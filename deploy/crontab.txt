@@ -1,0 +1,16 @@
+# WhaleChat — cron entries for a 24/7 host
+# Install with:  sudo cp deploy/crontab.txt /etc/cron.d/whalechat
+#                sudo chmod 644 /etc/cron.d/whalechat
+# Adjust paths/user (this file assumes /opt/whalechat and the `whalechat` user).
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# health check every 2 minutes — restarts the app if /api/health stops answering
+*/2 * * * * whalechat APP_DIR=/opt/whalechat PORT=8090 DATA_DIR=/var/lib/whalechat PUBLIC_URL=https://chat.yourdomain.com /opt/whalechat/deploy/keepalive.sh >> /var/lib/whalechat/keepalive-cron.log 2>&1
+
+# make sure the site comes back after a reboot
+@reboot whalechat sleep 10; APP_DIR=/opt/whalechat PORT=8090 DATA_DIR=/var/lib/whalechat PUBLIC_URL=https://chat.yourdomain.com /opt/whalechat/deploy/keepalive.sh >> /var/lib/whalechat/keepalive-cron.log 2>&1
+
+# daily database snapshot + log rotation at 03:10
+10 3 * * * whalechat curl -fsS -X POST http://127.0.0.1:8090/api/backup >> /var/lib/whalechat/backup-cron.log 2>&1
