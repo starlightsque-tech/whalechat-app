@@ -16,3 +16,12 @@ for (const name of fs.readdirSync(dir)) {
   } catch (e) { console.error('[assets] failed', name, e.message); }
 }
 console.log('[assets] decoded', made, 'file(s)');
+
+/* The app bundle is committed in <120KB text parts (API/arg limits); join them. */
+const pub = path.resolve(__dirname, '..', 'public');
+const appFile = path.join(pub, 'whalechat.html');
+const parts = fs.readdirSync(pub).filter((f) => /^whalechat\.html\.part\d+$/.test(f)).sort();
+if (parts.length && (!fs.existsSync(appFile) || fs.statSync(appFile).size === 0)) {
+  fs.writeFileSync(appFile, parts.map((f) => fs.readFileSync(path.join(pub, f), 'utf8')).join(''));
+  console.log('[assets] assembled whalechat.html from', parts.length, 'parts');
+}
