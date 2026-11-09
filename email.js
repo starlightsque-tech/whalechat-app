@@ -114,7 +114,9 @@ const templates = {
       text: `Welcome to WhaleChat, ${name}. Your account @${user.username} is ready. Open ${ctx.appUrl}/whalechat.html`
     };
   },
-  delivered(order, user, ctx) {
+  delivered(payload, ctx) {
+    const order = (payload && payload.order) || payload || {};
+    const user = (payload && payload.user) || {};
     const items = (order.items || []).map(i => `${i.name} × ${i.qty || 1}`).join(', ');
     return {
       subject: 'Your WhaleChat order ' + (order.ref || '') + ' has arrived 📦',
