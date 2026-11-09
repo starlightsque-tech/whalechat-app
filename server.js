@@ -160,7 +160,7 @@ function lifecycleEmails(pushes, events) {
     if (ev.col === 'orders' && ev.to === 'delivered' && ev.item) {
       const buyer = (store.db.users || []).find(u => u.id === ev.item.buyerId);
       if (buyer && buyer.email) {
-        email.enqueue({ key: 'delivered:' + ev.item.id, to: buyer.email, template: 'delivered', data: ev.item, appUrl });
+        email.enqueue({ key: 'delivered:' + ev.item.id, to: buyer.email, template: 'delivered', data: { order: ev.item, user: buyer }, appUrl });
       }
     }
   }
