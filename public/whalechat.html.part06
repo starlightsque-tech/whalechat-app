@@ -1,0 +1,1430 @@
+coins)} WC</div>
+            <div class="tiny muted">${esc(b ? b.username : '')} · ${esc(d.methodName)}</div></div>
+            <div class="row gap6"><button class="btn btn-xs btn-primary" data-act="dep-approve" data-id="${d.id}">Approve</button></div></div>`;
+        }).join('') : `<div class="empty" style="padding:18px"><p>No pending deposits.</p></div>`}
+      </div>
+    </div>
+    <div class="card mt16">
+      <div class="section-title"><h3>Newest users</h3><a href="#/admin/users" class="link tiny">All users</a></div>
+      ${users.slice().sort((a, b) => b.createdAt - a.createdAt).slice(0, 5).map(x => `<div class="between" style="padding:9px 0;border-bottom:1px dashed var(--border)">
+        <div class="row gap10">${avatarHTML(x, 'sm')}<div><div class="small" style="font-weight:600">${esc(x.fullName)}</div><div class="tiny muted">@${esc(x.username)} · ${dateLabel(x.createdAt)}</div></div></div>
+        <div class="row gap8"><span class="small" style="font-weight:600">${coins(x.balance)} WC</span><button class="btn btn-xs btn-ghost" data-act="admin-user" data-id="${x.id}">Manage</button></div></div>`).join('') || '<p class="muted small">No users yet.</p>'}
+    </div>
+    <style>@media(max-width:860px){.dash2{grid-template-columns:1fr!important}}</style>`;
+}
+
+let ADMIN_USER_Q = '';
+function adminUsers(params) {
+  const q = (params.q || ADMIN_USER_Q || '').toLowerCase();
+  const users = DB.users.filter(u => u.role !== 'admin' && (!q || u.fullName.toLowerCase().includes(q) || u.username.toLowerCase().includes(q) || u.email.toLowerCase().includes(q)));
+  return `<div class="card">
+    <div class="between wrap gap10 mb16">
+      <div class="searchbar" style="width:min(100%,320px)">${ic('search', 16)}<input id="adminUserSearch" placeholder="Search users…" value="${esc(q)}"/></div>
+      <div class="row gap8"><span class="badge">${users.length} users</span><button class="btn btn-sm btn-ghost" data-act="admin-export" data-id="users">${ic('download', 14)} Export</button></div>
+    </div>
+    <div class="table-wrap"><table class="tbl"><thead><tr><th>User</th><th>Balance</th><th>Trust</th><th>Status</th><th>Joined</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+      ${users.length ? users.map(x => `<tr>
+        <td><div class="row gap8">${avatarHTML(x, 'sm')}<div><div style="font-weight:600">${esc(x.fullName)} ${vendorOf(x.id) ? '<span class="badge" style="font-size:9px">Vendor</span>' : ''}</div><div class="tiny muted">@${esc(x.username)} · ${esc(x.email)}</div></div></div></td>
+        <td style="font-weight:600">${coins(x.balance)} <span class="tiny muted">WC</span></td>
+        <td>${x.trustScore}/100</td>
+        <td>${x.banned ? '<span class="badge badge-danger">Banned</span>' : '<span class="badge badge-success">Active</span>'}</td>
+        <td class="muted">${dateLabel(x.createdAt)}</td>
+        <td><div class="row gap6" style="justify-content:flex-end">
+          <button class="btn btn-xs btn-ghost" data-act="admin-user" data-id="${x.id}">Manage</button>
+          <button class="btn btn-xs btn-ghost" data-act="admin-msg-user" data-id="${x.id}" title="Support chat">${ic('chat', 12)}</button>
+          <button class="btn btn-xs btn-ghost" data-act="admin-login-as" data-id="${x.id}" title="Log in as user">${ic('key', 12)}</button>
+          <button class="btn btn-xs ${x.banned ? 'btn-soft' : 'btn-danger'}" data-act="admin-ban" data-id="${x.id}">${x.banned ? 'Unban' : 'Ban'}</button>
+          <button class="btn btn-xs btn-danger" data-act="admin-del-user" data-id="${x.id}">${ic('trash', 12)}</button>
+        </div></td></tr>`).join('') : `<tr><td colspan="6" class="center muted" style="padding:30px">No users found</td></tr>`}
+    </tbody></table></div>
+  </div>`;
+}
+App.adminUser = function (id) {
+  const x = findUser(id); if (!x) return;
+  const v = vendorOf(id);
+  openModal(modalShell('Manage user', `
+    <div class="row gap12 mb16">${avatarHTML(x, 'lg')}
+      <div><div style="font-weight:650">${esc(x.fullName)}</div><div class="small muted">@${esc(x.username)}</div>
+      <div class="row gap6 mt6">${v ? `<span class="badge badge-accent">Vendor @${esc(v.username)}</span>` : ''}<span class="badge">${x.banned ? 'Banned' : 'Active'}</span></div></div></div>
+    <div class="grid2" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      ${field('Whale Coin balance', 'auBal', { type: 'number', value: x.balance, inputmode: 'decimal' })}
+      ${field('Trust score (0–100)', 'auTrust', { type: 'number', value: x.trustScore })}
+      ${field('Completed sales', 'auSales', { type: 'number', value: x.completedSales || 0 })}
+      ${field('Total earnings (WC)', 'auEarn', { type: 'number', value: x.totalEarnings || 0 })}
+    </div>
+    <div class="kv"><span class="k">Email</span><span class="v">${esc(x.email)}</span></div>
+    <div class="kv"><span class="k">Phone</span><span class="v">${esc(x.phone || '—')}</span></div>
+    <div class="kv"><span class="k">Total deposits</span><span class="v">${coins(x.totalDeposits || 0)} WC</span></div>
+    <div class="kv"><span class="k">Total withdrawals</span><span class="v">${coins(x.totalWithdrawals || 0)} WC</span></div>
+    <div class="kv"><span class="k">Withdrawal PIN</span><span class="v">${x.pin ? 'Set' : 'Not set'}</span></div>
+    <div class="mt16 col gap8">
+      <button class="btn btn-ghost btn-block" data-act="admin-credit" data-id="${x.id}">${ic('wallet', 15)} Add Whale Coin</button>
+      <button class="btn btn-ghost btn-block" data-act="admin-notify-user" data-id="${x.id}">${ic('bell', 15)} Send notification</button>
+      <button class="btn btn-ghost btn-block" data-act="admin-msg-user" data-id="${x.id}" data-close>${ic('chat', 15)} Open support chat</button>
+      <button class="btn btn-soft btn-block" data-act="admin-login-as" data-id="${x.id}">${ic('key', 15)} Log in as this user (no password)</button>
+      <button class="btn ${x.banned ? 'btn-soft' : 'btn-danger'} btn-block" data-act="admin-ban" data-id="${x.id}">${x.banned ? 'Unban account' : 'Ban account'}</button>
+    </div>`,
+    `<button class="btn btn-ghost" data-close style="flex:1">Close</button><button class="btn btn-primary" data-act="admin-save-user" data-id="${x.id}" style="flex:1">Save changes</button>`), { width: '520px' });
+};
+App.adminSaveUser = function (id) {
+  const x = findUser(id); if (!x) return;
+  const bal = Number(document.getElementById('auBal').value);
+  const trust = Number(document.getElementById('auTrust').value);
+  const sales = Number(document.getElementById('auSales').value);
+  const earn = Number(document.getElementById('auEarn').value);
+  if (isNaN(bal) || bal < 0) return toast('Invalid balance', 'err');
+  const diff = Math.round((bal - x.balance) * 100) / 100;
+  x.balance = Math.round(bal * 100) / 100;
+  x.trustScore = Math.max(0, Math.min(100, trust || 0));
+  x.completedSales = Math.max(0, sales || 0);
+  x.totalEarnings = Math.round((earn || 0) * 100) / 100;
+  if (diff) tx(x.id, diff > 0 ? 'deposit' : 'withdrawal', 'Admin balance adjustment', diff);
+  notify(x.id, 'Account updated', 'Your account settings were updated by the WhaleChat team.', '#/profile', 'settings');
+  sync(); closeModal(); toast('User updated', 'ok'); render();
+};
+App.adminCredit = async function (id) {
+  const v = await promptDialog({ title: 'Add Whale Coin', label: 'Amount in WC (negative to deduct)', type: 'number', placeholder: '10' });
+  if (!v) return;
+  const amt = Number(v);
+  if (!isFinite(amt) || amt === 0) return toast('Enter a valid amount', 'err');
+  const x = findUser(id); if (!x) return;
+  x.balance = Math.round((x.balance + amt) * 100) / 100;
+  tx(x.id, amt > 0 ? 'deposit' : 'withdrawal', 'Admin credit', amt);
+  notify(x.id, amt > 0 ? 'Wallet credited' : 'Wallet adjusted', `${coins(Math.abs(amt))} WC ${amt > 0 ? 'added to' : 'deducted from'} your balance by the WhaleChat team.`, '#/wallet', 'wallet');
+  sync(); closeModal(); toast('Balance updated', 'ok'); render();
+};
+App.adminBan = async function (id) {
+  const x = findUser(id); if (!x) return;
+  if (!x.banned) {
+    if (!await confirmDialog({ title: 'Ban this user?', body: 'They will not be able to sign in.', danger: true, ok: 'Ban' })) return;
+    x.banned = true;
+    notify(x.id, 'Account suspended', 'Your account has been suspended. Contact support for assistance.', null, 'ban');
+  } else x.banned = false;
+  sync(); closeModal(); toast(x.banned ? 'User banned' : 'User unbanned', 'ok'); render();
+};
+App.adminDeleteUser = async function (id) {
+  const x = findUser(id); if (!x) return;
+  if (!await confirmDialog({ title: 'Delete user?', body: 'This permanently removes the account, its vendor profile and notifications. Orders are kept for records.', danger: true, ok: 'Delete' })) return;
+  DB.users = DB.users.filter(u => u.id !== id);
+  DB.vendors = DB.vendors.filter(v => v.userId !== id);
+  DB.contacts = DB.contacts.filter(c => c.ownerId !== id && c.userId !== id);
+  DB.notifications = DB.notifications.filter(n => n.userId !== id);
+  sync(); toast('User deleted', 'ok'); render();
+};
+App.adminMsgUser = function (id) {
+  const admin = me();
+  if (!isContact(admin.id, id)) DB.contacts.push({ id: uid('ct'), ownerId: admin.id, userId: id, createdAt: Date.now() });
+  sync(); closeModal(); go('chat/' + id);
+};
+
+function adminVendorRequests() {
+  const list = (DB.vendorApplications || []).slice().sort((a, b) => (a.status === 'pending' ? -1 : 1) - (b.status === 'pending' ? -1 : 1) || b.createdAt - a.createdAt);
+  const pending = list.filter(a => a.status === 'pending');
+  return `<div class="card mb16" style="background:linear-gradient(120deg,rgba(46,230,201,.08),rgba(58,160,255,.05))">
+      <div class="between wrap gap10">
+        <div><h3 style="font-size:15px">Vendor activation payments</h3>
+          <p class="tiny muted mt6">Review the uploaded payment slip, then approve to unlock the applicant's vendor dashboard.</p></div>
+        <div class="row gap8"><span class="badge badge-warn">${pending.length} pending</span>
+          <a href="#/admin/settings" class="btn btn-xs btn-ghost">${ic('settings', 12)} Fee & payment accounts</a></div>
+      </div>
+      <div class="grid-kpi k4 mt14">
+        ${[['Fee', usd(DB.settings.vendorFeeUsd || 0), 'tag'], ['Applications', list.length, 'users'], ['Pending', pending.length, 'clock'], ['Approved', list.filter(a => a.status === 'approved').length, 'check']]
+          .map(([k, v, i]) => `<div class="kpi"><div class="ic">${ic(i, 15)}</div><div class="v" style="font-size:17px">${v}</div><div class="k">${k}</div></div>`).join('')}
+      </div>
+    </div>
+    <div class="card">
+      <div class="table-wrap"><table class="tbl"><thead><tr><th>Applicant</th><th>Vendor name</th><th>Plan</th><th>Fee</th><th>Payment account</th><th>Slip</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+      ${list.length ? list.map(a => {
+        const u = findUser(a.userId);
+        return `<tr>
+          <td><div class="row gap8">${avatarHTML(u || {}, 'sm')}<div><div style="font-weight:600">${esc(u ? u.fullName : a.userName || '—')}</div><div class="tiny muted">@${esc(u ? u.username : a.username || '')} · ${dateLabel(a.createdAt)}</div></div></div></td>
+          <td style="font-weight:600">@${esc(a.vendorUsername)}</td>
+          <td><div style="font-weight:600">${a.months || 1} month${(a.months || 1) > 1 ? 's' : ''}</div><div class="tiny muted">${a.kind === 'renewal' ? 'Renewal' : 'New vendor'}</div></td>
+          <td>${usd(a.feeUsd)}</td>
+          <td class="tiny muted" style="max-width:180px"><div>${esc(a.methodLabel || '—')}</div><div style="word-break:break-all">${esc(a.address || '')}</div></td>
+          <td>${a.proof ? `<img src="${a.proof}" style="width:46px;height:46px;object-fit:cover;border-radius:8px;border:1px solid var(--border);cursor:pointer" data-act="vendor-view-proof" data-id="${a.id}"/>` : '<span class="tiny muted">none</span>'}</td>
+          <td>${statusBadge(a.status)}</td>
+          <td><div class="row gap6" style="justify-content:flex-end">
+            ${a.status === 'pending' ? `<button class="btn btn-xs btn-primary" data-act="vendor-app-approve" data-id="${a.id}">Approve</button>
+              <button class="btn btn-xs btn-danger" data-act="vendor-app-reject" data-id="${a.id}">Reject</button>` : ''}
+            ${a.status !== 'pending' ? `<button class="btn btn-xs btn-ghost" data-act="vendor-app-del" data-id="${a.id}">${ic('trash', 12)}</button>` : ''}
+          </div></td></tr>`;
+      }).join('') : `<tr><td colspan="7" class="center muted" style="padding:30px">No vendor applications yet</td></tr>`}
+      </tbody></table></div>
+    </div>`;
+}
+
+function adminVendors() {
+  return `<div class="card">
+    <div class="between mb16"><h3 style="font-size:15px">Vendors</h3><span class="badge">${DB.vendors.length} total</span></div>
+    <div class="table-wrap"><table class="tbl"><thead><tr><th>Vendor</th><th>Owner</th><th>Products</th><th>Sales</th><th>Expiry</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+    ${DB.vendors.length ? DB.vendors.map(v => {
+      const owner = findUser(v.userId);
+      const prods = DB.products.filter(p => p.vendorId === v.id);
+      const rev = DB.orders.filter(o => o.vendorId === v.id).reduce((s, o) => s + o.usd || 0, 0);
+      return `<tr><td><div style="font-weight:600">@${esc(v.username)}</div><div class="tiny muted">Since ${dateLabel(v.createdAt)}</div></td>
+        <td><div class="row gap6">${owner ? avatarHTML(owner, 'sm') : ''}<div><div class="small">${esc(owner ? owner.fullName : '—')}</div><div class="tiny muted">${esc(owner ? owner.username : '')}</div></div></div></td>
+        <td>${prods.length}</td><td>${v.sales || 0}</td><td>${coins(DB.orders.filter(o => o.vendorId === v.id).reduce((s, o) => s + o.totalUsd, 0) / COIN_USD)} WC</td>
+        <td>${v.rating.toFixed(1)} ★</td>
+        <td><div class="row gap6" style="justify-content:flex-end">
+          <button class="btn btn-xs btn-ghost" data-act="admin-vendor" data-id="${v.id}">View</button>
+          <button class="btn btn-xs btn-ghost" data-act="admin-edit-vendor" data-id="${v.id}">Edit</button>
+          <button class="btn btn-xs btn-ghost" data-act="vendor-extend" data-id="${v.id}" title="Add 30 days">+30d</button>
+          ${owner ? `<button class="btn btn-xs btn-ghost" data-act="admin-msg-user" data-id="${owner.id}">${ic('chat', 12)}</button>` : ''}
+        </div></td></tr>`;
+    }).join('') : `<tr><td colspan="7" class="center muted" style="padding:30px">No vendors yet</td></tr>`}
+    </tbody></table></div></div>`;
+}
+App.adminVendor = function (id) {
+  const v = vendorById(id); if (!v) return;
+  const owner = findUser(v.userId);
+  const prods = DB.products.filter(p => p.vendorId === id);
+  openModal(modalShell('Vendor @' + v.username, `
+    <div class="row gap12 mb16">${avatarHTML(owner || {}, 'lg')}<div><div style="font-weight:650">${esc(v.name)}</div>
+      <div class="small muted">${esc(owner ? owner.fullName : '')}</div><div class="row gap6 mt6"><span class="badge badge-accent">${v.rating.toFixed(1)} ★</span><span class="badge">Trust ${v.trustScore}</span><span class="badge">${v.sales || 0} sales</span></div></div></div>
+    <div class="kv"><span class="k">Wallet balance</span><span class="v">${coins(owner ? owner.balance : 0)} WC</span></div>
+    <div class="kv"><span class="k">Products in inventory</span><span class="v">${prods.length}</span></div>
+    <div class="kv"><span class="k">Created</span><span class="v">${dateLabel(v.createdAt)}</span></div>
+    <div class="divider"></div>
+    <div class="label mb10">Inventory</div>
+    ${prods.length ? `<div class="list">${prods.slice(0, 8).map(p => `<div class="list-item" style="padding:8px 10px">
+      <div style="width:32px;height:32px;border-radius:8px;background:var(--surface-3);display:flex;align-items:center;justify-content:center;font-size:15px">${p.emoji || '📦'}</div>
+      <div class="grow"><div class="tiny" style="font-weight:600">${esc(p.name)}</div><div class="tiny muted">Stock ${p.stock} · ${p.active ? 'Listed' : 'Hidden'}</div></div>
+      <span class="tiny">${p.priceUsd ? coins(p.priceUsd / COIN_USD) + ' WC' : '—'}</span></div>`).join('')}</div>` : '<p class="tiny muted">No products.</p>'}`,
+    `<button class="btn btn-ghost" data-close style="flex:1">Close</button><button class="btn btn-primary" data-act="admin-edit-vendor" data-id="${v.id}" style="flex:1">Edit vendor</button>`));
+};
+App.adminEditVendor = function (id) {
+  const v = vendorById(id); if (!v) return;
+  openModal(modalShell('Edit vendor', `
+    ${field('Vendor username', 'evName', { value: v.username })}
+    ${field('Display name', 'evDisplay', { value: v.name })}
+    ${field('Star rating (0–5)', 'evRating', { type: 'number', value: v.rating, step: '0.1' })}
+    ${field('Trust score (0–100)', 'evTrust', { type: 'number', value: v.trustScore })}`,
+    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="admin-save-vendor" data-id="${v.id}">Save</button>`));
+};
+App.adminSaveVendor = function (id) {
+  const v = vendorById(id); if (!v) return;
+  const name = document.getElementById('evName').value.trim();
+  if (!/^[a-zA-Z0-9._-]{3,24}$/.test(name)) return toast('Invalid vendor username', 'err');
+  v.username = name;
+  v.name = document.getElementById('evDisplay').value.trim() || name;
+  v.rating = Math.max(0, Math.min(5, Number(document.getElementById('evRating').value) || 5));
+  v.trustScore = Math.max(0, Math.min(100, Number(document.getElementById('evTrust').value) || 50));
+  sync(); closeModal(); toast('Vendor updated', 'ok'); render();
+};
+
+/* ---------------- products ---------------- */
+let PRODUCT_EDIT = null, PRODUCT_IMAGE = null;
+function adminProducts() {
+  return `<div class="card">
+    <div class="between wrap gap10 mb16">
+      <div><h3 style="font-size:15px">Company marketplace</h3><p class="tiny muted mt6">Wholesale catalogue available to vendors only.</p></div>
+      <button class="btn btn-primary btn-sm" data-act="admin-product-new">${ic('plus', 15)} Add product</button>
+    </div>
+    <div class="table-wrap"><table class="tbl"><thead><tr><th>Product</th><th>Category</th><th>Wholesale price</th><th>Stock</th><th>Listings</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+    ${DB.companyProducts.length ? DB.companyProducts.map(p => {
+      const listings = DB.products.filter(x => x.companyProductId === p.id);
+      return `<tr>
+        <td><div class="row gap8"><div style="width:38px;height:38px;border-radius:9px;overflow:hidden;background:var(--surface-2);display:flex;align-items:center;justify-content:center;font-size:17px">${p.image ? `<img src="${p.image}" style="width:100%;height:100%;object-fit:cover"/>` : (p.emoji || '📦')}</div>
+          <div><div style="font-weight:600">${esc(p.name)}</div><div class="tiny muted">${esc((p.description || '').slice(0, 44))}…</div></div></div></td>
+        <td>${esc(p.category)}</td>
+        <td><div style="font-weight:600">${coins(p.priceUsd / COIN_USD)} WC</div><div class="tiny muted">${usd(p.priceUsd)}</div></td>
+        <td>${p.stock}</td><td>${listings.length} vendors</td>
+        <td><div class="row gap6" style="justify-content:flex-end">
+          <button class="btn btn-xs btn-ghost" data-act="admin-product-edit" data-id="${p.id}">${ic('edit', 12)}</button>
+          <button class="btn btn-xs btn-danger" data-act="admin-product-del" data-id="${p.id}">${ic('trash', 12)}</button></div></td></tr>`;
+    }).join('') : `<tr><td colspan="6" class="center muted" style="padding:30px">No company products yet</td></tr>`}
+    </tbody></table></div>
+  </div>
+  <div class="card mt16">
+    <h3 style="font-size:15px">Vendor listings</h3><p class="tiny muted mt6">Everything currently listed on the public marketplace.</p>
+    <div class="table-wrap mt16"><table class="tbl"><thead><tr><th>Product</th><th>Vendor</th><th>Price</th><th>Stock</th><th>Stars</th><th>Status</th></tr></thead><tbody>
+      ${DB.products.filter(p => p.priceUsd).length ? DB.products.filter(p => p.priceUsd).map(p => {
+        const v = vendorById(p.vendorId);
+        return `<tr><td style="font-weight:600">${esc(p.name)}</td><td>@${esc(v ? v.username : '—')}</td>
+          <td>${coins(p.priceUsd / COIN_USD)} WC <span class="tiny muted">${usd(p.priceUsd)}</span></td>
+          <td>${p.stock}</td><td>${(p.starUsers || []).length}</td>
+          <td>${p.active && p.stock > 0 ? '<span class="badge badge-success">Live</span>' : '<span class="badge">Hidden</span>'}</td></tr>`;
+      }).join('') : `<tr><td colspan="6" class="center muted" style="padding:24px">No vendor listings yet</td></tr>`}
+    </tbody></table></div>
+  </div>`;
+}
+function bindProductForm() {
+  const f = document.getElementById('productForm');
+  if (!f) return;
+  const price = document.getElementById('pfPrice');
+  const calc = () => {
+    const el = document.getElementById('pfCoins');
+    if (el) el.textContent = coins(usdToCoins(Number(price.value) || 0)) + ' WC';
+  };
+  price.addEventListener('input', calc); calc();
+}
+App.adminProductNew = function () {
+  PRODUCT_EDIT = null; PRODUCT_IMAGE = null;
+  openProductModal();
+};
+App.adminProductEdit = function (id) {
+  PRODUCT_EDIT = DB.companyProducts.find(p => p.id === id) || null;
+  PRODUCT_IMAGE = PRODUCT_EDIT ? PRODUCT_EDIT.image : null;
+  openProductModal();
+};
+function openProductModal() {
+  const p = PRODUCT_EDIT;
+  openModal(modalShell(p ? 'Edit product' : 'Add company product', `
+    <div id="productForm">
+      <div class="row gap12 mb16">
+        <div id="pfThumb" style="width:74px;height:74px;border-radius:12px;overflow:hidden;background:var(--surface-2);display:flex;align-items:center;justify-content:center;font-size:28px;flex:none">${PRODUCT_IMAGE ? `<img src="${PRODUCT_IMAGE}" style="width:100%;height:100%;object-fit:cover"/>` : (p && p.emoji ? p.emoji : '📦')}</div>
+        <div class="col gap6"><button class="btn btn-ghost btn-sm" data-act="admin-product-image">${ic('image', 14)} Upload image</button>
+          <span class="tiny muted">JPG or PNG, auto-compressed</span></div>
+      </div>
+      ${field('Product name', 'pfName', { value: p ? p.name : '', ph: 'e.g. Whale X1 Pro 5G' })}
+      <div class="field"><label class="label">Category</label>
+        <select class="input" id="pfCat">${['Phones', 'Laptops', 'Tablets', 'Headphones', 'Chargers', 'Video Games', 'Phone Pouches', 'Accessories'].map(c => `<option ${p && p.category === c ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
+      ${field('Wholesale price (USD)', 'pfPrice', { type: 'number', step: '0.01', value: p ? p.priceUsd : '', ph: '100.00' })}
+      <div class="panel" style="padding:10px 12px;margin-bottom:12px"><div class="between"><span class="tiny muted">Vendors pay in Whale Coin</span><span id="pfCoins" style="font-weight:700;color:var(--accent)">0 WC</span></div></div>
+      ${field('Company stock', 'pfStock', { type: 'number', value: p ? p.stock : 0 })}
+      ${field('Emoji fallback', 'pfEmoji', { value: p ? (p.emoji || '') : '📦', maxlength: '4', help: 'Shown when no image is uploaded.' })}
+      <div class="field"><label class="label">Description</label><textarea class="input" id="pfDesc" style="min-height:80px">${esc(p ? p.description || '' : '')}</textarea></div>
+    </div>`,
+    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="admin-product-save">${ic('check', 15)} ${p ? 'Save product' : 'Add product'}</button>`), { width: '520px' });
+  bindProductForm();
+}
+App.adminProductImage = async function () {
+  const f = await pickFile({ accept: 'image/*' });
+  if (!f) return;
+  const c = await compressImage(f, 640, 0.66);
+  PRODUCT_IMAGE = await fileToDataURL(c);
+  const t = document.getElementById('pfThumb');
+  if (t) t.innerHTML = `<img src="${PRODUCT_IMAGE}" style="width:100%;height:100%;object-fit:cover"/>`;
+};
+App.adminProductSave = function () {
+  const name = document.getElementById('pfName').value.trim();
+  const price = Number(document.getElementById('pfPrice').value);
+  const stock = Number(document.getElementById('pfStock').value);
+  if (name.length < 2) return toast('Enter a product name', 'err');
+  if (!(price > 0)) return toast('Enter a valid price', 'err');
+  if (!catValid(document.getElementById('pfCat').value)) return toast('Invalid category', 'err');
+  const data = {
+    name, category: document.getElementById('pfCat').value, priceUsd: Math.round(price * 100) / 100,
+    stock: Math.max(0, Math.round(stock) || 0), emoji: document.getElementById('pfEmoji').value || '📦',
+    description: document.getElementById('pfDesc').value.trim(), image: PRODUCT_IMAGE
+  };
+  if (PRODUCT_EDIT) Object.assign(PRODUCT_EDIT, data);
+  else DB.companyProducts.unshift(Object.assign({ id: uid('cp'), createdAt: Date.now() }, data));
+  sync(); closeModal(); toast(PRODUCT_EDIT ? 'Product updated' : 'Product added', 'ok'); render();
+};
+function catValid(c) { return ['Phones', 'Laptops', 'Tablets', 'Headphones', 'Chargers', 'Video Games', 'Phone Pouches', 'Accessories'].includes(c); }
+App.adminProductDel = async function (id) {
+  if (!await confirmDialog({ title: 'Delete company product?', body: 'Vendors keep their existing inventory, but it can no longer be restocked.', danger: true, ok: 'Delete' })) return;
+  DB.companyProducts = DB.companyProducts.filter(p => p.id !== id);
+  sync(); toast('Product deleted', 'ok'); render();
+};
+
+/* ---------------- orders ---------------- */
+function adminOrders() {
+  const orders = DB.orders;
+  return `<div class="grid-kpi mb16">
+    ${[['Processing', orders.filter(o => o.status === 'processing').length, 'clock'], ['Shipped', orders.filter(o => o.status === 'shipped').length, 'truck'],
+       ['Delivered', orders.filter(o => o.status === 'delivered').length, 'check'], ['Revenue', usd(orders.reduce((s, o) => s + o.totalUsd, 0)), 'trend']]
+      .map(([k, v, i]) => `<div class="kpi"><div class="ic">${ic(i, 15)}</div><div class="v">${v}</div><div class="k">${k}</div></div>`).join('')}
+    </div>
+    <div class="card">
+      <div class="between mb16"><h3 style="font-size:15px">All orders</h3><span class="badge">${orders.length} orders</span></div>
+      <div class="table-wrap"><table class="tbl"><thead><tr><th>Order</th><th>Buyer</th><th>Items</th><th>Total</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+      ${orders.length ? orders.map(o => {
+        const b = findUser(o.buyerId);
+        return `<tr><td><div style="font-weight:600">${esc(o.ref)}</div><div class="tiny muted">${dateLabel(o.createdAt)}</div></td>
+          <td><div class="small" style="font-weight:600">${esc(o.delivery.fullName)}</div><div class="tiny muted">${esc(b ? '@' + b.username : 'deleted user')}</div></td>
+          <td class="muted tiny">${o.items.map(i => esc(i.name) + ' ×' + i.qty).join('<br/>')}</td>
+          <td style="font-weight:600">${coins(o.totalCoins)} WC<div class="tiny muted">${usd(o.totalUsd)}</div></td>
+          <td>${statusBadge(o.status)}</td>
+          <td><div class="row gap6" style="justify-content:flex-end">
+            <button class="btn btn-xs btn-primary" data-act="admin-order" data-id="${o.id}">Manage</button>
+            <button class="btn btn-xs btn-ghost" data-act="admin-order-del" data-id="${o.id}">${ic('trash', 12)}</button></div></td></tr>`;
+      }).join('') : `<tr><td colspan="6" class="center muted" style="padding:30px">No orders yet</td></tr>`}
+      </tbody></table></div>
+    </div>`;
+}
+App.adminOrder = function (id) {
+  const o = DB.orders.find(x => x.id === id); if (!o) return;
+  const b = findUser(o.buyerId);
+  const v = vendorById(o.vendorId); const vu = v ? findUser(v.userId) : null;
+  openModal(modalShell('Order ' + o.ref, `
+    <div class="between mb10"><div class="row gap8">${statusBadge(o.status)}<span class="badge">${dateLabel(o.createdAt)}</span></div>
+      <span style="font-weight:700;font-family:var(--display)">${coins(o.totalCoins)} WC</span></div>
+    <div class="panel" style="padding:12px;margin-bottom:12px">
+      ${o.items.map(i => `<div class="between" style="padding:4px 0"><span class="small">${esc(i.name)} ×${i.qty}</span><span class="small muted">${usd(i.priceUsd * i.qty)}</span></div>`).join('')}
+    </div>
+    <div class="small" style="font-weight:650;margin-bottom:4px">Buyer</div>
+    <div class="kv"><span class="k">Account</span><span class="v">${esc(b ? b.fullName + ' (@' + b.username + ')' : 'Deleted user')}</span></div>
+    <div class="kv"><span class="k">Receiver</span><span class="v">${esc(o.delivery.fullName)}</span></div>
+    <div class="kv"><span class="k">Phone</span><span class="v">${esc(o.delivery.phone)}</span></div>
+    <div class="kv"><span class="k">Email</span><span class="v">${esc(o.delivery.email)}</span></div>
+    <div class="kv"><span class="k">Country</span><span class="v">${esc(o.delivery.country)}</span></div>
+    <div class="kv"><span class="k">Address</span><span class="v" style="max-width:62%">${esc(o.delivery.address)}</span></div>
+    <div class="kv"><span class="k">Vendor</span><span class="v">@${esc(vu ? vu.username : '—')}</span></div>
+    ${field('Tracking reference (optional)', 'aoTrack', { value: o.tracking || '', ph: 'e.g. PKG-88123' })}
+    <div class="field"><label class="label">Update status</label>
+      <select class="input" id="aoStatus">
+        ${['processing', 'shipped', 'delivered', 'cancelled'].map(s => `<option value="${s}" ${o.status === s ? 'selected' : ''}>${s[0].toUpperCase() + s.slice(1)}</option>`).join('')}
+      </select></div>
+    <div class="field"><label class="label">Message to buyer (optional)</label><input class="input" id="aoNote" placeholder="e.g. Dispatched with express courier"/></div>`,
+    `<button class="btn btn-ghost" data-close>Close</button><button class="btn btn-primary" data-act="admin-order-save" data-id="${o.id}">${ic('check', 15)} Save & notify</button>`), { width: '520px' });
+};
+App.adminOrderSave = function (id) {
+  const o = DB.orders.find(x => x.id === id); if (!o) return;
+  const st = document.getElementById('aoStatus').value;
+  const note = document.getElementById('aoNote').value.trim();
+  o.tracking = document.getElementById('aoTrack').value.trim() || o.tracking;
+  if (st !== o.status) {
+    o.status = st;
+    o.timeline.push({ status: st, at: Date.now(), note: note || '' });
+    notify(o.buyerId, 'Order ' + o.ref + ' · ' + st[0].toUpperCase() + st.slice(1),
+      (st === 'shipped' ? 'Your package is on the way. ' : st === 'delivered' ? 'Your package was delivered. ' : '') + (note || 'Track your package movements in the app.'),
+      '#/orders', 'truck');
+    if (o.vendorId) {
+      const v = vendorById(o.vendorId);
+      if (v) notify(v.userId, 'Order ' + o.ref + ' is now ' + st, note || 'Status updated by WhaleChat admin.', '#/vendor/orders', 'truck');
+    }
+  } else if (note) {
+    notify(o.buyerId, 'Update on order ' + o.ref, note, '#/orders', 'chat');
+  }
+  sync(); closeModal(); toast('Order updated', 'ok'); render();
+};
+App.adminOrderDel = async function (id) {
+  if (!await confirmDialog({ title: 'Delete order?', body: 'Removes the order record. Buyer will no longer see tracking.', danger: true, ok: 'Delete' })) return;
+  DB.orders = DB.orders.filter(o => o.id !== id); sync(); toast('Order deleted', 'ok'); render();
+};
+
+/* ---------------- refunds ---------------- */
+function adminRefunds() {
+  const list = DB.refunds || [];
+  const pending = list.filter(r => r.status === 'pending');
+  const approved = list.filter(r => r.status === 'approved');
+  return `<div class="grid-kpi k4 mb16">
+      ${[['Pending refunds', pending.length, 'clock'], ['Approved', approved.length, 'check'],
+         ['Refunded value', coins(approved.reduce((s, r) => s + r.coins, 0)) + ' WC', 'wallet'],
+         ['Requests total', list.length, 'refresh']]
+        .map(([k, v, i]) => `<div class="kpi"><div class="ic">${ic(i, 15)}</div><div class="v" style="font-size:17px">${v}</div><div class="k">${k}</div></div>`).join('')}
+    </div>
+    <div class="card">
+      <div class="between mb16"><div><h3 style="font-size:15px">Company purchase refunds</h3>
+        <p class="tiny muted mt6">Approve to return the vendor's unsold units to company stock and credit the amount back to their balance.</p></div>
+        <span class="badge badge-warn">${pending.length} pending</span></div>
+      <div class="table-wrap"><table class="tbl"><thead><tr><th>Vendor</th><th>Product</th><th>Qty</th><th>Amount</th><th>Reason</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+      ${list.length ? list.map(r => {
+        const v = vendorById(r.vendorId); const vu = v ? findUser(v.userId) : null;
+        return `<tr>
+          <td><div style="font-weight:600">@${esc(v ? v.username : '—')}</div><div class="tiny muted">${esc(vu ? vu.fullName : '')}</div></td>
+          <td style="font-weight:600">${esc(r.name)}</td><td>${r.qty}</td>
+          <td><div style="font-weight:600">${coins(r.coins)} WC</div><div class="tiny muted">${usd(r.usd)}</div></td>
+          <td class="tiny muted" style="max-width:180px">${esc(r.reason || '—')}</td>
+          <td>${statusBadge(r.status)}</td>
+          <td><div class="row gap6" style="justify-content:flex-end">
+            ${r.status === 'pending' ? `<button class="btn btn-xs btn-primary" data-act="refund-approve" data-id="${r.id}">Approve</button>
+              <button class="btn btn-xs btn-danger" data-act="refund-reject" data-id="${r.id}">Reject</button>` : ''}
+            <button class="btn btn-xs btn-ghost" data-act="refund-del" data-id="${r.id}">${ic('trash', 12)}</button>
+          </div></td></tr>`;
+      }).join('') : `<tr><td colspan="7" class="center muted" style="padding:30px">No refund requests yet</td></tr>`}
+      </tbody></table></div>
+    </div>`;
+}
+
+/* ---------------- deposits ---------------- */
+function adminDeposits() {
+  const list = DB.deposits;
+  return `<div class="card">
+    <div class="between mb16"><h3 style="font-size:15px">Deposit requests</h3>
+      <div class="row gap8"><span class="badge badge-warn">${list.filter(d => d.status === 'pending').length} pending</span>
+      <button class="btn btn-sm btn-ghost" data-nav="#/admin/settings">${ic('settings', 14)} Payment methods</button></div></div>
+    <div class="table-wrap"><table class="tbl"><thead><tr><th>User</th><th>Amount</th><th>Whale Coin</th><th>Method</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+    ${list.length ? list.map(d => {
+      const u = findUser(d.userId);
+      return `<tr><td><div style="font-weight:600">${esc(u ? u.fullName : 'Deleted user')}</div><div class="tiny muted">${esc(u ? '@' + u.username : '')} · ${timeAgo(d.createdAt)} ago</div></td>
+        <td style="font-weight:600">${usd(d.usd)}</td><td>${coins(d.coins)} WC</td>
+        <td><div class="small">${esc(d.methodName || d.method)}</div><div class="tiny muted" style="max-width:180px;overflow:hidden;text-overflow:ellipsis">${esc(d.detail || '')}</div></td>
+        <td>${statusBadge(d.status)}</td>
+        <td><div class="row gap6" style="justify-content:flex-end">
+          ${d.status === 'pending' ? `<button class="btn btn-xs btn-primary" data-act="dep-approve" data-id="${d.id}">Approve</button>
+          <button class="btn btn-xs btn-danger" data-act="dep-reject" data-id="${d.id}">Reject</button>` : ''}
+          <button class="btn btn-xs btn-ghost" data-act="dep-del" data-id="${d.id}">${ic('trash', 12)}</button></div></td></tr>`;
+    }).join('') : `<tr><td colspan="6" class="center muted" style="padding:30px">No deposit requests</td></tr>`}
+    </tbody></table></div>
+  </div>`;
+}
+App.depApprove = async function (id) {
+  const d = DB.deposits.find(x => x.id === id); if (!d || d.status !== 'pending') return;
+  const u = findUser(d.userId); if (!u) return toast('User not found', 'err');
+  d.status = 'approved'; d.reviewedAt = Date.now();
+  u.balance = Math.round((u.balance + d.coins) * 100) / 100;
+  u.totalDeposits = Math.round(((u.totalDeposits || 0) + d.usd) * 100) / 100;
+  tx(u.id, 'deposit', 'Deposit approved · ' + (d.methodName || d.method), d.coins);
+  notify(u.id, 'Deposit approved ✅', `${coins(d.coins)} WC has been credited to your wallet.`, '#/wallet', 'wallet');
+  // referral payout on first approved deposit (idempotent)
+  try { resolvePendingReferrals(); } catch (e) {}
+  let bonus = false;
+  try { bonus = referralBonus(u.id); } catch (e) {}
+  sync();
+  toast(bonus ? 'Deposit approved · 10 WC referral bonus paid' : 'Deposit approved and credited', 'ok');
+  render();
+};
+App.depReject = async function (id) {
+  const d = DB.deposits.find(x => x.id === id); if (!d) return;
+  const reason = await promptDialog({ title: 'Reject deposit', label: 'Reason (sent to user)', placeholder: 'Payment not received' });
+  if (reason === null) return;
+  d.status = 'rejected'; d.note = reason; d.reviewedAt = Date.now();
+  notify(d.userId, 'Deposit rejected', `${usd(d.usd)} deposit was rejected. ${reason || ''}`, '#/wallet', 'ban');
+  sync(); toast('Deposit rejected', 'ok'); render();
+};
+App.depDel = async function (id) {
+  if (!await confirmDialog({ title: 'Delete deposit record?', danger: true, ok: 'Delete' })) return;
+  DB.deposits = DB.deposits.filter(d => d.id !== id); sync(); render();
+};
+
+/* ---------------- withdrawals ---------------- */
+function adminWithdrawals() {
+  const list = DB.withdrawals;
+  return `<div class="card">
+    <div class="between mb16"><h3 style="font-size:15px">Withdrawal requests</h3>
+      <div class="row gap8"><span class="badge badge-warn">${list.filter(w => w.status === 'pending').length} pending</span>
+      <button class="btn btn-sm btn-ghost" data-act="edit-networks">${ic('settings', 14)} USDT networks</button></div></div>
+    <div class="table-wrap"><table class="tbl"><thead><tr><th>User</th><th>Amount</th><th>Network · Address</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+    ${list.length ? list.map(w => {
+      const u = findUser(w.userId);
+      return `<tr><td><div style="font-weight:600">${esc(u ? u.fullName : 'Deleted user')}</div><div class="tiny muted">${esc(u ? '@' + u.username : '')} · ${timeAgo(w.createdAt)} ago</div></td>
+        <td><div style="font-weight:600">${coins(w.coins)} WC</div><div class="tiny muted">${usd(w.usd)}</div></td>
+        <td><span class="badge">${esc(w.network)}</span><div class="tiny muted" style="max-width:190px;overflow:hidden;text-overflow:ellipsis;margin-top:3px">${esc(w.address)}</div></td>
+        <td>${statusBadge(w.status)}</td>
+        <td><div class="row gap6" style="justify-content:flex-end">
+          ${w.status === 'pending' ? `<button class="btn btn-xs btn-primary" data-act="wd-approve" data-id="${w.id}">Approve</button>
+          <button class="btn btn-xs btn-danger" data-act="wd-reject" data-id="${w.id}">Reject</button>` : ''}
+          <button class="btn btn-xs btn-ghost" data-act="wd-edit" data-id="${w.id}">${ic('edit', 12)}</button>
+          <button class="btn btn-xs btn-ghost" data-act="wd-del" data-id="${w.id}">${ic('trash', 12)}</button></div></td></tr>`;
+    }).join('') : `<tr><td colspan="5" class="center muted" style="padding:30px">No withdrawal requests</td></tr>`}
+    </tbody></table></div>
+  </div>`;
+}
+App.wdApprove = async function (id) {
+  const w = DB.withdrawals.find(x => x.id === id); if (!w) return;
+  const u = findUser(w.userId);
+  const txRef = await promptDialog({ title: 'Approve withdrawal', label: 'Blockchain transaction hash (optional)', placeholder: '0x… or leave blank' });
+  if (txRef === null) return;
+  w.status = 'approved'; w.txHash = txRef; w.reviewedAt = Date.now();
+  const act = DB.txs.find(t => t.id === w.txId || (t.meta && t.meta.withdrawalId === w.id));
+  if (act) { act.label = 'Withdrawal approved · ' + w.network; act.meta = Object.assign({}, act.meta, { withdrawalId: w.id, status: 'approved' }); }
+  if (u) {
+    u.totalWithdrawals = Math.round(((u.totalWithdrawals || 0) + w.coins) * 100) / 100;
+    notify(u.id, 'Withdrawal approved 💸', `${coins(w.coins)} WC (${usd(w.usd)}) was sent via ${w.network}.${txRef ? ' Tx: ' + txRef : ''}`, '#/wallet', 'download');
+  }
+  sync(); toast('Withdrawal approved', 'ok'); render();
+};
+App.wdReject = async function (id) {
+  const w = DB.withdrawals.find(x => x.id === id); if (!w) return;
+  const reason = await promptDialog({ title: 'Reject withdrawal', label: 'Reason (sent to user)', placeholder: 'Invalid wallet address' });
+  if (reason === null) return;
+  const u = findUser(w.userId);
+  w.status = 'rejected'; w.note = reason; w.reviewedAt = Date.now();
+  const actR = DB.txs.find(t => t.id === w.txId || (t.meta && t.meta.withdrawalId === w.id));
+  if (actR) { actR.label = 'Withdrawal rejected · ' + w.network; actR.meta = Object.assign({}, actR.meta, { withdrawalId: w.id, status: 'rejected' }); }
+  if (u) {
+    u.balance = Math.round((u.balance + w.coins) * 100) / 100;
+    tx(u.id, 'refund', 'Withdrawal rejected · refund', w.coins);
+    notify(u.id, 'Withdrawal rejected', `${coins(w.coins)} WC has been returned to your balance. ${reason || ''}`, '#/wallet', 'ban');
+  }
+  sync(); toast('Withdrawal rejected and refunded', 'ok'); render();
+};
+App.wdEdit = function (id) {
+  const w = DB.withdrawals.find(x => x.id === id); if (!w) return;
+  openModal(modalShell('Edit withdrawal', `
+    ${field('Amount (Whale Coin)', 'ewCoins', { type: 'number', value: w.coins })}
+    <div class="field"><label class="label">Network</label><select class="input" id="ewNet">${(DB.settings.networks || []).map(n => `<option ${w.network === n ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></div>
+    ${field('USDT address', 'ewAddr', { value: w.address })}
+    ${field('Admin note', 'ewNote', { value: w.note || '' })}`,
+    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="wd-save" data-id="${w.id}">Save changes</button>`));
+};
+App.wdSave = function (id) {
+  const w = DB.withdrawals.find(x => x.id === id); if (!w) return;
+  const coinsVal = Number(document.getElementById('ewCoins').value);
+  const addr = document.getElementById('ewAddr').value.trim();
+  if (!(coinsVal > 0) || !addr) return toast('Enter a valid amount and address', 'err');
+  const u = findUser(w.userId);
+  const diff = Math.round((coinsVal - w.coins) * 100) / 100;
+  if (diff > 0 && u && u.balance < diff) return toast('User balance too low for this increase', 'err');
+  if (u && diff !== 0) { u.balance = Math.round((u.balance - diff) * 100) / 100; tx(u.id, 'withdrawal', 'Withdrawal adjusted by admin', -diff); }
+  w.coins = coinsVal; w.usd = coinsToUsd(coinsVal);
+  w.network = document.getElementById('ewNet').value;
+  w.address = addr;
+  w.note = document.getElementById('ewNote').value.trim();
+  // keep the user's activity row in sync with admin edits
+  const linked = DB.txs.find(t => t.id === w.txId || (t.meta && t.meta.withdrawalId === w.id));
+  if (linked && (w.status === 'pending' || w.status === 'approved')) {
+    linked.coins = -w.coins;
+    linked.label = (w.status === 'approved' ? 'Withdrawal approved · ' : 'Withdrawal request · ') + w.network;
+    linked.meta = Object.assign({}, linked.meta, { withdrawalId: w.id, network: w.network, editedByAdmin: true });
+  }
+  if (u) notify(u.id, 'Withdrawal request updated', `Your ${coins(w.coins)} WC withdrawal was updated by our team (${w.network}).`, '#/wallet', 'download');
+  sync(); closeModal(); toast('Withdrawal updated', 'ok'); render();
+};
+App.wdDel = async function (id) {
+  if (!await confirmDialog({ title: 'Delete withdrawal history?', body: 'This removes the record only; funds already approved are not affected.', danger: true, ok: 'Delete' })) return;
+  DB.withdrawals = DB.withdrawals.filter(w => w.id !== id); sync(); render();
+};
+
+/* ---------------- notification management ---------------- */
+function adminNotifications() {
+  const list = DB.notifications.slice(0, 100);
+  return `<div class="card mb16">
+    <h3 style="font-size:15px">Send a notification</h3>
+    <p class="tiny muted mt6">Delivered instantly to a single account or every user.</p>
+    <div class="mt16" style="display:grid;grid-template-columns:1fr 1fr;gap:12px" class="dash2">
+      <div class="field"><label class="label">Recipient</label><select class="input" id="anUser"><option value="all">All users</option>
+        ${DB.users.filter(x => x.role !== 'admin').map(x => `<option value="${x.id}">${esc(x.fullName)} (@${esc(x.username)})</option>`).join('')}</select></div>
+      ${field('Title', 'anTitle', { ph: 'e.g. Platform update' })}
+    </div>
+    <div class="field"><label class="label">Message</label><textarea class="input" id="anBody" style="min-height:80px" placeholder="Write your message…"></textarea></div>
+    <div class="row gap8"><button class="btn btn-primary btn-sm" data-act="admin-send-notif">${ic('send', 14)} Send notification</button>
+    <button class="btn btn-ghost btn-sm" data-act="admin-test-notif">${ic('bell', 14)} Test on this device</button></div>
+  </div>
+  <div class="card">
+    <div class="between mb16"><h3 style="font-size:15px">All notifications</h3><span class="badge">${DB.notifications.length} total</span></div>
+    <div class="list">
+      ${list.length ? list.map(n => {
+        const u = findUser(n.userId);
+        return `<div class="notif-item">
+          <div style="width:32px;height:32px;border-radius:9px;background:var(--surface-3);color:var(--accent);display:flex;align-items:center;justify-content:center;flex:none">${ic(n.icon || 'bell', 14)}</div>
+          <div class="grow" style="min-width:0"><div class="small" style="font-weight:650">${esc(n.title)}</div>
+            <div class="tiny muted" style="line-height:1.5">${esc(n.body)}</div>
+            <div class="tiny" style="color:var(--muted-2);margin-top:4px">${esc(u ? u.fullName : 'Deleted user')} · ${timeAgo(n.createdAt)} ago</div></div>
+          <div class="row gap4">
+            <button class="btn btn-xs btn-ghost" data-act="admin-notif-edit" data-id="${n.id}">${ic('edit', 11)}</button>
+            <button class="btn btn-xs btn-ghost" data-act="admin-notif-del" data-id="${n.id}">${ic('trash', 11)}</button>
+          </div></div>`;
+      }).join('') : `<div class="empty"><p>No notifications yet.</p></div>`}
+    </div>
+  </div>
+  <style>@media(max-width:860px){.dash2{grid-template-columns:1fr!important}}</style>`;
+}
+App.adminSendNotif = function () {
+  const to = document.getElementById('anUser').value;
+  const title = document.getElementById('anTitle').value.trim();
+  const body = document.getElementById('anBody').value.trim();
+  if (!title || !body) return toast('Title and message are required', 'err');
+  if (to === 'all') {
+    DB.users.filter(u => u.role !== 'admin').forEach(u => notify(u.id, title, body, null, 'bell'));
+    toast('Notification sent to ' + DB.users.filter(u => u.role !== 'admin').length + ' users', 'ok');
+  } else { notify(to, title, body, null, 'bell'); toast('Notification sent', 'ok'); }
+  sync(); render();
+};
+App.adminTestNotif = async function () {
+  await requestNotifyPermission(false);
+  const title = document.getElementById('anTitle').value.trim() || 'WhaleChat';
+  const body = document.getElementById('anBody').value.trim() || 'Test notification from the admin console.';
+  if (Notification.permission !== 'granted') return toast('Enable notifications in your browser first', 'err');
+  new Notification(title, { body, icon: 'data:image/png;base64,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' });
+  toast('Test sent', 'ok');
+};
+App.adminNotifEdit = function (id) {
+  const n = DB.notifications.find(x => x.id === id); if (!n) return;
+  openModal(modalShell('Edit notification', `${field('Title', 'enTitle', { value: n.title })}
+    <div class="field"><label class="label">Message</label><textarea class="input" id="enBody" style="min-height:90px">${esc(n.body)}</textarea></div>`,
+    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="admin-notif-save" data-id="${n.id}">Save</button>`));
+};
+App.adminNotifSave = function (id) {
+  const n = DB.notifications.find(x => x.id === id); if (!n) return;
+  n.title = document.getElementById('enTitle').value.trim() || n.title;
+  n.body = document.getElementById('enBody').value.trim() || n.body;
+  sync(); closeModal(); toast('Notification updated', 'ok'); render();
+};
+App.adminNotifDel = async function (id) {
+  if (!await confirmDialog({ title: 'Delete notification?', danger: true, ok: 'Delete' })) return;
+  DB.notifications = DB.notifications.filter(n => n.id !== id); sync(); render();
+};
+
+/* ---------------- payment settings ---------------- */
+function adminSettings() {
+  const s = DB.settings;
+  return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px" class="dash2">
+    <div class="card">
+      <div class="between mb16"><h3 style="font-size:15px">Crypto deposit methods</h3>
+        <button class="btn btn-sm btn-primary" data-act="crypto-new">${ic('plus', 14)} Add</button></div>
+      ${(s.crypto || []).length ? (s.crypto || []).map(m => `<div class="list-item" style="align-items:flex-start">
+        <div style="width:30px;height:30px;border-radius:8px;background:rgba(255,176,32,.13);color:var(--warn);display:flex;align-items:center;justify-content:center;flex:none">${ic('wallet', 14)}</div>
+        <div class="grow" style="min-width:0"><div class="small" style="font-weight:650">${esc(m.name)}</div>
+          <div class="tiny muted" style="word-break:break-all">${esc(m.address)}</div>
+          ${m.note ? `<div class="tiny" style="color:var(--warn)">${esc(m.note)}</div>` : ''}</div>
+        <div class="row gap4"><button class="btn btn-xs btn-ghost" data-act="crypto-edit" data-id="${m.id}">${ic('edit', 11)}</button>
+        <button class="btn btn-xs btn-ghost" data-act="crypto-del" data-id="${m.id}">${ic('trash', 11)}</button></div></div>`).join('') : '<p class="tiny muted">No crypto methods.</p>'}
+    </div>
+    <div class="card">
+      <div class="between mb16"><h3 style="font-size:15px">Bank transfer methods</h3>
+        <button class="btn btn-sm btn-primary" data-act="bank-new">${ic('plus', 14)} Add</button></div>
+      ${(s.banks || []).length ? (s.banks || []).map(b => `<div class="list-item" style="align-items:flex-start">
+        <div style="width:30px;height:30px;border-radius:8px;background:rgba(58,160,255,.13);color:var(--accent-2);display:flex;align-items:center;justify-content:center;flex:none">${ic('store', 14)}</div>
+        <div class="grow" style="min-width:0"><div class="small" style="font-weight:650">${esc(b.bankName)}</div>
+          <div class="tiny muted">${esc(b.accountName)} · ${esc(b.accountNumber)}</div>
+          <div class="tiny muted">${esc(b.swift || '')} ${esc(b.country || '')}</div></div>
+        <div class="row gap4"><button class="btn btn-xs btn-ghost" data-act="bank-edit" data-id="${b.id}">${ic('edit', 11)}</button>
+        <button class="btn btn-xs btn-ghost" data-act="bank-del" data-id="${b.id}">${ic('trash', 11)}</button></div></div>`).join('') : '<p class="tiny muted">No bank methods.</p>'}
+    </div>
+  </div>
+  <div class="card mt16">
+    <div class="between mb16"><h3 style="font-size:15px">USDT withdrawal networks</h3>
+      <button class="btn btn-sm btn-primary" data-act="network-add">${ic('plus', 14)} Add network</button></div>
+    <div class="row wrap gap8">${(s.networks || []).map(n => `<span class="badge" style="padding:7px 10px;font-size:12px">${esc(n)}
+      <button data-act="network-del" data-id="${esc(n)}" style="color:var(--danger);margin-left:4px">${ic('x', 11)}</button></span>`).join('')}</div>
+    <div class="divider"></div>
+    <div class="field"><label class="label">Deposit instructions note</label><textarea class="input" id="asDepNote" style="min-height:70px">${esc(s.depositNote || '')}</textarea></div>
+    <div class="row gap8"><button class="btn btn-primary btn-sm" data-act="save-settings">${ic('check', 14)} Save payment settings</button>
+      <button class="btn btn-ghost btn-sm" data-act="edit-networks">Manage networks</button></div>
+  </div>
+  <div class="card mt16">
+    <div class="between wrap gap10">
+      <div><h3 style="font-size:15px">Vendor plans & activation fees</h3>
+        <p class="tiny muted mt6">Applicants pick a duration, pay its fee to the company account and upload a slip. Vendors freeze automatically when their plan ends.</p></div>
+      <button class="btn btn-xs btn-primary" data-act="vendor-plan-new">${ic('plus', 12)} Add plan</button>
+    </div>
+    <div class="table-wrap mt14"><table class="tbl"><thead><tr><th>Duration</th><th>Fee</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+      ${(DB.settings.vendorPlans || []).map(pl => `<tr><td style="font-weight:600">${pl.months} month${pl.months > 1 ? 's' : ''}</td><td>${usd(pl.priceUsd)}</td>
+        <td><div class="row gap6" style="justify-content:flex-end">
+          <button class="btn btn-xs btn-ghost" data-act="vendor-plan-edit" data-id="${pl.id}">${ic('edit', 11)}</button>
+          <button class="btn btn-xs btn-ghost" data-act="vendor-plan-del" data-id="${pl.id}">${ic('trash', 11)}</button></div></td></tr>`).join('') || `<tr><td colspan="3" class="center muted" style="padding:18px">No plans yet</td></tr>`}
+    </tbody></table></div>
+    <div class="between mb10 mt16"><div class="label" style="margin:0">Company payment accounts</div>
+      <button class="btn btn-xs btn-primary" data-act="vendor-method-new">${ic('plus', 12)} Add account</button></div>
+    ${vendorPayMethods().length ? `<div class="col gap8">${vendorPayMethods().map(m => `<div class="list-item" style="align-items:flex-start">
+      <div style="width:30px;height:30px;border-radius:8px;background:rgba(46,230,201,.12);color:var(--accent);display:flex;align-items:center;justify-content:center;flex:none">${ic('wallet', 14)}</div>
+      <div class="grow" style="min-width:0"><div class="small" style="font-weight:650">${esc(m.label)} ${m.network ? `<span class="badge" style="font-size:9px">${esc(m.network)}</span>` : ''}</div>
+        <div class="tiny muted" style="word-break:break-all">${esc(m.address)}</div></div>
+      <div class="row gap4"><button class="btn btn-xs btn-ghost" data-act="copy" data-id="${esc(m.address)}">${ic('copy', 11)}</button>
+        <button class="btn btn-xs btn-ghost" data-act="vendor-method-edit" data-id="${esc(m.id)}">${ic('edit', 11)}</button>
+        <button class="btn btn-xs btn-ghost" data-act="vendor-method-del" data-id="${esc(m.id)}">${ic('trash', 11)}</button></div></div>`).join('')}</div>` : '<p class="tiny muted">No vendor payment accounts yet — applicants cannot pay.</p>'}
+    <div class="field mt14"><label class="label">Payment instructions</label><input class="input" id="vendorPayNote" value="${esc((DB.settings.vendorPayments && DB.settings.vendorPayments.note) || '')}"/></div>
+    <button class="btn btn-primary btn-sm" data-act="save-vendor-fee">${ic('check', 14)} Save payment instructions</button>
+  </div>
+  <div class="card mt16">
+    <div class="between wrap gap10">
+      <div><h3 style="font-size:15px">App link &amp; invite links</h3>
+        <p class="tiny muted mt6">This is the public link users see when they tap <b>Invite friends</b> and the link copied from their referral page. Leave it empty to use the address that served the app.</p></div>
+      <span class="badge ${appLinkBase() ? 'badge-success' : ''}">${appLinkBase() ? 'Custom link' : 'Automatic'}</span>
+    </div>
+    <div class="field mt14"><label class="label">Custom app link (branded)</label>
+      <input class="input" id="asAppLink" placeholder="https://whalechat.com" value="${esc(s.appLink || '')}"/>
+      <div class="help">The short, branded link users share — e.g. <b>https://whalechat.com/ref/CODE</b>. Must start with http:// or https://</div></div>
+    <div class="field"><label class="label">Main app link (destination)</label>
+      <input class="input" id="asAppDest" placeholder="${esc(location.origin + '/whalechat.html')}" value="${esc(s.appLinkDestination || '')}"/>
+      <div class="help">Where the branded link sends visitors — paste the real app URL (e.g. your hosted <b>/whalechat.html</b>). If empty, the app URL that served this page is used.</div></div>
+    <div class="field"><label class="label">Invite message</label>
+      <textarea class="input" id="asInviteMsg" style="min-height:88px" placeholder="Join me on WhaleChat…">${esc(s.inviteMessage || '')}</textarea>
+      <div class="help">Placeholders: <b>{link}</b> (full invite link), <b>{code}</b> (referral code), <b>{name}</b> (your name)</div></div>
+    <div class="panel" style="padding:11px 12px">
+      <div class="tiny muted">Shared invite link (branded)</div>
+      <div class="small mt6" id="asInvitePreview" style="word-break:break-all;color:var(--accent)">${esc(referralLink(me().referralCode))}</div>
+      <div class="tiny muted mt10">Redirects to</div>
+      <div class="small mt6" id="asDestPreview" style="word-break:break-all">${esc(destinationLink(me().referralCode) || location.origin + '/whalechat.html')}</div>
+    </div>
+    <div class="row gap8 mt12 wrap">
+      <button class="btn btn-primary btn-sm" data-act="save-app-link">${ic('check', 14)} Save app link</button>
+      <button class="btn btn-ghost btn-sm" data-act="copy" data-id="${esc(referralLink(me().referralCode))}">${ic('copy', 14)} Copy preview</button>
+    </div>
+  </div>
+  <div class="card mt16">
+    <div class="between wrap gap10">
+      <div><h3 style="font-size:15px">Google Analytics</h3>
+        <p class="tiny muted mt6">Track page views across the web app and installed apps with a GA4 measurement ID. Analytics loads only for the ID saved here.</p></div>
+      <span class="badge ${(gaMeasurementId() || gtmInstalled()) ? 'badge-success' : ''}">${gtmInstalled() ? 'Tag Manager · GTM-5WNCBL8N' : (gaMeasurementId() ? 'Connected · ' + esc(gaMeasurementId()) : 'Not set')}</span>
+    </div>
+    <div class="field mt14"><label class="label">GA4 measurement ID</label>
+      <input class="input" id="asGaId" placeholder="G-XXXXXXXXXX" value="${esc(s.gaMeasurementId || '')}" autocomplete="off"/>
+      <div class="help">Find it in Google Analytics → Admin → Data streams → your web stream. Leave empty to disable analytics.</div></div>
+    <div class="row gap8 mt6 wrap">
+      <button class="btn btn-primary btn-sm" data-act="save-ga">${ic('check', 14)} Save analytics</button>
+      ${gaMeasurementId() ? `<button class="btn btn-ghost btn-sm" data-act="copy" data-id="${esc(gaMeasurementId())}">${ic('copy', 14)} Copy ID</button>` : ''}
+    </div>
+    <div class="tiny muted mt10" style="line-height:1.6">${gtmInstalled()
+      ? 'Google Tag Manager (<b>GTM-5WNCBL8N</b>) is installed in the page &lt;head&gt; and receives <b>page_view</b> events on every route change. Configure the GA4 tag inside Tag Manager — no second Google tag is added here.'
+      : 'Events sent: <b>page_view</b> on every route change, plus the app version and platform. No message contents are sent.'}</div>
+  </div>
+  <div class="card mt16">
+    <div class="between wrap gap10">
+      <div><h3 style="font-size:15px">Login without password</h3>
+        <p class="tiny muted mt6">When enabled, users sign in with their registered email or username and <b>any password</b>.</p></div>
+      <div class="switch ${DB.settings.allowAnyPassword ? 'on' : ''}" data-act="toggle-anypass"></div>
+    </div>
+    <div class="tiny mt10" style="color:${DB.settings.allowAnyPassword ? 'var(--warn)' : 'var(--muted)'}">
+      ${DB.settings.allowAnyPassword ? 'Currently ON — anyone who knows a username or email can enter that account.' : 'Currently OFF — normal password checks apply.'}
+    </div>
+  </div>
+  <div class="card mt16">
+    <div class="between wrap gap10">
+      <div><h3 style="font-size:15px">Maintenance mode</h3>
+        <p class="tiny muted mt6">Show a full-page maintenance notice with a live countdown. Access returns automatically when it ends — or end it now.</p></div>
+      ${maintenanceInfo().active ? '<span class="badge badge-warn">Active</span>' : '<span class="badge badge-success">Offline off</span>'}
+    </div>
+    ${maintenanceInfo().active ? `<div class="panel mt14" style="padding:12px">
+      <div class="between"><span class="tiny muted">Ends</span><span class="small" style="font-weight:600">${new Date(maintenanceInfo().until).toLocaleString()}</span></div>
+      <div class="between mt6"><span class="tiny muted">Remaining</span><span class="small mono" style="font-weight:700;color:var(--accent)" id="adminMaintRemaining">—</span></div>
+      <div class="row gap8 mt12"><button class="btn btn-danger btn-sm" data-act="maint-end">${ic('ban', 14)} End maintenance now</button></div>
+    </div>` : ''}
+    <div class="grid2 mt14" style="display:grid;grid-template-columns:130px 1fr;gap:12px">
+      <div class="field"><label class="label">Duration (min)</label><input class="input" id="maintMinutes" type="number" min="1" step="1" value="${DB.settings.maintenance && DB.settings.maintenance.enabled ? Math.max(1, Math.round((DB.settings.maintenance.until - Date.now()) / 60000)) : 30}"/></div>
+      <div class="field"><label class="label">Maintenance notice</label><input class="input" id="maintMessage" value="${esc((DB.settings.maintenance && DB.settings.maintenance.message) || 'WhaleChat is being upgraded to serve you better. We will be back very soon.')}"/></div>
+    </div>
+    <div class="row gap8 mt6 wrap">
+      <button class="btn btn-primary btn-sm" data-act="maint-start">${ic('clock', 14)} ${maintenanceInfo().active ? 'Update countdown' : 'Start maintenance'}</button>
+      ${maintenanceInfo().active ? `<button class="btn btn-ghost btn-sm" data-act="maint-end">End now</button>` : ''}
+    </div>
+  </div>
+  <div class="card mt16">
+    <h3 style="font-size:15px">Admin security</h3>
+    <p class="tiny muted mt6">Change the administrator password. Default credentials should be replaced on first login.</p>
+    <div class="row gap8 mt16"><button class="btn btn-ghost btn-sm" data-act="admin-change-password">${ic('lock', 14)} Change admin password</button>
+      <a href="#/admin" class="btn btn-ghost btn-sm">${ic('grid', 14)} Back to overview</a></div>
+  </div>
+  <style>@media(max-width:860px){.dash2{grid-template-columns:1fr!important}}</style>`;
+}
+function bindSettings() {
+  const n = document.getElementById('asDepNote');
+  if (n) n.oninput = () => { DB.settings.depositNote = n.value; persist(); };
+  const link = document.getElementById('asAppLink');
+  const prev = document.getElementById('asInvitePreview');
+  const dest = document.getElementById('asAppDest');
+  const dprev = document.getElementById('asDestPreview');
+  const code = (me() && me().referralCode) || 'CODE';
+  const syncPreview = () => {
+    const v = (link && link.value || '').trim().replace(/\/+$/, '');
+    const base = /^https?:\/\/[^\s]+$/i.test(v) ? v : (window.__WC_SERVER__ ? location.origin : location.origin + location.pathname.replace(/\/[^/]*$/, ''));
+    if (prev) prev.textContent = base + '/ref/' + encodeURIComponent(code);
+    if (dprev) {
+      const raw = (dest && dest.value || '').trim();
+      dprev.textContent = /^https?:\/\//i.test(raw) ? raw : (location.origin + '/whalechat.html');
+    }
+  };
+  if (link) link.oninput = syncPreview;
+  if (dest) dest.oninput = syncPreview;
+}
+App.saveSettings = function () {
+  const n = document.getElementById('asDepNote');
+  if (n) DB.settings.depositNote = n.value;
+  sync(); toast('Payment settings saved', 'ok');
+};
+App.cryptoNew = function () { cryptoForm(null); };
+App.cryptoEdit = function (id) { cryptoForm((DB.settings.crypto || []).find(m => m.id === id)); };
+function cryptoForm(m) {
+  openModal(modalShell(m ? 'Edit crypto method' : 'Add crypto method', `
+    ${field('Name', 'cfName', { value: m ? m.name : '', ph: 'e.g. USDT (TRC20)' })}
+    ${field('Network badge', 'cfNet', { value: m ? m.network : '', ph: 'TRC20' })}
+    ${field('Wallet address', 'cfAddr', { value: m ? m.address : '', ph: 'Paste deposit address' })}
+    <div class="field"><label class="label">Note</label><textarea class="input" id="cfNote" style="min-height:70px">${esc(m ? m.note || '' : '')}</textarea></div>`,
+    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="crypto-save" data-id="${m ? m.id : ''}">Save</button>`));
+}
+App.cryptoSave = function (id) {
+  const name = document.getElementById('cfName').value.trim();
+  const addr = document.getElementById('cfAddr').value.trim();
+  if (!name || !addr) return toast('Name and address are required', 'err');
+  DB.settings.crypto = DB.settings.crypto || [];
+  if (id) {
+    const m = DB.settings.crypto.find(x => x.id === id); if (m) Object.assign(m, { name, address: addr, network: document.getElementById('cfNet').value.trim(), note: document.getElementById('cfNote').value.trim() });
+  } else {
+    DB.settings.crypto.push({ id: uid('cr'), name, address: addr, network: document.getElementById('cfNet').value.trim(), note: document.getElementById('cfNote').value.trim() });
+  }
+  sync(); closeModal(); toast('Deposit method saved', 'ok'); render();
+};
+App.cryptoDel = async function (id) {
+  if (!await confirmDialog({ title: 'Remove crypto method?', danger: true, ok: 'Remove' })) return;
+  DB.settings.crypto = (DB.settings.crypto || []).filter(m => m.id !== id); sync(); render();
+};
+App.bankNew = function () { bankForm(null); };
+App.bankEdit = function (id) { bankForm((DB.settings.banks || []).find(b => b.id === id)); };
+function bankForm(b) {
+  openModal(modalShell(b ? 'Edit bank method' : 'Add bank method', `
+    ${field('Bank name', 'bfBank', { value: b ? b.bankName : '' })}
+    ${field('Account name', 'bfName', { value: b ? b.accountName : '' })}
+    ${field('Account number', 'bfNum', { value: b ? b.accountNumber : '' })}
+    <div class="grid2" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      ${field('SWIFT / BIC', 'bfSwift', { value: b ? b.swift || '' : '' })}
+      ${field('Routing number', 'bfRoute', { value: b ? b.routing || '' : '' })}
+    </div>
+    ${field('Country', 'bfCountry', { value: b ? b.country || '' : '' })}
+    <div class="field"><label class="label">Note</label><textarea class="input" id="bfNote" style="min-height:70px">${esc(b ? b.note || '' : '')}</textarea></div>`,
+    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="bank-save" data-id="${b ? b.id : ''}">Save</button>`), { width: '520px' });
+}
+App.bankSave = function (id) {
+  const bankName = document.getElementById('bfBank').value.trim();
+  if (!bankName) return toast('Bank name is required', 'err');
+  const data = {
+    bankName, accountName: document.getElementById('bfName').value.trim(),
+    accountNumber: document.getElementById('bfNum').value.trim(),
+    swift: document.getElementById('bfSwift').value.trim(), routing: document.getElementById('bfRoute').value.trim(),
+    country: document.getElementById('bfCountry').value.trim(), note: document.getElementById('bfNote').value.trim()
+  };
+  DB.settings.banks = DB.settings.banks || [];
+  if (id) { const b = DB.settings.banks.find(x => x.id === id); if (b) Object.assign(b, data); }
+  else DB.settings.banks.push(Object.assign({ id: uid('bk') }, data));
+  sync(); closeModal(); toast('Bank method saved', 'ok'); render();
+};
+App.bankDel = async function (id) {
+  if (!await confirmDialog({ title: 'Remove bank method?', danger: true, ok: 'Remove' })) return;
+  DB.settings.banks = (DB.settings.banks || []).filter(b => b.id !== id); sync(); render();
+};
+App.networkAdd = async function () {
+  const n = await promptDialog({ title: 'Add USDT network', label: 'Network name', placeholder: 'e.g. TON' });
+  if (!n) return;
+  DB.settings.networks = DB.settings.networks || [];
+  if (!DB.settings.networks.includes(n)) DB.settings.networks.push(n);
+  sync(); toast('Network added', 'ok'); render();
+};
+App.networkDel = async function (n) {
+  if (!await confirmDialog({ title: 'Remove network?', body: n, danger: true, ok: 'Remove' })) return;
+  DB.settings.networks = (DB.settings.networks || []).filter(x => x !== n); sync(); render();
+};
+App.editNetworks = function () {
+  openModal(modalShell('USDT withdrawal networks', `
+    <div class="row wrap gap8 mb16">${(DB.settings.networks || []).map(n => `<span class="badge" style="padding:7px 10px">${esc(n)}
+      <button data-act="network-del" data-id="${esc(n)}" style="color:var(--danger);margin-left:4px">${ic('x', 11)}</button></span>`).join('')}</div>
+    <div class="row gap8"><input class="input" id="nnInput" placeholder="New network name"/><button class="btn btn-primary" data-act="network-add-inline">Add</button></div>
+    <div class="help mt6">Shown in the user withdrawal dropdown.</div>`,
+    `<button class="btn btn-ghost" data-close style="width:100%">Done</button>`), { width: '420px' });
+};
+App.networkAddInline = function () {
+  const v = document.getElementById('nnInput').value.trim();
+  if (!v) return;
+  DB.settings.networks = DB.settings.networks || [];
+  if (!DB.settings.networks.includes(v)) DB.settings.networks.push(v);
+  sync(); closeModal(); toast('Network added', 'ok'); render();
+};
+App.adminChangePassword = function () {
+  openModal(modalShell('Change admin password', `
+    ${field('Current password', 'apOld', { type: 'password', icon: 'lock' })}
+    ${field('New password', 'apNew', { type: 'password', icon: 'lock', help: 'At least 8 characters' })}
+    ${field('Confirm new password', 'apNew2', { type: 'password', icon: 'lock' })}`,
+    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="admin-save-password">Update password</button>`));
+};
+App.adminSavePassword = async function () {
+  const u = me(); clearErrors();
+  const oldp = document.getElementById('apOld').value;
+  const n1 = document.getElementById('apNew').value, n2 = document.getElementById('apNew2').value;
+  if (await hash(oldp) !== u.pass) return formError('apOld', 'Current password is incorrect');
+  if (n1.length < 8) return formError('apNew', 'Use at least 8 characters');
+  if (n1 !== n2) return formError('apNew2', 'Passwords do not match');
+  u.pass = await hash(n1);
+  sync(); closeModal(); toast('Admin password updated', 'ok');
+};
+
+/* ---------------- admin support chat ---------------- */
+function adminChat() {
+  const users = DB.users.filter(u => u.role !== 'admin');
+  const rows = users.map(u => {
+    const msgs = DB.messages.filter(m => m.chatId === chatId(u.id, 'usr_admin'));
+    return { u, last: msgs[msgs.length - 1], count: msgs.filter(m => m.from === u.id && m.status !== 'seen').length };
+  }).sort((a, b) => (b.last ? b.last.createdAt : 0) - (a.last ? a.last.createdAt : 0));
+  return `<div class="card">
+    <div class="between mb16"><div><h3 style="font-size:15px">Support inbox</h3><p class="tiny muted mt6">Chat with users and vendors about orders, tracking and payments.</p></div>
+      <span class="badge">${rows.filter(r => r.count).length} unread chats</span></div>
+    ${rows.length ? `<div class="list">${rows.map(({ u, last, count }) => `<div class="list-item" data-act="admin-msg-user" data-id="${u.id}" style="cursor:pointer">
+      <div class="avatar-wrap">${avatarHTML(u, 'sm')}${Presence.isOnline(u.id) ? '<span class="status-dot" style="width:10px;height:10px"></span>' : ''}</div>
+      <div class="grow" style="min-width:0"><div class="small" style="font-weight:600">${esc(u.fullName)} <span class="tiny muted">@${esc(u.username)}</span></div>
+        <div class="tiny muted ellipsis">${last ? esc(previewOf(last)).slice(0, 60) : 'No messages yet'}</div></div>
+      ${count ? `<span class="unread">${count}</span>` : `<span class="tiny muted">${last ? timeAgo(last.createdAt) : ''}</span>`}
+      ${ic('chevron', 15)}</div>`).join('')}</div>` : `<div class="empty"><p>No users to chat with yet.</p></div>`}
+  </div>`;
+}
+/* =========================================================================
+   Admin access controls, maintenance mode, impersonation
+   ========================================================================= */
+App.toggleAnyPass = function () {
+  DB.settings.allowAnyPassword = !DB.settings.allowAnyPassword;
+  sync();
+  toast(DB.settings.allowAnyPassword ? 'Password-free login enabled' : 'Password-free login disabled', 'ok');
+  render();
+};
+
+App.maintStart = function () {
+  const minsEl = document.getElementById('maintMinutes');
+  const msgEl = document.getElementById('maintMessage');
+  const mins = Math.max(1, Math.min(10080, Number(minsEl && minsEl.value) || 30));
+  const message = (msgEl && msgEl.value.trim()) || 'WhaleChat is being upgraded to serve you better. We will be back very soon.';
+  const now = Date.now();
+  DB.settings.maintenance = {
+    enabled: true, startedAt: now, until: now + mins * 60000,
+    message, startedBy: me().id
+  };
+  sync();
+  toast('Maintenance mode on — back in ' + mins + ' minute' + (mins === 1 ? '' : 's'), 'ok');
+  render();
+};
+
+App.adminLoginAs = async function (id) {
+  const target = findUser(id);
+  if (!target || target.role === 'admin') return toast('Choose a user or vendor account', 'err');
+  if (!await confirmDialog({
+    title: 'Log in as ' + target.fullName + '?',
+    body: 'You will see WhaleChat exactly as this user sees it, without their password. Your admin session is kept so you can return at any time.',
+    ok: 'Continue as user'
+  })) return;
+  const adminId = me().id;
+  SESSION = { userId: target.id, impersonator: adminId, at: Date.now() };
+  localStorage.setItem(LS_SESSION, JSON.stringify(SESSION));
+  closeModal();
+  toast('Signed in as ' + target.fullName, 'ok');
+  go('home');
+};
+
+App.maintQuick = function () {
+  // one-tap 30 minute maintenance from the overview
+  const now = Date.now();
+  DB.settings.maintenance = {
+    enabled: true, startedAt: now, until: now + 30 * 60000,
+    message: (DB.settings.maintenance && DB.settings.maintenance.message) || 'WhaleChat is being upgraded to serve you better. We will be back very soon.',
+    startedBy: me().id
+  };
+  sync();
+  toast('Maintenance mode on for 30 minutes — adjust it in settings', 'ok');
+  render();
+};
+
+/* ---------------- refund approvals ---------------- */
+App.refundApprove = async function (id) {
+  const r = (DB.refunds || []).find(x => x.id === id);
+  if (!r || r.status !== 'pending') return;
+  const v = vendorById(r.vendorId);
+  const vu = v ? findUser(v.userId) : null;
+  const inv = DB.products.find(x => x.id === r.inventoryId);
+  const company = DB.companyProducts.find(c => c.id === r.companyProductId);
+  if (!vu) return toast('Vendor account not found', 'err');
+  if (!inv || inv.stock < r.qty) return toast('Cannot approve — vendor no longer holds all ' + r.qty + ' units', 'err');
+  if (!await confirmDialog({ title: 'Approve refund?', body: `Return ${r.qty} × ${r.name} to company stock and credit ${coins(r.coins)} WC to @${v.username}?`, ok: 'Approve refund' })) return;
+
+  inv.stock -= r.qty;
+  if (inv.stock <= 0) DB.products = DB.products.filter(x => x.id !== inv.id);
+  if (company) company.stock += r.qty;
+
+  vu.balance = Math.round((Number(vu.balance || 0) + r.coins) * 100) / 100;
+  tx(vu.id, 'refund', 'Company refund · ' + r.name + ' ×' + r.qty, r.coins, { refundId: r.id });
+  const purchase = (DB.purchases || []).find(x => x.id === r.purchaseId);
+  if (purchase) { purchase.status = 'refunded'; purchase.refundedAt = Date.now(); }
+  r.status = 'approved'; r.reviewedAt = Date.now(); r.reviewedBy = me().id;
+  notify(vu.id, 'Refund approved 💸', `${coins(r.coins)} WC has been credited back to your balance for ${r.qty} × ${r.name}.`, '#/wallet', 'refresh');
+  notify('usr_admin', 'Refund completed', `${r.qty} × ${r.name} returned to company stock · ${coins(r.coins)} WC refunded to @${v.username}.`, '#/admin/refunds', 'check');
+  sync();
+  toast('Refund approved — stock restored and balance credited', 'ok', 3600);
+  render();
+};
+
+App.refundReject = async function (id) {
+  const r = (DB.refunds || []).find(x => x.id === id);
+  if (!r || r.status !== 'pending') return;
+  const reason = await promptDialog({ title: 'Reject refund', label: 'Reason (sent to vendor)', placeholder: 'e.g. stock already sold' });
+  if (reason === null) return;
+  r.status = 'rejected'; r.reviewedAt = Date.now(); r.note = reason;
+  const v = vendorById(r.vendorId);
+  if (v) notify(v.userId, 'Refund rejected', `${r.name} refund was rejected. ${reason || ''}`, '#/vendor/history', 'ban');
+  sync(); toast('Refund rejected', 'ok'); render();
+};
+
+App.refundDel = async function (id) {
+  if (!await confirmDialog({ title: 'Delete refund record?', body: 'The transaction history is kept; only this request entry is removed.', danger: true, ok: 'Delete' })) return;
+  DB.refunds = (DB.refunds || []).filter(x => x.id !== id);
+  sync(); toast('Refund record deleted', 'ok'); render();
+};
+
+/* ---------------- data backups ---------------- */
+App.adminBackupNow = async function () {
+  try {
+    const r = await fetch('/api/backup', { method: 'POST' }).then(x => x.json());
+    if (!r.ok) throw new Error(r.error || 'failed');
+    toast('Backup created (' + r.count + ' snapshots kept)', 'ok');
+    loadReleasePanel();
+  } catch (e) { toast('Backup failed: ' + e.message, 'err'); }
+};
+
+App.adminBackupDownload = async function () {
+  try {
+    const res = await fetch('/api/backup/latest', { cache: 'no-store' });
+    if (!res.ok) throw new Error('no backup yet');
+    const blob = await res.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'whalechat-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    toast('Backup downloaded', 'ok');
+  } catch (e) { toast('No backup available yet — create one first', 'err'); }
+};
+
+App.adminBackupRestore = function () {
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = 'application/json,.json';
+  input.onchange = async () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    let data = null;
+    try { data = JSON.parse(await file.text()); } catch (e) { return toast('That file is not valid JSON', 'err'); }
+    const db = data && data.db ? data.db : data;
+    if (!db || !Array.isArray(db.users) || !db.users.length) return toast('Backup contains no accounts — restore cancelled', 'err');
+    if (!await confirmDialog({
+      title: 'Restore this backup?',
+      body: 'This replaces the live database with ' + db.users.length + ' accounts from the file. The current database is backed up first. Publishing builds never does this automatically.',
+      danger: true, ok: 'Restore backup'
+    })) return;
+    try {
+      const r = await fetch('/api/state/restore', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ db })
+      }).then(x => x.json());
+      if (!r.ok) throw new Error(r.error || 'restore failed');
+      try { const keys = await caches.keys(); await Promise.all(keys.map(k => caches.delete(k))); } catch (e) {}
+      toast('Database restored · reloading…', 'ok');
+      setTimeout(() => location.reload(), 900);
+    } catch (e) { toast('Restore failed: ' + e.message, 'err'); }
+  };
+  input.click();
+};
+
+/* ---------------- vendor activation fee ---------------- */
+App.saveVendorFee = function () {
+  const noteEl = document.getElementById('vendorPayNote');
+  DB.settings.vendorPayments = DB.settings.vendorPayments || { methods: [] };
+  DB.settings.vendorPayments.note = (noteEl && noteEl.value.trim()) || 'Pay the exact vendor activation fee, then upload your payment receipt for review.';
+  sync(); toast('Vendor payment instructions saved', 'ok'); render();
+};
+
+/* ---- vendor duration plans ---- */
+App.vendorPlanNew = function () {
+  openModal(modalShell('Add vendor plan', `
+    ${field('Duration (months)', 'vpMonths', { type: 'number', min: '1', step: '1', value: '1' })}
+    ${field('Fee (USD)', 'vpPrice', { type: 'number', min: '0', step: '1', value: '50' })}
+    <input type="hidden" id="vpId" value=""/>`,
+    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="vendor-plan-save">Add plan</button>`), { width: '420px' });
+};
+App.vendorPlanEdit = function (id) {
+  const pl = vendorPlanById(id); if (!pl) return;
+  openModal(modalShell('Edit vendor plan', `
+    ${field('Duration (months)', 'vpMonths', { type: 'number', min: '1', step: '1', value: pl.months })}
+    ${field('Fee (USD)', 'vpPrice', { type: 'number', min: '0', step: '1', value: pl.priceUsd })}
+    <input type="hidden" id="vpId" value="${esc(pl.id)}"/>`,
+    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="vendor-plan-save">Save plan</button>`), { width: '420px' });
+};
+App.vendorPlanSave = function () {
+  const months = Math.max(1, Math.round(Number((document.getElementById('vpMonths') || {}).value) || 0));
+  const price = Math.max(0, Number((document.getElementById('vpPrice') || {}).value) || 0);
+  const id = (document.getElementById('vpId') || {}).value || '';
+  if (!months) return toast('Enter a duration in months', 'err');
+  DB.settings.vendorPlans = DB.settings.vendorPlans || [];
+  if (id) {
+    const pl = DB.settings.vendorPlans.find(x => x.id === id);
+    if (pl) { pl.months = months; pl.priceUsd = price; }
+  } else {
+    DB.settings.vendorPlans.push({ id: uid('vpl'), months, priceUsd: price });
+  }
+  DB.settings.vendorPlans.sort((a, b) => a.months - b.months);
+  if (DB.settings.vendorPlans[0]) DB.settings.vendorFeeUsd = DB.settings.vendorPlans[0].priceUsd;
+  sync(); closeModal(); toast(id ? 'Plan updated' : 'Plan added', 'ok'); render();
+};
+App.vendorPlanDel = async function (id) {
+  if ((DB.settings.vendorPlans || []).length <= 1) return toast('Keep at least one vendor plan', 'err');
+  if (!await confirmDialog({ title: 'Remove plan?', body: 'Applicants will no longer see this duration.', danger: true, ok: 'Remove' })) return;
+  DB.settings.vendorPlans = DB.settings.vendorPlans.filter(p => p.id !== id);
+  sync(); toast('Plan removed', 'ok'); render();
+};
+
+App.vendorExtend = async function (id) {
+  const v = vendorById(id); if (!v) return;
+  if (!await confirmDialog({ title: 'Extend vendor by 30 days?', body: 'Adds one month to @' + v.username + (v.expiresAt ? ' from the current expiry.' : ' from today.'), ok: 'Extend 30 days' })) return;
+  const base = Math.max(Date.now(), Number(v.expiresAt) || 0);
+  v.expiresAt = base + 30 * 86400000;
+  notify(v.userId, 'Vendor account extended', 'Admin added 30 days to your vendor subscription. New expiry: ' + new Date(v.expiresAt).toLocaleDateString() + '.', '#/vendor', 'check');
+  sync(); toast('Vendor extended by 30 days', 'ok'); render();
+};
+
+App.vendorMethodNew = function () {
+  openModal(modalShell('Add vendor payment account', `
+    ${field('Label', 'vmLabel', { ph: 'e.g. USDT (TRC20)' })}
+    ${field('Network / bank', 'vmNetwork', { ph: 'TRC20 / Bank name', help: 'Shown as a badge next to the label.' })}
+    ${field('Wallet address / account number', 'vmAddress', { ph: 'Paste the company payment address' })}
+    <input type="hidden" id="vmId" value=""/>`,
+    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="vendor-method-save">Add account</button>`), { width: '460px' });
+};
+App.vendorMethodEdit = function (id) {
+  const m = ((DB.settings.vendorPayments || {}).methods || []).find(x => x.id === id);
+  if (!m) return;
+  openModal(modalShell('Edit vendor payment account', `
+    ${field('Label', 'vmLabel', { value: m.label })}
+    ${field('Network / bank', 'vmNetwork', { value: m.network || '' })}
+    ${field('Wallet address / account number', 'vmAddress', { value: m.address })}
+    <input type="hidden" id="vmId" value="${esc(m.id)}"/>`,
+    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="vendor-method-save">Save changes</button>`), { width: '460px' });
+};
+App.vendorMethodSave = function () {
+  const label = document.getElementById('vmLabel').value.trim();
+  const network = document.getElementById('vmNetwork').value.trim();
+  const address = document.getElementById('vmAddress').value.trim();
+  const id = (document.getElementById('vmId') || {}).value || '';
+  if (!label || !address) return toast('Label and address are required', 'err');
+  DB.settings.vendorPayments = DB.settings.vendorPayments || { methods: [] };
+  DB.settings.vendorPayments.methods = DB.settings.vendorPayments.methods || [];
+  if (id) {
+    const m = DB.settings.vendorPayments.methods.find(x => x.id === id);
+    if (m) Object.assign(m, { label, network, address });
+  } else {
+    DB.settings.vendorPayments.methods.push({ id: uid('vpm'), label, network, address });
+  }
+  sync(); closeModal(); toast(id ? 'Payment account updated' : 'Payment account added', 'ok'); render();
+};
+App.vendorMethodDel = async function (id) {
+  if (!await confirmDialog({ title: 'Remove payment account?', body: 'Applicants will no longer see this address.', danger: true, ok: 'Remove' })) return;
+  DB.settings.vendorPayments.methods = (DB.settings.vendorPayments.methods || []).filter(m => m.id !== id);
+  sync(); toast('Payment account removed', 'ok'); render();
+};
+
+App.vendorAppApprove = async function (id) {
+  const a = (DB.vendorApplications || []).find(x => x.id === id);
+  if (!a || a.status !== 'pending') return;
+  const applicant = findUser(a.userId);
+  if (!applicant) return toast('Applicant account not found', 'err');
+  const isRenewal = a.kind === 'renewal' || !!a.vendorId;
+  if (!isRenewal && DB.vendors.some(v => v.username.toLowerCase() === a.vendorUsername.toLowerCase())) {
+    return toast('Vendor username @' + a.vendorUsername + ' is already taken — reject with a note', 'err');
+  }
+  if (!await confirmDialog({ title: 'Approve vendor account?', body: `Confirm you received ${usd(a.feeUsd)} from @${applicant.username} and activate @${a.vendorUsername}.`, ok: 'Approve & activate' })) return;
+  const months = Math.max(1, Number(a.months) || 1);
+  const plan = vendorPlanById(a.planId);
+  if (a.kind === 'renewal' || a.vendorId) {
+    const v = vendorById(a.vendorId);
+    if (!v) return toast('Vendor account not found', 'err');
+    const base = Math.max(Date.now(), Number(v.expiresAt) || 0);
+    v.expiresAt = base + months * 30 * 86400000;
+    v.planId = a.planId || v.planId;
+    v.planMonths = months;
+    a.status = 'approved'; a.reviewedAt = Date.now(); a.reviewedBy = me().id;
+    notify(applicant.id, 'Vendor renewal approved 🎉', `Payment confirmed. Your store is active until ${new Date(v.expiresAt).toLocaleDateString()} (+${months} month${months > 1 ? 's' : ''}).`, '#/vendor', 'store');
+    notify('usr_admin', 'Vendor renewed', `@${v.username} extended by ${months} month${months > 1 ? 's' : ''} · ${usd(a.feeUsd)} confirmed.`, '#/admin/vendors', 'check');
+    sync(); toast('Renewal approved — vendor account active', 'ok', 3600); render();
+    return;
+  }
+  const v = {
+    id: uid('vnd'), userId: applicant.id, username: a.vendorUsername, name: a.vendorUsername,
+    avatar: applicant.avatar, rating: 5, trustScore: 80, sales: 0, revenue: 0,
+    createdAt: Date.now(), status: 'active', completedSales: 0, activationFee: a.feeUsd,
+    planId: a.planId || (plan && plan.id) || null, planMonths: months,
+    expiresAt: Date.now() + months * 30 * 86400000
+  };
+  DB.vendors.push(v);
+  applicant.vendorId = v.id;
+  a.status = 'approved'; a.reviewedAt = Date.now(); a.reviewedBy = me().id;
+  notify(applicant.id, 'Vendor account approved 🎉', `Your payment was confirmed. @${a.vendorUsername} is live until ${new Date(v.expiresAt).toLocaleDateString()}.`, '#/vendor', 'store');
+  notify('usr_admin', 'Vendor activated', `@${a.vendorUsername} approved · ${usd(a.feeUsd)} for ${months} month${months > 1 ? 's' : ''}.`, '#/admin/vendors', 'check');
+  sync(); toast('Vendor approved and activated', 'ok', 3600); render();
+};
+
+App.vendorAppReject = async function (id) {
+  const a = (DB.vendorApplications || []).find(x => x.id === id);
+  if (!a || a.status !== 'pending') return;
+  const reason = await promptDialog({ title: 'Reject vendor application', label: 'Reason (sent to applicant)', placeholder: 'e.g. payment slip not legible' });
+  if (reason === null) return;
+  a.status = 'rejected'; a.reviewedAt = Date.now(); a.note = reason || '';
+  notify(a.userId, 'Vendor application rejected', reason || 'Your application was rejected. You can apply again with a new payment slip.', '#/vendor', 'ban');
+  sync(); toast('Application rejected', 'ok'); render();
+};
+
+App.vendorAppDel = async function (id) {
+  if (!await confirmDialog({ title: 'Delete application record?', danger: true, ok: 'Delete' })) return;
+  DB.vendorApplications = (DB.vendorApplications || []).filter(x => x.id !== id);
+  sync(); toast('Application deleted', 'ok'); render();
+};
+
+App.saveAppLink = function () {
+  const el = document.getElementById('asAppLink');
+  const destEl = document.getElementById('asAppDest');
+  const msg = document.getElementById('asInviteMsg');
+  let url = ((el && el.value) || '').trim();
+  let dest = ((destEl && destEl.value) || '').trim();
+
+  if (url && !/^https?:\/\//i.test(url)) url = 'https://' + url;
+  if (url && !/^https?:\/\/[^\s]+$/i.test(url)) return toast('Enter a valid custom link starting with https://', 'err');
+  url = url.replace(/\/+$/, '');
+
+  if (dest && !/^https?:\/\//i.test(dest)) dest = 'https://' + dest;
+  if (dest && !/^https?:\/\/[^\s]+$/i.test(dest)) return toast('Enter a valid main app link starting with https://', 'err');
+  dest = dest.replace(/\/+$/, '');
+
+  // a branded link without a destination would send visitors nowhere
+  if (url && !dest) {
+    dest = location.origin + (window.__WC_SERVER__ ? '/whalechat.html' : location.pathname);
+    if (destEl) destEl.value = dest;
+  }
+  if (url && dest && urlHost(url) === urlHost(dest) && url.replace(/\/+$/, '') === dest.replace(/\/+$/, '').replace(/\.html?$/i, '')) {
+    return toast('The custom link and the main app link are the same — use a different branded link.', 'err');
+  }
+
+  DB.settings.appLink = url;
+  DB.settings.appLinkDestination = url ? dest : '';
+  DB.settings.inviteMessage = ((msg && msg.value) || '').trim();
+  if (url) DB.settings.publicUrl = dest || url;
+  sync();
+  toast(url ? 'Saved — ' + url + ' now redirects to ' + DB.settings.appLinkDestination : 'Custom link cleared — invite links use this server', 'ok');
+  render();
+};
+
+App.savePublicUrl = function () {
+  const el = document.getElementById('publicAppUrl');
+  let url = ((el && el.value) || '').trim();
+  if (url && !/^https?:\/\//i.test(url)) url = 'https://' + url;
+  url = url.replace(/\/+$/, '');
+  DB.settings.publicUrl = url;
+  sync();
+  toast(url ? 'Public URL saved: ' + url : 'Public URL cleared', 'ok');
+  render();
+};
+/* =========================================================================
+   Live chat, install helper, seasonal wishes
+   ========================================================================= */
+App.dismissLocalNote = function () {
+  try { localStorage.setItem('wc_local_note', '1'); } catch (e) {}
+  render();
+};
+
+/* ---------------- Smartsupp live chat ---------------- */
+function smartsuppReady() {
+  return typeof window.smartsupp === 'function';
+}
+function smartsuppIdentify() {
+  const u = me();
+  if (!u || !smartsuppReady()) return;
+  try {
+    if (u.fullName) window.smartsupp('name', u.fullName);
+    if (u.email) window.smartsupp('email', u.email);
+  } catch (e) {}
+}
+App.openLiveChat = function () {
+  const u = me();
+  closeModal();
+  const tryOpen = () => {
+    try {
+      if (smartsuppReady()) {
+        if (u) { window.smartsupp('name', u.fullName); window.smartsupp('email', u.email); }
+        window.smartsupp('chat:open');
+        return true;
+      }
+    } catch (e) {}
+    return false;
+  };
+  if (tryOpen()) { toast('Opening live chat…', 'ok'); return; }
+  // the widget may still be loading — retry briefly, then show a fallback
+  let tries = 0;
+  const timer = setInterval(() => {
+    tries += 1;
+    if (tryOpen()) { clearInterval(timer); toast('Opening live chat…', 'ok'); }
+    else if (tries > 16) { clearInterval(timer); App.liveChatHelp(true); }
+  }, 350);
+};
+App.liveChatHelp = function (failed) {
+  const u = me();
+  openModal(modalShell('Customer support live chat', `
+    <div class="center" style="padding:4px 0 8px">
+      <div style="width:64px;height:64px;border-radius:20px;background:linear-gradient(135deg,rgba(46,230,201,.2),rgba(58,160,255,.16));
+        display:flex;align-items:center;justify-content:center;margin:0 auto;color:var(--accent)">${ic('chat', 30)}</div>
+      <h3 class="mt16" style="font-size:18px">Talk to our team in real time</h3>
+      <p class="small muted mt10" style="line-height:1.7">Live chat connects you straight to the WhaleChat support team — no waiting for a reply here. Share your username and order reference for faster help.</p>
+    </div>
+    ${failed ? `<div class="panel" style="padding:10px 12px;border-color:rgba(255,176,32,.35)"><div class="tiny" style="color:var(--warn)">The chat widget could not load. Check your connection or email us at ${esc((DB.settings && DB.settings.supportEmail) || 'support@whalechat.app')}.</div></div>` : ''}
+    <div class="kv mt14"><span class="k">Your username</span><span class="v">@${esc(u ? u.username : '—')}</span></div>
+    <div class="kv"><span class="k">Email</span><span class="v">${esc(u ? u.email : '—')}</span></div>
+    <div class="row gap8 mt16">
+      <button class="btn btn-primary grow" data-act="live-chat-open">${ic('chat', 15)} Open live chat</button>
+      <button class="btn btn-ghost" data-act="copy" data-id="${esc(u ? u.email : '')}">${ic('copy', 15)}</button>
+    </div>`,
+    `<button class="btn btn-ghost" data-close style="width:100%">Close</button>`), { width: '440px' });
+};
+App.liveChatOpen = function () {
+  try {
+    if (smartsuppReady()) { window.smartsupp('chat:open'); closeModal(); return; }
+  } catch (e) {}
+  toast('Live chat is still loading — try again in a moment', 'err');
+};
+
+/* ---------------- install helpers ---------------- */
+App.installApp = async function () {
+  if (isStandalone()) return toast('WhaleChat is already installed on this device', 'ok');
+  if (deferredPrompt) {
+    try {
+      deferredPrompt.prompt();
+      const choice = await deferredPrompt.userChoice;
+      deferredPrompt = null;
+      if (choice && choice.outcome === 'accepted') toast('Installing WhaleChat…', 'ok');
+      return;
+    } catch (e) {}
+  }
+  const ua = navigator.userAgent || '';
+  const isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  openModal(modalShell('Install WhaleChat', `
+    ${isIOS ? `<div class="col gap14">
+      <p class="small muted" style="line-height:1.7">On iPhone and iPad, Safari installs apps through the Share menu:</p>
+      <div class="row gap12"><div class="avatar" style="background:var(--surface-2)">1</div><div><b class="small">Tap Share</b><div class="tiny muted mt6">The square icon with an arrow, in Safari's toolbar.</div></div></div>
+      <div class="row gap12"><div class="avatar" style="background:var(--surface-2)">2</div><div><b class="small">Add to Home Screen</b><div class="tiny muted mt6">Scroll the share sheet to find it.</div></div></div>
+      <div class="row gap12"><div class="avatar" style="background:var(--surface-2)">3</div><div><b class="small">Tap Add</b><div class="tiny muted mt6">WhaleChat appears like a native app.</div></div></div>
+    </div>` : `<div class="col gap12">
+      <p class="small muted" style="line-height:1.7">Your browser will install WhaleChat to your home screen or desktop:</p>
+      <div class="panel" style="padding:12px"><b class="small">Chrome / Edge (Android, Windows, Mac)</b><div class="tiny muted mt6">Open the browser menu → “Install app”, or click the install icon in the address bar.</div></div>
+      <div class="panel" style="padding:12px"><b class="small">Safari on Mac</b><div class="tiny muted mt6">File → “Add to Dock”, or Share → “Add to Home Screen”.</div></div>
+      <div class="panel" style="padding:12px"><b class="small">Firefox</b><div class="tiny muted mt6">Firefox does not install web apps; open WhaleChat in Chrome or Safari to install.</div></div>
+    </div>`}
+    <div class="panel mt14" style="padding:11px 12px"><div class="tiny muted" style="line-height:1.6">Installed apps open full-screen, keep you signed in and receive push notifications when closed.</div></div>`,
+    `<button class="btn btn-primary" data-close style="width:100%">Got it</button>`), { width: '460px' });
+};
+
+/* ---------------- happy new month ---------------- */
+let WISH_SHOWN = false;
+function maybeNewMonthWish() {
+  const u = me();
+  if (!u || WISH_SHOWN) return;
+  const now = new Date();
+  if (now.getDate() > 7) return;
+  const key = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+  if (u.lastMonthWish === key) return;
+  if (document.getElementById('overlay') && document.getElementById('overlay').innerHTML.trim()) return;
+  if (document.getElementById('storyRoot')) return;
+
+  WISH_SHOWN = true;
+  u.lastMonthWish = key;
+  const month = now.toLocaleString('en-US', { month: 'long' });
+  const year = now.getFullYear();
+  notify(u.id, 'Happy new month 🎉', `Welcome to ${month}! Wishing you a month full of great chats, sales and Whale Coin rewards.`, '#/home', 'gift');
+  persist();
+  const colors = ['#2ee6c9', '#3aa0ff', '#ffc861', '#ff5f74', '#b388ff'];
+  let confetti = '';
+  for (let i = 0; i < 26; i++) {
+    confetti += `<i style="left:${(i * 3.7) % 100}%;top:${-10 - (i % 5) * 16}px;background:${colors[i % colors.length]};animation-delay:${(i % 10) * .22}s"></i>`;
+  }
+  openModal(`<div class="month-wish">
+    <div class="confetti">${confetti}</div>
+    <div class="mw-emoji">🎉</div>
+    <h2>Happy New Month!</h2>
+    <div class="mw-month">${month} ${year}</div>
+    <p>Wishing you a wonderful month ahead, ${esc(u.fullName.split(' ')[0] || u.username)}. Thank you for being part of WhaleChat — enjoy new chats, new sales and new rewards.</p>
+    <div class="row" style="justify-content:center;margin-top:20px">
+      <button class="btn btn-primary" data-close>Let's go 🐋</button>
+    </div>
+  </div>`, { width: '440px' });
+  const box = document.querySelector('.modal-back');
+  if (box) box.style.background = 'rgba(2,8,14,.82)';
+}
+
+/* keep Smartsupp in sync with the signed-in user */
+let LAST_SMARTSUPP_USER = null;
+function maybeIdentifySmartsupp() {
+  const u = me();
+  if (!u) return;
+  if (LAST_SMARTSUPP_USER === u.id) return;
+  if (smartsuppReady()) { LAST_SMARTSUPP_USER = u.id; smartsuppIdentify(); }
+}
+setInterval(maybeIdentifySmartsupp, 2500);
+/* =========================================================================
+   Clean links, referral capture, automatic update check
+   ========================================================================= */
+function appLinkBase() {
+  // Admins can publish a custom public link (Admin -> Settings -> App link).
+  // It is only honoured when a destination exists, so a half-filled setting can
+  // never produce a shareable link that goes nowhere.
+  try {
+    const raw = (DB && DB.settings && DB.settings.appLink) || '';
+    const dest = (DB && DB.settings && DB.settings.appLinkDestination) || '';
+    if (!/^http
