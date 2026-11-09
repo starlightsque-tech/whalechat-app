@@ -1,0 +1,27 @@
+{
+  "name": "whalechat-mobile",
+  "version": "3.2.0",
+  "private": true,
+  "description": "WhaleChat native shells (Android + iOS) powered by Capacitor",
+  "scripts": {
+    "bundle": "node ../scripts/build-mobile.mjs",
+    "add:android": "npx cap add android",
+    "add:ios": "npx cap add ios",
+    "sync": "npm run bundle && npx cap sync",
+    "open:android": "npx cap open android",
+    "open:ios": "npx cap open ios",
+    "run:android": "npm run sync && npx cap run android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.2.0",
+    "@capacitor/app": "^6.0.2",
+    "@capacitor/core": "^6.2.0",
+    "@capacitor/haptics": "^6.0.2",
+    "@capacitor/ios": "^6.2.0",
+    "@capacitor/splash-screen": "^6.0.3",
+    "@capacitor/status-bar": "^6.0.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.2.0"
+  }
+}
