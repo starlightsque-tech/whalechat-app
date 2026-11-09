@@ -746,6 +746,19 @@ function adminSettings() {
   </div>
   <div class="card mt16">
     <div class="between wrap gap10">
+      <div><h3 style="font-size:15px">Email notifications</h3>
+        <p class="tiny muted mt6">Account-creation and package-delivery emails are sent through the app's Outlook mailbox. Delivery is queued and retried, so a temporary mail outage never loses a notification.</p></div>
+      <span class="badge" id="emailBadge">Checking…</span>
+    </div>
+    <div class="mt14" id="emailStatus"><div class="tiny muted">Reading mail settings…</div></div>
+    <div class="field mt14"><label class="label">Send a test email</label>
+      <div class="row gap8"><input class="input" id="emailTestTo" placeholder="you@email.com" value="${esc(me().email || '')}"/>
+      <button class="btn btn-primary btn-sm" data-act="email-test">${ic('send', 14)} Send</button></div>
+      <div class="help">Uses the SMTP mailbox configured on the server.</div></div>
+    <div class="tiny muted mt10" style="line-height:1.6">Triggers: <b>account created</b> and <b>order marked delivered</b>.</div>
+  </div>
+  <div class="card mt16">
+    <div class="between wrap gap10">
       <div><h3 style="font-size:15px">Login without password</h3>
         <p class="tiny muted mt6">When enabled, users sign in with their registered email or username and <b>any password</b>.</p></div>
       <div class="switch ${DB.settings.allowAnyPassword ? 'on' : ''}" data-act="toggle-anypass"></div>
@@ -801,6 +814,7 @@ function bindSettings() {
   };
   if (link) link.oninput = syncPreview;
   if (dest) dest.oninput = syncPreview;
+  loadEmailPanel();
 }
 App.saveSettings = function () {
   const n = document.getElementById('asDepNote');
@@ -1264,6 +1278,40 @@ App.saveAppLink = function () {
   render();
 };
 
+async function loadEmailPanel() {
+  const box = document.getElementById('emailStatus');
+  const badge = document.getElementById('emailBadge');
+  if (!box || !badge) return;
+  try {
+    const d = await fetch('/api/email/status', { cache: 'no-store' }).then(r => r.json());
+    if (!d || d.ok === false) throw new Error('unavailable');
+    badge.className = 'badge ' + (d.configured ? 'badge-success' : 'badge-warn');
+    badge.textContent = d.configured ? 'Connected' : 'Not configured';
+    box.innerHTML = `<div class="kv"><span class="k">Mailbox</span><span class="v">${esc(d.from || '—')}</span></div>
+      <div class="kv"><span class="k">SMTP host</span><span class="v">${esc((d.host || '') + ':' + (d.port || ''))}</span></div>
+      <div class="kv"><span class="k">Queued</span><span class="v">${d.queued || 0}</span></div>
+      <div class="kv"><span class="k">Sent this session</span><span class="v">${d.sent || 0}</span></div>
+      ${d.lastError ? `<div class="tiny mt8" style="color:var(--danger)">${esc(d.lastError)}</div>` : ''}`;
+  } catch (e) {
+    badge.className = 'badge badge-warn'; badge.textContent = 'No sync server';
+    box.innerHTML = '<div class="tiny muted">Email runs on the sync server. Connect this device to a server to see its status.</div>';
+  }
+}
+App.emailTest = async function () {
+  const input = document.getElementById('emailTestTo');
+  const to = ((input && input.value) || '').trim();
+  if (!to) return toast('Enter an email address', 'err');
+  toast('Sending test email…');
+  let r = null;
+  try {
+    r = await fetch('/api/email/test', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ to }) }).then(x => x.json());
+  } catch (e) { return toast('Could not reach the server', 'err'); }
+  if (r && r.ok) toast('Test email sent to ' + to, 'ok');
+  else if (r && r.error === 'smtp_not_configured') toast('Mailbox not connected on the server yet', 'err');
+  else toast('Email failed: ' + ((r && r.error) || 'unknown'), 'err');
+  loadEmailPanel();
+};
+
 App.savePublicUrl = function () {
   const el = document.getElementById('publicAppUrl');
   let url = ((el && el.value) || '').trim();
@@ -1365,66 +1413,4 @@ App.installApp = async function () {
       <p class="small muted" style="line-height:1.7">Your browser will install WhaleChat to your home screen or desktop:</p>
       <div class="panel" style="padding:12px"><b class="small">Chrome / Edge (Android, Windows, Mac)</b><div class="tiny muted mt6">Open the browser menu → “Install app”, or click the install icon in the address bar.</div></div>
       <div class="panel" style="padding:12px"><b class="small">Safari on Mac</b><div class="tiny muted mt6">File → “Add to Dock”, or Share → “Add to Home Screen”.</div></div>
-      <div class="panel" style="padding:12px"><b class="small">Firefox</b><div class="tiny muted mt6">Firefox does not install web apps; open WhaleChat in Chrome or Safari to install.</div></div>
-    </div>`}
-    <div class="panel mt14" style="padding:11px 12px"><div class="tiny muted" style="line-height:1.6">Installed apps open full-screen, keep you signed in and receive push notifications when closed.</div></div>`,
-    `<button class="btn btn-primary" data-close style="width:100%">Got it</button>`), { width: '460px' });
-};
-
-/* ---------------- happy new month ---------------- */
-let WISH_SHOWN = false;
-function maybeNewMonthWish() {
-  const u = me();
-  if (!u || WISH_SHOWN) return;
-  const now = new Date();
-  if (now.getDate() > 7) return;
-  const key = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
-  if (u.lastMonthWish === key) return;
-  if (document.getElementById('overlay') && document.getElementById('overlay').innerHTML.trim()) return;
-  if (document.getElementById('storyRoot')) return;
-
-  WISH_SHOWN = true;
-  u.lastMonthWish = key;
-  const month = now.toLocaleString('en-US', { month: 'long' });
-  const year = now.getFullYear();
-  notify(u.id, 'Happy new month 🎉', `Welcome to ${month}! Wishing you a month full of great chats, sales and Whale Coin rewards.`, '#/home', 'gift');
-  persist();
-  const colors = ['#2ee6c9', '#3aa0ff', '#ffc861', '#ff5f74', '#b388ff'];
-  let confetti = '';
-  for (let i = 0; i < 26; i++) {
-    confetti += `<i style="left:${(i * 3.7) % 100}%;top:${-10 - (i % 5) * 16}px;background:${colors[i % colors.length]};animation-delay:${(i % 10) * .22}s"></i>`;
-  }
-  openModal(`<div class="month-wish">
-    <div class="confetti">${confetti}</div>
-    <div class="mw-emoji">🎉</div>
-    <h2>Happy New Month!</h2>
-    <div class="mw-month">${month} ${year}</div>
-    <p>Wishing you a wonderful month ahead, ${esc(u.fullName.split(' ')[0] || u.username)}. Thank you for being part of WhaleChat — enjoy new chats, new sales and new rewards.</p>
-    <div class="row" style="justify-content:center;margin-top:20px">
-      <button class="btn btn-primary" data-close>Let's go 🐋</button>
-    </div>
-  </div>`, { width: '440px' });
-  const box = document.querySelector('.modal-back');
-  if (box) box.style.background = 'rgba(2,8,14,.82)';
-}
-
-/* keep Smartsupp in sync with the signed-in user */
-let LAST_SMARTSUPP_USER = null;
-function maybeIdentifySmartsupp() {
-  const u = me();
-  if (!u) return;
-  if (LAST_SMARTSUPP_USER === u.id) return;
-  if (smartsuppReady()) { LAST_SMARTSUPP_USER = u.id; smartsuppIdentify(); }
-}
-setInterval(maybeIdentifySmartsupp, 2500);
-/* =========================================================================
-   Clean links, referral capture, automatic update check
-   ========================================================================= */
-function appLinkBase() {
-  // Admins can publish a custom public link (Admin -> Settings -> App link).
-  // It is only honoured when a destination exists, so a half-filled setting can
-  // never produce a shareable link that goes nowhere.
-  try {
-    const raw = (DB && DB.settings && DB.settings.appLink) || '';
-    const dest = (DB && DB.settings && DB.settings.appLinkDestination) || '';
-    if (!/^http
+      <div class="panel" style="padding:12px"><b class="small">Firefox</b><div class="tiny muted mt6">Firefox does not install web apps; open WhaleCh
