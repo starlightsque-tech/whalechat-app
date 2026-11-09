@@ -1,0 +1,1062 @@
+ class="btn-icon" style="position:relative">${ic('cart', 18)}${cartCount() ? `<span style="position:absolute;top:-4px;right:-4px;background:var(--danger);color:#fff;font-size:9px;min-width:15px;height:15px;border-radius:99px;display:flex;align-items:center;justify-content:center">${cartCount()}</span>` : ''}</a>
+    </div>
+    <div class="hero-card mb16">
+      <img class="wb" src="data:image/jpeg;base64,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cyI6eyJrZXlfdHJhbnNmb3JtX2Jhc2VfbWF0cml4IjpbMi4zNDU1Mzc3LDAuMCwwLjAsMC4wLDAuMCwyLjM0NTUxNDgsMC4wLDAuMCwwLjAsMC4wLDIuMzQ1NTQzMSwwLjAsLTEwNTMuMTY5MiwxNzEuODYzODMsMC4wLDEuMCwwLjAsMC4wLDAuMCwwLjAsMC4wLDAuMCwwLjAsMC4wLDAuMCwwLjAsMC4wLDAuMCwwLjAsMC4wLDAuMCwwLjBdLCJydWxlQW5nbGUiOjAsInZlcnRpY2FsVGlsdFN3aXRjaCI6dHJ1ZSwiaG9yaXpvbnRhbFRpbHRTd2l0Y2giOnRydWUsImtleV90cmFuc2Zvcm1fdmlld3BvcnRfd2lkdGgiOjEwODAsInJ1bGVBbmdsZVN3aXRjaCI6dHJ1ZSwia2V5X3RyYW5zZm9ybV9kaXNwbGF5X2JvdW5kcyI6WzAuMCwwLjAsOTI0LjAsNTc2LjBdLCJob3Jpem9udGFsVGlsdCI6MCwiYXV0b1RpbHRTd2l0Y2giOmZhbHNlLCJ2ZXJ0aWNhbFRpbHQiOjAsInJhdGlvIjowLjAsImtleV90cmFuc2Zvcm1fdmlld3BvcnRfaGVpZ2h0IjoyNDAwLCJrZXlfdHJhbnNmb3JtX2NsaXBfcmVjdCI6WzExMy45OTk5NTQsNDE3Ljc5MzE4LDk2Ni4wLDEwNjMuMjA2OF0sImdsb2JhbF9rZXlfY2FjaGVfa2V5d29yZCI6IlRyYW5zZm9ybUVmZmVjdF8xNzk0MTcyNDQxMDgxIiwiZ2xvYmFsX2tleV9leGVjdXRlX2NvbW1hbmQiOiJjbWRfdHJhbnNmb3JtX2RyYXciLCJyb3RhdGVPcmllbnRhdGlvbiI6MCwiaXNIb3Jpem9udGFsTWlycm9yIjpmYWxzZSwicm90YXRlQW5nbGUiOjAuMCwia2V5X3RyYW5zZm9ybV9tYXRyaXgiOlsyLjM0NTUzNzcsMC4wLDAuMCwwLjAsMC4wLDIuMzQ1NTE0OCwwLjAsMC4wLDAuMCwwLjAsMi4zNDU1NDMxLDAuMCwtMTA1My4xNjkyLDE3MS44NjM4MywwLjAsMS4wLDAuMCwwLjAsMC4wLDAuMCwwLjAsMC4wLDAuMCwwLjAsMC4wLDAuMCwwLjAsMC4wLDAuMCwwLjAsMC4wLDAuMF0sInJvdGF0ZV9heGlzIjpbMC4wLDEuMCwwLjAsMS4wXX0sInZlcnNpb24iOjAuMn1dAHsib3JpZ2luYWxGaWxlU3ViUGF0aCI6Ii9lZGl0L3BhcmFtZXRyaWMvZmlsZXMvb3JpZ2luXzE3OTQxNzI0NDQzNjAuanBnIiwiY29udGVudEVkaXRGaWxlU3ViUGF0aCI6Ii9lZGl0L3BhcmFtZXRyaWMvZmlsZXMvY29udGVudF9lZGl0XzE3OTQxNzI0NDQ0NDIuanBnIiwiaGFzQ29udGVudEVkaXQiOmZhbHNlfQCamZk/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAE9QUE8gUmVubzEyIEYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABbeyJsZW5ndGgiOjk5NywibmFtZSI6ImVkaXQucHJvamVjdC5jb25maWciLCJvZmZzZXQiOjEyNTYsInZlcnNpb24iOjF9LHsibGVuZ3RoIjoxNzgsIm5hbWUiOiJlZGl0LnByb2plY3QuZW50aXR5Iiwib2Zmc2V0IjoyNTksInZlcnNpb24iOjF9LHsibGVuZ3RoIjoxLCJuYW1lIjoiaW1hZ2UucXVhbGl0eS5lbmhhbmNlZCIsIm9mZnNldCI6MSwidmVyc2lvbiI6MX0seyJsZW5ndGgiOjEsIm5hbWUiOiJwcml2YXRlLmVtcHR5c3BhY2UiLCJvZmZzZXQiOjEyNTcsInZlcnNpb24iOjF9LHsibGVuZ3RoIjo4MCwibmFtZSI6IndhdGVybWFyay5kZXZpY2UiLCJvZmZzZXQiOjgxLCJ2ZXJzaW9uIjoxfV0Ad3Rta1wBAAA=" alt=""/>
+      <span class="badge badge-accent" style="margin-bottom:10px">${ic('store', 12)} Public marketplace</span>
+      <h2>Shop from verified WhaleChat vendors</h2>
+      <p>Every vendor is rated and trust-scored. Pay with Whale Coin, track every package.</p>
+      <div class="row wrap mt16" style="gap:8px">
+        <a href="#/cart" class="btn btn-primary btn-sm">${ic('cart', 15)} View cart${cartCount() ? ` (${cartCount()})` : ''}</a>
+        <a href="#/orders" class="btn btn-ghost btn-sm">${ic('truck', 15)} Track orders</a>
+      </div>
+    </div>
+    ${featured.length ? `<div class="scroll-x mb16">${featured.map(p => `<a href="#/product/${p.id}" class="panel" style="width:250px;flex:none;overflow:hidden;display:flex;gap:10px;padding:9px;border-radius:14px;align-items:center">
+      <div style="width:56px;height:56px;border-radius:10px;overflow:hidden;flex:none;background:#0b2230;display:flex;align-items:center;justify-content:center;font-size:24px">${p.image ? `<img src="${p.image}" style="width:100%;height:100%;object-fit:cover"/>` : (p.emoji || '📦')}</div>
+      <div class="grow" style="min-width:0"><div class="tiny muted">${esc(p.category)}</div><div class="small ellipsis" style="font-weight:600">${esc(p.name)}</div>
+      <div class="tiny" style="color:var(--accent);font-weight:700;margin-top:2px">${coins(p.priceUsd / COIN_USD)} WC</div></div></a>`).join('')}</div>` : ''}
+    <div class="between wrap gap14 mb16">
+      <div class="chip-row">${cats.slice(0, 9).map(c => `<button class="chip ${MARKET_FILTER.cat === c ? 'on' : ''}" data-act="market-cat" data-id="${esc(c)}">${esc(c)}</button>`).join('')}</div>
+      <div class="row gap6">
+        <div class="searchbar hide-mobile" style="width:220px">${ic('search', 16)}<input id="marketSearch" placeholder="Search…" value="${esc(MARKET_FILTER.q)}"/></div>
+        <span class="badge">${filtered.length} product${filtered.length === 1 ? '' : 's'}</span>
+      </div>
+    </div>
+    ${filtered.length ? `<div class="grid-products">${filtered.map(p => productCard(p, u)).join('')}</div>` :
+      `<div class="card empty"><div class="ic">${ic('bag', 26)}</div><h3>No products here yet</h3>
+        <p>Vendors are stocking this category. ${isVendor(u) ? 'Buy from the company market and list your first product.' : 'Check back soon or explore another category.'}</p>
+        ${isVendor(u) ? `<a href="#/vendor/company" class="btn btn-primary">${ic('box', 16)} Buy from company</a>` : `<button class="btn btn-primary" data-act="market-cat" data-id="All">Browse all products</button>`}</div>`}`;
+};
+
+function productCard(p, u) {
+  const v = vendorById(p.vendorId);
+  const vUser = v ? findUser(v.userId) : null;
+  const starred = (p.starUsers || []).includes(u.id);
+  const inCart = (u.cart || []).some(c => c.productId === p.id);
+  return `<div class="product-card">
+    <a href="#/product/${p.id}" style="display:block;position:relative">
+      ${productThumb(p, 150)}
+      ${p.stock <= 3 ? `<span class="badge badge-warn" style="position:absolute;top:8px;right:8px">Only ${p.stock} left</span>` : ''}
+    </a>
+    <div class="product-body">
+      <a href="#/product/${p.id}" class="product-name">${esc(p.name)}</a>
+      <div class="stars-row">${vUser ? `<span class="ellipsis" style="max-width:86px">${esc(vUser.username)}</span><span style="opacity:.5">·</span>` : ''}
+        <span style="color:var(--gold)">★</span> ${(v ? v.rating : 5).toFixed(1)} <span style="opacity:.5">·</span> ${v ? `Trust ${v.trustScore}` : ''}</div>
+      <div class="between mt6" style="align-items:flex-end">
+        <div><div class="price">${coins(p.priceUsd / COIN_USD)} <span class="tiny muted">WC</span></div><div class="tiny muted">${usd(p.priceUsd)}</div></div>
+        <div class="col" style="align-items:flex-end;gap:4px">
+          <button class="star-btn ${starred ? 'on' : ''}" data-act="star-product" data-id="${p.id}">${ic('star', 12)} ${(p.starUsers || []).length}</button>
+        </div>
+      </div>
+      <button class="btn ${inCart ? 'btn-soft' : 'btn-primary'} btn-sm mt6" style="width:100%" data-act="add-cart" data-id="${p.id}">
+        ${ic(inCart ? 'check' : 'cart', 14)} ${inCart ? 'In cart' : 'Add to cart'}</button>
+    </div>
+  </div>`;
+}
+
+AFTER.market = function () {
+  const ms = document.getElementById('marketSearch');
+  if (ms) ms.addEventListener('input', () => {
+    MARKET_FILTER.q = ms.value;
+    const pos = ms.selectionStart;
+    render();
+    const n = document.getElementById('marketSearch');
+    if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch (e) {} }
+  });
+};
+App.marketCat = function (cat) { MARKET_FILTER.cat = cat; render(); };
+
+VIEWS.product = function (parts) {
+  const u = me();
+  const p = DB.products.find(x => x.id === parts[1]);
+  if (!p) return `<div class="empty"><h3>Product not found</h3><a href="#/market" class="btn btn-primary">Back to marketplace</a></div>`;
+  const v = vendorById(p.vendorId);
+  const vUser = v ? findUser(v.userId) : null;
+  const vendorActive = vendorIsActive(v);
+  const canBuy = p.active && p.stock > 0 && vendorActive;
+  const starred = (p.starUsers || []).includes(u.id);
+  return `<div class="row gap6 tiny muted mb16" style="cursor:pointer" data-act="back">${ic('back', 14)} Back</div>
+    <div style="display:grid;grid-template-columns:1fr 380px;gap:22px" class="pdp">
+      <div>
+        <div style="border-radius:20px;overflow:hidden;border:1px solid var(--border)">
+          ${p.image ? `<img src="${p.image}" style="width:100%;max-height:440px;object-fit:cover"/>` : `<div style="height:340px;display:flex;align-items:center;justify-content:center;font-size:110px;background:radial-gradient(120% 120% at 20% 8%,hsla(${CAT_HUES[p.category] || 190},70%,55%,.32),transparent 60%),linear-gradient(140deg,#0b2230,#071520)">${p.emoji || '📦'}</div>`}
+        </div>
+        <div class="card mt16">
+          <h3 style="font-size:16px">About this product</h3>
+          <p class="small muted mt10" style="line-height:1.7">${esc(p.description || 'Verified WhaleChat marketplace item. Ships after admin approval with full package tracking.')}</p>
+          <div class="row wrap gap6 mt16">
+            <span class="badge">${ic('box', 12)} ${esc(p.category)}</span>
+            <span class="badge ${p.stock > 0 ? 'badge-success' : 'badge-danger'}">${p.stock > 0 ? p.stock + ' in stock' : 'Sold out'}</span>
+            <span class="badge">${ic('shield', 12)} Buyer protected</span>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="card">
+          <div class="tiny muted">${esc(p.category)}</div>
+          <h1 style="font-size:24px;margin-top:6px;line-height:1.2">${esc(p.name)}</h1>
+          <div class="row gap6 mt10">
+            <span style="color:var(--gold)">★★★★★</span><span class="tiny muted">${(v ? v.rating : 5).toFixed(1)} vendor rating</span>
+          </div>
+          <div class="row" style="gap:8px;margin-top:16px;align-items:baseline">
+            <span style="font-family:var(--display);font-size:32px;font-weight:800;letter-spacing:-.03em">${coins(p.priceUsd / COIN_USD)}</span>
+            <span class="muted">Whale Coin</span>
+          </div>
+          <div class="small muted mt6">≈ ${usd(p.priceUsd)} USD · 1 WC = $0.50</div>
+          ${vUser ? `<div class="divider"></div>
+            <div class="row gap10">
+              ${avatarHTML(vUser, 'sm')}
+              <div class="grow"><div class="small" style="font-weight:600">${esc(vUser.fullName)}</div><div class="tiny muted">@${esc(vUser.username)} · Trust ${v.trustScore}/100</div></div>
+              <button class="btn-icon" data-act="view-profile" data-id="${vUser.id}" style="width:34px;height:34px">${ic('chat', 15)}</button>
+            </div>` : ''}
+          <div class="divider"></div>
+          <div class="between">
+            <div class="small muted">Starred by</div>
+            <button class="star-btn ${starred ? 'on' : ''}" data-act="star-product" data-id="${p.id}">${ic('star', 13)} ${(p.starUsers || []).length} stars</button>
+          </div>
+          <div class="row gap8 mt16">
+            <button class="btn btn-ghost grow" data-act="add-cart" data-id="${p.id}" ${canBuy ? '' : 'disabled'}>${ic('cart', 16)} Add to cart</button>
+            <button class="btn btn-primary grow" data-act="buy-now" data-id="${p.id}" ${canBuy ? '' : 'disabled'}>${ic('bag', 16)} Buy now</button>
+          </div>
+          ${!vendorActive ? `<div class="err mt10" style="text-align:center">This vendor's subscription has ended — the store is temporarily unavailable.</div>` : (!canBuy ? `<div class="err mt10" style="text-align:center">This product is currently sold out.</div>` : '')}
+          <div class="panel mt16" style="padding:11px 13px">
+            <div class="row gap6 tiny" style="font-weight:600;color:var(--accent)">${ic('truck', 14)} Tracked delivery</div>
+            <p class="tiny muted mt6" style="line-height:1.6">After checkout our team approves your order and you can follow every package movement.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    <style>@media(max-width:860px){.pdp{grid-template-columns:1fr!important}}</style>`;
+};
+
+App.starProduct = function (id) {
+  const u = me(); const p = DB.products.find(x => x.id === id);
+  if (!p) return;
+  p.starUsers = p.starUsers || [];
+  if (p.starUsers.includes(u.id)) p.starUsers = p.starUsers.filter(x => x !== u.id);
+  else p.starUsers.push(u.id);
+  p.stars = p.starUsers.length;
+  sync(); render();
+};
+App.addToCart = function (id, qty) {
+  const u = me(); const p = DB.products.find(x => x.id === id);
+  if (!p) return;
+  if (!p.active || p.stock < 1) return toast('This product is sold out', 'err');
+  u.cart = u.cart || [];
+  const line = u.cart.find(c => c.productId === id);
+  const want = Math.max(1, qty || 1);
+  if (line) {
+    if (line.qty + want > p.stock) return toast('Only ' + p.stock + ' available', 'err');
+    line.qty += want;
+  } else u.cart.push({ productId: id, qty: want });
+  sync(); toast('Added to cart', 'ok'); render();
+};
+App.buyNow = function (id) {
+  App.addToCart(id, 1);
+  go('checkout');
+};
+
+/* ---------------- cart ---------------- */
+VIEWS.cart = function () {
+  const u = me();
+  const items = (u.cart || []).map(c => ({ ...c, p: DB.products.find(p => p.id === c.productId) })).filter(x => x.p);
+  const totalUsd = items.reduce((s, x) => s + x.p.priceUsd * x.qty, 0);
+  return `<div class="page-head"><div><h1>Your cart</h1><p>${items.length} item${items.length === 1 ? '' : 's'} · multiple vendors supported</p></div>
+    ${items.length ? `<button class="btn btn-ghost btn-sm" data-act="clear-cart">${ic('trash', 14)} Clear</button>` : ''}</div>
+    ${items.length ? `<div style="display:grid;grid-template-columns:1fr 340px;gap:20px" class="cart-grid">
+      <div class="col gap10">
+        ${items.map(({ p, qty }) => {
+          const v = vendorById(p.vendorId); const vu = v ? findUser(v.userId) : null;
+          return `<div class="card" style="padding:12px;display:flex;gap:12px;align-items:center">
+            <div style="width:72px;height:72px;border-radius:12px;overflow:hidden;flex:none;background:#0b2230;display:flex;align-items:center;justify-content:center;font-size:28px">${p.image ? `<img src="${p.image}" style="width:100%;height:100%;object-fit:cover"/>` : (p.emoji || '📦')}</div>
+            <div class="grow" style="min-width:0">
+              <a href="#/product/${p.id}" class="small" style="font-weight:650">${esc(p.name)}</a>
+              <div class="tiny muted mt6">Sold by ${esc(vu ? vu.username : 'vendor')} · ${usd(p.priceUsd)} each</div>
+              <div class="row gap8 mt10">
+                <div class="row" style="border:1px solid var(--border);border-radius:9px;overflow:hidden;height:30px">
+                  <button style="width:29px;height:100%;background:var(--surface-2)" data-act="cart-qty" data-id="${p.id}" data-d="-1">−</button>
+                  <span style="width:32px;text-align:center;font-size:13px;font-weight:600">${qty}</span>
+                  <button style="width:29px;height:100%;background:var(--surface-2)" data-act="cart-qty" data-id="${p.id}" data-d="1">+</button>
+                </div>
+                <button class="tiny" style="color:var(--danger)" data-act="cart-remove" data-id="${p.id}">Remove</button>
+              </div>
+            </div>
+            <div style="text-align:right"><div style="font-weight:700;font-family:var(--display)">${coins(p.priceUsd * qty / COIN_USD)}</div><div class="tiny muted">WC</div></div>
+          </div>`;
+        }).join('')}
+      </div>
+      <div class="card" style="height:fit-content;position:sticky;top:80px">
+        <h3 style="font-size:15px">Order summary</h3>
+        <div class="mt16">
+          <div class="kv"><span class="k">Subtotal</span><span class="v">${coins(totalUsd / COIN_USD)} WC</span></div>
+          <div class="kv"><span class="k">Delivery</span><span class="v" style="color:var(--success)">Included</span></div>
+          <div class="kv"><span class="k">USD equivalent</span><span class="v">${usd(totalUsd)}</span></div>
+        </div>
+        <div class="between mt16" style="padding-top:12px;border-top:1px solid var(--border)">
+          <span class="small" style="font-weight:600">Total</span>
+          <span style="font-family:var(--display);font-weight:800;font-size:19px">${coins(totalUsd / COIN_USD)} WC</span>
+        </div>
+        <div class="tiny muted mt6">Balance: ${coins(u.balance)} WC ${u.balance < totalUsd / COIN_USD ? `<span style="color:var(--danger)">· insufficient</span>` : ''}</div>
+        <button class="btn btn-primary btn-block mt16" data-nav="#/checkout">${ic('lock', 15)} Checkout</button>
+        <a href="#/market" class="btn btn-ghost btn-block mt10">Continue shopping</a>
+      </div>
+    </div>` : `<div class="card empty"><div class="ic">${ic('cart', 26)}</div><h3>Your cart is empty</h3><p>Browse the marketplace and add products from any vendor — checkout handles them all at once.</p><a href="#/market" class="btn btn-primary">${ic('bag', 16)} Explore marketplace</a></div>`}
+    <style>@media(max-width:860px){.cart-grid{grid-template-columns:1fr!important}.cart-grid>div:last-child{position:static!important}}</style>`;
+};
+App.cartQty = function (id, d) {
+  const u = me(); const line = (u.cart || []).find(c => c.productId === id);
+  if (!line) return;
+  const p = DB.products.find(x => x.id === id);
+  const n = line.qty + Number(d);
+  if (n < 1) return App.cartRemove(id);
+  if (p && n > p.stock) return toast('Only ' + p.stock + ' in stock', 'err');
+  line.qty = n; sync(); render();
+};
+App.cartRemove = function (id) {
+  const u = me(); u.cart = (u.cart || []).filter(c => c.productId !== id); sync(); render();
+};
+App.clearCart = async function () {
+  if (!await confirmDialog({ title: 'Clear cart?', ok: 'Clear', danger: true })) return;
+  me().cart = []; sync(); render();
+};
+
+/* ---------------- checkout ---------------- */
+VIEWS.checkout = function () {
+  const u = me();
+  const items = (u.cart || []).map(c => ({ ...c, p: DB.products.find(p => p.id === c.productId) })).filter(x => x.p);
+  if (!items.length) { setTimeout(() => go('cart'), 10); return `<div class="empty"><p>Your cart is empty.</p></div>`; }
+  const totalUsd = items.reduce((s, x) => s + x.p.priceUsd * x.qty, 0);
+  const totalCoins = totalUsd / COIN_USD;
+  const enough = u.balance >= totalCoins;
+  return `<div class="page-head"><div><button class="btn btn-ghost btn-sm mb10" data-act="back">${ic('back', 14)} Cart</button>
+    <h1>Checkout</h1><p>Confirm delivery details. Payment is taken from your Whale Coin balance.</p></div></div>
+    <div style="display:grid;grid-template-columns:1fr 360px;gap:20px" class="cart-grid">
+      <div class="card">
+        <h3 style="font-size:15px">Delivery information</h3>
+        <p class="tiny muted mt6">Our team uses these details to dispatch and track your package.</p>
+        <div class="mt16 grid2" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          ${field('Full name', 'ckName', { ph: 'Receiver full name', value: u.fullName, icon: 'user' })}
+          ${field('Phone number', 'ckPhone', { ph: '+1 555 000 0000', value: u.phone || '', icon: 'chat' })}
+        </div>
+        <div class="grid2" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          ${field('Email', 'ckEmail', { type: 'email', ph: 'you@email.com', value: u.email, icon: 'chat' })}
+          ${field('Country', 'ckCountry', { ph: 'e.g. United States', icon: 'pin' })}
+        </div>
+        ${field('House address', 'ckAddress', { ph: 'Street, apartment, city, postal code', icon: 'pin' })}
+        <label class="checkline" style="margin-top:4px"><input type="checkbox" id="ckConfirm" />
+          <span>I confirm the delivery details are correct and I understand my order is reviewed by the WhaleChat team before dispatch.</span></label>
+      </div>
+      <div>
+        <div class="card" style="position:sticky;top:80px">
+          <h3 style="font-size:15px">Summary</h3>
+          <div class="mt10">${items.map(({ p, qty }) => `<div class="between" style="padding:8px 0;border-bottom:1px dashed var(--border)">
+            <div class="grow" style="min-width:0"><div class="small ellipsis" style="font-weight:600">${esc(p.name)}</div><div class="tiny muted">${qty} × ${coins(p.priceUsd / COIN_USD)} WC</div></div>
+            <span class="small" style="font-weight:600">${coins(p.priceUsd * qty / COIN_USD)} WC</span></div>`).join('')}</div>
+          <div class="kv mt10"><span class="k">Total USD</span><span class="v">${usd(totalUsd)}</span></div>
+          <div class="between" style="padding-top:10px"><span class="small" style="font-weight:600">Total (Whale Coin)</span>
+            <span style="font-family:var(--display);font-size:20px;font-weight:800">${coins(totalCoins)}</span></div>
+          <div class="tiny mt6" style="color:${enough ? 'var(--muted)' : 'var(--danger)'}">Wallet: ${coins(u.balance)} WC ${enough ? '' : `· ${coins(totalCoins - u.balance)} short`}</div>
+          <button class="btn btn-primary btn-block mt16" id="placeOrder" ${enough ? '' : 'disabled'}>${ic('lock', 15)} Pay ${coins(totalCoins)} WC</button>
+          ${!enough ? `<button class="btn btn-soft btn-block mt10" data-nav="#/deposit">${ic('plus', 15)} Deposit Whale Coin</button>` : ''}
+          <div class="tiny muted center mt10" style="line-height:1.6">Your order is held for review. You'll be notified at every step.</div>
+        </div>
+      </div>
+    </div>
+    <style>@media(max-width:860px){.cart-grid{grid-template-columns:1fr!important}.cart-grid>div:last-child .card{position:static!important}}
+    @media(max-width:520px){#placeOrder+*{width:100%}}</style>`;
+};
+AFTER.checkout = function () {
+  const b = document.getElementById('placeOrder');
+  if (b) b.onclick = () => App.placeOrder();
+};
+App.placeOrder = async function () {
+  const u = me();
+  clearErrors();
+  const fullName = document.getElementById('ckName').value.trim();
+  const phone = document.getElementById('ckPhone').value.trim();
+  const email = document.getElementById('ckEmail').value.trim();
+  const country = document.getElementById('ckCountry').value.trim();
+  const address = document.getElementById('ckAddress').value.trim();
+  const conf = document.getElementById('ckConfirm').checked;
+  if (fullName.length < 3) return formError('ckName', 'Enter the receiver full name');
+  if (phone.replace(/\D/g, '').length < 7) return formError('ckPhone', 'Enter a valid phone number');
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return formError('ckEmail', 'Enter a valid email');
+  if (country.length < 2) return formError('ckCountry', 'Enter your country');
+  if (address.length < 8) return formError('ckAddress', 'Enter your full house address');
+  if (!conf) return toast('Please confirm your delivery details', 'err');
+
+  const items = (u.cart || []).map(c => ({ ...c, p: DB.products.find(p => p.id === c.productId) })).filter(x => x.p);
+  if (!items.length) return toast('Cart is empty', 'err');
+  const totalUsd = items.reduce((s, x) => s + x.p.priceUsd * x.qty, 0);
+  const totalCoins = Math.round(totalUsd / COIN_USD * 100) / 100;
+  if (u.balance < totalCoins) return toast('Insufficient balance — deposit Whale Coin first', 'err');
+
+  // vendor availability + stock check
+  for (const it of items) {
+    const vd = vendorById(it.p.vendorId);
+    if (!vendorIsActive(vd)) return toast(`${it.p.name}: the vendor store is temporarily unavailable`, 'err');
+    if (it.qty > it.p.stock) return toast(`Only ${it.p.stock} of ${it.p.name} left`, 'err');
+  }
+
+  // group by vendor
+  const groups = {};
+  items.forEach(it => { const k = it.p.vendorId; (groups[k] = groups[k] || []).push(it); });
+  const created = [];
+  Object.keys(groups).forEach(vid => {
+    const v = vendorById(vid);
+    if (!v) return;
+    const gItems = groups[vid];
+    const gUsd = gItems.reduce((s, x) => s + x.p.priceUsd * x.qty, 0);
+    const gCoins = Math.round(gUsd / COIN_USD * 100) / 100;
+    const off = delivery(fullName, phone, email, country, address);
+    const order = {
+      id: uid('ord'), ref: 'WC-' + Math.random().toString(36).slice(2, 7).toUpperCase(),
+      buyerId: u.id, vendorId: vid,
+      items: gItems.map(x => ({ productId: x.p.id, name: x.p.name, qty: x.qty, priceUsd: x.p.priceUsd, image: x.p.image, emoji: x.p.emoji, category: x.p.category })),
+      totalUsd: Math.round(gUsd * 100) / 100, totalCoins: gCoins,
+      delivery: off, status: 'processing', createdAt: Date.now(), payment: 'whale_coin',
+      timeline: [{ status: 'processing', at: Date.now(), note: 'Order placed and awaiting team review.' }]
+    };
+    DB.orders.unshift(order);
+    created.push(order);
+    // stock + vendor credit
+    gItems.forEach(x => {
+      x.p.stock = Math.max(0, x.p.stock - x.qty);
+      if (x.p.stock === 0) x.p.active = false;
+    });
+    const vu = findUser(v.userId);
+    if (vu) {
+      vu.balance = Math.round((vu.balance + gCoins) * 100) / 100;
+      vu.totalEarnings = Math.round(((vu.totalEarnings || 0) + gCoins) * 100) / 100;
+      v.sales = (v.sales || 0) + 1;
+      v.revenue = Math.round(((v.revenue || 0) + gUsd) * 100) / 100;
+      tx(vu.id, 'sale', 'Sale · ' + order.ref, gCoins);
+      notify(vu.id, 'Your product was purchased 🎉', `${gItems[0].name}${gItems.length > 1 ? ' +' + (gItems.length - 1) + ' more' : ''} · ${coins(gCoins)} WC credited to your balance.`, '#/vendor/orders', 'bag');
+    }
+    notify('usr_admin', 'New order · ' + order.ref, `${items.length} item(s) from ${esc(v.username)} — delivery details attached.`, '#/admin/orders', 'truck');
+  });
+
+  u.balance = Math.round((u.balance - totalCoins) * 100) / 100;
+  u.cart = [];
+  tx(u.id, 'purchase', 'Order ' + (created[0] ? created[0].ref : ''), -totalCoins);
+  notify(u.id, 'Request processing', 'Your request is being processed. Please wait for our team to proceed. You can track your package movements anytime.', '#/orders', 'truck');
+  sync();
+  const total = created.reduce((s, o) => s + o.totalCoins, 0);
+  openModal(modalShell('Request processing', `
+    <div class="center" style="padding:6px 0 4px">
+      <div style="width:64px;height:64px;border-radius:50%;background:rgba(46,230,201,.14);color:var(--accent);display:flex;align-items:center;justify-content:center;margin:0 auto">${ic('check', 30)}</div>
+      <h3 class="mt16" style="font-size:18px">Your request is being processed</h3>
+      <p class="small muted mt10" style="line-height:1.7">Please wait for our team to proceed. We've reserved ${coins(total)} WC from your wallet and notified the vendor.</p>
+      <div class="panel mt16" style="padding:12px;text-align:left">
+        ${created.map(o => `<div class="between" style="padding:5px 0"><span class="tiny muted">${esc(o.ref)}</span><span class="small" style="font-weight:600">${coins(o.totalCoins)} WC</span></div>`).join('')}
+      </div>
+    </div>`,
+    `<button class="btn btn-ghost" data-close style="flex:1">Keep shopping</button>
+     <a href="#/orders" class="btn btn-primary" data-close style="flex:1">${ic('truck', 15)} Track package</a>`), { locked: false, width: '430px' });
+  setTimeout(() => { if (me()) render(); }, 100);
+};
+function delivery(fullName, phone, email, country, address) {
+  return { fullName, phone, email, country, address };
+}
+
+/* ---------------- orders (buyer) ---------------- */
+VIEWS.orders = function () {
+  const u = me();
+  const orders = DB.orders.filter(o => o.buyerId === u.id);
+  return `<div class="page-head"><div><h1>My orders</h1><p>Track every package from approval to delivery.</p></div>
+    <a href="#/market" class="btn btn-ghost btn-sm">${ic('bag', 15)} Shop</a></div>
+    ${orders.length ? `<div class="col gap10">${orders.map(o => {
+      const v = vendorById(o.vendorId); const vu = v ? findUser(v.userId) : null;
+      return `<div class="card">
+        <div class="between wrap gap10">
+          <div class="row gap10"><div style="width:44px;height:44px;border-radius:11px;background:var(--surface-2);display:flex;align-items:center;justify-content:center;font-size:20px">${o.items[0] && o.items[0].image ? `<img src="${o.items[0].image}" style="width:100%;height:100%;object-fit:cover;border-radius:11px"/>` : (o.items[0] ? (o.items[0].emoji || '📦') : '📦')}</div>
+            <div><div class="small" style="font-weight:650">${esc(o.ref)} · ${o.items.length} item${o.items.length > 1 ? 's' : ''}</div>
+            <div class="tiny muted mt6">${dateLabel(o.createdAt)} · ${esc(vu ? vu.username : 'vendor')}</div></div></div>
+          <div class="row gap8">${statusBadge(o.status)}
+            <span style="font-weight:700;font-family:var(--display)">${coins(o.totalCoins)} <span class="tiny muted">WC</span></span></div>
+        </div>
+        <div class="divider"></div>
+        <div class="row between wrap gap10">
+          <div class="tiny muted">${o.items.map(i => esc(i.name) + ' ×' + i.qty).join(', ')}</div>
+          <div class="row gap8">
+            <button class="btn btn-sm btn-ghost" data-act="order-detail" data-id="${o.id}">${ic('eye', 14)} Details</button>
+            <button class="btn btn-sm btn-primary" data-act="track-order" data-id="${o.id}">${ic('truck', 14)} Track package</button>
+          </div>
+        </div>
+      </div>`;
+    }).join('')}</div>` : `<div class="card empty"><div class="ic">${ic('truck', 26)}</div><h3>No orders yet</h3><p>Your purchases and their tracking will appear here.</p><a href="#/market" class="btn btn-primary">Browse marketplace</a></div>`}`;
+};
+
+App.orderDetail = function (id) {
+  const o = DB.orders.find(x => x.id === id); if (!o) return;
+  const steps = ['processing', 'shipped', 'delivered'];
+  const v = vendorById(o.vendorId); const vu = v ? findUser(v.userId) : null;
+  openModal(modalShell('Order ' + o.ref, `
+    <div class="between mb10">${statusBadge(o.status)}<span style="font-family:var(--display);font-weight:800">${coins(o.totalCoins)} WC</span></div>
+    <div class="panel" style="padding:12px;margin-bottom:12px">
+      ${o.items.map(i => `<div class="between" style="padding:5px 0"><span class="small">${esc(i.name)} ×${i.qty}</span><span class="small muted">${usd(i.priceUsd * i.qty)}</span></div>`).join('')}
+    </div>
+    <div class="timeline">
+      ${steps.map(s => {
+        const hit = o.timeline.find(t => t.status === s);
+        const done = !!hit;
+        const names = { processing: 'Processing', shipped: 'Shipped', delivered: 'Delivered' };
+        return `<div class="step ${done ? 'done' : ''}"><div class="bullet">${done ? ic('check', 11) : ''}</div>
+          <div><h4>${names[s]}</h4><p>${hit ? new Date(hit.at).toLocaleString() + (hit.note ? ' · ' + esc(hit.note) : '') : 'Waiting'}</p></div></div>`;
+      }).join('')}
+    </div>
+    <div class="divider"></div>
+    <div class="small" style="font-weight:650;margin-bottom:6px">Delivery details</div>
+    <div class="kv"><span class="k">Receiver</span><span class="v">${esc(o.delivery.fullName)}</span></div>
+    <div class="kv"><span class="k">Phone</span><span class="v">${esc(o.delivery.phone)}</span></div>
+    <div class="kv"><span class="k">Email</span><span class="v">${esc(o.delivery.email)}</span></div>
+    <div class="kv"><span class="k">Address</span><span class="v" style="max-width:60%">${esc(o.delivery.address)}, ${esc(o.delivery.country)}</span></div>
+    <div class="kv"><span class="k">Vendor</span><span class="v">@${esc(vu ? vu.username : '—')}</span></div>
+    ${o.tracking ? `<div class="kv"><span class="k">Tracking ref</span><span class="v">${esc(o.tracking)}</span></div>` : ''}`,
+    `<button class="btn btn-ghost" data-close style="flex:1">Close</button>
+     ${vu ? `<button class="btn btn-ghost" data-act="open-chat" data-id="${vu.id}" data-close style="flex:1">${ic('chat', 15)} Vendor</button>` : ''}
+     <button class="btn btn-primary" data-act="track-order" data-id="${o.id}" style="flex:1">${ic('truck', 15)} Track</button>`));
+};
+
+App.trackOrder = function (id) {
+  const o = DB.orders.find(x => x.id === id);
+  go('track' + (o ? '?ref=' + o.ref : ''));
+};
+
+VIEWS.track = function (parts, params) {
+  const u = me();
+  const ref = params.ref || '';
+  const o = DB.orders.find(x => x.ref === ref && (x.buyerId === u.id || u.role === 'admin'));
+  const doneSteps = o ? ['processing', 'shipped', 'delivered'].map(s => {
+    const hit = o.timeline.find(t => t.status === s);
+    const names = { processing: 'Processing', shipped: 'Shipped', delivered: 'Delivered' };
+    return `<div class="step ${hit ? 'done' : ''}"><div class="bullet">${hit ? ic('check', 11) : ''}</div>
+      <div><h4>${names[s]}</h4><p>${hit ? new Date(hit.at).toLocaleString() + (hit.note ? ' · ' + esc(hit.note) : '') : 'Waiting for update'}</p></div></div>`;
+  }).join('') : '';
+  return `<div class="page-head"><div><button class="btn btn-ghost btn-sm mb10" data-act="back">${ic('back', 14)} Back</button>
+      <h1>Track package</h1><p>${o ? esc(o.ref) + ' · ' + o.items.map(i => esc(i.name)).join(', ') : 'Follow every movement of your delivery.'}</p></div>
+    ${o ? statusBadge(o.status) : ''}</div>
+    ${o ? `<div class="card mb16">
+      <div class="between mb10"><h3 style="font-size:15px">Delivery progress</h3>
+        ${o.tracking ? `<button class="btn btn-xs btn-ghost" data-act="copy" data-id="${esc(o.tracking)}">${ic('copy', 12)} ${esc(o.tracking)}</button>` : ''}</div>
+      <div class="timeline">${doneSteps}</div>
+      <div class="divider"></div>
+      <div class="row wrap gap14">
+        <div class="tiny muted">Receiver: <b style="color:var(--text)">${esc(o.delivery.fullName)}</b></div>
+        <div class="tiny muted">To: ${esc(o.delivery.country)}</div>
+      </div>
+    </div>` : ''}
+    <div class="card">
+      <div class="row gap12" style="align-items:flex-start">
+        <div style="width:44px;height:44px;border-radius:12px;background:rgba(46,230,201,.12);color:var(--accent);display:flex;align-items:center;justify-content:center;flex:none">${ic('truck', 20)}</div>
+        <div class="grow">
+          <h3 style="font-size:15px">Package Air Tracker</h3>
+          <p class="small muted mt6" style="line-height:1.65">Our delivery partner hosts live package movements on its own secure portal. Open it below — tracking opens in a new tab, so it always works even when a host blocks embedded pages.</p>
+          <div class="row gap8 mt16 wrap">
+            <a class="btn btn-primary" href="https://package-airtracker.zite.so" target="_blank" rel="noopener noreferrer">${ic('link', 15)} Open tracking portal</a>
+            <button class="btn btn-ghost" data-act="track-embed">${ic('grid', 15)} Try in-app view</button>
+            ${o && o.tracking ? `<button class="btn btn-ghost" data-act="copy" data-id="${esc(o.tracking)}">${ic('copy', 15)} Copy reference</button>` : ''}
+          </div>
+        </div>
+      </div>
+      <div id="trackEmbed" class="mt16 hidden"></div>
+      <div class="panel mt16" style="padding:11px 13px">
+        <div class="tiny" style="font-weight:600;color:var(--accent)">${ic('shield', 12)} Protected delivery</div>
+        <div class="tiny muted mt6" style="line-height:1.6">If the portal shows an access message, open it in your browser (or contact support in chat) — your order and tracking reference are always available here.</div>
+      </div>
+    </div>`;
+};
+
+App.trackEmbed = function () {
+  const box = document.getElementById('trackEmbed');
+  if (!box) return;
+  box.classList.remove('hidden');
+  box.innerHTML = `<div class="between" style="padding:10px 12px;border:1px solid var(--border);border-bottom:0;border-radius:12px 12px 0 0;background:var(--surface-2)">
+      <span class="tiny muted">package-airtracker.zite.so</span>
+      <a href="https://package-airtracker.zite.so" target="_blank" rel="noopener" class="link tiny">Open in new tab</a></div>
+    <iframe src="https://package-airtracker.zite.so" title="Package tracker" style="width:100%;height:min(65vh,600px);border:1px solid var(--border);border-radius:0 0 12px 12px;background:#fff"></iframe>
+    <div class="tiny muted mt10" style="line-height:1.6">The portal owner can block embedding for security. If you see “AccessDenied”, that is the portal’s own protection — use “Open in new tab”.</div>`;
+};
+
+/* ---------------- vendor: create ---------------- */
+VIEWS.vendor = function (parts) {
+  const u = me();
+  if (u.role === 'admin') return adminSupportView();
+  const v = vendorOf(u.id);
+  if (!v) return viewBecomeVendor(u);
+  if (!vendorIsActive(v)) return viewVendorFrozen(u, v);
+  if (parts[1] === 'renew') return viewVendorRenewForm(u, v, false);
+  return viewVendorDash(u, v, parts[1]);
+};
+
+let VENDOR_SLIP = null;
+function vendorPayMethods() {
+  const p = DB.settings.vendorPayments || {};
+  return Array.isArray(p.methods) ? p.methods : [];
+}
+function viewBecomeVendor(u) {
+  const fee = Math.max(0, Number(DB.settings.vendorFeeUsd) || 0);
+  const apps = (DB.vendorApplications || []).filter(a => a.userId === u.id).sort((a, b) => b.createdAt - a.createdAt);
+  const pending = apps.find(a => a.status === 'pending');
+  if (pending) return viewVendorApplicationStatus(u, pending);
+  const rejected = apps.find(a => a.status === 'rejected');
+  if (fee > 0) return viewVendorApplyForm(u, rejected);
+  return viewVendorFreeForm(u);
+}
+
+function viewVendorFreeForm(u) {
+  return `<div class="page-head"><div><h1>Become a vendor</h1><p>Open your own WhaleChat store and get paid instantly in Whale Coin.</p></div></div>
+    <div style="display:grid;grid-template-columns:1.1fr .9fr;gap:20px" class="cart-grid">
+      <div class="card">
+        <div class="row gap10 mb16"><div style="width:40px;height:40px;border-radius:12px;background:rgba(46,230,201,.12);color:var(--accent);display:flex;align-items:center;justify-content:center">${ic('store', 19)}</div>
+          <div><h3 style="font-size:16px">Create vendor profile</h3><div class="tiny muted">One profile per account · activation is free</div></div></div>
+        ${field('Preferred vendor username', 'vName', { ph: 'e.g. harbor.tech', icon: 'tag', help: '3–24 characters. Letters, numbers, dot, dash or underscore.' })}
+        ${field('Account password', 'vPass', { type: 'password', ph: 'Confirm your login password', icon: 'lock', help: 'For your security, confirm your WhaleChat account password.' })}
+        ${field('Confirm password', 'vPass2', { type: 'password', ph: 'Repeat password', icon: 'lock' })}
+        <label class="checkline" style="margin:4px 0 16px"><input type="checkbox" id="vAgree" />
+          <span>I agree to the Vendor Terms: accurate listings, honouring sales, and shipping within 5 business days.</span></label>
+        <button class="btn btn-primary btn-block btn-lg" id="createVendorBtn">${ic('store', 17)} Create vendor profile</button>
+      </div>
+      <div class="col gap12">
+        <div class="wallet-card" style="padding:20px">
+          <div class="tiny" style="opacity:.8;letter-spacing:.08em;font-weight:700">VENDOR WALLET</div>
+          <div class="wallet-bal" style="font-size:30px">${coins(u.balance)} <span style="font-size:14px;opacity:.7">WC</span></div>
+          <div class="tiny" style="opacity:.8;margin-top:4px">Available balance</div>
+          <div class="wallet-actions"><a href="#/deposit" class="btn">Deposit</a><a href="#/withdraw" class="btn">Withdraw</a><a href="#/wallet" class="btn">Activity</a></div>
+        </div>
+        ${[['box', 'Buy from the company', 'Stock your store from the official WhaleChat catalogue at wholesale prices.'],
+           ['tag', 'Set your selling price', 'Price in USD — we convert to Whale Coin automatically at $0.50 per coin.'],
+           ['truck', 'We handle delivery', 'Our team approves orders, ships and tracks packages for you.']]
+          .map(([i, t, d]) => `<div class="card" style="padding:14px"><div class="row gap10"><div style="width:32px;height:32px;border-radius:9px;background:var(--surface-2);color:var(--accent);display:flex;align-items:center;justify-content:center">${ic(i, 15)}</div>
+            <div><div class="small" style="font-weight:650">${t}</div><div class="tiny muted mt6" style="line-height:1.55">${d}</div></div></div></div>`).join('')}
+      </div>
+    </div>
+    <style>@media(max-width:860px){.cart-grid{grid-template-columns:1fr!important}}</style>`;
+}
+
+function viewVendorApplyForm(u, rejected) {
+  const plans = (DB.settings.vendorPlans || []).slice().sort((a, b) => a.months - b.months);
+  const fee = plans.length ? Number(plans[0].priceUsd) : 0;
+  const pay = DB.settings.vendorPayments || {};
+  const methods = vendorPayMethods();
+  return `<div class="page-head"><div><h1>Become a vendor</h1><p>Pay the one-time activation fee, upload your receipt and our team will activate your store.</p></div>
+      <span class="badge badge-warn">${ic('clock', 12)} Admin approval required</span></div>
+    ${rejected ? `<div class="card mb16" style="border-color:rgba(255,95,116,.35);background:rgba(255,95,116,.06)">
+      <div class="between wrap gap10"><div><div class="small" style="font-weight:650;color:var(--danger)">Previous application rejected</div>
+      <div class="tiny muted mt6">${esc(rejected.note || 'No reason provided.')}</div></div>
+      <span class="badge badge-danger">${ic('ban', 11)} Rejected</span></div></div>` : ''}
+    <div style="display:grid;grid-template-columns:1.05fr .95fr;gap:20px" class="cart-grid">
+      <div class="card">
+        <div class="row gap10 mb16"><div style="width:40px;height:40px;border-radius:12px;background:rgba(46,230,201,.12);color:var(--accent);display:flex;align-items:center;justify-content:center">${ic('store', 19)}</div>
+          <div><h3 style="font-size:16px">Vendor application</h3><div class="tiny muted">Fee: <b style="color:var(--accent)">${usd(fee)}</b> · one-time</div></div></div>
+        <div class="grid2" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          ${field('Preferred vendor username', 'vName', { ph: 'e.g. harbor.tech', icon: 'tag', help: '3–24 chars: letters, numbers, dot, dash, underscore' })}
+          ${field('Your account password', 'vPass', { type: 'password', ph: 'Confirm password', icon: 'lock' })}
+        </div>
+        ${field('Confirm password', 'vPass2', { type: 'password', ph: 'Repeat password', icon: 'lock' })}
+
+        <div class="label mt6 mb10">Choose your vendor account duration</div>
+        <div class="col gap8">${plans.map((pl, i) => `<label class="list-item" style="cursor:pointer;align-items:center">
+          <input type="radio" name="vplan" value="${esc(pl.id)}" data-price="${pl.priceUsd}" data-months="${pl.months}" ${i === 0 ? 'checked' : ''} onchange="A.updatePlanFee(this)" style="accent-color:var(--accent)"/>
+          <div class="grow"><div class="small" style="font-weight:650">${pl.months} month${pl.months > 1 ? 's' : ''}</div>
+            <div class="tiny muted">Full vendor access · renew when it ends</div></div>
+          <span style="font-family:var(--display);font-weight:800;color:var(--accent)">${usd(pl.priceUsd)}</span></label>`).join('')}</div>
+
+        <div class="label mt16 mb10">Pay <b id="planFee">${usd(fee)}</b> to one of these company accounts</div>
+        ${methods.length ? `<div class="col gap8">${methods.map((m, i) => `<label class="list-item" style="cursor:pointer;align-items:flex-start">
+          <input type="radio" name="vpm" value="${esc(m.id)}" ${i === 0 ? 'checked' : ''} style="margin-top:3px;accent-color:var(--accent)"/>
+          <div class="grow" style="min-width:0"><div class="small" style="font-weight:650">${esc(m.label)} ${m.network ? `<span class="badge" style="font-size:9px">${esc(m.network)}</span>` : ''}</div>
+            <div class="tiny muted" style="word-break:break-all;margin-top:3px">${esc(m.address)}</div></div>
+          <button type="button" class="btn-icon" data-act="copy" data-id="${esc(m.address)}" style="width:30px;height:30px">${ic('copy', 13)}</button></label>`).join('')}</div>`
+          : `<div class="empty" style="padding:14px"><p>No vendor payment account configured yet. Please contact support.</p></div>`}
+        ${pay.note ? `<div class="tiny muted mt8" style="line-height:1.6">${esc(pay.note)}</div>` : ''}
+
+        <div class="mt16">
+          <div class="label mb8">Payment slip / receipt</div>
+          <div class="row gap10">
+            <button class="btn btn-ghost btn-sm" data-act="vendor-slip">${ic('image', 14)} Upload slip</button>
+            <span class="tiny muted" id="slipStatus">${VENDOR_SLIP ? 'Receipt attached ✓' : 'JPG or PNG screenshot of your payment'}</span>
+          </div>
+          <div id="slipPreview" class="mt10">${VENDOR_SLIP ? `<img src="${VENDOR_SLIP}" style="max-width:220px;border-radius:10px;border:1px solid var(--border)"/>` : ''}</div>
+        </div>
+
+        <label class="checkline mt14"><input type="checkbox" id="vAgree" />
+          <span>I confirm I paid the ${usd(fee)} vendor activation fee and agree to the Vendor Terms.</span></label>
+        <button class="btn btn-primary btn-block btn-lg mt14" id="applyVendorBtn">${ic('check', 16)} Submit application for review</button>
+      </div>
+      <div class="col gap12">
+        <div class="wallet-card">
+          <div class="tiny" style="opacity:.85;letter-spacing:.08em;font-weight:700">VENDOR ACTIVATION FEE</div>
+          <div class="row" style="gap:8px;align-items:baseline;margin-top:6px"><span class="wallet-bal" id="planSummaryFee">${usd(fee)}</span></div>
+          <div class="tiny" style="opacity:.8;margin-top:4px">One-time payment · includes store activation</div>
+          <div class="wallet-actions"><a href="#/wallet" class="btn">Deposit WC</a><a href="#/market" class="btn">Marketplace</a><a href="#/settings" class="btn">Settings</a></div>
+        </div>
+        <div class="card">
+          <h3 style="font-size:15px">How activation works</h3>
+          <div class="col gap10 mt12">
+            ${[['link', 'Copy the company payment account above and pay the exact fee.'],
+               ['image', 'Upload the payment slip / receipt with this application.'],
+               ['clock', 'Admin reviews your payment and details.'],
+               ['store', 'Once approved, your vendor dashboard unlocks automatically.']]
+              .map(([i, t]) => `<div class="row gap10"><span style="width:28px;height:28px;border-radius:8px;background:var(--surface-2);color:var(--accent);display:flex;align-items:center;justify-content:center;flex:none">${ic(i, 14)}</span><span class="tiny muted" style="line-height:1.6">${t}</span></div>`).join('')}
+          </div>
+        </div>
+      </div>
+    </div>
+    <style>@media(max-width:860px){.cart-grid{grid-template-columns:1fr!important}}</style>`;
+}
+
+function viewVendorApplicationStatus(u, app) {
+  const fee = Number(app.feeUsd) || 0;
+  return `<div class="page-head"><div><h1>Vendor application</h1><p>Your payment is being reviewed by our team.</p></div>
+      ${statusBadge(app.status)}</div>
+    <div style="display:grid;grid-template-columns:1fr 340px;gap:20px" class="cart-grid">
+      <div class="card">
+        <div class="center" style="padding:8px 0 18px">
+          <div style="width:64px;height:64px;border-radius:18px;background:rgba(255,176,32,.14);color:var(--warn);display:flex;align-items:center;justify-content:center;margin:0 auto">${ic('clock', 30)}</div>
+          <h3 class="mt14" style="font-size:18px">Waiting for admin approval</h3>
+          <p class="small muted mt8" style="line-height:1.7">We received your ${usd(fee)} payment proof. Our team usually reviews vendor applications within 24 hours.</p>
+        </div>
+        <div class="kv"><span class="k">Vendor username</span><span class="v">@${esc(app.vendorUsername)}</span></div>
+        <div class="kv"><span class="k">Fee</span><span class="v">${usd(fee)}</span></div>
+        <div class="kv"><span class="k">Payment method</span><span class="v">${esc(app.methodLabel || '—')}</span></div>
+        <div class="kv"><span class="k">Submitted</span><span class="v">${dateLabel(app.createdAt)}</span></div>
+        ${app.proof ? `<div class="mt14"><div class="label mb6">Your uploaded slip</div><img src="${app.proof}" style="max-width:100%;max-height:320px;border-radius:12px;border:1px solid var(--border);cursor:pointer" data-act="vendor-view-proof" data-id="${app.id}"/></div>` : ''}
+        <div class="row gap8 mt16">
+          <button class="btn btn-ghost btn-sm" data-act="vendor-cancel-app" data-id="${app.id}">Cancel application</button>
+          <button class="btn btn-ghost btn-sm" data-act="support-chat">${ic('chat', 14)} Contact support</button>
+        </div>
+      </div>
+      <div class="col gap12">
+        <div class="card"><h3 style="font-size:15px">What happens next?</h3>
+          <ol class="tiny muted mt10" style="padding-left:18px;line-height:1.9">
+            <li>Admin verifies your payment slip.</li>
+            <li>Your vendor profile is activated.</li>
+            <li>You'll get a notification and the Vendor Hub appears in your menu.</li>
+          </ol></div>
+        <div class="wallet-card" style="padding:18px">
+          <div class="tiny" style="opacity:.8;letter-spacing:.08em;font-weight:700">VENDOR WALLET</div>
+          <div class="wallet-bal" style="font-size:26px">${coins(u.balance)} <span style="font-size:13px;opacity:.7">WC</span></div>
+          <div class="wallet-actions"><a href="#/deposit" class="btn">Deposit</a><a href="#/wallet" class="btn">Activity</a></div>
+        </div>
+      </div>
+    </div>
+    <style>@media(max-width:860px){.cart-grid{grid-template-columns:1fr!important}}</style>`;
+}
+
+App.vendorSlip = async function () {
+  const f = await pickFile({ accept: 'image/*' });
+  if (!f) return;
+  toast('Preparing receipt…');
+  const c = await compressImage(f, 1100, 0.7);
+  VENDOR_SLIP = await fileToDataURL(c);
+  const prev = document.getElementById('slipPreview');
+  const st = document.getElementById('slipStatus');
+  if (prev) prev.innerHTML = `<img src="${VENDOR_SLIP}" style="max-width:220px;border-radius:10px;border:1px solid var(--border)"/>`;
+  if (st) st.textContent = 'Receipt attached ✓';
+};
+
+App.applyVendor = async function () {
+  const u = me(); clearErrors();
+  const name = document.getElementById('vName').value.trim();
+  const p1 = document.getElementById('vPass').value, p2 = document.getElementById('vPass2').value;
+  if (!/^[a-zA-Z0-9._-]{3,24}$/.test(name)) return formError('vName', '3–24 characters: letters, numbers, dot, dash or underscore');
+  if (DB.vendors.some(v => v.username.toLowerCase() === name.toLowerCase())) return formError('vName', 'That vendor username is taken');
+  if ((DB.vendorApplications || []).some(a => a.status === 'pending' && a.vendorUsername.toLowerCase() === name.toLowerCase() && a.userId !== u.id)) return formError('vName', 'That vendor username is under review by another applicant');
+  if (!p1) return formError('vPass', 'Confirm your account password');
+  if (await hash(p1) !== u.pass) return formError('vPass', 'That password does not match your account');
+  if (p1 !== p2) return formError('vPass2', 'Passwords do not match');
+  const methodEl = document.querySelector('input[name="vpm"]:checked');
+  const methods = vendorPayMethods();
+  const method = methodEl ? methods.find(m => m.id === methodEl.value) : methods[0];
+  if (!method) return toast('No vendor payment account is configured — contact support', 'err');
+  if (!VENDOR_SLIP) return toast('Upload your payment slip / receipt', 'err');
+  if (!document.getElementById('vAgree').checked) return toast('Please confirm the fee was paid and accept the terms', 'err');
+  const planEl = document.querySelector('input[name="vplan"]:checked');
+  const plan = planEl ? vendorPlanById(planEl.value) : (DB.settings.vendorPlans || [])[0];
+  if (!plan) return toast('No vendor duration is configured — contact support', 'err');
+  const fee = Math.max(0, Number(plan.priceUsd) || 0);
+
+  DB.vendorApplications = DB.vendorApplications || [];
+  const app = {
+    id: uid('vap'), kind: 'new', userId: u.id, userName: u.fullName, username: u.username,
+    vendorUsername: name, feeUsd: fee, planId: plan.id, months: plan.months,
+    methodId: method.id, methodLabel: method.label + (method.network ? ' · ' + method.network : ''),
+    address: method.address, proof: VENDOR_SLIP, status: 'pending', note: '', createdAt: Date.now()
+  };
+  DB.vendorApplications.unshift(app);
+  notify('usr_admin', 'Vendor application · ' + usd(fee), `${u.fullName} (@${u.username}) applied as @${name} and uploaded a payment slip.`, '#/admin/vendor-requests', 'store');
+  notify(u.id, 'Vendor application submitted', 'Your payment slip is under review. You will be notified once approved.', '#/vendor', 'clock');
+  VENDOR_SLIP = null;
+  sync();
+  toast('Application submitted — awaiting admin approval', 'ok', 3600);
+  render();
+};
+
+App.vendorCancelApp = async function (id) {
+  const app = (DB.vendorApplications || []).find(a => a.id === id && a.userId === me().id);
+  if (!app) return;
+  if (!await confirmDialog({ title: 'Cancel application?', body: 'Your uploaded slip stays with the admin for audit. You can apply again later.', danger: true, ok: 'Cancel application' })) return;
+  DB.vendorApplications = DB.vendorApplications.filter(a => a.id !== id);
+  sync(); toast('Application cancelled', 'ok'); render();
+};
+
+App.vendorViewProof = function (id) {
+  const app = (DB.vendorApplications || []).find(a => a.id === id);
+  if (!app || !app.proof) return;
+  openModal(modalShell('Payment slip · @' + app.vendorUsername, `<img src="${app.proof}" style="width:100%;border-radius:12px;border:1px solid var(--border)"/>`, `<button class="btn btn-ghost" data-close style="width:100%">Close</button>`), { width: '560px' });
+};
+
+App.createVendor = async function () {
+  const u = me(); clearErrors();
+  const name = document.getElementById('vName').value.trim();
+  const p1 = document.getElementById('vPass').value, p2 = document.getElementById('vPass2').value;
+  if (!/^[a-zA-Z0-9._-]{3,24}$/.test(name)) return formError('vName', '3–24 characters: letters, numbers, dot, dash or underscore');
+  if (DB.vendors.some(v => v.username.toLowerCase() === name.toLowerCase())) return formError('vName', 'That vendor username is taken');
+  if (!p1) return formError('vPass', 'Confirm your account password');
+  if (await hash(p1) !== u.pass) return formError('vPass', 'That password does not match your account');
+  if (p1 !== p2) return formError('vPass2', 'Passwords do not match');
+  if (!document.getElementById('vAgree').checked) return toast('Please accept the Vendor Terms', 'err');
+  const v = {
+    id: uid('vnd'), userId: u.id, username: name, name: name, avatar: u.avatar,
+    rating: 5, trustScore: 80, sales: 0, revenue: 0, createdAt: Date.now(), status: 'active', completedSales: 0,
+    planMonths: 1, planId: (DB.settings.vendorPlans || [])[0] ? DB.settings.vendorPlans[0].id : null,
+    expiresAt: Date.now() + 30 * 86400000
+  };
+  DB.vendors.push(v);
+  u.vendorId = v.id;
+  notify('usr_admin', 'New vendor profile', `${u.fullName} opened a store as @${name}.`, '#/admin/vendors', 'store');
+  notify(u.id, 'Vendor profile created 🎉', 'Buy stock from the Company Marketplace and start selling.', '#/vendor/company', 'store');
+  sync(); toast('Vendor profile created', 'ok'); go('vendor');
+};
+
+function viewVendorFrozen(u, v) {
+  const apps = (DB.vendorApplications || []).filter(a => a.userId === u.id && a.kind === 'renewal').sort((a, b) => b.createdAt - a.createdAt);
+  const pending = apps.find(a => a.status === 'pending');
+  if (pending) {
+    return `<div class="page-head"><div><h1>Vendor account frozen</h1><p>Your subscription ended on ${vendorExpiryText(v)}.</p></div>${statusBadge('pending')}</div>
+      <div class="card">
+        <div class="center" style="padding:8px 0 16px">
+          <div style="width:64px;height:64px;border-radius:18px;background:rgba(255,176,32,.14);color:var(--warn);display:flex;align-items:center;justify-content:center;margin:0 auto">${ic('clock', 30)}</div>
+          <h3 class="mt14" style="font-size:18px">Renewal under review</h3>
+          <p class="small muted mt8">We received your ${usd(pending.feeUsd)} renewal payment slip for ${pending.months} month${pending.months > 1 ? 's' : ''}. Your store reopens as soon as the admin approves it.</p>
+        </div>
+        <div class="kv"><span class="k">Plan</span><span class="v">${pending.months} month${pending.months > 1 ? 's' : ''} · ${usd(pending.feeUsd)}</span></div>
+        <div class="kv"><span class="k">Submitted</span><span class="v">${dateLabel(pending.createdAt)}</span></div>
+        ${pending.proof ? `<img src="${pending.proof}" style="max-width:100%;max-height:300px;border-radius:12px;border:1px solid var(--border);margin-top:14px;cursor:pointer" data-act="vendor-view-proof" data-id="${pending.id}"/>` : ''}
+        <div class="row gap8 mt16"><button class="btn btn-ghost btn-sm" data-act="support-chat">${ic('chat', 14)} Contact support</button></div>
+      </div>`;
+  }
+  return viewVendorRenewForm(u, v, true);
+}
+
+function viewVendorRenewForm(u, v, frozen) {
+  const plans = (DB.settings.vendorPlans || []).slice().sort((a, b) => a.months - b.months);
+  const pay = DB.settings.vendorPayments || {};
+  const methods = vendorPayMethods();
+  const fee = plans.length ? Number(plans[0].priceUsd) : 0;
+  return `<div class="page-head"><div><h1>${frozen ? 'Renew vendor account' : 'Extend vendor account'}</h1>
+      <p>${frozen ? 'Your vendor account is frozen — renew to reopen your store.' : 'Current access ends ' + vendorExpiryText(v) + '.'}</p></div>
+    ${frozen ? '<span class="badge badge-danger">Frozen</span>' : '<span class="badge badge-success">Active · ' + (vendorDaysLeft(v) || 0) + ' days left</span>'}</div>
+    ${frozen ? `<div class="card mb16" style="border-color:rgba(255,95,116,.35);background:rgba(255,95,116,.06)">
+      <div class="small" style="font-weight:650;color:var(--danger)">Your store and its products are hidden from the marketplace until renewal.</div>
+    </div>` : ''}
+    <div style="display:grid;grid-template-columns:1.05fr .95fr;gap:20px" class="cart-grid">
+      <div class="card">
+        <div class="label mb10">Choose a renewal duration</div>
+        <div class="col gap8">${plans.map((pl, i) => `<label class="list-item" style="cursor:pointer;align-items:center">
+          <input type="radio" name="vplan" value="${esc(pl.id)}" data-price="${pl.priceUsd}" data-months="${pl.months}" ${i === 0 ? 'checked' : ''} onchange="A.updatePlanFee(this)" style="accent-color:var(--accent)"/>
+          <div class="grow"><div class="small" style="font-weight:650">${pl.months} month${pl.months > 1 ? 's' : ''}</div>
+            <div class="tiny muted">${frozen ? 'Reopens immediately after approval' : 'Added to your current expiry date'}</div></div>
+          <span style="font-family:var(--display);font-weight:800;color:var(--accent)">${usd(pl.priceUsd)}</span></label>`).join('')}</div>
+        <div class="label mt16 mb10">Pay <b id="planFee">${usd(fee)}</b> to one of these company accounts</div>
+        ${methods.length ? `<div class="col gap8">${methods.map((m, i) => `<label class="list-item" style="cursor:pointer;align-items:flex-start">
+          <input type="radio" name="vpm" value="${esc(m.id)}" ${i === 0 ? 'checked' : ''} style="margin-top:3px;accent-color:var(--accent)"/>
+          <div class="grow" style="min-width:0"><div class="small" style="font-weight:650">${esc(m.label)} ${m.network ? `<span class="badge" style="font-size:9px">${esc(m.network)}</span>` : ''}</div>
+            <div class="tiny muted" style="word-break:break-all;margin-top:3px">${esc(m.address)}</div></div>
+          <button type="button" class="btn-icon" data-act="copy" data-id="${esc(m.address)}" style="width:30px;height:30px">${ic('copy', 13)}</button></label>`).join('')}</div>`
+          : '<p class="tiny muted">No vendor payment account configured — contact support.</p>'}
+        <div class="mt16"><div class="label mb8">Payment slip / receipt</div>
+          <div class="row gap10"><button class="btn btn-ghost btn-sm" data-act="vendor-slip">${ic('image', 14)} Upload slip</button>
+          <span class="tiny muted" id="slipStatus">${VENDOR_SLIP ? 'Receipt attached ✓' : 'JPG or PNG screenshot'}</span></div>
+          <div id="slipPreview" class="mt10">${VENDOR_SLIP ? `<img src="${VENDOR_SLIP}" style="max-width:220px;border-radius:10px;border:1px solid var(--border)"/>` : ''}</div></div>
+        <button class="btn btn-primary btn-block btn-lg mt16" id="renewVendorBtn">${ic('refresh', 16)} Submit renewal for approval</button>
+      </div>
+      <div class="col gap12">
+        <div class="wallet-card" style="padding:18px">
+          <div class="tiny" style="opacity:.85;letter-spacing:.08em;font-weight:700">CURRENT EXPIRY</div>
+          <div class="wallet-bal" style="font-size:26px">${vendorExpiryText(v)}</div>
+          <div class="tiny" style="opacity:.8;margin-top:4px">${frozen ? 'Frozen' : (vendorDaysLeft(v) || 0) + ' days remaining'}</div>
+        </div>
+        <div class="card"><h3 style="font-size:15px">Renewal rules</h3>
+          <ul class="tiny muted mt10" style="padding-left:18px;line-height:1.9">
+            <li>Pick any duration and pay the exact fee.</li>
+            <li>Upload the receipt — admin approves the renewal.</li>
+            <li>${frozen ? 'Store reopens on approval.' : 'New months are added to your current expiry.'}</li>
+            <li>Unsold stock and listings are preserved.</li>
+          </ul></div>
+      </div>
+    </div>
+    <style>@media(max-width:860px){.cart-grid{grid-template-columns:1fr!important}}</style>`;
+}
+
+App.updatePlanFee = function (el) {
+  const fee = el && el.getAttribute('data-price');
+  const a = document.getElementById('planFee'); if (a && fee != null) a.textContent = usd(Number(fee));
+  const b = document.getElementById('planSummaryFee'); if (b && fee != null) b.textContent = usd(Number(fee));
+};
+
+App.applyVendorRenew = async function () {
+  const u = me(); const v = vendorOf(u.id);
+  if (!v) return;
+  const planEl = document.querySelector('input[name="vplan"]:checked');
+  const plan = planEl ? vendorPlanById(planEl.value) : (DB.settings.vendorPlans || [])[0];
+  if (!plan) return toast('Choose a renewal duration', 'err');
+  const methodEl = document.querySelector('input[name="vpm"]:checked');
+  const methods = vendorPayMethods();
+  const method = methodEl ? methods.find(m => m.id === methodEl.value) : methods[0];
+  if (!method) return toast('No vendor payment account configured', 'err');
+  if (!VENDOR_SLIP) return toast('Upload your payment slip / receipt', 'err');
+  DB.vendorApplications = DB.vendorApplications || [];
+  DB.vendorApplications.unshift({
+    id: uid('vap'), kind: 'renewal', userId: u.id, vendorId: v.id,
+    userName: u.fullName, username: u.username, vendorUsername: v.username,
+    feeUsd: Number(plan.priceUsd) || 0, planId: plan.id, months: plan.months,
+    methodId: method.id, methodLabel: method.label + (method.network ? ' · ' + method.network : ''),
+    address: method.address, proof: VENDOR_SLIP, status: 'pending', note: '', createdAt: Date.now()
+  });
+  notify('usr_admin', 'Vendor renewal · @' + v.username, `${u.fullName} paid ${usd(plan.priceUsd)} for ${plan.months} month${plan.months > 1 ? 's' : ''} and uploaded a slip.`, '#/admin/vendor-requests', 'clock');
+  notify(u.id, 'Renewal submitted', 'Your payment slip is under review. Access resumes once approved.', '#/vendor', 'clock');
+  VENDOR_SLIP = null;
+  sync(); toast('Renewal submitted for approval', 'ok'); render();
+};
+
+function viewVendorDash(u, v, tab) {
+  const products = DB.products.filter(p => p.vendorId === v.id);
+  const listed = products.filter(p => p.active && p.stock > 0);
+  const soldItems = DB.orders.reduce((s, o) => s + o.items.filter(i => products.some(p => p.id === i.productId)).reduce((x, i) => x + i.qty, 0), 0);
+  const revenue = DB.orders.reduce((s, o) => s + (o.vendorId === v.id ? o.totalCoins : 0), 0);
+  const pendingOrders = DB.orders.filter(o => o.vendorId === v.id && o.status !== 'delivered').length;
+  return `<div class="page-head"><div>
+      <span class="badge badge-accent mb10">${ic('store', 12)} Vendor</span>
+      <h1>${esc(v.name)}</h1><p>@${esc(v.username)} · ${v.rating.toFixed(1)} ★ · Trust ${v.trustScore}/100</p></div>
+      <div class="row gap8"><a href="#/market" class="btn btn-ghost btn-sm">${ic('bag', 15)} View store</a>
+      <a href="#/vendor/renew" class="btn btn-ghost btn-sm">${ic('refresh', 15)} Renew</a>
+      <a href="#/vendor/company" class="btn btn-primary btn-sm">${ic('plus', 15)} Buy stock</a></div></div>
+    <div class="card mb16" style="padding:12px 14px">
+      <div class="between wrap gap10">
+        <div class="row gap8"><span class="badge badge-success">${ic('check', 11)} Active vendor</span>
+          <span class="tiny muted">Subscription ends <b style="color:var(--text)">${vendorExpiryText(v)}</b> · ${vendorDaysLeft(v)} days left</span></div>
+        <button class="btn btn-xs btn-ghost" data-nav="#/vendor/renew">${ic('refresh', 12)} Extend / renew</button>
+      </div>
+    </div>
+    <div class="wallet-card mb16">
+      <div class="between"><div class="tiny" style="opacity:.8;letter-spacing:.08em;font-weight:700">VENDOR BALANCE</div>${ic('wallet', 18)}</div>
+      <div class="row" style="gap:8px;align-items:baseline;margin-top:6px"><span class="wallet-bal">${coins(u.balance)}</span><span class="small" style="opacity:.75">WC</span></div>
+      <div class="tiny" style="opacity:.8;margin-top:4px">≈ ${usd(coinsToUsd(u.balance))} USD</div>
+      <div class="wallet-actions">
+        <a href="#/deposit" class="btn">Deposit</a><a href="#/withdraw" class="btn">Withdraw</a><a href="#/vendor/products" class="btn">Inventory</a>
+      </div>
+    </div>
+    <div class="grid-kpi mb16">
+      ${[['Completed sales', fmtNum(v.sales || 0), 'bag'], ['Revenue', coins(revenue) + ' WC', 'trend'], ['Listed products', fmtNum(listed.length), 'tag'], ['Pending orders', fmtNum(pendingOrders), 'truck']]
+        .map(([k, val, icon]) => `<div class="kpi"><div class="ic">${ic(icon, 15)}</div><div class="v">${val}</div><div class="k">${k}</div><span class="spark">${ic(icon, 52)}</span></div>`).join('')}
+    </div>
+    <div class="grid2" style="display:grid;grid-template-columns:1fr 1fr;gap:14px" class="dash2">
+      <div class="card"><div class="section-title"><h3>Vendor actions</h3></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          ${[['box', 'Buy from company', '#/vendor/company', 'Wholesale stock'],
+             ['tag', 'My products', '#/vendor/products', products.length + ' items'],
+             ['truck', 'Orders', '#/vendor/orders', pendingOrders + ' pending'],
+             ['trend', 'Sales history', '#/vendor/history', v.sales + ' sales']]
+            .map(([i, t, h, s]) => `<a href="${h}" class="panel" style="padding:12px;display:flex;flex-direction:column;gap:7px;border-radius:12px">
+              <span style="width:30px;height:30px;border-radius:8px;background:rgba(46,230,201,.12);color:var(--accent);display:flex;align-items:center;justify-content:center">${ic(i, 15)}</span>
+              <span class="small" style="font-weight:600">${t}</span><span class="tiny muted">${s}</span></a>`).join('')}
+        </div>
+      </div>
+      <div class="card"><div class="section-title"><h3>Recent sales</h3><a href="#/vendor/orders" class="link tiny">All orders</a></div>
+        ${DB.orders.filter(o => o.vendorId === v.id).slice(0, 4).length ? DB.orders.filter(o => o.vendorId === v.id).slice(0, 4).map(o => `<div class="row between" style="padding:8px 0;border-bottom:1px dashed var(--border)">
+          <div><div class="small" style="font-weight:600">${esc(o.ref)}</div><div class="tiny muted">${o.items[0] ? esc(o.items[0].name) : ''}</div></div>
+          <div class="row gap8">${statusBadge(o.status)}<span class="small" style="font-weight:700">${coins(o.totalCoins)} WC</span></div></div>`).join('')
+        : `<div class="empty" style="padding:16px"><p>No sales yet. List a product to get started.</p></div>`}
+      </div>
+    </div>
+    <style>@media(max-width:860px){.dash2{grid-template-columns:1fr!important}}</style>`;
+}
+
+/* ---------------- company marketplace (vendors) ---------------- */
+VIEWS.vendorCompany = undefined;
+VIEWS.vendor_company = function () {
+  return `<div class="page-head"><div><button class="btn btn-ghost btn-sm mb10" data-nav="#/vendor">${ic('back', 14)} Vendor hub</button>
+      <h1>Company Marketplace</h1><p>Wholesale stock for vendors only. Buy with your Whale Coin balance.</p></div>
+      <span class="badge badge-accent">${ic('shield', 12)} Wholesale</span></div>
+    ${DB.companyProducts.length ? `<div class="grid-products">${DB.companyProducts.map(p => `<div class="product-card">
+      ${productThumb(p, 150)}
+      <div class="product-body">
+        <div class="tiny muted">${esc(p.category)}</div>
+        <div class="product-name">${esc(p.name)}</div>
+        <div class="price">${coins(p.priceUsd / COIN_USD)} <span class="tiny muted">WC</span></div>
+        <div class="tiny muted">${usd(p.priceUsd)} · ${p.stock} in company stock</div>
+        <button class="btn btn-primary btn-sm mt6" data-act="buy-company" data-id="${p.id}" ${p.stock > 0 ? '' : 'disabled'}>${ic('box', 14)} ${p.stock > 0 ? 'Buy stock' : 'Out of stock'}</button>
+      </div></div>`).join('')}</div>` : `<div class="card empty"><div class="ic">${ic('box', 26)}</div><h3>No wholesale products yet</h3><p>The admin hasn't added company products. Check back soon.</p></div>`}`;
+};
+
+App.buyCompany = function (id) {
+  const u = me(); const p = DB.companyProducts.find(x => x.id === id);
+  if (!p) return;
+  const v = vendorOf(u.id); if (!v) return toast('Vendor profile required', 'err');
+  openModal(modalShell('Buy stock · ' + p.name, `
+    <div class="row gap12 mb16"><div style="width:64px;height:64px;border-radius:12px;overflow:hidden;background:#0b2230;display:flex;align-items:center;justify-content:center;font-size:26px">${p.image ? `<img src="${p.image}" style="width:100%;height:100%;object-fit:cover"/>` : (p.emoji || '📦')}</div>
+      <div><div class="small" style="font-weight:650">${esc(p.name)}</div><div class="tiny muted mt6">${coins(p.priceUsd / COIN_USD)} WC each · ${usd(p.priceUsd)}</div><div class="tiny muted">Company stock: ${p.stock}</div></div></div>
+    <div class="field"><label class="label">Quantity</label><input class="input" id="bq" type="number" min="1" max="${p.stock}" value="1" inputmode="numeric"/></div>
+    <div class="panel" style="padding:12px">
+      <div class="between"><span class="tiny muted">Total cost</span><span id="bqTotal" style="font-weight:700">${coins(p.priceUsd / COIN_USD)} WC</span></div>
+      <div class="between mt6"><span class="tiny muted">Your balance</span><span class="tiny" style="font-weight:600">${coins(u.balance)} WC</span></div>
+      <div class="between mt6"><span class="tiny muted">After purchase</span><span id="bqAfter" class="tiny" style="font-weight:600">${coins(u.balance - p.priceUsd / COIN_USD)} WC</span></div>
+    </div>`,
+    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="confirm-company" data-id="${p.id}">Confirm purchase</button>`));
+  const upd = () => {
+    const q = Math.max(1, Math.min(p.stock, Number(document.getElementById('bq').value) || 1));
+    const total = p.priceUsd * q / COIN_USD;
+    document.getElementById('bqTotal').textContent = coins(total) + ' WC';
+    document.getElementById('bqAfter').textContent = coins(u.balance - total) + ' WC';
+    document.getElementById('bqAfter').style.color = (u.balance - total) < 0 ? 'var(--danger)' : 'var(--text)';
+  };
+  document.getElementById('bq').addEventListener('input', upd);
+};
+App.confirmCompany = function (id) {
+  const u = me(); const p = DB.companyProducts.find(x => x.id === id);
+  const v = vendorOf(u.id);
+  if (!p || !v) return;
+  const q = Math.max(1, Math.min(p.stock, Number(document.getElementById('bq').value) || 1));
+  const totalUsd = p.priceUsd * q;
+  const totalCoins = Math.round(totalUsd / COIN_USD * 100) / 100;
+  if (u.balance < totalCoins) return toast('Insufficient balance — deposit Whale Coins first', 'err');
+  u.balance = Math.round((u.balance - totalCoins) * 100) / 100;
+  p.stock -= q;
+  const existing = DB.products.find(x => x.vendorId === v.id && x.companyProductId === p.id && !x.active);
+  let inventory;
+  if (existing) { existing.stock += q; inventory = existing; }
+  else {
+    inventory = {
+      id: uid('prd'), vendorId: v.id, companyProductId: p.id, name: p.name, category: p.category,
+      priceUsd: null, costUsd: p.priceUsd, stock: q, image: p.image, emoji: p.emoji,
+      description: p.description, active: false, starUsers: [], stars: 0, createdAt: Date.now()
+    };
+    DB.products.push(inventory);
+  }
+  DB.purchases = DB.purchases || [];
+  DB.purchases.unshift({
+    id: uid('buy'), vendorId: v.id, productId: p.id, companyProductId: p.id,
+    inventoryId: inventory.id, name: p.name, qty: q, totalUsd, totalCoins,
+    status: 'active', createdAt: Date.now()
+  });
+  tx(u.id, 'stock', 'Company stock · ' + p.name + ' ×' + q, -totalCoins);
+  notify('usr_admin', 'Vendor stock purchase', `@${v.username} bought ${q} × ${p.name} (${coins(totalCoins)} WC).`, '#/admin/products', 'box');
+  notify(u.id, 'Stock added to inventory', `${q} × ${p.name} is ready. Set a selling price to publish it.`, '#/vendor/products', 'tag');
+  sync(); closeModal(); toast('Stock purchased — set a selling price', 'ok'); go('vendor/products');
+};
+
+/* ---------------- vendor products ---------------- */
+VIEWS.vendorProducts = function () {
+  const u = me(); const v = vendorOf(u.id);
+  if (!v) { setTimeout(() => go('vendor'), 10); return ''; }
+  const products = DB.products.filter(p => p.vendorId === v.id);
+  return `<div class="page-head"><div><button class="btn btn-ghost btn-sm mb10" data-nav="#/vendor">${ic('back', 14)} Vendor hub</button>
+      <h1>My products</h1><p>${products.length} item${products.length === 1 ? '' : 's'} in inventory</p></div>
+      <a href="#/vendor/company" class="btn btn-primary btn-sm">${ic('plus', 15)} Buy stock</a></div>
+    ${products.length ? `<div class="col gap10">${products.map(p => `<div class="card" style="padding:12px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+      <div style="width:64px;height:64px;border-radius:11px;overflow:hidden;flex:none;background:#0b2230;display:flex;align-items:center;justify-content:center;font-size:26px">${p.image ? `<img src="${p.image}" style="width:100%;height:100%;object-fit:cover"/>` : (p.emoji || '📦')}</div>
+      <div class="grow" style="min-width:140px">
+        <div class="small" style="font-weight:650">${esc(p.name)}</div>
+        <div class="tiny muted mt6">${esc(p.category)} · Stock ${p.stock} · Cost ${coins(p.costUsd / COIN_USD)} WC</div>
+        <div class="row gap6 mt6">
+          ${p.active && p.stock > 0 ? `<span class="badge badge-success">Live on marketplace</span>` : p.priceUsd ? `<span class="badge badge-warn">Hidden · ${p.stock === 0 ? 'out of stock' : 'paused'}</span>` : `<span class="badge">Not listed</span>`}
+          ${p.priceUsd ? `<span class="badge">${coins(p.priceUsd / COIN_USD)} WC · ${usd(p.priceUsd)}</span>` : ''}
+        </div>
+      </div>
+      <div class="row gap6" style="flex-wrap:wrap">
+        <button class="btn btn-sm ${p.active ? 'btn-ghost' : 'btn-primary'}" data-act="sell-product" data-id="${p.id}">${p.priceUsd ? ic('edit', 14) : ic('tag', 14)} ${p.priceUsd ? 'Edit listing' : 'Sell'}</button>
+        ${p.active ? `<button class="btn btn-sm btn-ghost" data-act="toggle-product" data-id="${p.id}">Pause</button>` : (p.priceUsd ? `<button class="btn btn-sm btn-ghost" data-act="toggle-product" data-id="${p.id}">Publish</button>` : '')}
+        <button class="btn-icon" data-act="delete-product" data-id="${p.id}" style="width:34px;height:34px;color:var(--danger)">${ic('trash', 15)}</button>
+      </div>
+    </div>`).join('')}</div>` : `<div class="card empty"><div class="ic">${ic('tag', 26)}</div><h3>No products yet</h3><p>Buy stock from the Company Marketplace, then set your selling price.</p><a href="#/vendor/company" class="btn btn-primary">${ic('box', 16)} Buy from company</a></div>`}`;
+};
+
+App.sellProduct = function (id) {
+  const u = me(); const p = DB.products.find(x => x.id === id);
+  if (!p) return;
+  openModal(modalShell((p.priceUsd ? 'Edit listing' : 'Sell product') + ' · ' + p.name, `
+    <div class="field"><label class="label">Selling price (USD)</label>
+      <div class="input-wrap"><span class="ic">$</span><input class="input" id="sellUsd" type="number" min="0.5" step="0.5" value="${p.priceUsd || Math.round(p.costUsd * 1.25)}" inputmode="decimal"/></div>
+      <div class="help">Auto-converted to Whale Coin at $0.50 per coin.</div></div>
+    <div class="panel" style="padding:12px;margin-bottom:14px">
+      <div class="between"><span class="tiny muted">Customer pays</span><span id="sellCoins" style="font-weight:700">0 WC</span></div>
+      <div class="between mt6"><span class="tiny muted">Your cost</span><span class="tiny">${coins(p.costUsd / COIN_USD)} WC</span></div>
+      <div class="between mt6"><span class="tiny muted">Profit per unit</span><span id="sellProfit" class="tiny" style="font-weight:700;color:var(--success)">—</span></div>
+    </div>
+    <div class="field"><label class="label">Quantity available</label><input class="input" id="sellQty" type="number" min="0" max="${p.stock}" value="${p.stock}" inputmode="numeric"/>
+      <div class="help">You hold ${p.stock} in inventory. The listing hides automatically at 0.</div></div>`,
+    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="save-listing" data-id="${p.id}">${ic('check', 15)} Publish listing</button>`));
+  const upd = () => {
+    const usdVal = Number(document.getElementById('sellUsd').value) || 0;
+    document.getElementById('sellCoins').textContent = coins(usdVal / COIN_USD) + ' WC';
+    document.getElementById('sellProfit').textContent = coins((usdVal - p.costUsd) / COIN_USD) + ' WC';
+  };
+  document.getElementById('sellUsd').addEventListener('input', upd); upd();
+};
+App.saveListing = function (id) {
+  const u = me(); const p = DB.products.find(x => x.id === id);
+  if (!p) return;
+  const usdVal = Math.round(Number(document.getElementById('sellUsd').value) * 100) / 100;
+  const qty = Math.max(0, Math.min(p.stock, Number(document.getElementById('sellQty').value) || 0));
+  if (!(usdVal > 0)) return toast('Enter a selling price', 'err');
+  p.priceUsd = usdVal;
+  if (qty < p.stock) {
+    // keep the unlisted remainder as a separate hidden inventory record
+    DB.products.push({
+      id: uid('prd'), vendorId: p.vendorId, companyProductId: p.companyProductId,
+      name: p.name, category: p.category, priceUsd: null, costUsd: p.costUsd,
+      stock: p.stock - qty, image: p.image, emoji: p.emoji, description: p.description,
+      active: false, starUsers: [], stars: 0, createdAt: Date.now()
+    });
+  }
+  p.stock = qty;
+  p.active = qty > 0;
+  sync(); closeModal();
+  toast(p.active ? 'Listed on the public marketplace' : 'Listing saved (hidden — no stock)', 'ok');
+  render();
+};
+App.toggleProduct = function (id) {
+  const p = DB.products.find(x => x.id === id); if (!p) return;
+  p.active = !p.active;
+  sync(); toast(p.active ? 'Product published' : 'Product paused', 'ok'); render();
+};
+App.deleteProduct = async function (id) {
+  if (!await confirmDialog({ title: 'Delete product?', body: 'This removes it from your inventory and the marketplace.', danger: true, ok: 'Delete' })) return;
+  DB.products = DB.products.filter(p => p.id !== id);
+  sync(); render();
+};
+
+VIEWS.vendorOrders = function () {
+  const u = me(); const v = vendorOf(u.id);
+  if (!v) { setTimeout(() => go('vendor'), 10); return ''; }
+  const orders = DB.orders.filter(o => o.vendorId === v.id);
+  return `<div class="page-head"><div><button class="btn btn-ghost btn-sm mb10" data-nav="#/vendor">${ic('back', 14)} Vendor hub</button>
+    <h1>Orders</h1><p>Sales of your listed products.</p></div><span class="badge">${orders.length} total</span></div>
+    ${orders.length ? `<div class="col gap10">${orders.map(o => `<div class="card">
+      <div class="between wrap gap10"><div><div class="small" style="font-weight:650">${esc(o.ref)}</div><div class="tiny muted mt6">${dateLabel(o.createdAt)}</div></div>
+        <div class="row gap8">${statusBadge(o.status)}<span style="font-weight:700">${coins(o.totalCoins)} WC</span></div></div>
+      <div class="divider"></div>
+      <div class="tiny muted">${o.items.map(i => esc(i.name) + ' ×' + i.qty).join(', ')}</div>
+      <div class="row gap8 mt10"><button class="btn btn-sm btn-ghost" data-act="vendor-order-detail" data-id="${o.id}">${ic('eye', 14)} Buyer & delivery</button></div>
+    </div>`).join('')}</div>` : `<div class="card empty"><div class="ic">${ic('truck', 26)}</div><h3>No orders yet</h3><p>Your sales will appear here with buyer delivery details.</p></div>`}`;
+};
+App.vendorOrderDetail = function (id) {
+  const o = DB.orders.find(x => x.id === id); if (!o) return;
+  openModal(modalShell('Order ' + o.ref, `
+    <div class="between mb10">${statusBadge(o.status)}<span style="font-weight:700">${coins(o.totalCoins)} WC</span></div>
+    <div class="small" style="font-weight:650;margin-bottom:6px">Buyer delivery details</div>
+    <div class="kv"><span class="k">Name</span><span class="v">${esc(o.delivery.fullName)}</span></div>
+    <div class="kv"><span class="k">Phone</span><span class="v">${esc(o.delivery.phone)}</span></div>
+    <div class="kv"><span class="k">Email</span><span class="v">${esc(o.delivery.email)}</span></div>
+    <div class="kv"><span class="k">Country</
