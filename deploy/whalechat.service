@@ -1,0 +1,20 @@
+[Unit]
+Description=WhaleChat
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/whalechat
+ExecStart=/usr/bin/node /opt/whalechat/server.js
+Restart=always
+RestartSec=2
+Environment=NODE_ENV=production
+Environment=PORT=8090
+Environment=DATA_DIR=/var/lib/whalechat
+Environment=PUBLIC_URL=https://chat.yourdomain.com
+Environment=VAPID_EMAIL=support@whalechat.app
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target
