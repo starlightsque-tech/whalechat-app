@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: whalechat
+    runtime: node
+    plan: starter
+    buildCommand: node scripts/prepare-assets.js && npm install --omit=dev
+    startCommand: node server.js
+    healthCheckPath: /api/health
+    disk:
+      name: whalechat-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: DATA_DIR
+        value: /var/data
+      - key: VAPID_EMAIL
+        value: support@whalechat.app
