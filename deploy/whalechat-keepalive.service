@@ -1,0 +1,14 @@
+[Unit]
+Description=WhaleChat keepalive (health check + auto-restart)
+After=network-online.target whalechat.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=whalechat
+Environment=APP_DIR=/opt/whalechat
+Environment=PORT=8090
+Environment=DATA_DIR=/var/lib/whalechat
+Environment=PUBLIC_URL=https://chat.yourdomain.com
+Environment=TUNNEL=0
+ExecStart=/opt/whalechat/deploy/keepalive.sh
