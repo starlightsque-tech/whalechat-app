@@ -1,0 +1,32 @@
+{
+  "name": "WhaleChat — Chat, shop and get paid",
+  "short_name": "WhaleChat",
+  "description": "WhaleChat brings your conversations, your store and your wallet together — with referral rewards for every friend you invite.",
+  "id": "/?source=pwa",
+  "start_url": "./whalechat.html",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui", "browser"],
+  "orientation": "portrait-primary",
+  "background_color": "#04101a",
+  "theme_color": "#04101a",
+  "lang": "en",
+  "dir": "ltr",
+  "categories": ["social", "shopping", "finance", "productivity"],
+  "icons": [
+    { "src": "./assets/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./assets/icon-384.png", "sizes": "384x384", "type": "image/png", "purpose": "any" },
+    { "src": "./assets/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "./assets/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "./assets/logo-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" }
+  ],
+  "screenshots": [
+    { "src": "./assets/hero.jpg", "sizes": "924x576", "type": "image/jpeg", "form_factor": "wide", "label": "WhaleChat — one calm place" }
+  ],
+  "shortcuts": [
+    { "name": "Chats", "short_name": "Chats", "url": "./whalechat.html#/chat", "icons": [{ "src": "./assets/logo-192.png", "sizes": "192x192" }] },
+    { "name": "Marketplace", "short_name": "Shop", "url": "./whalechat.html#/market", "icons": [{ "src": "./assets/logo-192.png", "sizes": "192x192" }] },
+    { "name": "Wallet", "short_name": "Wallet", "url": "./whalechat.html#/wallet", "icons": [{ "src": "./assets/logo-192.png", "sizes": "192x192" }] }
+  ],
+  "prefer_related_applications": false
+}
