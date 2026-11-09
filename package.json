@@ -2,13 +2,19 @@
   "name": "whalechat",
   "version": "3.2.0",
   "private": true,
-  "description": "WhaleChat — chat, marketplace and wallet. Web app + sync server + Android/iOS shells.",
+  "description": "WhaleChat \u2014 chat, marketplace and wallet. Web app + sync server + Android/iOS shells.",
   "main": "server.js",
-  "engines": { "node": ">=18" },
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
     "build:mobile": "node scripts/build-mobile.mjs"
   },
-  "dependencies": { "web-push": "^3.6.7" }
+  "dependencies": {
+    "web-push": "^3.6.7",
+    "nodemailer": "^6.9.14",
+    "pg": "^8.11.5"
+  }
 }
