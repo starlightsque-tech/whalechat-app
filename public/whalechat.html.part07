@@ -1,4 +1,66 @@
-s?:\/\/[^\s]+$/i.test(String(dest).trim())) return '';
+at in Chrome or Safari to install.</div></div>
+    </div>`}
+    <div class="panel mt14" style="padding:11px 12px"><div class="tiny muted" style="line-height:1.6">Installed apps open full-screen, keep you signed in and receive push notifications when closed.</div></div>`,
+    `<button class="btn btn-primary" data-close style="width:100%">Got it</button>`), { width: '460px' });
+};
+
+/* ---------------- happy new month ---------------- */
+let WISH_SHOWN = false;
+function maybeNewMonthWish() {
+  const u = me();
+  if (!u || WISH_SHOWN) return;
+  const now = new Date();
+  if (now.getDate() > 7) return;
+  const key = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+  if (u.lastMonthWish === key) return;
+  if (document.getElementById('overlay') && document.getElementById('overlay').innerHTML.trim()) return;
+  if (document.getElementById('storyRoot')) return;
+
+  WISH_SHOWN = true;
+  u.lastMonthWish = key;
+  const month = now.toLocaleString('en-US', { month: 'long' });
+  const year = now.getFullYear();
+  notify(u.id, 'Happy new month 🎉', `Welcome to ${month}! Wishing you a month full of great chats, sales and Whale Coin rewards.`, '#/home', 'gift');
+  persist();
+  const colors = ['#2ee6c9', '#3aa0ff', '#ffc861', '#ff5f74', '#b388ff'];
+  let confetti = '';
+  for (let i = 0; i < 26; i++) {
+    confetti += `<i style="left:${(i * 3.7) % 100}%;top:${-10 - (i % 5) * 16}px;background:${colors[i % colors.length]};animation-delay:${(i % 10) * .22}s"></i>`;
+  }
+  openModal(`<div class="month-wish">
+    <div class="confetti">${confetti}</div>
+    <div class="mw-emoji">🎉</div>
+    <h2>Happy New Month!</h2>
+    <div class="mw-month">${month} ${year}</div>
+    <p>Wishing you a wonderful month ahead, ${esc(u.fullName.split(' ')[0] || u.username)}. Thank you for being part of WhaleChat — enjoy new chats, new sales and new rewards.</p>
+    <div class="row" style="justify-content:center;margin-top:20px">
+      <button class="btn btn-primary" data-close>Let's go 🐋</button>
+    </div>
+  </div>`, { width: '440px' });
+  const box = document.querySelector('.modal-back');
+  if (box) box.style.background = 'rgba(2,8,14,.82)';
+}
+
+/* keep Smartsupp in sync with the signed-in user */
+let LAST_SMARTSUPP_USER = null;
+function maybeIdentifySmartsupp() {
+  const u = me();
+  if (!u) return;
+  if (LAST_SMARTSUPP_USER === u.id) return;
+  if (smartsuppReady()) { LAST_SMARTSUPP_USER = u.id; smartsuppIdentify(); }
+}
+setInterval(maybeIdentifySmartsupp, 2500);
+/* =========================================================================
+   Clean links, referral capture, automatic update check
+   ========================================================================= */
+function appLinkBase() {
+  // Admins can publish a custom public link (Admin -> Settings -> App link).
+  // It is only honoured when a destination exists, so a half-filled setting can
+  // never produce a shareable link that goes nowhere.
+  try {
+    const raw = (DB && DB.settings && DB.settings.appLink) || '';
+    const dest = (DB && DB.settings && DB.settings.appLinkDestination) || '';
+    if (!/^https?:\/\/[^\s]+$/i.test(String(dest).trim())) return '';
     const v = String(raw).trim().replace(/\/+$/, '');
     if (/^https?:\/\/[^\s]+$/i.test(v)) return v;
   } catch (e) {}
