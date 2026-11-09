@@ -1,0 +1,11 @@
+node_modules/
+data/
+.env
+*.log
+mobile/www/
+mobile/android/.gradle/
+mobile/android/app/build/
+mobile/android/local.properties
+mobile/ios/App/Pods/
+*.apk
+*.zip
