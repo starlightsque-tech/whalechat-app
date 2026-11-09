@@ -1,0 +1,11 @@
+[Unit]
+Description=Run WhaleChat keepalive every 2 minutes
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=2min
+AccuracySec=10s
+Unit=whalechat-keepalive.service
+
+[Install]
+WantedBy=timers.target
