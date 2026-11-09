@@ -1,8 +1,8 @@
 {
-  "version": "3.5.2",
-  "build": "2026-11-09T19:57:20Z",
+  "version": "3.6.0",
+  "build": "2026-11-09T22:02:24Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.5.2 - live release with branded-link redirects and a fresh sync endpoint.",
-  "releasedAt": "2026-11-09T19:57:20Z",
+  "notes": "WhaleChat 3.6.0 - Outlook transactional email (welcome + delivery), Postgres-backed storage so releases never wipe accounts.",
+  "releasedAt": "2026-11-09T22:02:24Z",
   "minimum": "3.0.0"
 }
