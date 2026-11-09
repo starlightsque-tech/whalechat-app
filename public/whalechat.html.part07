@@ -1,0 +1,946 @@
+s?:\/\/[^\s]+$/i.test(String(dest).trim())) return '';
+    const v = String(raw).trim().replace(/\/+$/, '');
+    if (/^https?:\/\/[^\s]+$/i.test(v)) return v;
+  } catch (e) {}
+  return '';
+}
+function appLink() {
+  const custom = appLinkBase();
+  if (custom) return custom + '/';
+  if (window.__WC_SERVER__) return location.origin + '/';
+  return location.origin + location.pathname;
+}
+function urlHost(u) {
+  try { return new URL(u, location.origin).hostname.toLowerCase(); } catch (e) { return ''; }
+}
+/* The main app URL that every custom/branded link redirects to. */
+function appDestinationBase() {
+  try {
+    const raw = String((DB && DB.settings && DB.settings.appLinkDestination) || '').trim();
+    if (/^https?:\/\/[^\s]+$/i.test(raw)) return raw.replace(/\/+$/, '');
+  } catch (e) {}
+  return '';
+}
+function destinationLink(code) {
+  const raw = appDestinationBase();
+  if (!raw) return '';
+  try {
+    const u = new URL(raw, location.origin);
+    if (code) {
+      const c = String(code).toUpperCase();
+      if (/\.html?$/i.test(u.pathname)) u.searchParams.set('ref', c);
+      else u.pathname = u.pathname.replace(/\/+$/, '') + '/ref/' + encodeURIComponent(c);
+    }
+    return u.href;
+  } catch (e) { return ''; }
+}
+function referralLink(code) {
+  const c = encodeURIComponent(String(code || '').toUpperCase());
+  const custom = appLinkBase();
+  if (custom) return custom + '/ref/' + c;   // branded link → redirects to the main app
+  if (window.__WC_SERVER__) return location.origin + '/ref/' + c;
+  return location.origin + location.pathname + '#/ref=' + c;
+}
+/* If this page is opened on the branded domain, hand the visitor to the main app. */
+function maybeBrandedRedirect() {
+  const custom = appLinkBase();
+  if (!custom) return false;
+  const dest = destinationLink(referralFromURL());
+  if (!dest) return false;
+  const here = location.hostname.toLowerCase();
+  if (urlHost(custom) !== here) return false;      // not on the branded link
+  if (urlHost(dest) === here) return false;        // already on the main app
+  location.replace(dest);
+  return true;
+}
+/* ---------------- Google Analytics (GA4 / Tag Manager) ---------------- */
+const GA = { loaded: false, id: '', last: '', mode: '' };
+function gaMeasurementId() {
+  try {
+    const v = String((DB && DB.settings && DB.settings.gaMeasurementId) || '').trim().toUpperCase();
+    return /^G-[A-Z0-9]{4,20}$/.test(v) ? v : '';
+  } catch (e) { return ''; }
+}
+/* The GTM container is installed in <head> on every page. When it is present we push
+   events into its dataLayer instead of adding a second Google tag. */
+function gtmInstalled() {
+  try {
+    return !!(document.querySelector('script[src*="googletagmanager.com/gtm.js"]') || window.google_tag_manager);
+  } catch (e) { return false; }
+}
+function gaLoad(force) {
+  if (gtmInstalled()) {
+    GA.loaded = true; GA.mode = 'gtm'; GA.id = 'GTM';
+    return true;
+  }
+  const id = gaMeasurementId();
+  if (!id) { GA.loaded = false; GA.id = ''; GA.mode = ''; return false; }
+  if (GA.loaded && GA.id === id && GA.mode === 'gtag' && !force) return true;
+  GA.id = id; GA.mode = 'gtag';
+  window.dataLayer = window.dataLayer || [];
+  window.gtag = window.gtag || function () { window.dataLayer.push(arguments); };
+  window.gtag('js', new Date());
+  window.gtag('config', id, { send_page_view: false, anonymize_ip: true });
+  if (!document.getElementById('ga4Script')) {
+    const t = document.createElement('script');
+    t.id = 'ga4Script';
+    t.async = true;
+    t.src = 'https://www.googletagmanager.com/gtag/js?id=' + encodeURIComponent(id);
+    document.head.appendChild(t);
+  }
+  GA.loaded = true;
+  GA.last = '';
+  return true;
+}
+function gaTrack(path) {
+  if (!GA.loaded) gaLoad();
+  if (!GA.loaded) return;
+  const p = path || (location.hash || '/');
+  if (GA.last === p) return;
+  GA.last = p;
+  const payload = {
+    page_location: location.origin + location.pathname + location.hash,
+    page_path: p,
+    page_title: document.title
+  };
+  try {
+    if (GA.mode === 'gtm') {
+      window.dataLayer = window.dataLayer || [];
+      window.dataLayer.push(Object.assign({ event: 'page_view' }, payload));
+    } else if (typeof window.gtag === 'function') {
+      window.gtag('event', 'page_view', payload);
+    }
+  } catch (e) {}
+}
+function inviteMessageFor(u, link) {
+  const raw = ((DB && DB.settings && DB.settings.inviteMessage) || '').trim();
+  const base = raw || 'Join me on WhaleChat 🐋 — chat, shop and get paid in one calm place. Use my code {code}.';
+  return base
+    .replace(/\{link\}/g, link)
+    .replace(/\{code\}/g, (u && u.referralCode) || '')
+    .replace(/\{name\}/g, (u && (u.fullName || u.username)) || '');
+}
+function referralFromURL() {
+  let code = null;
+  const m = location.pathname.match(/\/(?:ref|r)[=\/]([A-Za-z0-9_-]{3,24})\/?$/i);
+  if (m) code = m[1];
+  if (!code) {
+    try { const q = new URLSearchParams(location.search); if (q.get('ref')) code = q.get('ref'); } catch (e) {}
+  }
+  if (!code) {
+    const h = location.hash || '';
+    const hm = h.match(/(?:ref|r)[=\/]([A-Za-z0-9_-]{3,24})/i);
+    if (hm) code = hm[1];
+  }
+  return code ? String(code).toUpperCase() : null;
+}
+
+let UPDATE_READY = false;
+let UPDATE_TIMER = null;
+
+async function checkForUpdates(manual) {
+  if (!APP_BUILD || !/^\d{4}-\d{2}-\d{2}T/.test(APP_BUILD)) {
+    if (manual) toast('You are running the latest version', 'ok');
+    return false;
+  }
+  let v = null;
+  for (const name of ['release.json', 'version.json']) {
+    try {
+      const res = await fetch(name + '?t=' + Date.now(), { cache: 'no-store' });
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (data && data.build) { v = data; break; }
+    } catch (e) { /* try next manifest */ }
+  }
+  if (!v) { if (manual) toast('Update check is unavailable right now', 'err'); return false; }
+  if (v.build > APP_BUILD) {
+    showUpdateBar(v);
+    if (manual) toast('A new version is ready — update to get it', 'ok');
+    return true;
+  }
+  if (manual) toast('You are running the latest version', 'ok');
+  return false;
+}
+
+function showUpdateBar(v) {
+  if (UPDATE_READY || document.getElementById('updateBar')) return;
+  UPDATE_READY = true;
+  const bar = document.createElement('div');
+  bar.className = 'update-bar';
+  bar.id = 'updateBar';
+  bar.innerHTML = `<span class="dot" style="background:var(--accent)"></span>
+    <div style="flex:1;min-width:0"><div class="small" style="font-weight:650">New WhaleChat version ready</div>
+    <div class="tiny" style="color:#9cb6c6">Version ${esc(v.version || '')} · updating in a moment</div></div>
+    <button class="btn btn-primary btn-xs" id="updateNow">Update now</button>
+    <button class="btn-icon" id="updateLater" style="width:28px;height:28px" title="Later">${ic('x', 13)}</button>`;
+  document.body.appendChild(bar);
+  document.getElementById('updateNow').onclick = applyUpdate;
+  document.getElementById('updateLater').onclick = () => { clearTimeout(UPDATE_TIMER); bar.remove(); UPDATE_READY = false; };
+  UPDATE_TIMER = setTimeout(applyUpdate, 20000);
+}
+
+async function applyUpdate() {
+  clearTimeout(UPDATE_TIMER);
+  try {
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.update().catch(() => {})));
+      regs.forEach(r => { if (r.waiting) r.waiting.postMessage({ type: 'SKIP_WAITING' }); });
+    }
+  } catch (e) {}
+  try {
+    if (window.caches) { const keys = await caches.keys(); await Promise.all(keys.map(k => caches.delete(k))); }
+  } catch (e) {}
+  location.reload();
+}
+
+App.checkUpdate = function () { checkForUpdates(true); };
+setInterval(() => { checkForUpdates(false); }, 10 * 60 * 1000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkForUpdates(false); });
+setTimeout(() => checkForUpdates(false), 5000);
+
+App.dismissNotifNudge = function () {
+  try { localStorage.setItem('wc_notif_nudge_' + new Date().toDateString(), '1'); } catch (e) {}
+  render();
+};
+
+AFTER.settings = function () {
+  const el = document.getElementById('pushDeviceCount');
+  if (!el || !Remote.enabled) return;
+  fetch('/api/push/status?userId=' + encodeURIComponent(me() ? me().id : ''), { cache: 'no-store' })
+    .then(r => r.json()).then(d => {
+      if (!d || !d.ok) return;
+      el.textContent = (d.push ? 'Push service ready' : 'Push service unavailable on this server') +
+        ' · ' + (d.devices || 0) + ' device' + ((d.devices || 0) === 1 ? '' : 's') + ' registered for @' + (me() ? me().username : '');
+    }).catch(() => { el.textContent = 'Could not read push status'; });
+};
+
+App.toggleReadReceipts = function () {
+  const u = me();
+  u.settings = u.settings || {};
+  const off = u.settings.readReceipts === false;
+  u.settings.readReceipts = off; // turning back on
+  sync();
+  toast(off ? 'Read receipts on — green ✓✓ when you read' : 'Read receipts off — senders will not see read ticks', 'ok');
+  render();
+};
+
+/* ---------------- server connection details ---------------- */
+App.serverDetails = async function () {
+  openModal(modalShell('Sync server details', `
+    <div id="srvDetails"><div class="row gap10"><span class="spinner"></span><span class="small muted">Reading server status…</span></div></div>`,
+    `<button class="btn btn-ghost" data-close style="flex:1">Close</button><button class="btn btn-primary" data-act="server-dialog" style="flex:1">Manage connection</button>`), { width: '540px' });
+  const box = document.getElementById('srvDetails');
+  const row = (k, v, mono) => `<div class="kv"><span class="k">${k}</span><span class="v" style="${mono ? 'font-family:ui-monospace,monospace;font-size:11.5px;word-break:break-all' : ''}">${esc(String(v))}</span></div>`;
+  try {
+    const [health, release, backup, push] = await Promise.all([
+      fetch('/api/health', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch('/api/release', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch('/api/backup', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch('/api/push/status?userId=' + encodeURIComponent(me() ? me().id : ''), { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null)
+    ]);
+    if (!health) throw new Error('unreachable');
+    const up = release ? Math.floor(release.uptimeSec / 3600) + 'h ' + Math.floor((release.uptimeSec % 3600) / 60) + 'm' : '—';
+    box.innerHTML = `
+      <div class="panel" style="padding:12px;margin-bottom:12px">
+        <div class="row gap8"><span class="dot" style="background:var(--success)"></span><span class="small" style="font-weight:650">Connected</span>
+          <span class="badge badge-success" style="margin-left:auto">${Remote.enabled ? 'Cross-device' : 'Local mode'}</span></div>
+        <div class="tiny muted mt6" style="word-break:break-all">${esc(Remote.base || location.origin)}</div>
+      </div>
+      ${row('Sync server URL', Remote.base || location.origin, true)}
+      ${row('App origin', location.origin, true)}
+      ${row('Server app', health.app || 'whalechat')}
+      ${row('Public URL', (release && release.publicUrl) || (DB.settings && DB.settings.publicUrl) || 'not set', true)}
+      ${row('Server build', (release && release.build) || '—', true)}
+      ${row('App build (this device)', APP_BUILD, true)}
+      ${row('Database revision', health.rev)}
+      ${row('Registered users', release ? release.users : '—')}
+      ${row('Connected tabs', release ? release.clients : '—')}
+      ${row('Push devices', push ? push.devices : '—')}
+      ${row('Push service', health.push ? 'VAPID ready' : 'unavailable')}
+      ${health.vapid ? row('VAPID public key', String(health.vapid).slice(0, 28) + '…', true) : ''}
+      ${row('Node runtime', release ? release.node : '—')}
+      ${row('Server uptime', up)}
+      ${backup ? row('Data storage', backup.persistent ? 'Persistent disk' : (backup.recoverable ? 'Ephemeral + persistent backups' : 'Ephemeral')) : ''}
+      ${backup ? row('Backups', backup.count + ' snapshots · last ' + (backup.last ? new Date(backup.last).toLocaleString() : 'none')) : ''}
+      <div class="row gap8 mt14">
+        <button class="btn btn-ghost btn-sm" data-act="copy" data-id="${esc(Remote.base || location.origin)}">${ic('copy', 14)} Copy server URL</button>
+        <button class="btn btn-ghost btn-sm" data-act="push-test">${ic('bell', 14)} Test push</button>
+      </div>`;
+  } catch (e) {
+    box.innerHTML = `<div class="empty" style="padding:18px"><p>This device is not connected to a sync server. Open “Manage connection” and enter your server URL, or visit the app with <code>?server=https://your-server</code>.</p></div>`;
+  }
+};
+/* =========================================================================
+   Cross-device sync (WhaleChat server) + Web Push
+   ========================================================================= */
+const LS_SERVER = 'whalechat.server';
+const LS_PUSH = 'whalechat.push';
+
+const Remote = {
+  base: '',
+  enabled: false,
+  rev: 0,
+  last: null,
+  clientId: 'c_' + Math.random().toString(36).slice(2, 10),
+  es: null,
+  applying: false,
+  flushing: false,
+  dirty: false,
+  timer: null,
+  retry: 0,
+  status: 'local',          // local | connecting | online | syncing | offline | error
+  lastError: '',
+
+  storedBase() {
+    try { return localStorage.getItem(LS_SERVER) || ''; } catch (e) { return ''; }
+  },
+  setStoredBase(v) {
+    try { v ? localStorage.setItem(LS_SERVER, v) : localStorage.removeItem(LS_SERVER); } catch (e) {}
+  },
+  url(p) { return (this.base || '') + p; },
+
+  async fetchJSON(pathname, opts = {}, timeout = 7000) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeout);
+    try {
+      const res = await fetch(this.url(pathname), Object.assign({ signal: ctrl.signal, headers: { 'content-type': 'application/json' } }, opts));
+      const data = await res.json().catch(() => null);
+      return { res, data };
+    } finally { clearTimeout(t); }
+  },
+
+  async init() {
+    try {
+      // ?server=https://sync.domain.com overrides everything (and is remembered)
+      let param = null;
+      try { param = new URLSearchParams(location.search).get('server'); } catch (e) {}
+      if (param) {
+        if (param === 'off') { this.setStoredBase(''); this.status = 'local'; return false; }
+        const url = /^https?:\/\//i.test(param) ? param : 'https://' + param;
+        return await this.connect(url.replace(/\/+$/, ''), { silent: true, initFromLocal: true });
+      }
+      const stored = this.storedBase();
+      if (stored) return await this.connect(stored, { silent: true, initFromLocal: true });
+      // Only a server that served this page injects the marker — avoids failed probes on static hosts
+      if (window.__WC_SERVER__) {
+        return await this.connect('', { silent: true, initFromLocal: true });
+      }
+      if (DEFAULT_SYNC_SERVER) {
+        return await this.connect(DEFAULT_SYNC_SERVER, { silent: true, initFromLocal: true });
+      }
+    } catch (e) {}
+    this.status = 'local';
+    return false;
+  },
+
+  async connect(base, opts = {}) {
+    base = String(base || '').replace(/\/+$/, '');
+    this.status = 'connecting';
+    try {
+      const health = await this.fetchJSON(base + '/api/health', {}, 5000);
+      if (!health.res.ok || !health.data || health.data.app !== 'whalechat') throw new Error('Not a WhaleChat server');
+      this.base = base;
+      this.setStoredBase(base);
+      this.enabled = true;
+      this.status = 'online';
+      this.retry = 0;
+
+      const st = await this.fetchJSON('/api/state');
+      if (!st.res.ok || !st.data) throw new Error('Could not read server state');
+
+      if (!st.data.db) {
+        // brand new server — seed it with this device's database
+        if (!DB) DB = await seedDB();
+        const r = await this.fetchJSON('/api/state/init', { method: 'POST', body: JSON.stringify({ db: DB, rev: 1 }) });
+        if (!r.res.ok && r.res.status !== 409) throw new Error((r.data && r.data.error) || 'Initialise failed');
+        if (r.res.status === 409) return this.connect(base, opts); // another device won the race
+        this.rev = r.data.rev || 1;
+        this.last = cloneDB(DB);
+      } else {
+        DB = migrateDB(st.data.db);
+        this.rev = st.data.rev || 0;
+        this.last = cloneDB(DB);
+        saveLocalNow();
+      }
+      try { resolvePendingReferrals(); reconcileReferralBonuses(); } catch (e) {}
+      // session may point at a user this server doesn't know
+      if (SESSION && !DB.users.some(u => u.id === SESSION.userId)) {
+        SESSION = null; localStorage.removeItem(LS_SESSION);
+      }
+      startEventStream();
+      if (!opts.silent) toast('Connected — syncing across devices', 'ok');
+      return true;
+    } catch (e) {
+      this.lastError = e.message || 'Connection failed';
+      this.status = 'error';
+      if (!opts.silent) toast('Could not connect: ' + this.lastError, 'err');
+      return false;
+    }
+  },
+
+  disconnect() {
+    stopEventStream();
+    this.enabled = false;
+    this.base = '';
+    this.status = 'local';
+    this.setStoredBase('');
+  },
+
+  onLocalChange() {
+    if (!this.enabled || this.applying) return;
+    this.dirty = true;
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.flush(), 140);
+  },
+
+  async flush() {
+    if (!this.enabled || this.applying || this.flushing) return;
+    if (!this.dirty) return;
+    const ops = diffDB(this.last || blankDB(), DB);
+    if (!ops.length) { this.dirty = false; return; }
+    this.flushing = true;
+    this.status = 'syncing';
+    try {
+      const r = await this.fetchJSON('/api/ops', {
+        method: 'POST',
+        body: JSON.stringify({ ops, clientId: this.clientId })
+      }, 10000);
+      if (!r.res.ok) throw new Error((r.data && r.data.error) || ('Sync failed (' + r.res.status + ')'));
+      this.rev = r.data.rev || this.rev;
+      this.last = cloneDB(DB);
+      this.dirty = false;
+      this.status = 'online';
+      this.lastError = '';
+      this.retry = 0;
+    } catch (e) {
+      this.lastError = e.message || 'Sync failed';
+      this.status = 'offline';
+      this.retry = Math.min(this.retry + 1, 12);
+      clearTimeout(this.retryTimer);
+      this.retryTimer = setTimeout(() => { this.flush(); }, 800 * this.retry);
+    } finally {
+      this.flushing = false;
+      if (this.dirty && this.status === 'online') setTimeout(() => this.flush(), 80);
+    }
+  },
+
+  async refresh(force) {
+    if (!this.enabled) return;
+    if (this.flushing) { this.pendingRefresh = true; return; }
+    try {
+      const r = await this.fetchJSON('/api/state', {}, 10000);
+      if (!r.res.ok || !r.data) throw new Error('State fetch failed');
+      if (!force && (r.data.rev === this.rev || r.data.rev === undefined)) return;
+      if (!r.data.db) return;
+      this.applying = true;
+      DB = migrateDB(r.data.db);
+      this.rev = r.data.rev;
+      this.last = cloneDB(DB);
+      saveLocalNow();
+      if (SESSION && !DB.users.some(u => u.id === SESSION.userId)) {
+        SESSION = null; localStorage.removeItem(LS_SESSION);
+      }
+      this.status = 'online';
+      try { resolvePendingReferrals(); reconcileReferralBonuses(); } catch (e) {}
+      render();
+      Media.hydrate(document);
+      if (ACTIVE_CHAT) { const b = document.getElementById('chatBody'); if (b) b.scrollTop = b.scrollHeight; }
+    } catch (e) {
+      this.status = 'offline';
+      this.lastError = e.message || 'Reconnect failed';
+    } finally {
+      this.applying = false;
+      if (this.pendingRefresh) { this.pendingRefresh = false; setTimeout(() => this.refresh(true), 150); }
+    }
+  }
+};
+
+const SYNC_COLLECTIONS = ['users', 'vendors', 'companyProducts', 'products', 'orders', 'deposits', 'withdrawals', 'messages', 'statuses', 'notifications', 'contacts', 'blocks', 'txs', 'referrals', 'purchases', 'refunds', 'vendorApplications'];
+
+function cloneDB(db) { try { return JSON.parse(JSON.stringify(db)); } catch (e) { return db; } }
+function migrateDB(db) {
+  if (!db) return DB;
+  const out = Object.assign(blankDB(), db);
+  out.settings = withSettingsDefaults(Object.assign({}, blankDB().settings, db.settings || {}));
+  migrateVendorExpiry(out);
+  return out;
+}
+function saveLocalNow() {
+  try { localStorage.setItem(LS_DB, JSON.stringify(DB)); } catch (e) {}
+}
+
+function diffDB(prev, next) {
+  prev = prev || blankDB(); next = next || blankDB();
+  const ops = [];
+  for (const col of SYNC_COLLECTIONS) {
+    const a = prev[col] || [], b = next[col] || [];
+    if (a === b) continue;
+    if (a.length === b.length && JSON.stringify(a) === JSON.stringify(b)) continue;
+    const am = new Map(a.map(x => [x && x.id, x]));
+    const bm = new Map(b.map(x => [x && x.id, x]));
+    for (const id of am.keys()) if (id && !bm.has(id)) ops.push({ op: 'remove', col, id });
+    for (const [id, item] of bm) {
+      if (!id) continue;
+      if (!am.has(id)) ops.push({ op: 'push', col, item });
+      else if (JSON.stringify(am.get(id)) !== JSON.stringify(item)) ops.push({ op: 'update', col, id, patch: item });
+    }
+  }
+  for (const key of ['settings', 'chatsMeta', 'meta']) {
+    if (JSON.stringify(prev[key]) !== JSON.stringify(next[key])) ops.push({ op: 'set', key, value: next[key] });
+  }
+  return ops;
+}
+
+function startEventStream() {
+  stopEventStream();
+  if (!Remote.enabled || typeof EventSource === 'undefined') return;
+  try {
+    const es = new EventSource(Remote.url('/api/events?client=' + encodeURIComponent(Remote.clientId)));
+    Remote.es = es;
+    es.addEventListener('hello', (e) => {
+      Remote.status = 'online';
+      try { const d = JSON.parse(e.data); if (d.rev > Remote.rev) Remote.refresh(); } catch (err) {}
+    });
+    es.addEventListener('reload', (e) => {
+      // admin pressed “Force refresh all devices”
+      let d = {};
+      try { d = JSON.parse(e.data || '{}'); } catch (err) {}
+      try { if (typeof showUpdateBar === 'function') showUpdateBar({ version: d.version || APP_VERSION, build: d.build || APP_BUILD }); } catch (err) {}
+      setTimeout(() => { try { if (typeof applyUpdate === 'function') applyUpdate(); } catch (err) { location.reload(); } }, 1500);
+    });
+    es.addEventListener('change', (e) => {
+      let d = {};
+      try { d = JSON.parse(e.data); } catch (err) {}
+      if (d.source === Remote.clientId) { if (d.rev) Remote.rev = d.rev; return; }
+      Remote.refresh();
+    });
+    es.onerror = () => {
+      Remote.status = 'offline';
+      // EventSource reconnects automatically; refresh once it is back
+      setTimeout(() => { if (Remote.enabled) Remote.refresh(); }, 4000);
+    };
+  } catch (e) {}
+}
+function stopEventStream() {
+  if (Remote.es) { try { Remote.es.close(); } catch (e) {} }
+  Remote.es = null;
+}
+
+/* ---------------- Web Push ---------------- */
+const Push = {
+  publicKey: null,
+  async ensure(interactive) {
+    if (!Remote.enabled) return { ok: false, reason: 'no-server' };
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return { ok: false, reason: 'unsupported' };
+    const u = me();
+    if (!u) return { ok: false, reason: 'no-user' };
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return { ok: false, reason: 'permission' };
+    try {
+      const reg = await withTimeout(navigator.serviceWorker.ready, 8000, 'service-worker-timeout');
+      const keyRes = await withTimeout(fetch(Remote.url('/api/push/key')).then(r => r.json()), 8000, 'key-timeout').catch(() => null);
+      if (!keyRes || !keyRes.publicKey) return { ok: false, reason: 'no-key' };
+      this.publicKey = keyRes.publicKey;
+      let sub = await withTimeout(reg.pushManager.getSubscription(), 8000, 'subscription-timeout');
+      if (!sub) {
+        sub = await withTimeout(reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlB64ToUint8Array(keyRes.publicKey)
+        }), 12000, 'push-subscribe-timeout');
+      }
+      const res = await fetch(Remote.url('/api/push/subscribe'), {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ userId: u.id, subscription: sub, device: navigator.userAgent })
+      }).then(r => r.json()).catch(() => null);
+      if (res && res.ok) {
+        try { localStorage.setItem(LS_PUSH, JSON.stringify({ at: Date.now(), userId: u.id })); } catch (e) {}
+        return { ok: true, devices: res.devices };
+      }
+      return { ok: false, reason: 'register-failed' };
+    } catch (e) {
+      return { ok: false, reason: e.message || 'subscribe-failed' };
+    }
+  },
+  async test() {
+    const u = me();
+    if (!Remote.enabled) return toast('Connect a sync server first', 'err');
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
+      toast('Allow notifications in your browser first', 'err'); return;
+    }
+    const sub = await this.ensure(true);
+    if (!sub.ok) { toast('Push unavailable: ' + sub.reason, 'err'); return; }
+    const r = await fetch(Remote.url('/api/push/test'), {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ userId: u.id, title: 'WhaleChat', body: 'Push notifications are working on this device 🐋', link: '#/notifications' })
+    }).then(x => x.json()).catch(() => null);
+    if (r && r.ok && r.sent > 0) toast('Test notification sent to ' + r.sent + ' device(s)', 'ok');
+    else toast('No push device registered yet — check browser permission', 'err');
+  }
+};
+
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(label || 'timeout')), ms))
+  ]);
+}
+
+function urlB64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; ++i) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+/* ---------------- settings UI ---------------- */
+function syncBadge() {
+  const map = {
+    local: ['Local device only', 'var(--muted)'],
+    connecting: ['Connecting…', 'var(--warn)'],
+    online: ['Connected · realtime', 'var(--success)'],
+    syncing: ['Syncing…', 'var(--accent)'],
+    offline: ['Reconnecting…', 'var(--warn)'],
+    error: ['Connection error', 'var(--danger)']
+  };
+  const m = map[Remote.status] || map.local;
+  return `<span class="badge" style="color:${m[1]};border-color:${m[1]}33"><span class="dot" style="background:${m[1]}"></span> ${m[0]}</span>`;
+}
+
+App.serverDialog = function () {
+  const base = Remote.base || '';
+  openModal(modalShell('Cross-device sync', `
+    <p class="small muted" style="line-height:1.7">Connect this app to your WhaleChat sync server to share chats, orders and wallet data across phones, tablets and computers — with live updates and closed-app push notifications.</p>
+    <div class="field mt16"><label class="label">Server URL</label>
+      <input class="input" id="srvUrl" placeholder="https://your-whalechat-server.com" value="${esc(base)}"/>
+      <div class="help">Leave empty to use the same origin that served this app. The server must run <code>server.js</code>.</div></div>
+    <div class="panel" style="padding:12px;margin-bottom:14px">
+      <div class="between"><span class="tiny muted">Status</span>${syncBadge()}</div>
+      ${Remote.lastError ? `<div class="tiny mt6" style="color:var(--danger)">${esc(Remote.lastError)}</div>` : ''}
+      ${Remote.enabled ? `<div class="tiny muted mt6">Revision ${Remote.rev} · device <b>${esc(Remote.clientId)}</b></div>` : ''}
+    </div>
+    <div class="panel" style="padding:12px">
+      <div class="tiny" style="font-weight:600;color:var(--accent)">Push notifications</div>
+      <div class="tiny muted mt6" style="line-height:1.6">After connecting, enable browser alerts and send a test. Messages and order updates then arrive even when the app is closed.</div>
+      <div class="row gap8 mt10"><button class="btn btn-ghost btn-sm" data-act="push-test">${ic('bell', 14)} Send test</button>
+      <button class="btn btn-ghost btn-sm" data-act="push-enable">${ic('shield', 14)} Enable alerts</button></div>
+    </div>`,
+    `<button class="btn btn-ghost" data-close>Close</button>
+     ${Remote.enabled ? `<button class="btn btn-danger" data-act="server-disconnect">Disconnect</button>` : ''}
+     <button class="btn btn-primary" data-act="server-connect">${ic('refresh', 15)} Connect</button>`), { width: '500px' });
+  setTimeout(() => { const i = document.getElementById('srvUrl'); if (i) i.focus(); }, 80);
+};
+
+App.serverConnect = async function () {
+  const input = document.getElementById('srvUrl');
+  let url = input ? input.value.trim() : '';
+  if (url && !/^https?:\/\//i.test(url)) url = 'https://' + url;
+  url = url.replace(/\/+$/, '');
+  closeModal();
+  toast('Connecting to sync server…');
+  const ok = await Remote.connect(url || '', { initFromLocal: true });
+  if (ok) {
+    await Push.ensure(false);
+    toast('Cross-device sync enabled', 'ok');
+    render();
+    setTimeout(() => App.serverDialog(), 250);
+  } else { render(); setTimeout(() => App.serverDialog(), 250); }
+};
+App.serverDisconnect = async function () {
+  if (!await confirmDialog({ title: 'Disconnect sync?', body: 'This device keeps a local copy and stops receiving updates. Other devices stay connected.', danger: true, ok: 'Disconnect' })) return;
+  Remote.disconnect();
+  closeModal(); toast('Disconnected from sync server', 'ok'); render();
+};
+App.pushEnable = async function () {
+  await requestNotifyPermission(false);
+  const r = await Push.ensure(true);
+  if (r.ok) toast('Push notifications enabled (' + (r.devices || 1) + ' device)', 'ok');
+  else if (r.reason === 'permission') toast('Notifications blocked in browser settings', 'err');
+  else if (r.reason === 'no-server') toast('Connect a sync server first', 'err');
+  else toast('Push unavailable: ' + r.reason, 'err');
+  render();
+};
+App.pushTest = function () { Push.test(); };
+
+/* Send pending changes before the tab/app is closed (keeps messages + pushes reliable). */
+window.addEventListener('pagehide', () => {
+  try {
+    if (!Remote.enabled || !Remote.dirty) return;
+    const ops = diffDB(Remote.last || blankDB(), DB);
+    if (!ops.length) return;
+    const body = JSON.stringify({ ops, clientId: Remote.clientId });
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon(Remote.url('/api/ops'), new Blob([body], { type: 'application/json' }));
+    } else {
+      fetch(Remote.url('/api/ops'), { method: 'POST', headers: { 'content-type': 'application/json' }, body, keepalive: true }).catch(() => {});
+    }
+  } catch (e) {}
+});
+setInterval(() => {
+  try {
+    if (Remote.enabled && me() && typeof Notification !== 'undefined' && Notification.permission === 'granted') Push.ensure(false);
+  } catch (e) {}
+}, 5 * 60 * 1000);
+/* =========================================================================
+   Boot, global action dispatch, PWA wiring
+   ========================================================================= */
+function camel(act) {
+  return act.replace(/-([a-z])/g, (m, c) => c.toUpperCase());
+}
+const ACTION_ALIASES = {
+  'admin-del-user': 'adminDeleteUser',
+  'admin-notif-edit': 'adminNotifEdit',
+  'admin-notif-del': 'adminNotifDel',
+  'admin-notif-save': 'adminNotifSave',
+  'admin-product-del': 'adminProductDel',
+  'admin-send-notif': 'adminSendNotif',
+  'admin-test-notif': 'adminTestNotif',
+  'admin-user': 'adminUser',
+  'admin-order-del': 'adminOrderDel',
+  'admin-order-save': 'adminOrderSave',
+  'admin-export': 'adminExport',
+  'admin-notify-user': 'adminNotifyUser',
+  'edit-msg': 'editMessage',
+  'copy-msg': 'copyMessage',
+  'delete-msg': 'deleteMessage',
+  'forward-msg': 'forwardMessage',
+  'avatar-camera': 'avatarCamera',
+  'live-chat': 'openLiveChat',
+  'search-people': 'mobileSearch',
+  'toggle-anypass': 'toggleAnyPass'
+};
+
+App.openChat = function (id) {
+  if (!id) return;
+  closeModal();            // a search sheet must not stay on top of the chat
+  go('chat/' + id);
+  const focusComposer = () => {
+    const i = document.getElementById('msgInput');
+    if (!i) return false;
+    i.focus({ preventScroll: true });
+    const b = document.getElementById('chatBody');
+    if (b) b.scrollTop = b.scrollHeight;
+    try { i.setSelectionRange(i.value.length, i.value.length); } catch (e) {}
+    return true;
+  };
+  setTimeout(focusComposer, 60);
+  setTimeout(focusComposer, 260);
+  setTimeout(focusComposer, 600);
+};
+App.openProduct = function (id) { if (id) go('product/' + id); };
+App.back = function () { back(); };
+App.copy = function (v) { if (v) copyText(v); };
+App.copyMessageText = function (id) { App.copyMessage(id); };
+
+document.addEventListener('click', function (ev) {
+  const nav = ev.target.closest('[data-nav]');
+  if (nav) {
+    ev.preventDefault();
+    const h = nav.getAttribute('data-nav');
+    go(h.replace(/^#\/?/, ''));
+    return;
+  }
+  const el = ev.target.closest('[data-act]');
+  if (!el) return;
+  const act = el.getAttribute('data-act');
+  if (!act) return;
+  const ds = Object.assign({}, el.dataset);
+  ev.preventDefault();
+  // special multi-arg handlers
+  if (act === 'cart-qty') return App.cartQty(ds.id, ds.d);
+  if (act === 'remove-media') return App.removeMedia(Number(ds.idx));
+  if (act === 'do-forward') return App.doForward(ds.id, ds.msg);
+  if (act === 'send-status-reply') return;
+  if (act === 'back') return App.back();
+  if (act === 'toggle-theme') return App.toggleTheme();
+  if (act === 'set-pin-now') return App.setPinNow();
+  if (act === 'status-step') return App.statusStep(Number(ds.d));
+  const name = ACTION_ALIASES[act] || camel(act);
+  const fn = App[name];
+  if (typeof fn === 'function') {
+    try { fn(ds.id, ds, ev); }
+    catch (err) { console.error('Action failed', act, err); toast('Something went wrong. Please try again.', 'err'); }
+  } else {
+    console.warn('No handler for action:', act, name);
+  }
+}, false);
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { closeModal(); closeViewer(); }
+  if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+    e.preventDefault();
+    const s = document.getElementById('globalSearch');
+    if (s) s.focus();
+  }
+});
+
+App.avatarCamera = function () { App.avatarUpload(true); };
+
+App.mobileSearch = function () {
+  openModal(modalShell('Search WhaleChat', `
+    <div class="searchbar" style="height:46px">${ic('search', 17)}<input id="msInput" placeholder="People, chats, products…" autocomplete="off"/></div>
+    <div class="mt16" id="msResults"><p class="small muted">Type to search people, contacts and products.</p></div>`,
+    `<button class="btn btn-ghost" data-close style="width:100%">Close</button>`));
+  const i = document.getElementById('msInput');
+  setTimeout(() => i.focus(), 80);
+  i.addEventListener('keydown', (e) => { if (e.key === 'Enter' && i.value.trim()) { closeModal(); App.openSearch(i.value.trim()); } });
+};
+
+App.adminNotifyUser = async function (id) {
+  const u = findUser(id); if (!u) return;
+  const title = await promptDialog({ title: 'Send notification', label: 'Title', placeholder: 'Account update' });
+  if (!title) return;
+  const body = await promptDialog({ title: 'Send notification', label: 'Message', placeholder: 'Write the message…' });
+  if (!body) return;
+  notify(id, title, body, null, 'bell');
+  sync(); toast('Notification sent to ' + u.fullName, 'ok'); render();
+};
+
+App.adminExport = function (type) {
+  if (type !== 'users') return;
+  const rows = [['Full name', 'Username', 'Email', 'Phone', 'Balance (WC)', 'Trust', 'Vendor', 'Banned', 'Joined']];
+  DB.users.filter(u => u.role !== 'admin').forEach(u => rows.push([u.fullName, u.username, u.email, u.phone || '', u.balance, u.trustScore, vendorOf(u.id) ? 'yes' : 'no', u.banned ? 'yes' : 'no', new Date(u.createdAt).toISOString()]));
+  const csv = rows.map(r => r.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'whalechat-users.csv';
+  document.body.appendChild(a); a.click(); a.remove();
+  toast('Export downloaded', 'ok');
+};
+
+/* Vendor sub-route dispatch */
+const __vendorBase = VIEWS.vendor;
+VIEWS.vendor = function (parts, params) {
+  const u = me();
+  const myVendor = u ? vendorOf(u.id) : null;
+  // applicants/renewals only see their application or renewal page, never vendor tools
+  if (u && u.role !== 'admin' && (!myVendor || !vendorIsActive(myVendor))) return __vendorBase(parts, params);
+  const sub = parts[1];
+  if (sub === 'company') return VIEWS.vendor_company(parts, params);
+  if (sub === 'products') return VIEWS.vendorProducts(parts, params);
+  if (sub === 'orders') return VIEWS.vendorOrders(parts, params);
+  if (sub === 'history') return VIEWS.vendorHistory(parts, params);
+  return __vendorBase(parts, params);
+};
+
+/* boot */
+async function boot() {
+  await initDB();
+  try { if (maybeBrandedRedirect()) return; } catch (e) {}
+  try { if (gaLoad()) gaTrack(location.hash || '/'); } catch (e) {}
+  try { await Remote.init(); } catch (e) { console.warn('sync init failed', e); }
+  try { resolvePendingReferrals(); reconcileReferralBonuses(); } catch (e) {}
+  if (SESSION) {
+    const u = me();
+    if (!u) { SESSION = null; localStorage.removeItem(LS_SESSION); }
+    else if (u.pin) Presence.touch();
+  }
+  initTheme();
+  // referral short links: /ref/CODE, ?ref=CODE, #/ref=CODE
+  let refCode = null;
+  try { refCode = referralFromURL(); } catch (e) {}
+  if (refCode) { try { sessionStorage.setItem('wc_ref', refCode); } catch (e) {} }
+
+  if (!me() && refCode) go('signup?ref=' + encodeURIComponent(refCode));
+
+  const hasHash = !!location.hash;
+  if (!hasHash) {
+    renderSplash();
+    setTimeout(() => {
+      const u = me();
+      if (u) go(u.role === 'admin' ? 'admin' : 'home');
+      else go('welcome');
+    }, 1200);
+  } else {
+    render();
+  }
+  // Global safety net: never leave the user on a dead screen
+  let lastErrToast = 0;
+  window.addEventListener('error', (ev) => {
+    if (ev.target && ev.target.tagName === 'SCRIPT') return;
+    if (Date.now() - lastErrToast < 4000) return;
+    lastErrToast = Date.now();
+    try { toast('Something went wrong — please try that again.', 'err'); } catch (e) {}
+  });
+  window.addEventListener('unhandledrejection', (ev) => {
+    console.warn('Unhandled promise rejection:', ev.reason);
+    if (Date.now() - lastErrToast < 4000) return;
+    lastErrToast = Date.now();
+    try { toast('A request failed — check your connection and retry.', 'err'); } catch (e) {}
+  });
+
+  // Service worker (offline shell + push). If the host forbids sw.js, drop any
+  // stale worker so a cached error page can never be served again.
+  if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
+    window.addEventListener('load', async () => {
+      try {
+        const reg = await navigator.serviceWorker.register('sw.js');
+        if (reg && reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+      } catch (e) {
+        try {
+          const regs = await navigator.serviceWorker.getRegistrations();
+          await Promise.all(regs.map(r => r.unregister()));
+        } catch (e2) {}
+        try {
+          const keys = await caches.keys();
+          await Promise.all(keys.map(k => caches.delete(k)));
+        } catch (e3) {}
+      }
+    });
+  }
+  // keep this device in sync when it becomes visible / regains network
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && Remote.enabled) Remote.refresh(); });
+  window.addEventListener('online', () => { if (Remote.enabled) { Remote.refresh(); Remote.flush(); } });
+  window.addEventListener('focus', () => { if (Remote.enabled) Remote.refresh(); });
+  if (Remote.enabled && SESSION) setTimeout(() => { Push.ensure(false); }, 1400);
+
+  // periodic maintenance (status expiry, delivery ack, unread badge)
+  setInterval(() => {
+    if (!me()) return;
+    if (DB.statuses.some(s => s.createdAt + 86400000 < Date.now())) {
+      DB.statuses = DB.statuses.filter(s => s.createdAt + 86400000 > Date.now());
+      persist(); render();
+    }
+    if ('setAppBadge' in navigator) {
+      const n = totalUnread() + unreadNotifs();
+      try { n ? navigator.setAppBadge(n) : navigator.clearAppBadge(); } catch (e) {}
+    }
+  }, 30000);
+}
+
+window.addEventListener('DOMContentLoaded', boot);
+
+/* Manual recovery: open #/reset-cache (or run A.repair() in the console) to drop a
+   stale service worker/cache that a host may have poisoned with an error page. */
+App.repair = async function () {
+  try {
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.unregister()));
+    }
+    if (window.caches) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+    }
+    toast('App cache cleared — reloading…', 'ok');
+    setTimeout(() => location.replace(location.pathname + location.search + '#/home'), 700);
+  } catch (e) { toast('Could not clear the cache automatically', 'err'); }
+};
+</script>
+
+<script>
+/* PWA bootstrap — registered independently of the async app boot so install prompts work reliably. */
+if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
+  var __regSW = function () {
+    navigator.serviceWorker.register('sw.js', { scope: './' }).then(function (reg) {
+      if (reg && reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+    }).catch(function () {});
+  };
+  if (document.readyState === 'complete') __regSW();
+  else window.addEventListener('load', __regSW);
+}
+</script>
+</body>
+</html>
