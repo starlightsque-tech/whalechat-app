@@ -1,0 +1,26 @@
+services:
+  whalechat:
+    build: .
+    restart: unless-stopped
+    ports: ["8090:8090"]
+    environment:
+      PORT: 8090
+      DATA_DIR: /data
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      VAPID_EMAIL: ${VAPID_EMAIL:-support@whalechat.app}
+    volumes: [whalechat-data:/data]
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on: [whalechat]
+    ports: ["80:80", "443:443"]
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+volumes:
+  whalechat-data:
+  caddy-data:
+  caddy-config:
