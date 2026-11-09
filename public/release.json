@@ -1,0 +1,8 @@
+{
+  "version": "3.5.2",
+  "build": "2026-11-09T19:57:20Z",
+  "file": "whalechat.html",
+  "notes": "WhaleChat 3.5.2 - live release with branded-link redirects and a fresh sync endpoint.",
+  "releasedAt": "2026-11-09T19:57:20Z",
+  "minimum": "3.0.0"
+}
