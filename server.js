@@ -15,6 +15,10 @@ const PUBLIC_URL = (process.env.PUBLIC_URL || '').replace(/\/+$/, '');
 const VAPID_EMAIL = process.env.VAPID_EMAIL || 'support@whalechat.app';
 const MAX_BODY = 30 * 1024 * 1024;
 const STARTED = Date.now();
+const DATABASE_URL = process.env.DATABASE_URL || '';
+let email = null;
+try { email = require('./email'); } catch (e) { console.error('[email] module unavailable:', e.message); }
+let pool = null;
 const BUILD = process.env.APP_BUILD || new Date().toISOString();
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -70,6 +74,39 @@ function persistNow() {
   if (!store.db) return;
   try { writeJSONAtomic(STATE_FILE, { rev: store.rev, updatedAt: store.updatedAt, db: store.db }); }
   catch (e) { console.error('[db] write failed:', e.message); }
+  pgPersist();
+}
+/* Durable storage: optional Postgres (DATABASE_URL) so a redeploy can never
+   wipe accounts. The file stays as a fast cache and local backup. */
+function pgPersist() {
+  if (!pool || !store.db) return;
+  const payload = JSON.stringify(store.db);
+  pool.query('insert into whalechat_state (id, rev, updated_at, db) values (1,$1,now(),$2::jsonb) on conflict (id) do update set rev=excluded.rev, updated_at=now(), db=excluded.db', [store.rev, payload])
+    .catch(e => console.error('[db] postgres write failed:', e.message));
+}
+async function initStorage() {
+  if (!DATABASE_URL) return;
+  try {
+    const { Pool } = require('pg');
+    const needsSsl = /sslmode=require/i.test(DATABASE_URL) || /\.render\.com/i.test(DATABASE_URL);
+    pool = new Pool({ connectionString: DATABASE_URL, max: 4, ssl: needsSsl ? { rejectUnauthorized: false } : undefined });
+    await pool.query('create table if not exists whalechat_state (id int primary key, rev int not null default 0, updated_at timestamptz not null default now(), db jsonb)');
+    const r = await pool.query('select rev, db, updated_at from whalechat_state where id = 1');
+    if (r.rows[0] && r.rows[0].db) {
+      store.rev = r.rows[0].rev || 0;
+      store.db = r.rows[0].db;
+      store.updatedAt = new Date(r.rows[0].updated_at).getTime() || Date.now();
+      store.loadedFrom = 'postgres';
+      try { writeJSONAtomic(STATE_FILE, { rev: store.rev, updatedAt: store.updatedAt, db: store.db }); } catch (e) {}
+      console.log('[db] loaded from Postgres · rev', store.rev);
+    } else if (store.db) {
+      pgPersist();
+      console.log('[db] seeded Postgres from local state · rev', store.rev);
+    }
+  } catch (e) {
+    console.error('[db] postgres unavailable:', e.message);
+    pool = null;
+  }
 }
 loadState();
 setInterval(() => snapshot('hourly'), 3600000).unref();
@@ -109,6 +146,24 @@ function readBody(req) {
     req.on('end', () => { if (!chunks.length) return resolve({}); try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); } catch (e) { reject(Object.assign(new Error('Invalid JSON'), { code: 400 })); } });
     req.on('error', reject);
   });
+}
+/* Account + delivery emails (Outlook SMTP, queued & retried). */
+function lifecycleEmails(pushes, events) {
+  if (!email) return;
+  const appUrl = PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || ('http://localhost:' + PORT);
+  for (const p of pushes) {
+    if (p.col === 'users' && p.isNew && p.item && p.item.email) {
+      email.enqueue({ key: 'welcome:' + p.item.id, to: p.item.email, template: 'welcome', data: p.item, appUrl });
+    }
+  }
+  for (const ev of events) {
+    if (ev.col === 'orders' && ev.to === 'delivered' && ev.item) {
+      const buyer = (store.db.users || []).find(u => u.id === ev.item.buyerId);
+      if (buyer && buyer.email) {
+        email.enqueue({ key: 'delivered:' + ev.item.id, to: buyer.email, template: 'delivered', data: ev.item, appUrl });
+      }
+    }
+  }
 }
 function broadcast(event, data) {
   const frame = `event: ${event}\ndata: ${JSON.stringify(data || {})}\n\n`;
@@ -187,6 +242,7 @@ function serveStatic(req, res, pathname) {
 const COLLECTIONS = ['users', 'vendors', 'companyProducts', 'products', 'orders', 'deposits', 'withdrawals', 'messages', 'statuses', 'notifications', 'contacts', 'blocks', 'txs', 'referrals', 'purchases', 'refunds', 'vendorApplications', 'reports'];
 function applyOps(db, ops) {
   const pushes = [];
+  const events = [];
   for (const op of ops || []) {
     if (!op || typeof op !== 'object') continue;
     if (op.op === 'set') { if (typeof op.key === 'string' && !op.key.startsWith('__')) db[op.key] = op.value; continue; }
@@ -199,13 +255,16 @@ function applyOps(db, ops) {
       pushes.push({ col: op.col, item: op.item, isNew: i < 0 });
     } else if (op.op === 'update' && op.id) {
       const i = arr.findIndex(x => x && x.id === op.id);
-      if (i >= 0) arr[i] = Object.assign({}, arr[i], op.patch || {});
-      else if (op.patch && op.patch.id) arr.push(op.patch);
+      if (i >= 0) {
+        const before = arr[i] ? arr[i].status : null;
+        arr[i] = Object.assign({}, arr[i], op.patch || {});
+        if (op.patch && op.patch.status && op.patch.status !== before) events.push({ col: op.col, item: arr[i], from: before, to: op.patch.status });
+      } else if (op.patch && op.patch.id) arr.push(op.patch);
     } else if (op.op === 'remove' && op.id) {
       const i = arr.findIndex(x => x && x.id === op.id); if (i >= 0) arr.splice(i, 1);
     }
   }
-  return pushes;
+  return { pushes, events };
 }
 function previewText(msg) {
   if (!msg) return 'New message';
@@ -232,7 +291,7 @@ async function dispatchPushes(pushes, db) {
 
 async function api(req, res, pathname, query) {
   if (pathname === '/api/health' && req.method === 'GET') {
-    return json(res, 200, { ok: true, app: 'whalechat', version: readJSON(path.join(PUBLIC_DIR, 'version.json'), {}).version || null, build: (readJSON(path.join(PUBLIC_DIR, 'version.json'), {}).build) || BUILD, uptimeSec: Math.floor((Date.now() - STARTED) / 1000), rev: store.rev, users: (store.db && store.db.users) ? store.db.users.length : 0, clients: clients.size, push: !!webpush, publicUrl: PUBLIC_URL || null });
+    return json(res, 200, { ok: true, app: 'whalechat', version: readJSON(path.join(PUBLIC_DIR, 'version.json'), {}).version || null, build: (readJSON(path.join(PUBLIC_DIR, 'version.json'), {}).build) || BUILD, uptimeSec: Math.floor((Date.now() - STARTED) / 1000), rev: store.rev, users: (store.db && store.db.users) ? store.db.users.length : 0, clients: clients.size, push: !!webpush, publicUrl: PUBLIC_URL || null, storage: pool ? 'postgres' : 'file', email: !!(email && email.configured()) });
   }
   if (pathname === '/api/state' && req.method === 'GET') return json(res, 200, { rev: store.rev, db: store.db, updatedAt: store.updatedAt });
   if (pathname === '/api/state/init' && req.method === 'POST') {
@@ -246,10 +305,12 @@ async function api(req, res, pathname, query) {
   if (pathname === '/api/ops' && req.method === 'POST') {
     if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
     const body = await readBody(req);
-    const pushes = applyOps(store.db, Array.isArray(body.ops) ? body.ops : []);
+    const result = applyOps(store.db, Array.isArray(body.ops) ? body.ops : []);
+    const pushes = result.pushes;
     store.rev += 1; store.updatedAt = Date.now(); persist();
     broadcast('change', { rev: store.rev, source: body.clientId || null, at: store.updatedAt });
     if (pushes.length) setImmediate(() => dispatchPushes(pushes, store.db).catch(() => {}));
+    try { lifecycleEmails(pushes, result.events); } catch (e) { console.error('[email] lifecycle:', e.message); }
     return json(res, 200, { ok: true, rev: store.rev });
   }
   if (pathname === '/api/events' && req.method === 'GET') {
@@ -260,6 +321,20 @@ async function api(req, res, pathname, query) {
     const ping = setInterval(() => { try { res.write(': ping\n\n'); } catch (e) {} }, 25000);
     req.on('close', () => { clearInterval(ping); clients.delete(res); });
     return;
+  }
+  // --- email -----------------------------------------------------------
+  if (pathname === '/api/email/status' && req.method === 'GET') {
+    return json(res, 200, email ? email.status() : { ok: true, configured: false, queued: 0 });
+  }
+  if (pathname === '/api/email/test' && req.method === 'POST') {
+    if (!email) return json(res, 503, { ok: false, error: 'email_unavailable' });
+    const body = await readBody(req);
+    const admin = (store.db && store.db.users.find(u => u.role === 'admin')) || {};
+    const to = String(body.to || admin.email || '');
+    if (!to) return json(res, 400, { ok: false, error: 'missing_recipient' });
+    if (!email.configured()) return json(res, 503, { ok: false, error: 'smtp_not_configured', to });
+    const queued = email.enqueue({ key: 'test:' + Date.now(), to, template: 'test', data: {}, appUrl: PUBLIC_URL || ('http://localhost:' + PORT) });
+    return json(res, 200, { ok: true, queued, to, status: email.status() });
   }
   if (pathname === '/api/release' && req.method === 'GET') {
     const v = readJSON(path.join(PUBLIC_DIR, 'version.json'), {});
@@ -346,17 +421,22 @@ const server = http.createServer(async (req, res) => {
 });
 server.keepAliveTimeout = 65000;
 server.headersTimeout = 70000;
-server.listen(PORT, HOST, () => {
-  console.log(`[whalechat] listening on http://localhost:${PORT}`);
-  console.log(`[whalechat] data: ${DATA_DIR}`);
-  console.log(`[whalechat] db: ${store.loadedFrom} · rev ${store.rev}`);
-});
+(async () => {
+  await initStorage();
+  server.listen(PORT, HOST, () => {
+    console.log(`[whalechat] listening on http://localhost:${PORT}`);
+    console.log(`[whalechat] data: ${DATA_DIR}`);
+    console.log(`[whalechat] db: ${store.loadedFrom} · rev ${store.rev}`);
+    console.log(`[whalechat] storage: ${pool ? 'postgres' : 'file'} · email: ${email && email.configured() ? 'smtp ' + email.status().from : 'not configured'}`);
+  });
+})();
 let stopping = false;
 function shutdown(signal) {
   if (stopping) return; stopping = true;
   console.log(`[whalechat] ${signal} — saving and exiting`);
   try { if (store.db) snapshot('shutdown'); } catch (e) {}
   try { persistNow(); } catch (e) {}
+  try { if (pool) pool.end().catch(() => {}); } catch (e) {}
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 1500).unref();
 }
