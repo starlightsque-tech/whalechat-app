@@ -1,0 +1,1309 @@
+k');
+});
+function isStandalone() {
+  return (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+}
+function installState() {
+  try { return JSON.parse(localStorage.getItem(LS_INSTALL) || '{}'); } catch (e) { return {}; }
+}
+function maybeShowInstall() {
+  if (!document.getElementById('app') || isStandalone()) return;
+  if ((location.hash || '').indexOf('/chat/') !== -1) return;
+  if (window.__installScheduled) return;
+  if (document.getElementById('installBanner')) return;
+  const st = installState();
+  if (st.installed || st.never) return;
+  if (st.dismissedAt && Date.now() - st.dismissedAt < 86400000) return;
+  if (!me()) return;
+  window.__installScheduled = true;
+  setTimeout(() => {
+    window.__installScheduled = false;
+    if (document.getElementById('installBanner') || isStandalone()) return;
+    const ua = navigator.userAgent || '';
+    const isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const banner = document.createElement('div');
+    banner.className = 'install-banner'; banner.id = 'installBanner';
+    banner.innerHTML = `<img src="${LOGO}" alt=""/><div style="flex:1;min-width:0">
+      <div style="font-weight:650;font-size:13px">Install WhaleChat</div>
+      <div class="tiny" style="color:#9cb6c6;margin-top:2px">${isIOS ? 'Tap Install for quick steps' : 'Faster chats, notifications and your wallet on the home screen'}</div>
+      <button id="installNever" class="tiny" style="color:#8ba4b6;text-decoration:underline;margin-top:3px;padding:0;font-size:10.5px">Don't show again</button></div>
+      <button class="btn btn-primary btn-sm" id="installGo">Install App</button>
+      <button class="x" id="installX" aria-label="Dismiss">${ic('x', 14)}</button>`;
+    document.body.appendChild(banner);
+    document.body.classList.add('has-install-banner');
+    const dropBanner = () => { banner.remove(); document.body.classList.remove('has-install-banner'); };
+    document.getElementById('installX').onclick = () => {
+      localStorage.setItem(LS_INSTALL, JSON.stringify(Object.assign(installState(), { dismissedAt: Date.now() })));
+      dropBanner();
+      toast('Reminder hidden for today', '', 2600);
+    };
+    document.getElementById('installNever').onclick = () => {
+      localStorage.setItem(LS_INSTALL, JSON.stringify(Object.assign(installState(), { never: true })));
+      dropBanner();
+      toast('Install banner turned off', 'ok');
+    };
+    document.getElementById('installGo').onclick = async () => {
+      clearTimeout(window.__installTimer);
+      if (deferredPrompt) {
+        deferredPrompt.prompt();
+        const choice = await deferredPrompt.userChoice;
+        if (choice && choice.outcome === 'accepted') { dropBanner(); }
+        deferredPrompt = null;
+      } else if (isIOS) {
+        openModal(modalShell('Install WhaleChat on iPhone', `
+          <div class="col gap14">
+            <div class="row gap14"><div class="avatar" style="background:var(--surface-2)">1</div><div><b style="font-size:13.5px">Tap the Share button</b><div class="small muted mt6">In Safari, tap the share icon in the toolbar.</div></div></div>
+            <div class="row gap14"><div class="avatar" style="background:var(--surface-2)">2</div><div><b style="font-size:13.5px">Choose “Add to Home Screen”</b><div class="small muted mt6">Scroll the share sheet if you don't see it.</div></div></div>
+            <div class="row gap14"><div class="avatar" style="background:var(--surface-2)">3</div><div><b style="font-size:13.5px">Tap “Add”</b><div class="small muted mt6">WhaleChat will appear as an app icon.</div></div></div>
+            <div class="panel" style="padding:10px 12px"><div class="tiny muted">On Android Chrome, open the browser menu and choose “Install app”.</div></div>
+          </div>`, `<button class="btn btn-ghost" data-close>Close</button>`, 'Safari · iOS'));
+      } else {
+        openModal(modalShell('Install WhaleChat', `
+          <p class="small muted" style="line-height:1.7">To install, open your browser menu and choose <b style="color:var(--text)">“Install app”</b> or <b style="color:var(--text)">“Add to Home screen”</b>.</p>
+          <div class="panel mt16" style="padding:11px 13px"><div class="tiny muted">Installed apps launch full-screen and can show notifications, even when closed.</div></div>`,
+          `<button class="btn btn-primary" data-close style="width:100%">Got it</button>`));
+      }
+    };
+    const only = document.getElementById('installBanner');
+    window.__installTimer = setTimeout(() => { if (only && only.parentNode) { only.remove(); document.body.classList.remove('has-install-banner'); } }, 22000);
+  }, 5000);
+}
+
+/* ---------------- notifications permission ---------------- */
+async function requestNotifyPermission(silent) {
+  if (typeof Notification === 'undefined') return;
+  if (Notification.permission === 'default') {
+    if (silent) return;
+    try { await Notification.requestPermission(); } catch (e) {}
+  }
+}
+App.enableNotifications = async function () {
+  if (typeof Notification === 'undefined') return toast('Notifications are not supported on this browser', 'err');
+  const p = await Notification.requestPermission();
+  if (p === 'granted') {
+    let extra = '';
+    if (Remote.enabled) {
+      try {
+        const r = await Push.ensure(true);
+        if (r.ok) extra = ' · ' + (r.devices || 1) + ' device' + ((r.devices || 1) === 1 ? '' : 's') + ' registered';
+      } catch (e) {}
+    }
+    toast('Notifications enabled' + extra, 'ok', 3600);
+    try {
+      new Notification('WhaleChat alerts are on', {
+        body: 'New messages now appear on your lock screen, even when the app is closed.',
+        icon: LOGO, badge: LOGO, tag: 'wc-welcome', renotify: true
+      });
+    } catch (e) {}
+  } else toast('Notifications blocked — allow them in browser settings', 'err');
+  render();
+};
+/* =========================================================================
+   Chats, contacts, status, media messaging
+   ========================================================================= */
+const COMPOSE = {};      // chatId -> {text, media:[{id,type,name,dur}]}
+let EDITING = null;      // message id
+let ACTIVE_CHAT = null;
+const TYPING = {};       // chatId -> {userId: ts}
+const PRESENCE_KEY = 'whalechat.presence';
+
+const Presence = {
+  map() { try { return JSON.parse(localStorage.getItem(PRESENCE_KEY) || '{}'); } catch (e) { return {}; } },
+  touch() { const u = me(); if (!u) return; const m = this.map(); m[u.id] = Date.now(); try { localStorage.setItem(PRESENCE_KEY, JSON.stringify(m)); } catch (e) {} },
+  isOnline(id) { const m = this.map(); return m[id] && Date.now() - m[id] < 90000; },
+  lastSeen(id) { const m = this.map(); return m[id] || 0; }
+};
+setInterval(() => { if (me()) { Presence.touch(); if (ACTIVE_CHAT) render(); } }, 25000);
+
+/* ---------------- presence broadcast (typing) ---------------- */
+let chan = null;
+try { chan = new BroadcastChannel('whalechat.live'); } catch (e) { chan = null; }
+if (chan) chan.onmessage = (ev) => {
+  const d = ev.data;
+  if (!d || !d.t) return;
+  if (d.t === 'typing' && d.chatId) {
+    TYPING[d.chatId] = TYPING[d.chatId] || {};
+    TYPING[d.chatId][d.from] = Date.now();
+    if (ACTIVE_CHAT === d.chatId) render();
+  }
+  if (d.t === 'message') { DB = loadDB(); render(); }
+};
+
+/* ---------------- helpers ---------------- */
+function lastMessage(a, b) {
+  const cid = chatId(a, b);
+  const u = me();
+  const msgs = DB.messages.filter(m => m.chatId === cid && (!m.deleted || !(m.deletedFor || []).includes(u.id)));
+  return msgs.length ? msgs[msgs.length - 1] : null;
+}
+function previewOf(m) {
+  if (!m) return '';
+  if (m.deleted) return 'Message deleted';
+  const map = { image: '📷 Photo', video: '🎬 Video', audio: '🎤 Voice message', file: '📎 Attachment' };
+  return (m.forwarded && m.type !== 'audio' ? 'Forwarded · ' : '') + (m.text || map[m.type] || 'Message');
+}
+function chatMessages(cid) {
+  const u = me();
+  return DB.messages.filter(m => m.chatId === cid && (!m.deleted || !(m.deletedFor || []).includes(u.id)));
+}
+function timeDivider(ts) { return dayLabel(ts); }
+
+function supportWaiting(cid) {
+  const u = me(); if (!u) return false;
+  const msgs = DB.messages.filter(m => m.chatId === cid && (!m.deleted || !(m.deletedFor || []).includes(u.id)));
+  if (!msgs.length) return false;
+  const lastMine = [...msgs].reverse().find(m => m.from === u.id);
+  if (!lastMine) return false;
+  const lastTheirs = [...msgs].reverse().find(m => m.from !== u.id);
+  if (lastTheirs && lastTheirs.createdAt > lastMine.createdAt) return false;
+  return Date.now() - lastMine.createdAt >= 10 * 60 * 1000;
+}
+
+function canViewStatus(s, viewerId) {
+  if (!s) return false;
+  if (s.userId === viewerId) return true;
+  if (isBlocked(viewerId, s.userId)) return false;
+  if (s.privacy === 'everyone') return true;
+  if (s.privacy === 'selected') return (s.selected || []).includes(viewerId);
+  return isContact(viewerId, s.userId);
+}
+
+function threadPreview(uid1, uid2) {
+  const m = lastMessage(uid1, uid2);
+  if (!m) return null;
+  return m;
+}
+
+/* ---------------- HOME ---------------- */
+VIEWS.home = function () {
+  const u = me();
+  if (!u) return '';
+  const contacts = myContacts(u.id);
+  const rows = contacts.map(c => {
+    const m = lastMessage(u.id, c.id);
+    const pinned = (DB.chatsMeta[chatId(u.id, c.id)] || {}).pinned;
+    return { c, m, t: m ? m.createdAt : 0, pinned };
+  }).sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || b.t - a.t);
+
+  const activeStatuses = DB.statuses.filter(s => s.createdAt + 86400000 > Date.now() && canViewStatus(s, u.id));
+  const byOwner = {};
+  activeStatuses.forEach(s => { (byOwner[s.userId] = byOwner[s.userId] || []).push(s); });
+  const myStatuses = byOwner[u.id] || [];
+  const statusUsers = Object.keys(byOwner).filter(id => byOwner[id].length && !isBlocked(u.id, id)).map(id => findUser(id)).filter(Boolean);
+
+  const unread = unreadCount(u.id);
+  const recentOrders = DB.orders.filter(o => o.buyerId === u.id).slice(0, 2);
+
+  let localNoteDismissed = true;
+  try { localNoteDismissed = localStorage.getItem('wc_local_note') === '1'; } catch (e) {}
+  let notifNudgeDismissed = true;
+  try { notifNudgeDismissed = localStorage.getItem('wc_notif_nudge_' + new Date().toDateString()) === '1'; } catch (e) {}
+  const notifNudge = (Remote.enabled && typeof Notification !== 'undefined' && Notification.permission !== 'granted' && !notifNudgeDismissed)
+    ? `<div class="card mb16" style="padding:12px 14px;border-color:rgba(46,230,201,.3);background:linear-gradient(120deg,rgba(46,230,201,.10),rgba(58,160,255,.05))">
+        <div class="between gap10 wrap">
+          <div class="row gap10" style="align-items:flex-start">
+            <span style="width:32px;height:32px;border-radius:9px;background:rgba(46,230,201,.15);color:var(--accent);display:flex;align-items:center;justify-content:center;flex:none">${ic('bell', 16)}</span>
+            <div><div class="small" style="font-weight:650">Get messages on your lock screen</div>
+            <div class="tiny muted mt6" style="line-height:1.6">Turn on alerts to see new messages on your home screen or lock screen — even when WhaleChat is closed.</div></div>
+          </div>
+          <div class="row gap6">
+            <button class="btn btn-xs btn-primary" data-act="enable-notifications">Turn on</button>
+            <button class="btn btn-xs btn-ghost" data-act="dismiss-notif-nudge">Later</button>
+          </div>
+        </div>
+      </div>` : '';
+  const localNote = (!Remote.enabled && !localNoteDismissed) ? `<div class="card mb16" style="padding:12px 14px;border-color:rgba(255,176,32,.35);background:linear-gradient(120deg,rgba(255,176,32,.10),rgba(46,230,201,.05))">
+      <div class="between gap10 wrap">
+        <div class="row gap10" style="align-items:flex-start">
+          <span style="width:32px;height:32px;border-radius:9px;background:rgba(255,176,32,.15);color:var(--warn);display:flex;align-items:center;justify-content:center;flex:none">${ic('shield', 16)}</span>
+          <div><div class="small" style="font-weight:650">Single-device mode</div>
+          <div class="tiny muted mt6" style="line-height:1.6">Invites, contacts and chats only reach accounts stored on this device. Connect the sync server so every phone and computer shares one database.</div></div>
+        </div>
+        <div class="row gap6">
+          <button class="btn btn-xs btn-primary" data-act="server-dialog">Connect</button>
+          <button class="btn btn-xs btn-ghost" data-act="dismiss-local-note">Dismiss</button>
+        </div>
+      </div>
+    </div>` : '';
+  return `<div class="home-grid">
+    <div>
+      ${notifNudge}
+      ${localNote}
+      <div class="between mb16">
+        <div>
+          <h1 style="font-size:23px">Chats ${unread ? `<span class="badge badge-accent" style="vertical-align:middle;margin-left:6px">${unread} new</span>` : ''}</h1>
+          <p class="muted small" style="margin-top:3px">Private conversations with your WhaleChat contacts.</p>
+        </div>
+        <div class="row" style="gap:7px">
+          <button class="btn-icon" data-act="search-people" title="Search people">${ic('search', 18)}</button>
+          <button class="btn btn-primary btn-sm" data-act="add-contact">${ic('plus', 15)} Add contact</button>
+        </div>
+      </div>
+
+      <div class="status-circles">
+        <div class="story ${myStatuses.length ? '' : 'add'}" data-act="${myStatuses.length ? 'open-status' : 'compose-status'}" data-id="${u.id}">
+          <div class="ring" style="position:relative">
+            <div class="avatar">${u.avatar ? `<img src="${u.avatar}"/>` : `<span>${esc(initials(u.fullName))}</span>`}</div>
+            ${!myStatuses.length ? `<span style="position:absolute;right:0;bottom:0;width:21px;height:21px;border-radius:50%;background:var(--accent);color:#04241f;display:flex;align-items:center;justify-content:center;border:2.5px solid var(--bg);z-index:2">${ic('plus', 11)}</span>` : ''}
+          </div>
+          <span>${myStatuses.length ? 'My status' : 'Add status'}</span>
+        </div>
+        ${statusUsers.filter(x => x.id !== u.id).map(su => `<div class="story" data-act="open-status" data-id="${su.id}">
+          <div class="ring"><div class="avatar">${su.avatar ? `<img src="${su.avatar}"/>` : `<span>${esc(initials(su.fullName))}</span>`}</div></div>
+          <span>${esc(su.fullName.split(' ')[0])}</span></div>`).join('')}
+        ${statusUsers.filter(x => x.id !== u.id).length === 0 ? '' : ''}
+      </div>
+
+      ${rows.length === 0 ? `<div class="card empty" style="border-style:dashed">
+          <div class="ic">${ic('chat', 26)}</div><h3>No conversations yet</h3>
+          <p>Add a contact by username, phone or email — WhaleChat only lets you chat with people you've saved.</p>
+          <button class="btn btn-primary" data-act="add-contact">${ic('plus', 16)} Add your first contact</button>
+        </div>`
+        : `<div class="chat-list">${rows.map(({ c, m }) => {
+          const un = DB.messages.filter(x => x.chatId === chatId(u.id, c.id) && x.to === u.id && !x.deleted && !isReadBy(x, u.id)).length;
+          const meta = DB.chatsMeta[chatId(u.id, c.id)] || {};
+          const muted = (meta.muted || []).includes(u.id);
+          const online = Presence.isOnline(c.id);
+          return `<div class="chat-item" data-act="open-chat" data-id="${c.id}">
+            <div class="avatar-wrap">${avatarHTML(c)}${online ? '<span class="status-dot"></span>' : ''}</div>
+            <div class="meta">
+              <div class="nm">${esc(c.fullName)}${c.verified ? `<span class="verified">${ic('check', 9)}</span>` : ''}
+                ${c.role === 'admin' ? '<span class="badge badge-accent" style="font-size:9.5px">Support</span>' : ''}
+                ${isVendor(c) ? '<span class="badge" style="font-size:9.5px">Vendor</span>' : ''}</div>
+              <div class="pv">${m && m.from === u.id ? `<span class="tick ${m.status === 'seen' ? 'seen' : ''}">${ic(m.status === 'seen' ? 'checks' : 'check', 13)}</span>` : ''}
+                <span class="ellipsis">${esc(previewOf(m))}</span></div>
+            </div>
+            <div class="right">
+              <span class="time">${m ? timeAgo(m.createdAt) : ''}</span>
+              ${un ? `<span class="unread">${un > 99 ? '99+' : un}</span>` : muted ? `<span class="muted">${ic('bell', 13)}</span>` : ''}
+            </div>
+          </div>`;
+        }).join('')}</div>`}
+    </div>
+    <aside class="home-side col gap14">
+      <div class="card" style="background:linear-gradient(160deg,rgba(46,230,201,.13),rgba(58,160,255,.06))">
+        <div class="between"><span class="tiny muted" style="font-weight:700;letter-spacing:.08em">WALLET BALANCE</span>${ic('wallet', 16)}</div>
+        <div class="row" style="gap:7px;margin-top:8px;align-items:baseline"><span style="font-family:var(--display);font-size:30px;font-weight:800">${coins(u.balance)}</span><span class="small muted">WC</span></div>
+        <div class="tiny muted mt6">≈ ${usd(coinsToUsd(u.balance))} USD</div>
+        <div class="row" style="gap:8px;margin-top:14px">
+          <button class="btn btn-primary btn-sm grow" data-nav="#/deposit">Deposit</button>
+          <button class="btn btn-ghost btn-sm grow" data-nav="#/withdraw">Withdraw</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="section-title"><h3>Quick actions</h3></div>
+        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px">
+          ${[['bag', 'Marketplace', '#/market'], ['gift', 'Invite & earn', '#/referrals'], ['truck', 'My orders', '#/orders'], ['store', isVendor(u) ? 'Vendor hub' : 'Become a vendor', '#/vendor']]
+            .map(([i, t, h]) => `<a href="${h}" class="panel" style="padding:12px 10px;display:flex;flex-direction:column;gap:8px;align-items:flex-start;border-radius:12px">
+              <span style="width:30px;height:30px;border-radius:8px;background:rgba(46,230,201,.12);color:var(--accent);display:flex;align-items:center;justify-content:center">${ic(i, 16)}</span>
+              <span class="tiny" style="font-weight:600">${t}</span></a>`).join('')}
+        </div>
+      </div>
+      ${recentOrders.length ? `<div class="card">
+        <div class="section-title"><h3>Order updates</h3><a href="#/orders" class="link tiny">View all</a></div>
+        ${recentOrders.map(o => `<div class="row" style="padding:8px 0;gap:10px;border-bottom:1px dashed var(--border)">
+          <span style="width:32px;height:32px;border-radius:9px;background:var(--surface-2);display:flex;align-items:center;justify-content:center">${ic('truck', 15)}</span>
+          <div class="grow"><div class="small" style="font-weight:600">${esc(o.ref)}</div><div class="tiny muted">${statusBadge(o.status)}</div></div>
+          <a href="#/track" class="btn btn-xs btn-ghost">Track</a></div>`).join('')}
+      </div>` : ''}
+      <div class="card" style="position:relative;overflow:hidden">
+        <img src="data:image/jpeg;base64,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cyI6eyJrZXlfdHJhbnNmb3JtX2Jhc2VfbWF0cml4IjpbMi4zNDU1Mzc3LDAuMCwwLjAsMC4wLDAuMCwyLjM0NTUxNDgsMC4wLDAuMCwwLjAsMC4wLDIuMzQ1NTQzMSwwLjAsLTEwNTMuMTY5MiwxNzEuODYzODMsMC4wLDEuMCwwLjAsMC4wLDAuMCwwLjAsMC4wLDAuMCwwLjAsMC4wLDAuMCwwLjAsMC4wLDAuMCwwLjAsMC4wLDAuMCwwLjBdLCJydWxlQW5nbGUiOjAsInZlcnRpY2FsVGlsdFN3aXRjaCI6dHJ1ZSwiaG9yaXpvbnRhbFRpbHRTd2l0Y2giOnRydWUsImtleV90cmFuc2Zvcm1fdmlld3BvcnRfd2lkdGgiOjEwODAsInJ1bGVBbmdsZVN3aXRjaCI6dHJ1ZSwia2V5X3RyYW5zZm9ybV9kaXNwbGF5X2JvdW5kcyI6WzAuMCwwLjAsOTI0LjAsNTc2LjBdLCJob3Jpem9udGFsVGlsdCI6MCwiYXV0b1RpbHRTd2l0Y2giOmZhbHNlLCJ2ZXJ0aWNhbFRpbHQiOjAsInJhdGlvIjowLjAsImtleV90cmFuc2Zvcm1fdmlld3BvcnRfaGVpZ2h0IjoyNDAwLCJrZXlfdHJhbnNmb3JtX2NsaXBfcmVjdCI6WzExMy45OTk5NTQsNDE3Ljc5MzE4LDk2Ni4wLDEwNjMuMjA2OF0sImdsb2JhbF9rZXlfY2FjaGVfa2V5d29yZCI6IlRyYW5zZm9ybUVmZmVjdF8xNzk0MTcyNDQxMDgxIiwiZ2xvYmFsX2tleV9leGVjdXRlX2NvbW1hbmQiOiJjbWRfdHJhbnNmb3JtX2RyYXciLCJyb3RhdGVPcmllbnRhdGlvbiI6MCwiaXNIb3Jpem9udGFsTWlycm9yIjpmYWxzZSwicm90YXRlQW5nbGUiOjAuMCwia2V5X3RyYW5zZm9ybV9tYXRyaXgiOlsyLjM0NTUzNzcsMC4wLDAuMCwwLjAsMC4wLDIuMzQ1NTE0OCwwLjAsMC4wLDAuMCwwLjAsMi4zNDU1NDMxLDAuMCwtMTA1My4xNjkyLDE3MS44NjM4MywwLjAsMS4wLDAuMCwwLjAsMC4wLDAuMCwwLjAsMC4wLDAuMCwwLjAsMC4wLDAuMCwwLjAsMC4wLDAuMCwwLjAsMC4wLDAuMF0sInJvdGF0ZV9heGlzIjpbMC4wLDEuMCwwLjAsMS4wXX0sInZlcnNpb24iOjAuMn1dAHsib3JpZ2luYWxGaWxlU3ViUGF0aCI6Ii9lZGl0L3BhcmFtZXRyaWMvZmlsZXMvb3JpZ2luXzE3OTQxNzI0NDQzNjAuanBnIiwiY29udGVudEVkaXRGaWxlU3ViUGF0aCI6Ii9lZGl0L3BhcmFtZXRyaWMvZmlsZXMvY29udGVudF9lZGl0XzE3OTQxNzI0NDQ0NDIuanBnIiwiaGFzQ29udGVudEVkaXQiOmZhbHNlfQCamZk/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAE9QUE8gUmVubzEyIEYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABbeyJsZW5ndGgiOjk5NywibmFtZSI6ImVkaXQucHJvamVjdC5jb25maWciLCJvZmZzZXQiOjEyNTYsInZlcnNpb24iOjF9LHsibGVuZ3RoIjoxNzgsIm5hbWUiOiJlZGl0LnByb2plY3QuZW50aXR5Iiwib2Zmc2V0IjoyNTksInZlcnNpb24iOjF9LHsibGVuZ3RoIjoxLCJuYW1lIjoiaW1hZ2UucXVhbGl0eS5lbmhhbmNlZCIsIm9mZnNldCI6MSwidmVyc2lvbiI6MX0seyJsZW5ndGgiOjEsIm5hbWUiOiJwcml2YXRlLmVtcHR5c3BhY2UiLCJvZmZzZXQiOjEyNTcsInZlcnNpb24iOjF9LHsibGVuZ3RoIjo4MCwibmFtZSI6IndhdGVybWFyay5kZXZpY2UiLCJvZmZzZXQiOjgxLCJ2ZXJzaW9uIjoxfV0Ad3Rta1wBAAA=" style="width:100%;border-radius:12px;opacity:.9"/>
+        <div class="tiny muted mt10" style="line-height:1.6">WhaleChat — chat, shop and get paid in one calm place.</div>
+      </div>
+    </aside>
+  </div>`;
+};
+
+AFTER.home = function () { ACTIVE_CHAT = null; };
+
+/* ---------------- contacts ---------------- */
+VIEWS.contacts = function () {
+  const u = me();
+  const cs = myContacts(u.id);
+  return `<div class="page-head"><div><h1>Contacts</h1><p>People you can chat with on WhaleChat.</p></div>
+    <button class="btn btn-primary btn-sm" data-act="add-contact">${ic('plus', 15)} Add contact</button></div>
+    ${cs.length ? `<div class="list">${cs.map(c => `<div class="list-item">
+      ${avatarHTML(c)}
+      <div class="grow"><div style="font-weight:600;font-size:14px">${esc(c.fullName)} ${c.verified ? `<span class="verified" style="vertical-align:middle">${ic('check', 9)}</span>` : ''}</div>
+      <div class="tiny muted">@${esc(c.username)} · ${esc(c.phone || '')}</div></div>
+      <button class="btn btn-sm btn-ghost" data-act="open-chat" data-id="${c.id}">${ic('chat', 15)} Chat</button>
+      <button class="btn-icon" data-act="contact-menu" data-id="${c.id}" style="width:36px;height:36px">${ic('more', 16)}</button>
+    </div>`).join('')}</div>` : `<div class="empty"><div class="ic">${ic('users', 26)}</div><h3>No contacts saved</h3><p>Search by username, phone number or email to add someone.</p><button class="btn btn-primary" data-act="add-contact">Add contact</button></div>`}`;
+};
+
+function normPhone(v) { return String(v || '').replace(/[^\d]/g, ''); }
+
+/* Look someone up by phone number, username or email address. */
+function directoryMatches(query) {
+  const u = me();
+  const raw = String(query || '').trim();
+  if (!raw || !u) return { exact: null, list: [] };
+  const low = raw.toLowerCase().replace(/^@/, '');
+  const digits = normPhone(raw);
+  const people = DB.users.filter(x => x.id !== u.id && !x.banned && x.role !== 'admin');
+  const phoneHit = (x) => {
+    const phone = normPhone(x.phone);
+    if (!phone || digits.length < 6) return false;
+    return phone === digits || (digits.length >= 9 && phone.slice(-9) === digits.slice(-9));
+  };
+  const exact = people.find(x =>
+    phoneHit(x) ||
+    String(x.username || '').toLowerCase() === low ||
+    String(x.email || '').toLowerCase() === low
+  ) || null;
+  let list = [];
+  if (!exact) {
+    list = people.filter(x => {
+      const phone = normPhone(x.phone);
+      return (digits.length >= 4 && phone.includes(digits)) ||
+        String(x.username || '').toLowerCase().includes(low) ||
+        String(x.email || '').toLowerCase().includes(low) ||
+        String(x.fullName || '').toLowerCase().includes(low);
+    }).slice(0, 8);
+  }
+  return { exact, list };
+}
+
+function contactResultCard(x) {
+  const u = me();
+  const added = isContact(u.id, x.id);
+  return `<div class="list-item">${avatarHTML(x, 'sm')}
+    <div class="grow" style="min-width:0"><div class="small" style="font-weight:600">${esc(x.fullName)}</div>
+      <div class="tiny muted">@${esc(x.username)}${x.phone ? ' · ' + esc(x.phone) : ''}</div></div>
+    <button class="btn btn-sm ${added ? 'btn-ghost' : 'btn-primary'}" data-act="${added ? 'open-chat' : 'save-contact'}" data-id="${x.id}">${added ? 'Chat' : 'Save'}</button></div>`;
+}
+
+App.addContact = function () {
+  openModal(modalShell('Save a contact', `
+    <p class="small muted" style="line-height:1.7">Add someone with their phone number or their WhaleChat username, then tap Save. They are added to your contact list and you can chat immediately.</p>
+    <div class="field mt14"><label class="label">Phone number</label>
+      <div class="input-wrap"><span class="ic">${ic('user', 17)}</span>
+        <input class="input" id="acPhone" type="tel" inputmode="tel" placeholder="+1 555 010 2030" autocomplete="off"/></div>
+      <div class="help">Use the number saved on their WhaleChat account.</div></div>
+    <div class="field"><label class="label">or username / email</label>
+      <div class="input-wrap"><span class="ic">${ic('search', 17)}</span>
+        <input class="input" id="acUser" placeholder="janedoe or jane@email.com" autocomplete="off"/></div></div>
+    <div id="acResults" class="mt10"></div>`,
+    `<button class="btn btn-ghost" data-close>Cancel</button>
+     <button class="btn btn-primary" data-act="ac-save">${ic('check', 15)} Save contact</button>`), { width: '480px' });
+  const phone = document.getElementById('acPhone');
+  const user = document.getElementById('acUser');
+  const submit = (e) => { if (e.key === 'Enter') { e.preventDefault(); App.acSave(); } };
+  if (phone) phone.addEventListener('keydown', submit);
+  if (user) user.addEventListener('keydown', submit);
+  setTimeout(() => { if (phone) phone.focus(); }, 90);
+};
+
+App.acSave = function () {
+  const phone = (document.getElementById('acPhone') || {}).value || '';
+  const user = (document.getElementById('acUser') || {}).value || '';
+  const query = phone.trim() || user.trim();
+  const box = document.getElementById('acResults');
+  if (!query) return toast('Enter a phone number or username', 'err');
+  const { exact, list } = directoryMatches(query);
+  if (exact) {
+    if (isContact(me().id, exact.id)) { closeModal(); return go('chat/' + exact.id); }
+    return App.saveContact(exact.id);
+  }
+  if (list.length) {
+    if (box) box.innerHTML = `<div class="tiny muted mb8">${list.length} match${list.length === 1 ? '' : 'es'} — choose the right person</div><div class="list">${list.map(contactResultCard).join('')}</div>`;
+    return;
+  }
+  if (box) box.innerHTML = `<div class="panel center" style="padding:14px">
+    <div class="small" style="font-weight:600">No account found</div>
+    <div class="tiny muted mt6">Check the phone number or username.${!Remote.enabled ? ' This device is in local mode, so only accounts created here can be found.' : ''}</div></div>`;
+};
+
+App.saveContact = function (id) {
+  const u = me();
+  const x = findUser(id);
+  if (!x) return;
+  if (isContact(u.id, id)) { closeModal(); return go('chat/' + id); }
+  DB.contacts.push({ id: uid('ct'), ownerId: u.id, userId: id, createdAt: Date.now() });
+  // reciprocal so both sides can talk
+  if (!isContact(id, u.id)) DB.contacts.push({ id: uid('ct'), ownerId: id, userId: u.id, createdAt: Date.now() });
+  notify(id, 'New contact', `${u.fullName} (@${u.username}) added you to their WhaleChat contacts.`, '#/home', 'users');
+  sync(); closeModal(); toast('Contact added', 'ok'); go('chat/' + id);
+};
+
+App.contactMenu = function (id) {
+  const u = me(); const c = findUser(id);
+  if (!c) return;
+  openModal(modalShell(c.fullName, `
+    <div class="list">
+      <button class="list-item" data-act="open-chat" data-id="${id}" style="width:100%;text-align:left">${ic('chat', 17)} <span class="grow">Open chat</span></button>
+      <button class="list-item" data-act="delete-contact" data-id="${id}" style="width:100%;text-align:left;color:var(--danger)">${ic('trash', 17)} <span class="grow">Remove contact</span></button>
+    </div>`, `<button class="btn btn-ghost" data-close style="width:100%">Close</button>`, '@' + c.username));
+};
+App.deleteContact = async function (id) {
+  const u = me();
+  if (!await confirmDialog({ title: 'Remove contact?', body: 'They will be removed from your contact list. Your chat history stays on your account.', danger: true, ok: 'Remove' })) return;
+  DB.contacts = DB.contacts.filter(c => !(c.ownerId === u.id && c.userId === id));
+  sync(); closeModal(); toast('Contact removed', 'ok'); render();
+};
+
+/* ---------------- CHAT ROOM ---------------- */
+VIEWS.chat = function (parts) {
+  const u = me();
+  const other = findUser(parts[1]);
+  if (!other) return `<div class="empty"><h3>Conversation not found</h3><button class="btn btn-primary" data-nav="#/home">Back</button></div>`;
+  if (!isContact(u.id, other.id) && other.role !== 'admin' && u.role !== 'admin') {
+    return `<div class="empty"><div class="ic">${ic('lock', 24)}</div><h3>You need to add ${esc(other.fullName)} first</h3>
+      <p>WhaleChat only allows conversations between saved contacts.</p><button class="btn btn-primary" data-act="save-contact" data-id="${other.id}">Add contact</button></div>`;
+  }
+  const cid = chatId(u.id, other.id);
+  ACTIVE_CHAT = cid;
+  const msgs = chatMessages(cid);
+  const meta = DB.chatsMeta[cid] || {};
+  const muted = (meta.muted || []).includes(u.id);
+  const blocked = isBlocked(u.id, other.id);
+  const online = Presence.isOnline(other.id);
+  const comp = COMPOSE[cid] || { text: '', media: [] };
+  const typing = TYPING[cid] && TYPING[cid][other.id] && Date.now() - TYPING[cid][other.id] < 4000;
+
+  let body = '', lastDay = '';
+  msgs.forEach((m) => {
+    const dl = timeDivider(m.createdAt);
+    if (dl !== lastDay) { body += `<div class="day-sep">${dl}</div>`; lastDay = dl; }
+    body += messageHTML(m, u, other);
+  });
+  if (!msgs.length) body = `<div class="chat-empty-hint">🔒 Messages are private between you and ${esc(other.fullName.split(' ')[0])}. Say hello to get started.</div>`;
+
+  const editMsg = EDITING ? DB.messages.find(m => m.id === EDITING) : null;
+
+  return `<div class="chat-room">
+    <div class="chat-head">
+      <button class="btn-icon" data-nav="#/home" style="width:36px;height:36px">${ic('back', 18)}</button>
+      <div class="avatar-wrap" data-act="view-profile" data-id="${other.id}" style="cursor:pointer">${avatarHTML(other, 'sm')}${online ? '<span class="status-dot" style="width:10px;height:10px"></span>' : ''}</div>
+      <div class="grow" data-act="view-profile" data-id="${other.id}" style="cursor:pointer;min-width:0">
+        <div class="row gap6" style="font-weight:650;font-size:14.5px">${esc(other.fullName)} ${other.verified ? `<span class="verified">${ic('check', 9)}</span>` : ''}</div>
+        <div class="tiny" style="color:${typing ? 'var(--accent)' : 'var(--muted)'}">${typing ? 'typing…' : online ? 'online' : 'last seen ' + (Presence.lastSeen(other.id) ? timeAgo(Presence.lastSeen(other.id)) + ' ago' : 'recently')}
+          ${muted ? ' · muted' : ''}</div>
+      </div>
+      <button class="btn-icon" data-act="chat-menu" data-id="${other.id}" style="width:36px;height:36px">${ic('more', 18)}</button>
+    </div>
+    <div class="chat-body" id="chatBody">
+      ${body}
+      ${typing ? `<div class="typing"><i></i><i></i><i></i></div>` : ''}
+    </div>
+    ${other.role === 'admin' && supportWaiting(cid) ? `<div class="support-live" id="supportLiveCallout">
+      <div class="row gap10" style="align-items:flex-start">
+        <span style="width:34px;height:34px;border-radius:10px;background:rgba(46,230,201,.15);color:var(--accent);display:flex;align-items:center;justify-content:center;flex:none">${ic('help', 17)}</span>
+        <div><div class="small" style="font-weight:650">Still waiting for a reply?</div>
+        <div class="tiny muted mt6" style="line-height:1.55">Our team hasn't responded for 10 minutes. Connect to our customer support team on live chat for an immediate answer.</div></div>
+      </div>
+      <div class="row gap8 mt10"><button class="btn btn-primary btn-sm" data-act="live-chat">${ic('chat', 14)} Connect on live chat</button>
+        <button class="btn btn-ghost btn-sm" data-act="live-chat-help">${ic('help', 14)} How it works</button></div>
+    </div>` : ''}
+    <div class="chat-input" style="flex-direction:column;align-items:stretch;gap:4px">
+      ${editMsg ? `<div class="row between" style="padding:6px 8px;background:rgba(46,230,201,.08);border-radius:9px;margin-bottom:4px">
+        <span class="tiny" style="color:var(--accent);font-weight:600">${ic('edit', 13)} Editing message</span>
+        <button class="tiny muted" data-act="cancel-edit">Cancel</button></div>` : ''}
+      ${comp.media && comp.media.length ? `<div class="row gap6 wrap" style="padding:2px 2px 6px">${comp.media.map((m, i) => `<div class="pv" style="width:54px;height:54px;position:relative;border-radius:8px;overflow:hidden;border:1px solid var(--border)">
+        ${m.type === 'image' && m.preview ? `<img src="${m.preview}" style="width:100%;height:100%;object-fit:cover"/>` : `<span style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;color:var(--accent)">${ic(m.type === 'video' ? 'video' : 'mic', 18)}</span>`}
+        <button data-act="remove-media" data-idx="${i}" style="position:absolute;top:2px;right:2px;width:17px;height:17px;border-radius:50%;background:rgba(0,0,0,.7);color:#fff;font-size:10px;display:flex;align-items:center;justify-content:center">×</button></div>`).join('')}</div>` : ''}
+      <div class="row" style="gap:7px;align-items:flex-end">
+        <button class="icon-btn-round" data-act="attach" title="Attach">${ic('clip', 19)}</button>
+        <textarea id="msgInput" placeholder="${blocked ? 'You blocked this contact' : 'Message…'}" rows="1" ${blocked ? 'disabled' : ''}>${esc(comp.text || '')}</textarea>
+        ${comp.text || (comp.media && comp.media.length) || editMsg
+          ? `<button class="send-btn" data-act="send">${ic(editMsg ? 'check' : 'send', 19)}</button>`
+          : `<button class="icon-btn-round" data-act="voice" style="width:44px;height:44px;background:var(--surface-2)">${ic('mic', 20)}</button>`}
+      </div>
+    </div>
+  </div>`;
+};
+
+function waveform(id, n = 22) {
+  let h = 0; for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 9973;
+  let out = '';
+  for (let i = 0; i < n; i++) {
+    h = (h * 1103515245 + 12345) % 2147483647;
+    const v = 5 + (h % 18);
+    out += `<i style="height:${v}px"></i>`;
+  }
+  return out;
+}
+function reactionCounts(reactions) {
+  const out = {};
+  Object.keys(reactions || {}).forEach(k => { const e = reactions[k]; if (e) out[e] = (out[e] || 0) + 1; });
+  return out;
+}
+function reactionChips(reactions, meId, kind, id) {
+  const counts = reactionCounts(reactions);
+  const keys = Object.keys(counts);
+  if (!keys.length) return '';
+  const mine = (reactions || {})[meId];
+  return `<div class="react-row">${keys.map(e => `<button class="react-chip ${mine === e ? 'mine' : ''}" data-act="react-${kind}" data-id="${id}" data-emoji="${e}" title="React">${e}${counts[e] > 1 ? ' ' + counts[e] : ''}</button>`).join('')}</div>`;
+}
+function messageHTML(m, u, other) {
+  const out = m.from === u.id;
+  const showFwd = m.forwarded && m.type !== 'audio'; // audio forwards intentionally look normal
+  let content = '';
+  if (m.type === 'image') {
+    content = `<img class="chat-media skeleton" data-media="${m.mediaId}" style="min-height:120px" alt="Photo" data-act="view-media" data-id="${m.id}"/>`;
+  } else if (m.type === 'video') {
+    content = `<video class="chat-media" data-media="${m.mediaId}" controls playsinline preload="metadata" style="min-height:120px"></video>`;
+  } else if (m.type === 'audio') {
+    content = `<div class="audio-player" data-audio="${m.id}">
+      <button class="ap-btn" data-act="play-audio" data-id="${m.id}">${ic('play', 14)}</button>
+      <div class="wave">${waveform(m.id, 24)}</div>
+      <span class="tiny muted" style="min-width:30px;text-align:right" data-dur="${m.id}">${m.dur ? Math.round(m.dur) + 's' : '0s'}</span>
+      <audio data-media="${m.mediaId}" preload="metadata" style="display:none"></audio>
+    </div>`;
+  }
+  return `<div class="msg ${out ? 'out' : 'in'}" data-msg="${m.id}" data-mine="${out ? 1 : 0}" data-type="${m.type}" data-at="${m.createdAt}">
+    ${!out && other.role === 'admin' ? '' : ''}
+    ${showFwd ? `<div class="fwd">${ic('forward', 11)} Forwarded</div>` : ''}
+    ${m.replyText ? `<div class="tiny" style="border-left:2px solid var(--accent);padding-left:7px;margin-bottom:4px;opacity:.8">${esc(m.replyText).slice(0, 90)}</div>` : ''}
+    ${content}
+    ${m.text ? `<div class="txt">${linkify(esc(m.text))}</div>` : ''}
+    <div class="meta">
+      ${m.editedAt ? '<span class="edited">Edited</span>' : ''}
+      <span>${clockTime(m.createdAt)}</span>
+      ${out ? `<span class="tick ${m.status === 'seen' ? 'seen' : ''}" title="${m.status === 'seen' ? 'Read' : 'Sent'}">${ic(m.status === 'seen' ? 'checks' : 'check', 12)}</span>` : ''}
+    </div>
+    ${reactionChips(m.reactions, u.id, 'msg', m.id)}
+  </div>`;
+}
+function linkify(escaped) {
+  return escaped.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener" style="color:var(--accent-2);text-decoration:underline">$1</a>');
+}
+
+let SUPPORT_TIMER = null;
+AFTER.chat = function (parts) {
+  ACTIVE_CHAT = chatId(me().id, parts[1]);
+  const otherUser = findUser(parts[1]);
+  clearInterval(SUPPORT_TIMER);
+  if (otherUser && otherUser.role === 'admin') {
+    SUPPORT_TIMER = setInterval(() => {
+      if (!ACTIVE_CHAT) { clearInterval(SUPPORT_TIMER); return; }
+      const waiting = supportWaiting(ACTIVE_CHAT);
+      const present = !!document.getElementById('supportLiveCallout');
+      if (waiting !== present) render();
+    }, 15000);
+  }
+  const body = document.getElementById('chatBody');
+  if (body) body.scrollTop = body.scrollHeight;
+  const inp = document.getElementById('msgInput');
+  if (inp) {
+    inp.focus({ preventScroll: true });
+    inp.style.height = 'auto';
+    inp.style.height = Math.min(120, inp.scrollHeight) + 'px';
+    if (!inp.dataset.bound) {
+      inp.dataset.bound = '1';
+      inp.addEventListener('input', () => {
+        const cid = ACTIVE_CHAT;
+        COMPOSE[cid] = COMPOSE[cid] || { text: '', media: [] };
+        COMPOSE[cid].text = inp.value;
+        inp.style.height = 'auto';
+        inp.style.height = Math.min(120, inp.scrollHeight) + 'px';
+        if (chan) { try { chan.postMessage({ t: 'typing', chatId: cid, from: me().id }); } catch (e) {} }
+        const has = inp.value || (COMPOSE[cid].media || []).length;
+        const sendBtn = document.querySelector('[data-act="send"], [data-act="voice"]');
+        if (sendBtn) {
+          if (has && sendBtn.getAttribute('data-act') === 'voice') { sendBtn.outerHTML = `<button class="send-btn" data-act="send">${ic('send', 19)}</button>`; }
+          if (!has && sendBtn.getAttribute('data-act') === 'send') { sendBtn.outerHTML = `<button class="icon-btn-round" data-act="voice" style="width:44px;height:44px;background:var(--surface-2)">${ic('mic', 20)}</button>`; }
+        }
+      });
+      inp.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey && window.innerWidth > 860) { e.preventDefault(); App.send(); }
+      });
+    }
+    // mark incoming messages seen
+    const u = me(), oid = parts[1];
+    const receipts = !(u.settings && u.settings.readReceipts === false);
+    let changed = false;
+    DB.messages.forEach(m => {
+      if (m.to !== u.id) return;
+      if (!isReadBy(m, u.id)) {
+        m.readBy = Array.isArray(m.readBy) ? m.readBy : [];
+        if (!m.readBy.includes(u.id)) m.readBy.push(u.id);
+        changed = true;
+      }
+      // only expose the green “seen” tick when this reader allows receipts
+      if (receipts && m.status !== 'seen') { m.status = 'seen'; changed = true; }
+    });
+    if (changed) { persist(true); notifySeen(oid); }
+  }
+  bindMessageGestures();
+  Media.hydrate(body || document);
+};
+function notifySeen(otherId) {
+  if (chan) { try { chan.postMessage({ t: 'seen', from: me().id, to: otherId }); } catch (e) {} }
+}
+
+function bindMessageGestures() {
+  const body = document.getElementById('chatBody');
+  if (!body || body.dataset.gest) return;
+  body.dataset.gest = '1';
+  let timer = null, target = null;
+  const start = (e) => {
+    const m = e.target.closest('[data-msg]');
+    if (!m) return;
+    target = m;
+    timer = setTimeout(() => { timer = null; App.messageMenu(m.getAttribute('data-msg')); }, 430);
+  };
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  body.addEventListener('pointerdown', start);
+  body.addEventListener('pointerup', cancel);
+  body.addEventListener('pointermove', cancel);
+  body.addEventListener('pointercancel', cancel);
+  body.addEventListener('contextmenu', (e) => {
+    const m = e.target.closest('[data-msg]');
+    if (m) { e.preventDefault(); App.messageMenu(m.getAttribute('data-msg')); }
+  });
+}
+
+App.messageMenu = function (msgId) {
+  const m = DB.messages.find(x => x.id === msgId);
+  if (!m) return;
+  const mine = m.from === me().id;
+  const canEdit = mine && m.type === 'text' && Date.now() - m.createdAt < 15 * 60000;
+  const mineReaction = (m.reactions || {})[me().id];
+  openModal(modalShell('Message', `
+    <div class="react-pick">${['👍','❤️','😂','😮','😢','🙏','🔥','🎉'].map(e => `<button data-act="react-msg" data-close data-id="${m.id}" data-emoji="${e}" style="${mineReaction === e ? 'background:rgba(46,230,201,.25)' : ''}">${e}</button>`).join('')}</div>
+    <div class="panel" style="padding:10px 12px;margin-bottom:12px;max-height:120px;overflow:auto">
+      <div class="tiny muted">${esc(previewOf(m)).slice(0, 200)}</div></div>
+    <div class="list">
+      ${canEdit ? `<button class="list-item" data-act="edit-msg" data-id="${m.id}" style="width:100%;text-align:left">${ic('edit', 16)} <span class="grow">Edit message</span><span class="tiny muted">15 min</span></button>` : ''}
+      ${m.type === 'text' ? `<button class="list-item" data-act="copy-msg" data-id="${m.id}" style="width:100%;text-align:left">${ic('copy', 16)} <span class="grow">Copy text</span></button>` : ''}
+      <button class="list-item" data-act="forward-msg" data-id="${m.id}" style="width:100%;text-align:left">${ic('forward', 16)} <span class="grow">Forward</span></button>
+      ${mine ? `<button class="list-item" data-act="delete-msg" data-id="${m.id}" style="width:100%;text-align:left;color:var(--danger)">${ic('trash', 16)} <span class="grow">Delete message</span></button>` : ''}
+    </div>`, `<button class="btn btn-ghost" data-close style="width:100%">Close</button>`));
+};
+
+App.copyMessage = function (id) {
+  const m = DB.messages.find(x => x.id === id); if (!m) return;
+  copyText(m.text || ''); closeModal();
+};
+
+App.editMessage = function (id) {
+  const m = DB.messages.find(x => x.id === id); if (!m) return;
+  if (Date.now() - m.createdAt > 15 * 60000) { toast('Editing window closed (15 minutes)', 'err'); return; }
+  closeModal();
+  EDITING = id;
+  COMPOSE[m.chatId] = { text: m.text || '', media: [] };
+  render();
+  setTimeout(() => {
+    const inp = document.getElementById('msgInput');
+    if (inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+  }, 60);
+};
+
+App.cancelEdit = function () {
+  if (!EDITING) return;
+  const m = DB.messages.find(x => x.id === EDITING);
+  EDITING = null;
+  if (m) COMPOSE[m.chatId] = { text: '', media: [] };
+  render();
+};
+
+App.deleteMessage = async function (id) {
+  closeModal();
+  const m = DB.messages.find(x => x.id === id); if (!m) return;
+  if (!await confirmDialog({ title: 'Delete message?', body: 'This removes the message for you. Other participants keep their copy.', danger: true, ok: 'Delete' })) return;
+  m.deleted = true; m.deletedFor = [me().id];
+  sync(); render();
+};
+
+App.send = async function () {
+  const u = me();
+  if (!u || !ACTIVE_CHAT) return;
+  const cid = ACTIVE_CHAT;
+  const c = COMPOSE[cid] || { text: '', media: [] };
+  const inp = document.getElementById('msgInput');
+  const text = (inp ? inp.value : c.text || '').trim();
+  const media = c.media || [];
+  if (!text && !media.length) return;
+  const otherId = cid.split('__').find(x => x !== u.id);
+
+  if (EDITING) {
+    const m = DB.messages.find(x => x.id === EDITING);
+    if (m && Date.now() - m.createdAt < 15 * 60000) {
+      m.text = text; m.editedAt = Date.now();
+      EDITING = null; COMPOSE[cid] = { text: '', media: [] };
+      if (inp) inp.value = '';
+      sync(); toast('Message updated', 'ok');
+      if (chan) { try { chan.postMessage({ t: 'message', from: u.id }); } catch (e) {} }
+      render();
+      return;
+    }
+    EDITING = null;
+  }
+
+  const base = { chatId: cid, from: u.id, to: otherId, createdAt: Date.now(), status: 'sent', deleted: false, readBy: [] };
+  if (media.length) {
+    media.forEach((md, i) => {
+      DB.messages.push(Object.assign({}, base, {
+        id: uid('msg'), type: md.type, mediaId: md.id, dur: md.dur || null,
+        text: i === media.length - 1 ? text : '', forwarded: false
+      }));
+    });
+  } else {
+    DB.messages.push(Object.assign({}, base, { id: uid('msg'), type: 'text', text, forwarded: false }));
+  }
+  COMPOSE[cid] = { text: '', media: [] };
+  if (inp) inp.value = '';
+  const meta = DB.chatsMeta[cid] || {};
+  if ((meta.deletedFor || []).includes(u.id)) meta.deletedFor = meta.deletedFor.filter(x => x !== u.id);
+  DB.chatsMeta[cid] = meta;
+  notify(otherId, u.fullName, text ? text.slice(0, 120) : (media[0].type === 'audio' ? 'Voice message' : media[0].type === 'video' ? 'Video' : 'Photo'), '#/chat/' + u.id, 'chat');
+  sync();
+  if (chan) { try { chan.postMessage({ t: 'message', from: u.id }); } catch (e) {} }
+  render();
+  setTimeout(() => { if (ACTIVE_CHAT === cid) { const b = document.getElementById('chatBody'); if (b) b.scrollTop = b.scrollHeight; } }, 30);
+  // delivery ack simulation
+  setTimeout(() => {
+    const fresh = loadDB();
+    if (!fresh) return;
+    let ch = false;
+    fresh.messages.forEach(m => { if (m.chatId === cid && m.from === u.id && m.status === 'sent') { m.status = 'delivered'; ch = true; } });
+    if (ch) { DB = fresh; persist(); if (ACTIVE_CHAT === cid) render(); }
+  }, 1200);
+};
+
+App.attach = function () {
+  openModal(modalShell('Send attachment', `
+    <div class="list">
+      <button class="list-item" data-act="pick-image" style="width:100%;text-align:left">${ic('image', 18)} <span class="grow">Photo</span><span class="tiny muted">JPG, PNG</span></button>
+      <button class="list-item" data-act="pick-video" style="width:100%;text-align:left">${ic('video', 18)} <span class="grow">Video</span><span class="tiny muted">MP4</span></button>
+      <button class="list-item" data-act="voice" style="width:100%;text-align:left">${ic('mic', 18)} <span class="grow">Voice note</span><span class="tiny muted">Hold to record</span></button>
+    </div>`, `<button class="btn btn-ghost" data-close style="width:100%">Cancel</button>`), { width: '360px' });
+};
+
+App.pickImage = async function () {
+  closeModal();
+  const f = await pickFile({ accept: 'image/*' });
+  if (!f) return;
+  toast('Optimising photo…');
+  const c = await compressImage(f, 1080, 0.68);
+  const id = await Media.put(c);
+  if (!id) return toast('Could not store media', 'err');
+  const preview = URL.createObjectURL(c);
+  COMPOSE[ACTIVE_CHAT] = COMPOSE[ACTIVE_CHAT] || { text: '', media: [] };
+  COMPOSE[ACTIVE_CHAT].media.push({ id, type: 'image', preview });
+  render();
+};
+App.pickVideo = async function () {
+  closeModal();
+  const f = await pickFile({ accept: 'video/*', any: true });
+  if (!f) return;
+  if (f.size > 40 * 1024 * 1024) return toast('Video must be under 40MB', 'err');
+  const id = await Media.put(f);
+  if (!id) return toast('Could not store video', 'err');
+  COMPOSE[ACTIVE_CHAT] = COMPOSE[ACTIVE_CHAT] || { text: '', media: [] };
+  COMPOSE[ACTIVE_CHAT].media.push({ id, type: 'video' });
+  render();
+};
+App.removeMedia = function (idx) {
+  if (!ACTIVE_CHAT || !COMPOSE[ACTIVE_CHAT]) return;
+  COMPOSE[ACTIVE_CHAT].media.splice(idx, 1);
+  render();
+};
+
+let recorder = null, recChunks = [], recStart = 0, recTimer = null;
+App.voice = async function () {
+  closeModal();
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return toast('Voice recording is not supported here', 'err');
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch (e) { return toast('Microphone permission is required', 'err'); }
+  try {
+    recorder = new MediaRecorder(stream);
+    recChunks = []; recStart = Date.now();
+    recorder.ondataavailable = (e) => { if (e.data.size) recChunks.push(e.data); };
+    recorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      const blob = new Blob(recChunks, { type: recChunks[0] ? recChunks[0].type : 'audio/webm' });
+      const dur = Math.max(1, Math.round((Date.now() - recStart) / 1000));
+      const id = await Media.put(blob);
+      COMPOSE[ACTIVE_CHAT] = COMPOSE[ACTIVE_CHAT] || { text: '', media: [] };
+      COMPOSE[ACTIVE_CHAT].media.push({ id, type: 'audio', dur });
+      clearInterval(recTimer); recTimer = null;
+      render();
+    };
+    recorder.start();
+    openModal(modalShell('Recording voice note', `
+      <div class="center" style="padding:18px 0">
+        <div class="row" style="justify-content:center;gap:9px;color:var(--danger);font-weight:600"><span class="rec-dot"></span><span id="recTime">0:00</span></div>
+        <p class="small muted mt16">Speak now. Tap stop to attach the voice note.</p>
+        <div class="wave" style="justify-content:center;height:40px;margin-top:14px">${waveform('rec', 30)}</div>
+      </div>`, `<button class="btn btn-ghost" data-cancel-rec style="flex:1">Cancel</button><button class="btn btn-primary" data-stop-rec style="flex:1">${ic('check', 15)} Stop & attach</button>`), { locked: true });
+    recTimer = setInterval(() => {
+      const el = document.getElementById('recTime');
+      if (el) { const s = Math.floor((Date.now() - recStart) / 1000); el.textContent = Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
+    }, 400);
+    document.querySelector('[data-stop-rec]').onclick = () => { closeModal(); if (recorder && recorder.state !== 'inactive') recorder.stop(); };
+    document.querySelector('[data-cancel-rec]').onclick = () => {
+      closeModal(); clearInterval(recTimer);
+      if (recorder) { recorder.onstop = null; recorder.stop(); }
+      stream.getTracks().forEach(t => t.stop());
+      recorder = null;
+    };
+  } catch (e) { stream.getTracks().forEach(t => t.stop()); toast('Could not start recording', 'err'); }
+};
+
+let audioEl = null;
+App.playAudio = function (id) {
+  const wrap = document.querySelector(`[data-audio="${id}"]`);
+  if (!wrap) return;
+  const audio = wrap.querySelector('audio');
+  const btn = wrap.querySelector('.ap-btn');
+  if (audioEl && audioEl !== audio) { audioEl.pause(); }
+  audioEl = audio;
+  if (audio.paused) {
+    audio.play().then(() => { btn.innerHTML = ic('pause', 14); }).catch(() => toast('Audio unavailable', 'err'));
+  } else {
+    audio.pause(); btn.innerHTML = ic('play', 14);
+  }
+  audio.onended = () => { btn.innerHTML = ic('play', 14); $$('.wave i', wrap).forEach(i => i.classList.remove('on')); };
+  audio.ontimeupdate = () => {
+    const bars = $$('.wave i', wrap);
+    const p = audio.duration ? audio.currentTime / audio.duration : 0;
+    bars.forEach((b, i) => b.classList.toggle('on', i / bars.length <= p));
+  };
+  audio.onloadedmetadata = () => {
+    const d = document.querySelector(`[data-dur="${id}"]`);
+    if (d && isFinite(audio.duration)) d.textContent = Math.round(audio.duration) + 's';
+  };
+};
+
+App.viewMedia = function (id) {
+  const m = DB.messages.find(x => x.id === id);
+  if (!m) return;
+  openModal(`<div class="modal-head"><div style="font-weight:600">Photo</div><button class="btn-icon" data-close style="width:34px;height:34px">${ic('x', 17)}</button></div>
+    <div class="modal-body" style="padding:0"><img data-media="${m.mediaId}" style="width:100%;display:block" class="skeleton" alt="Photo"/></div>`);
+  Media.hydrate(document.getElementById('overlay'));
+};
+
+App.chatMenu = function (id) {
+  const u = me();
+  const cid = chatId(u.id, id);
+  const meta = DB.chatsMeta[cid] || {};
+  const muted = (meta.muted || []).includes(u.id);
+  const blocked = isBlocked(u.id, id);
+  const other = findUser(id);
+  openModal(modalShell(other.fullName, `
+    <div class="list">
+      <button class="list-item" data-act="view-profile" data-id="${id}" style="width:100%;text-align:left">${ic('user', 16)} <span class="grow">View profile</span></button>
+      ${other.role === 'admin' ? `<button class="list-item" data-act="live-chat" style="width:100%;text-align:left">${ic('help', 16)} <span class="grow">Customer support live chat</span><span class="badge badge-accent">Live</span></button>` : ''}
+      <button class="list-item" data-act="toggle-mute" data-id="${id}" style="width:100%;text-align:left">${ic('bell', 16)} <span class="grow">${muted ? 'Unmute notifications' : 'Mute notifications'}</span></button>
+      <button class="list-item" data-act="toggle-block" data-id="${id}" style="width:100%;text-align:left;color:var(--danger)">${ic('ban', 16)} <span class="grow">${blocked ? 'Unblock contact' : 'Block contact'}</span></button>
+      <button class="list-item" data-act="clear-chat" data-id="${id}" style="width:100%;text-align:left;color:var(--danger)">${ic('trash', 16)} <span class="grow">Delete chat</span></button>
+    </div>`, `<button class="btn btn-ghost" data-close style="width:100%">Close</button>`, '@' + other.username));
+};
+App.toggleMute = function (id) {
+  const u = me(); const cid = chatId(u.id, id);
+  const meta = DB.chatsMeta[cid] || {};
+  meta.muted = meta.muted || [];
+  meta.muted = meta.muted.includes(u.id) ? meta.muted.filter(x => x !== u.id) : meta.muted.concat(u.id);
+  DB.chatsMeta[cid] = meta; sync(); closeModal();
+  toast(meta.muted.includes(u.id) ? 'Chat muted' : 'Chat unmuted', 'ok'); render();
+};
+App.toggleBlock = async function (id) {
+  const u = me();
+  const blocked = isBlocked(u.id, id);
+  closeModal();
+  if (!blocked) {
+    if (!await confirmDialog({ title: 'Block this contact?', body: 'They will not be able to message you. You can unblock them later.', danger: true, ok: 'Block' })) return;
+    DB.blocks.push({ id: uid('bk'), by: u.id, target: id, createdAt: Date.now() });
+  } else {
+    DB.blocks = DB.blocks.filter(b => !(b.by === u.id && b.target === id));
+  }
+  sync(); toast(blocked ? 'Contact unblocked' : 'Contact blocked', 'ok'); render();
+};
+App.clearChat = async function (id) {
+  const u = me(); const cid = chatId(u.id, id);
+  closeModal();
+  if (!await confirmDialog({ title: 'Delete chat?', body: 'This clears the conversation from your account only.', danger: true, ok: 'Delete' })) return;
+  DB.messages = DB.messages.filter(m => !(m.chatId === cid && (m.from === u.id || m.to === u.id)));
+  delete DB.chatsMeta[cid];
+  sync(); toast('Chat deleted', 'ok'); go('home');
+};
+
+App.viewProfile = function (id) {
+  const u = me(); const c = findUser(id);
+  if (!c) return;
+  const v = vendorOf(c.id);
+  closeModal();
+  openModal(modalShell('Profile', `
+    <div class="center">
+      ${avatarHTML(c, 'xl', 'avatar-ring')}
+      <h3 class="mt10" style="font-size:18px">${esc(c.fullName)} ${c.verified ? `<span class="verified" style="vertical-align:middle">${ic('check', 9)}</span>` : ''}</h3>
+      <div class="small muted">@${esc(c.username)}</div>
+      <div class="row" style="justify-content:center;gap:6px;margin-top:10px">
+        ${v ? `<span class="badge badge-accent">${ic('store', 12)} Vendor · ${v.rating.toFixed(1)}★</span>` : ''}
+        ${c.role === 'admin' ? `<span class="badge badge-accent">${ic('shield', 12)} Support</span>` : ''}
+        <span class="badge">${Presence.isOnline(c.id) ? 'Online' : 'Offline'}</span>
+      </div>
+    </div>
+    <div class="mt16">
+      ${c.role !== 'admin' ? `<div class="kv"><span class="k">Member since</span><span class="v">${dateLabel(c.createdAt)}</span></div>` : ''}
+      <div class="kv"><span class="k">Trust score</span><span class="v">${c.trustScore}/100</span></div>
+      ${v ? `<div class="kv"><span class="k">Vendor rating</span><span class="v">${v.rating.toFixed(1)} ★</span></div>` : ''}
+    </div>`,
+    `<button class="btn btn-ghost" data-close style="flex:1">Close</button><button class="btn btn-primary" data-act="open-chat" data-id="${c.id}" style="flex:1">${ic('chat', 15)} Message</button>`));
+};
+
+/* ---------------- forward ---------------- */
+App.forwardMessage = function (id) {
+  const m = DB.messages.find(x => x.id === id);
+  if (!m) return;
+  const u = me();
+  const contacts = myContacts(u.id);
+  openModal(modalShell('Forward to…', `
+    ${contacts.length ? `<div class="list">${contacts.map(c => `<button class="list-item" data-act="do-forward" data-id="${c.id}" data-msg="${m.id}" style="width:100%;text-align:left">
+      ${avatarHTML(c, 'sm')}<div class="grow"><div class="small" style="font-weight:600">${esc(c.fullName)}</div><div class="tiny muted">@${esc(c.username)}</div></div>${ic('forward', 15)}</button>`).join('')}</div>`
+      : `<div class="empty" style="padding:20px"><p>Add contacts first to forward messages.</p></div>`}`,
+    `<button class="btn btn-ghost" data-close style="width:100%">Cancel</button>`, 'Forwarded messages show a label, except voice notes'));
+};
+App.doForward = function (id, msgId) {
+  const u = me();
+  const m = DB.messages.find(x => x.id === msgId);
+  if (!m) return;
+  const cid = chatId(u.id, id);
+  DB.messages.push({
+    id: uid('msg'), chatId: cid, from: u.id, to: id, type: m.type, text: m.text || '',
+    mediaId: m.mediaId || null, dur: m.dur || null, createdAt: Date.now(), status: 'sent',
+    forwarded: true, deleted: false, readBy: []
+  });
+  DB.contacts.push();
+  notify(id, u.fullName + ' forwarded a message', previewOf(m).slice(0, 120), '#/chat/' + u.id, 'forward');
+  sync(); closeModal(); toast('Message forwarded', 'ok');
+  go('chat/' + id);
+};
+
+/* ---------------- status ---------------- */
+VIEWS.status = function () {
+  const u = me();
+  const active = DB.statuses.filter(s => s.createdAt + 86400000 > Date.now());
+  const mine = active.filter(s => s.userId === u.id);
+  const byUser = {};
+  active.filter(s => s.userId !== u.id && canViewStatus(s, u.id)).forEach(s => {
+    (byUser[s.userId] = byUser[s.userId] || []).push(s);
+  });
+  return `<div class="page-head"><div><h1>Status</h1><p>Share moments that disappear after 24 hours.</p></div>
+    <button class="btn btn-primary btn-sm" data-act="compose-status">${ic('plus', 15)} New status</button></div>
+    <div class="card mb16" style="background:linear-gradient(120deg,rgba(46,230,201,.12),rgba(58,160,255,.06))">
+      <div class="between wrap gap14">
+        <div class="row gap14">
+          <div class="story" data-act="${mine.length ? 'open-status' : 'compose-status'}" data-id="${u.id}" style="width:auto">
+            <div class="ring ${mine.length ? '' : 'seen'}"><div class="avatar" style="width:58px;height:58px">${u.avatar ? `<img src="${u.avatar}"/>` : esc(initials(u.fullName))}</div></div>
+          </div>
+          <div><div style="font-weight:650;font-size:15px">My status</div>
+          <div class="small muted mt6">${mine.length ? `${mine.length} update${mine.length > 1 ? 's' : ''} · ${mine.reduce((s, x) => s + (x.viewers || []).length, 0)} views` : 'Tap to share a photo, video or text update'}</div></div>
+        </div>
+        <button class="btn btn-primary btn-sm" data-act="compose-status">${ic('plus', 15)} Create</button>
+      </div>
+    </div>
+    <div class="section-title"><h3>Recent updates</h3><span class="tiny muted">${Object.keys(byUser).length} contacts</span></div>
+    ${Object.keys(byUser).length ? `<div class="list">${Object.keys(byUser).map(id => {
+      const us = findUser(id); if (!us) return '';
+      const list = byUser[id];
+      return `<div class="list-item" data-act="open-status" data-id="${id}" style="cursor:pointer">
+        <div class="avatar-wrap"><div class="ring" style="padding:2px;border-radius:50%;background:conic-gradient(from 210deg,var(--accent),#3aa0ff,var(--accent))">${avatarHTML(us, 'sm')}</div></div>
+        <div class="grow"><div style="font-weight:600;font-size:14px">${esc(us.fullName)}</div>
+        <div class="tiny muted">${list.length} update${list.length > 1 ? 's' : ''} · ${timeAgo(list[list.length - 1].createdAt)} ago</div></div>
+        ${ic('chevron', 16)}
+      </div>`;
+    }).join('')}</div>` : `<div class="card empty"><div class="ic">${ic('status', 26)}</div><h3>No recent updates</h3><p>When your contacts share a status, it will appear here for 24 hours.</p><button class="btn btn-primary" data-act="compose-status">Create your first status</button></div>`}`;
+};
+
+App.composeStatus = function () {
+  const u = me();
+  const v = vendorOf(u.id);
+  const products = DB.products.filter(p => p.vendorId === (v && v.id) && p.active && p.stock > 0);
+  openModal(modalShell('Create status', `
+    <div class="tabs" style="margin-bottom:14px">
+      <button class="tab on" data-stab="text">Text</button>
+      <button class="tab" data-stab="image">Photo</button>
+      <button class="tab" data-stab="video">Video</button>
+    </div>
+    <div id="stText">
+      <div class="field"><label class="label">Your status</label>
+        <textarea class="input" id="stTextInput" maxlength="280" placeholder="Type something…" style="min-height:110px"></textarea></div>
+      <div class="row gap6 wrap" id="stBg">${['linear-gradient(135deg,#0f766e,#0ea5e9)', 'linear-gradient(135deg,#1e3a8a,#7c3aed)', 'linear-gradient(135deg,#7c2d12,#db2777)', 'linear-gradient(135deg,#065f46,#84cc16)', 'linear-gradient(135deg,#111827,#374151)'].map((g, i) => `<button data-bg="${g}" style="width:34px;height:34px;border-radius:9px;background:${g};border:2px solid ${i === 0 ? 'var(--accent)' : 'transparent'}"></button>`).join('')}</div>
+    </div>
+    <div id="stImage" class="hidden">
+      <button class="btn btn-ghost btn-block" data-act="status-pick-image" style="height:110px;flex-direction:column;gap:6px">${ic('image', 26)}<span class="small">Choose a photo</span></button>
+      <div id="stImagePreview"></div>
+    </div>
+    <div id="stVideo" class="hidden">
+      <button class="btn btn-ghost btn-block" data-act="status-pick-video" style="height:110px;flex-direction:column;gap:6px">${ic('video', 26)}<span class="small">Choose a video (max 30s)</span></button>
+      <div id="stVideoPreview"></div>
+      <div class="help mt6">Videos longer than 30 seconds cannot be posted.</div>
+    </div>
+    ${products.length ? `<div class="field mt16"><label class="label">Attach a product (optional)</label>
+      <select class="input" id="stProduct"><option value="">No product</option>${products.map(p => `<option value="${p.id}">${esc(p.name)} — ${p.priceUsd ? usd(p.priceUsd) : ''}</option>`).join('')}</select>
+      <div class="help">Followers can tap “Buy now” straight from your status.</div></div>` : ''}
+    <div class="field mt16"><label class="label">Privacy</label>
+      <select class="input" id="stPrivacy">
+        <option value="contacts">My contacts</option>
+        <option value="everyone">Everyone</option>
+        <option value="selected">Only selected contacts</option>
+      </select>
+      <div id="stSelected" class="hidden mt10"><div class="checkbox-grid panel" style="padding:8px">
+        ${myContacts(u.id).map(c => `<label><input type="checkbox" value="${c.id}"/> ${esc(c.fullName)} <span class="tiny muted">@${esc(c.username)}</span></label>`).join('')}
+      </div></div>
+    </div>`,
+    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="post-status">Post status</button>`), { width: '480px' });
+  STATUS_DRAFT = { type: 'text', bg: 'linear-gradient(135deg,#0f766e,#0ea5e9)', image: null, video: null, mediaId: null, videoId: null, productId: '', privacy: 'contacts' };
+  $$('[data-stab]').forEach(t => t.onclick = () => {
+    $$('[data-stab]').forEach(x => x.classList.remove('on')); t.classList.add('on');
+    const k = t.getAttribute('data-stab');
+    STATUS_DRAFT.type = k;
+    document.getElementById('stText').classList.toggle('hidden', k !== 'text');
+    document.getElementById('stImage').classList.toggle('hidden', k !== 'image');
+    document.getElementById('stVideo').classList.toggle('hidden', k !== 'video');
+  });
+  $$('#stBg [data-bg]').forEach(b => b.onclick = () => {
+    $$('#stBg [data-bg]').forEach(x => x.style.borderColor = 'transparent');
+    b.style.borderColor = 'var(--accent)';
+    STATUS_DRAFT.bg = b.getAttribute('data-bg');
+  });
+  const pr = document.getElementById('stPrivacy');
+  pr.onchange = () => document.getElementById('stSelected').classList.toggle('hidden', pr.value !== 'selected');
+};
+let STATUS_DRAFT = null;
+
+App.statusPickImage = async function () {
+  const f = await pickFile({ accept: 'image/*' });
+  if (!f) return;
+  const c = await compressImage(f, 1280, 0.72);
+  const id = await Media.put(c);
+  STATUS_DRAFT.image = URL.createObjectURL(c);
+  STATUS_DRAFT.mediaId = id;
+  document.getElementById('stImagePreview').innerHTML = `<img src="${STATUS_DRAFT.image}" style="width:100%;border-radius:12px;margin-top:10px;max-height:240px;object-fit:cover"/>`;
+};
+App.statusPickVideo = async function () {
+  const f = await pickFile({ accept: 'video/*', any: true });
+  if (!f) return;
+  if (f.size > 50 * 1024 * 1024) return toast('Video must be under 50MB', 'err');
+  const url = URL.createObjectURL(f);
+  const v = document.createElement('video');
+  v.preload = 'metadata'; v.src = url;
+  v.onloadedmetadata = async () => {
+    if (v.duration > 30.5) { toast('Video is ' + Math.round(v.duration) + 's — max is 30 seconds', 'err'); return; }
+    const id = await Media.put(f);
+    STATUS_DRAFT.video = url; STATUS_DRAFT.videoId = id;
+    document.getElementById('stVideoPreview').innerHTML = `<video src="${url}" controls style="width:100%;border-radius:12px;margin-top:10px;max-height:240px"></video>
+      <div class="tiny muted mt6">Duration: ${Math.round(v.duration)}s</div>`;
+  };
+  v.onerror = () => toast('Could not read that video', 'err');
+};
+
+App.postStatus = async function () {
+  const u = me();
+  const d = STATUS_DRAFT;
+  if (!d) return;
+  const text = (document.getElementById('stTextInput') || {}).value || '';
+  if (d.type === 'text' && !text.trim()) return toast('Write something first', 'err');
+  if (d.type === 'image' && !d.mediaId) return toast('Choose a photo first', 'err');
+  if (d.type === 'video' && !d.videoId) return toast('Choose a video first', 'err');
+  const sel = document.getElementById('stSelected');
+  const selected = sel ? Array.from(sel.querySelectorAll('input:checked')).map(i => i.value) : [];
+  const product = document.getElementById('stProduct');
+  DB.statuses.push({
+    id: uid('st'), userId: u.id, type: d.type, text: text.trim(), bg: d.bg,
+    mediaId: d.type === 'image' ? d.mediaId : d.type === 'video' ? d.videoId : null,
+    productId: product ? product.value || null : null,
+    privacy: document.getElementById('stPrivacy').value,
+    selected, viewers: [], createdAt: Date.now(), expired: false
+  });
+  STATUS_DRAFT = null;
+  sync(); closeModal(); toast('Status posted — live for 24 hours', 'ok'); render();
+};
+
+let STATUS_VIEW = null;
+App.openStatus = function (id) {
+  const u = me();
+  const items = DB.statuses.filter(s => s.userId === id && s.createdAt + 86400000 > Date.now() && canViewStatus(s, me().id));
+  if (!items.length) return toast('This status is not available to you', 'err');
+  STATUS_VIEW = { userId: id, items, idx: 0, timer: null };
+  renderStatusViewer();
+};
+function renderStatusViewer() {
+  const v = STATUS_VIEW;
+  if (!v) return;
+  const old = document.getElementById('storyRoot'); if (old) old.remove();
+  const s = v.items[v.idx];
+  const owner = findUser(v.userId);
+  if (!s || !owner) return closeViewer();
+  const mine = v.userId === me().id;
+  const product = s.productId ? DB.products.find(p => p.id === s.productId) : null;
+  const root = document.createElement('div');
+  root.className = 'story-view'; root.id = 'storyRoot';
+  root.innerHTML = `
+    <div class="story-bars">${v.items.map((x, i) => `<i class="${i < v.idx ? 'done' : i === v.idx ? 'on' : ''}"></i>`).join('')}</div>
+    <div class="story-head">
+      <div class="avatar" style="width:36px;height:36px">${owner.avatar ? `<img src="${owner.avatar}"/>` : esc(initials(owner.fullName))}</div>
+      <div class="grow"><div style="font-weight:600;font-size:13.5px">${esc(mine ? 'My status' : owner.fullName)}</div>
+        <div class="tiny" style="color:#b9cdd8">${timeAgo(s.createdAt)} ago</div></div>
+      ${mine ? `<button class="btn-icon" data-st-del="${s.id}" style="background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.2);color:#fff;width:34px;height:34px">${ic('trash', 15)}</button>` : ''}
+      <button class="btn-icon" data-st-close style="background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.2);color:#fff;width:34px;height:34px">${ic('x', 17)}</button>
+    </div>
+    <div class="story-stage" style="background:${s.type === 'text' ? s.bg : '#000'}">
+      ${s.type === 'text' ? `<div class="story-text">${esc(s.text)}</div>` :
+        s.type === 'image' ? `<img data-media="${s.mediaId}" alt="status" class="skeleton"/>` :
+        `<video data-media="${s.mediaId}" autoplay playsinline controls style="max-height:100%"></video>`}
+      ${s.type !== 'text' && s.text ? `<div style="position:absolute;bottom:130px;left:16px;right:16px;text-align:center;font-size:14px;text-shadow:0 2px 12px #000;padding:10px;background:rgba(0,0,0,.35);border-radius:12px">${esc(s.text)}</div>` : ''}
+    </div>
+    ${product ? `<div style="position:absolute;left:12px;right:12px;bottom:${mine ? '76px' : '88px'};z-index:4;background:rgba(8,22,32,.92);border:1px solid rgba(255,255,255,.15);border-radius:14px;padding:10px;display:flex;gap:10px;align-items:center;backdrop-filter:blur(10px)">
+      <div style="width:44px;height:44px;border-radius:9px;overflow:hidden;flex:none;background:#0b2230;display:flex;align-items:center;justify-content:center;font-size:20px">${product.image ? `<img src="${product.image}" style="width:100%;height:100%;object-fit:cover"/>` : (product.emoji || '📦')}</div>
+      <div class="grow" style="min-width:0"><div class="small" style="font-weight:600" class="ellipsis">${esc(product.name)}</div>
+        <div class="tiny" style="color:var(--accent);font-weight:700">${coins(product.priceUsd / COIN_USD)} WC <span style="color:#8ba4b6;font-weight:400">${usd(product.priceUsd)}</span></div></div>
+      <button class="btn btn-primary btn-sm" data-st-buy="${product.id}">Buy now</button></div>` : ''}
+    <div class="story-react" style="position:absolute;left:0;right:0;bottom:${mine ? '90px' : '104px'};z-index:5">
+      ${['👍','❤️','😂','😮','😢','🎉'].map(e => `<button data-act="react-status" data-id="${s.id}" data-emoji="${e}" class="${(s.reactions || {})[me().id] === e ? 'mine' : ''}">${e}</button>`).join('')}
+    </div>
+    ${Object.keys(reactionCounts(s.reactions)).length ? `<div class="story-react" style="position:absolute;left:0;right:0;bottom:${mine ? '58px' : '72px'};z-index:5;pointer-events:none">${reactionChips(s.reactions, me().id, 'status', s.id)}</div>` : ''}
+    <div style="position:absolute;left:0;right:0;bottom:0;z-index:4;padding:10px 12px calc(12px + env(safe-area-inset-bottom));display:flex;gap:9px;align-items:center;background:linear-gradient(0deg,rgba(0,0,0,.75),transparent)">
+      ${mine ? `<button class="btn btn-ghost btn-sm" data-st-viewers style="background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.2);color:#fff">${ic('eye', 15)} ${(s.viewers || []).length} viewers</button>
+        <div class="grow"></div><span class="tiny" style="color:#9fb4c0">${s.privacy === 'everyone' ? 'Everyone' : s.privacy === 'selected' ? 'Selected contacts' : 'My contacts'}</span>` :
+        `<input class="input" id="stReply" placeholder="Reply to ${esc(owner.fullName.split(' ')[0])}…" style="height:40px;background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.2);color:#fff"/>
+        <button class="btn btn-primary btn-sm" data-st-reply="${s.id}">${ic('send', 15)}</button>`}
+    </div>`;
+  document.body.appendChild(root);
+  root.addEventListener('click', (e) => {
+    if (e.target.closest('.story-react') || e.target.closest('[data-act="react-status"]')) return;
+    if (e.target.closest('[data-st-close]')) return closeViewer();
+    if (e.target.closest('[data-st-del]')) return App.deleteStatus(s.id);
+    if (e.target.closest('[data-st-viewers]')) return App.statusViewers(s.id);
+    if (e.target.closest('[data-st-buy]')) { closeViewer(); go('product/' + e.target.closest('[data-st-buy]').getAttribute('data-st-buy')); return; }
+    if (e.target.closest('[data-st-reply]')) {
+      const inp = document.getElementById('stReply');
+      const txt = inp ? inp.value.trim() : '';
+      if (!txt) return;
+      App.sendStatusReply(s.id, txt);
+      return;
+    }
+    if (e.target.closest('.story-stage') || e.target.closest('.story-view')) {
+      if (e.target.closest('video')) return;
+      const x = e.clientX;
+      if (x < window.innerWidth * 0.32) App.statusStep(-1);
+      else App.statusStep(1);
+    }
+  });
+  root.addEventListener('contextmenu', (e) => e.preventDefault());
+  // record viewer
+  if (!mine) {
+    s.viewers = s.viewers || [];
+    if (!s.viewers.includes(me().id)) s.viewers.push(me().id);
+    persist(true);
+  }
+  Media.hydrate(root);
+  clearTimeout(v.timer);
+  v.timer = setTimeout(() => App.statusStep(1), s.type === 'video' ? 16000 : 5200);
+}
+App.statusStep = function (dir) {
+  const v = STATUS_VIEW; if (!v) return;
+  clearTimeout(v.timer);
+  const nx = v.idx + dir;
+  if (nx < 0) { v.idx = 0; renderStatusViewer(); return; }
+  if (nx >= v.items.length) {
+    const u = me();
+    const others = [...new Set(DB.statuses.filter(s => s.userId !== u.id && s.createdAt + 86400000 > Date.now()).map(s => s.userId))];
+    const nextUser = others.find(id => id !== v.userId);
+    if (nextUser) { closeViewer(); return App.openStatus(nextUser); }
+    return closeViewer();
+  }
+  v.idx = nx; renderStatusViewer();
+};
+App.statusViewers = function (id) {
+  const s = DB.statuses.find(x => x.id === id); if (!s) return;
+  const viewers = (s.viewers || []).map(findUser).filter(Boolean);
+  openModal(modalShell('Status viewers', viewers.length ? `<div class="list">${viewers.map(v => `<div class="list-item">${avatarHTML(v, 'sm')}
+    <div class="grow"><div class="small" style="font-weight:600">${esc(v.fullName)}</div><div class="tiny muted">@${esc(v.username)}</div></div></div>`).join('')}</div>`
+    : `<div class="empty" style="padding:16px"><p>No views yet. Only contacts who can see this status appear here.</p></div>`,
+    `<button class="btn btn-ghost" data-close style="width:100%">Close</button>`, (s.viewers || []).length + ' views'));
+};
+App.deleteStatus = async function (id) {
+  if (!await confirmDialog({ title: 'Delete status?', body: 'This removes it for everyone immediately.', danger: true, ok: 'Delete' })) return;
+  DB.statuses = DB.statuses.filter(s => s.id !== id);
+  sync(); closeViewer(); toast('Status deleted', 'ok'); render();
+};
+App.sendStatusReply = function (statusId, text) {
+  const s = DB.statuses.find(x => x.id === statusId);
+  if (!s) return;
+  const u = me();
+  if (!isContact(u.id, s.userId) && s.userId !== u.id) DB.contacts.push({ id: uid('ct'), ownerId: u.id, userId: s.userId, createdAt: Date.now() });
+  const cid = chatId(u.id, s.userId);
+  DB.messages.push({
+    id: uid('msg'), chatId: cid, from: u.id, to: s.userId, type: 'text', text,
+    replyText: s.type === 'text' ? s.text : 'Status', createdAt: Date.now(), status: 'sent', forwarded: false, deleted: false
+  });
+  notify(s.userId, 'New reply to your status', u.fullName + ': ' + text.slice(0, 100), '#/chat/' + u.id, 'chat');
+  sync(); closeViewer(); toast('Reply sent', 'ok'); go('chat/' + s.userId);
+};
+
+/* ---------------- global search ---------------- */
+App.openSearch = function (q) {
+  const u = me();
+  const ql = String(q || '').toLowerCase().trim();
+  const digits = normPhone(q);
+  const people = DB.users.filter(x => x.id !== u.id && !x.banned && (
+      x.username.toLowerCase().includes(ql) ||
+      x.fullName.toLowerCase().includes(ql) ||
+      (x.email || '').toLowerCase() === ql ||
+      (digits.length >= 4 && normPhone(x.phone).includes(digits))
+    )).slice(0, 6);
+  const prods = DB.products.filter(p => p.active && p.stock > 0 && (p.name.toLowerCase().includes(ql) || p.category.toLowerCase().includes(ql))).slice(0, 6);
+  const chats = myContacts(u.id).filter(c => c.fullName.toLowerCase().includes(ql) || c.username.toLowerCase().includes(ql) || (digits.length >= 4 && normPhone(c.phone).includes(digits))).slice(0, 5);
+  openModal(modalShell('Search results', `
+    ${chats.length ? `<div class="label mb10">Chats</div><div class="list" style="margin-bottom:14px">${chats.map(c => `<div class="list-item">${avatarHTML(c, 'sm')}
+      <div class="grow" style="min-width:0"><div class="small" style="font-weight:600">${esc(c.fullName)}</div><div class="tiny muted">@${esc(c.username)}</div></div>
+      <button class="btn btn-sm btn-primary" data-act="open-chat" data-id="${c.id}">${ic('chat', 14)} Chat</button></div>`).join('')}</div>` : ''}
+    ${people.length ? `<div class="label mb10">People</div><div class="list" style="margin-bottom:14px">${people.map(x => {
+      const added = isContact(u.id, x.id);
+      return `<div class="list-item">${avatarHTML(x, 'sm')}
+        <div class="grow" style="min-width:0"><div class="small" style="font-weight:600">${esc(x.fullName)}</div>
+          <div class="tiny muted">@${esc(x.username)}${x.phone ? ' · ' + esc(x.phone) : ''}</div></div>
+        <button class="btn btn-sm ${added ? 'btn-primary' : 'btn-ghost'}" data-act="${added ? 'open-chat' : 'save-contact'}" data-id="${x.id}">${added ? ic('chat', 14) + ' Chat' : 'Save & chat'}</button></div>`;
+    }).join('')}</div>` : ''}
+    ${prods.length ? `<div class="label mb10">Products</div><div class="list">${prods.map(p => `<button class="list-item" data-act="open-product" data-id="${p.id}" style="width:100%;text-align:left">${ic('bag', 16)}<span class="grow"><span class="small" style="font-weight:600">${esc(p.name)}</span><span class="tiny muted" style="display:block">${coins(p.priceUsd / COIN_USD)} WC · ${usd(p.priceUsd)}</span></span>${ic('chevron', 15)}</button>`).join('')}</div>` : ''}
+    ${!people.length && !prods.length && !chats.length ? `<div class="empty" style="padding:20px"><p>No results for “${esc(q)}”.</p></div>` : ''}`,
+    `<button class="btn btn-ghost" data-close style="width:100%">Close</button>`, 'Searching WhaleChat'));
+};
+
+/* ---------------- message & status reactions ---------------- */
+App.reactMsg = function (id, ds) {
+  const m = DB.messages.find(x => x.id === id);
+  if (!m || !ds || !ds.emoji) return;
+  const u = me(); if (!u) return;
+  m.reactions = m.reactions || {};
+  if (m.reactions[u.id] === ds.emoji) delete m.reactions[u.id];
+  else m.reactions[u.id] = ds.emoji;
+  if (!Object.keys(m.reactions).length) delete m.reactions;
+  sync();
+  closeModal();
+  render();
+  setTimeout(() => { const b = document.getElementById('chatBody'); if (b) b.scrollTop = b.scrollHeight; }, 30);
+};
+
+App.reactStatus = function (id, ds) {
+  const s = DB.statuses.find(x => x.id === id);
+  if (!s || !ds || !ds.emoji) return;
+  const u = me(); if (!u) return;
+  s.reactions = s.reactions || {};
+  if (s.reactions[u.id] === ds.emoji) delete s.reactions[u.id];
+  else s.reactions[u.id] = ds.emoji;
+  if (!Object.keys(s.reactions).length) delete s.reactions;
+  sync();
+  renderStatusViewer();
+};
+/* =========================================================================
+   Marketplace, cart, checkout, orders, vendor system
+   ========================================================================= */
+const CATEGORIES = ['All', 'Phones', 'Laptops', 'Tablets', 'Headphones', 'Chargers', 'Video Games', 'Phone Pouches', 'Accessories'];
+let MARKET_FILTER = { cat: 'All', q: '' };
+
+VIEWS.market = function () {
+  const u = me();
+  const list = DB.products.filter(p => p.active && p.stock > 0 && !p.hidden && vendorIsActive(vendorById(p.vendorId)));
+  const cats = CATEGORIES.filter(c => c === 'All' || list.some(p => p.category === c) || DB.companyProducts.some(cp => cp.category === c));
+  const filtered = list.filter(p => (MARKET_FILTER.cat === 'All' || p.category === MARKET_FILTER.cat) && (!MARKET_FILTER.q || p.name.toLowerCase().includes(MARKET_FILTER.q.toLowerCase())));
+  const featured = list.slice(0, 3);
+
+  return `<div style="display:flex;gap:10px;align-items:center;margin-bottom:14px" class="hide-desktop">
+      <div class="searchbar grow">${ic('search', 17)}<input id="marketSearch" placeholder="Search products…" value="${esc(MARKET_FILTER.q)}"/></div>
+      <a href="#/cart"
