@@ -1,0 +1,1082 @@
+span><span class="v">${esc(o.delivery.country)}</span></div>
+    <div class="kv"><span class="k">Address</span><span class="v" style="max-width:60%">${esc(o.delivery.address)}</span></div>
+    <div class="divider"></div>
+    ${o.items.map(i => `<div class="between" style="padding:5px 0"><span class="small">${esc(i.name)} ×${i.qty}</span><span class="small muted">${usd(i.priceUsd * i.qty)}</span></div>`).join('')}
+    <div class="tiny muted mt10">Delivery and status updates are handled by WhaleChat admin.</div>`,
+    `<button class="btn btn-ghost" data-close style="width:100%">Close</button>`));
+};
+
+VIEWS.vendorHistory = function () {
+  const u = me(); const v = vendorOf(u.id);
+  if (!v) { setTimeout(() => go('vendor'), 10); return ''; }
+  const sales = DB.orders.filter(o => o.vendorId === v.id);
+  const buys = (DB.purchases || []).filter(b => b.vendorId === v.id);
+  return `<div class="page-head"><div><button class="btn btn-ghost btn-sm mb10" data-nav="#/vendor">${ic('back', 14)} Vendor hub</button>
+    <h1>History</h1><p>Sales and company purchases.</p></div></div>
+    <div class="tabs mb16"><button class="tab on" data-hist="sales">Sales history</button><button class="tab" data-hist="buys">Buy history</button></div>
+    <div id="histSales">
+      <div class="table-wrap"><table class="tbl"><thead><tr><th>Order</th><th>Items</th><th>Status</th><th>Amount</th><th>Date</th></tr></thead><tbody>
+      ${sales.length ? sales.map(o => `<tr><td style="font-weight:600">${esc(o.ref)}</td><td class="muted">${o.items.map(i => esc(i.name) + ' ×' + i.qty).join(', ')}</td><td>${statusBadge(o.status)}</td><td style="font-weight:600">${coins(o.totalCoins)} WC</td><td class="muted">${dateLabel(o.createdAt)}</td></tr>`).join('')
+        : `<tr><td colspan="5" class="muted center" style="padding:26px">No sales yet</td></tr>`}
+      </tbody></table></div>
+    </div>
+    <div id="histBuys" class="hidden">
+      <div class="table-wrap"><table class="tbl"><thead><tr><th>Product</th><th>Qty</th><th>Total</th><th>Status</th><th>Date</th><th style="text-align:right">Action</th></tr></thead><tbody>
+      ${buys.length ? buys.map(b => {
+        const refund = (DB.refunds || []).find(r => r.purchaseId === b.id);
+        const inv = DB.products.find(x => x.id === b.inventoryId);
+        const unsold = inv ? inv.stock >= b.qty : false;
+        let badge = '<span class="badge">Purchased</span>';
+        if (b.status === 'refunded') badge = '<span class="badge badge-success">Refunded</span>';
+        else if (refund && refund.status === 'pending') badge = '<span class="badge badge-warn">Refund pending</span>';
+        else if (refund && refund.status === 'rejected') badge = '<span class="badge badge-danger">Refund rejected</span>';
+        else if (!unsold) badge = '<span class="badge badge-warn">Stock sold</span>';
+        let action = '—';
+        if (b.status !== 'refunded' && !refund && unsold) action = `<button class="btn btn-xs btn-ghost" data-act="request-refund" data-id="${b.id}">${ic('refresh', 12)} Return / Refund</button>`;
+        else if (refund && refund.status === 'pending') action = `<button class="btn btn-xs btn-ghost" data-act="cancel-refund" data-id="${refund.id}">Cancel request</button>`;
+        else if (refund && refund.status === 'rejected') action = `<button class="btn btn-xs btn-ghost" data-act="request-refund" data-id="${b.id}">Request again</button>`;
+        return `<tr><td style="font-weight:600">${esc(b.name)}</td><td>${b.qty}</td><td>${coins(b.totalCoins)} WC</td><td>${badge}</td><td class="muted">${dateLabel(b.createdAt)}</td><td style="text-align:right">${action}</td></tr>`;
+      }).join('')
+        : `<tr><td colspan="6" class="muted center" style="padding:26px">No company purchases yet</td></tr>`}
+      </tbody></table></div>
+    </div>`;
+};
+AFTER.vendorHistory = function () {
+  $$('[data-hist]').forEach(t => t.onclick = () => {
+    $$('[data-hist]').forEach(x => x.classList.remove('on')); t.classList.add('on');
+    document.getElementById('histSales').classList.toggle('hidden', t.getAttribute('data-hist') !== 'sales');
+    document.getElementById('histBuys').classList.toggle('hidden', t.getAttribute('data-hist') !== 'buys');
+  });
+};
+/* route-level after hooks for vendor pages */
+AFTER.vendor = function (parts) {
+  const createBtn = document.getElementById('createVendorBtn');
+  if (createBtn) createBtn.onclick = () => App.createVendor();
+  const applyBtn = document.getElementById('applyVendorBtn');
+  if (applyBtn) applyBtn.onclick = () => App.applyVendor();
+  const renewBtn = document.getElementById('renewVendorBtn');
+  if (renewBtn) renewBtn.onclick = () => App.applyVendorRenew();
+  if (parts[1] === 'history' && typeof AFTER.vendorHistory === 'function') AFTER.vendorHistory(parts);
+};
+
+function adminSupportView() {
+  return `<div class="card empty"><h3>You are signed in as the administrator</h3><p>Open the management console for users, vendors, orders and payments.</p><a href="#/admin" class="btn btn-primary">Go to admin console</a></div>`;
+}
+
+
+/* ---------------- company purchase refunds (vendor side) ---------------- */
+App.requestRefund = function (purchaseId) {
+  const u = me(); const v = vendorOf(u.id);
+  const b = (DB.purchases || []).find(x => x.id === purchaseId && x.vendorId === (v && v.id));
+  if (!b) return toast('Purchase not found', 'err');
+  if (b.status === 'refunded') return toast('This purchase is already refunded', 'err');
+  const pending = (DB.refunds || []).find(r => r.purchaseId === b.id && r.status === 'pending');
+  if (pending) return toast('A refund request is already pending', 'err');
+  const inv = DB.products.find(x => x.id === b.inventoryId);
+  if (!inv || inv.stock < b.qty) return toast('Some units were already sold or listed — refund unavailable', 'err');
+  openModal(modalShell('Return & refund · ' + b.name, `
+    <div class="row gap12 mb16">
+      <div style="width:56px;height:56px;border-radius:12px;background:var(--surface-2);display:flex;align-items:center;justify-content:center;font-size:24px">${inv.emoji || '📦'}</div>
+      <div><div class="small" style="font-weight:650">${esc(b.name)} × ${b.qty}</div>
+        <div class="tiny muted mt6">Paid ${coins(b.totalCoins)} WC · ${usd(b.totalUsd)}</div></div>
+    </div>
+    <div class="panel" style="padding:12px;margin-bottom:14px">
+      <div class="tiny" style="font-weight:600;color:var(--accent)">How refunds work</div>
+      <div class="tiny muted mt6" style="line-height:1.7">The admin reviews your request. If approved, the unsold units return to the company stock and the full amount is credited back to your Whale Coin balance.</div>
+    </div>
+    <div class="field"><label class="label">Reason (optional)</label>
+      <textarea class="input" id="refundReason" style="min-height:80px" placeholder="Why are you returning this stock?"></textarea></div>`,
+    `<button class="btn btn-ghost" data-close>Cancel</button>
+     <button class="btn btn-primary" data-act="submit-refund" data-id="${b.id}">${ic('refresh', 15)} Request refund</button>`), { width: '460px' });
+};
+App.submitRefund = function (purchaseId) {
+  const u = me(); const v = vendorOf(u.id);
+  const b = (DB.purchases || []).find(x => x.id === purchaseId && x.vendorId === (v && v.id));
+  if (!b) return;
+  const reason = (document.getElementById('refundReason') || {}).value || '';
+  const inv = DB.products.find(x => x.id === b.inventoryId);
+  if (!inv || inv.stock < b.qty) return toast('Stock already sold — refund unavailable', 'err');
+  DB.refunds = DB.refunds || [];
+  DB.refunds.unshift({
+    id: uid('rfd'), purchaseId: b.id, vendorId: v.id, companyProductId: b.companyProductId,
+    inventoryId: b.inventoryId, name: b.name, qty: b.qty, coins: b.totalCoins, usd: b.totalUsd,
+    reason: String(reason).slice(0, 400), status: 'pending', createdAt: Date.now()
+  });
+  notify('usr_admin', 'Refund request', `@${v.username} requested a refund for ${b.qty} × ${b.name} (${coins(b.totalCoins)} WC).`, '#/admin/refunds', 'refresh');
+  notify(u.id, 'Refund requested', 'Your request is pending admin review.', '#/vendor/history', 'refresh');
+  sync(); closeModal(); toast('Refund request submitted', 'ok'); render();
+};
+App.cancelRefund = async function (refundId) {
+  const r = (DB.refunds || []).find(x => x.id === refundId);
+  if (!r) return;
+  if (!await confirmDialog({ title: 'Cancel refund request?', body: 'You can submit a new request later.', danger: true, ok: 'Cancel request' })) return;
+  DB.refunds = DB.refunds.filter(x => x.id !== refundId);
+  sync(); toast('Refund request cancelled', 'ok'); render();
+};
+/* =========================================================================
+   Wallet, deposits, withdrawals, referrals, profile, settings, notifications
+   ========================================================================= */
+VIEWS.wallet = function () {
+  const u = me();
+  const txs = DB.txs.filter(t => t.userId === u.id);
+  const pendingDep = DB.deposits.filter(d => d.userId === u.id && d.status === 'pending');
+  const pendingWd = DB.withdrawals.filter(w => w.userId === u.id && w.status === 'pending');
+  return `<div class="page-head"><div><h1>Wallet</h1><p>Your Whale Coin balance, deposits and withdrawals.</p></div>
+      <a href="#/referrals" class="btn btn-ghost btn-sm">${ic('gift', 15)} Invite & earn</a></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px" class="wallet-grid">
+      <div class="wallet-card">
+        <div class="between"><div class="tiny" style="opacity:.8;letter-spacing:.08em;font-weight:700">WHALE COIN BALANCE</div>${ic('wallet', 20)}</div>
+        <div class="row" style="gap:8px;align-items:baseline;margin-top:8px"><span class="wallet-bal">${coins(u.balance)}</span><span class="small" style="opacity:.8">WC</span></div>
+        <div class="small" style="opacity:.8;margin-top:4px">≈ ${usd(coinsToUsd(u.balance))} USD <span style="opacity:.6">· 1 WC = $0.50</span></div>
+        <div class="wallet-actions">
+          <a href="#/deposit" class="btn">${ic('plus', 14)} Deposit</a>
+          <a href="#/withdraw" class="btn">${ic('download', 14)} Withdraw</a>
+          <a href="#/referrals" class="btn">${ic('gift', 14)} Invite</a>
+        </div>
+      </div>
+      <div class="grid-kpi" style="grid-template-columns:1fr 1fr">
+        ${[['Total deposits', coins(u.totalDeposits || 0) + ' WC', 'wallet'], ['Total withdrawals', coins(u.totalWithdrawals || 0) + ' WC', 'download'],
+           ['Total earnings', coins(u.totalEarnings || 0) + ' WC', 'trend'], ['Referral code', u.referralCode, 'gift']]
+          .map(([k, v, i]) => `<div class="kpi"><div class="ic">${ic(i, 15)}</div><div class="v" style="font-size:17px">${v}</div><div class="k">${k}</div></div>`).join('')}
+      </div>
+    </div>
+    ${pendingDep.length || pendingWd.length ? `<div class="card mt16">
+      <div class="section-title"><h3>Pending requests</h3><span class="badge badge-warn">${pendingDep.length + pendingWd.length}</span></div>
+      ${pendingDep.map(d => `<div class="between" style="padding:9px 0;border-bottom:1px dashed var(--border)"><div><div class="small" style="font-weight:600">Deposit · ${coins(d.coins)} WC</div><div class="tiny muted">${esc(d.methodName || d.method)} · ${timeAgo(d.createdAt)} ago</div></div>${statusBadge('pending')}</div>`).join('')}
+      ${pendingWd.map(w => `<div class="between" style="padding:9px 0;border-bottom:1px dashed var(--border)"><div><div class="small" style="font-weight:600">Withdrawal · ${coins(w.coins)} WC</div><div class="tiny muted">${esc(w.network)} · ${esc(w.address.slice(0, 10))}… · ${timeAgo(w.createdAt)} ago</div></div>${statusBadge('pending')}</div>`).join('')}
+    </div>` : ''}
+    <div class="card mt16">
+      <div class="section-title"><h3>Activity</h3><span class="tiny muted">${txs.length} transactions</span></div>
+      ${txs.length ? `<div class="list">${txs.slice(0, 40).map(t => {
+        const pos = t.coins >= 0;
+        const iconMap = { deposit: 'wallet', withdrawal: 'download', purchase: 'bag', sale: 'trend', stock: 'box', referral: 'gift', refund: 'refresh' };
+        return `<div class="list-item">
+          <div style="width:34px;height:34px;border-radius:10px;background:${pos ? 'rgba(47,214,166,.12)' : 'rgba(255,95,116,.1)'};color:${pos ? 'var(--success)' : 'var(--danger)'};display:flex;align-items:center;justify-content:center;flex:none">${ic(iconMap[t.type] || 'wallet', 15)}</div>
+          <div class="grow" style="min-width:0"><div class="small" style="font-weight:600">${esc(t.label)}</div><div class="tiny muted">${timeAgo(t.createdAt)} ago · ${dateLabel(t.createdAt)}</div></div>
+          <div style="text-align:right"><div class="small" style="font-weight:700;color:${pos ? 'var(--success)' : 'var(--text)'}">${pos ? '+' : ''}${coins(t.coins)}</div><div class="tiny muted">WC</div></div>
+        </div>`;
+      }).join('')}</div>` : `<div class="empty" style="padding:26px"><p>No wallet activity yet. Deposit Whale Coin to get started.</p><a href="#/deposit" class="btn btn-primary">Deposit now</a></div>`}
+    </div>
+    <style>@media(max-width:860px){.wallet-grid{grid-template-columns:1fr!important}}</style>`;
+};
+
+/* ---------------- deposit ---------------- */
+let DEP_METHOD = null;
+VIEWS.deposit = function () {
+  const u = me();
+  const s = DB.settings;
+  const crypto = s.crypto || [], banks = s.banks || [];
+  return `<div class="page-head"><div><button class="btn btn-ghost btn-sm mb10" data-nav="#/wallet">${ic('back', 14)} Wallet</button>
+      <h1>Deposit Whale Coin</h1><p>Fund your wallet by crypto or bank transfer. Our team reviews each deposit.</p></div></div>
+    <div style="display:grid;grid-template-columns:1fr 360px;gap:20px" class="cart-grid">
+      <div class="card">
+        <div class="field"><label class="label">Amount in USD</label>
+          <div class="input-wrap"><span class="ic">$</span><input class="input" id="depUsd" type="number" min="1" step="1" placeholder="5.00" inputmode="decimal"/></div>
+          <div class="help">Minimum $1. You will receive <b id="depCoins" style="color:var(--accent)">0 WC</b> at 1 WC = $0.50.</div></div>
+        <div class="chip-row mb16">${[5, 10, 25, 50, 100].map(v => `<button class="chip" data-act="dep-quick" data-id="${v}">$${v} → ${v / COIN_USD} WC</button>`).join('')}</div>
+        <div class="label mb10">Payment method</div>
+        <div class="tabs mb16"><button class="tab on" data-depmode="crypto">${ic('wallet', 13)} Crypto</button><button class="tab" data-depmode="bank">${ic('store', 13)} Bank transfer</button></div>
+        <div id="depCrypto">
+          ${crypto.length ? `<div class="col gap8">${crypto.map((m, i) => `<label class="list-item" style="cursor:pointer;align-items:flex-start">
+            <input type="radio" name="depm" value="${m.id}" ${i === 0 ? 'checked' : ''} style="margin-top:3px;accent-color:var(--accent)"/>
+            <div class="grow"><div class="small" style="font-weight:650">${esc(m.name)}</div>
+              <div class="tiny muted" style="word-break:break-all;margin-top:3px">${esc(m.address)}</div>
+              ${m.note ? `<div class="tiny" style="color:var(--warn);margin-top:4px">${esc(m.note)}</div>` : ''}</div>
+            <button type="button" class="btn-icon" data-act="copy" data-id="${esc(m.address)}" style="width:30px;height:30px">${ic('copy', 13)}</button></label>`).join('')}</div>`
+            : `<div class="empty" style="padding:18px"><p>No crypto methods configured yet. Contact support.</p></div>`}
+        </div>
+        <div id="depBank" class="hidden">
+          ${banks.length ? banks.map((b, i) => `<div class="panel" style="padding:13px;margin-bottom:8px">
+            <div class="between mb10"><div class="small" style="font-weight:650">${esc(b.bankName)}</div>${i === 0 ? '<span class="badge badge-accent">Recommended</span>' : ''}</div>
+            <div class="kv"><span class="k">Account name</span><span class="v">${esc(b.accountName)}</span></div>
+            <div class="kv"><span class="k">Account number</span><span class="v">${esc(b.accountNumber)} <button class="btn-icon" data-act="copy" data-id="${esc(b.accountNumber)}" style="width:24px;height:24px;vertical-align:middle">${ic('copy', 11)}</button></span></div>
+            <div class="kv"><span class="k">SWIFT / BIC</span><span class="v">${esc(b.swift || '—')}</span></div>
+            <div class="kv"><span class="k">Routing</span><span class="v">${esc(b.routing || '—')}</span></div>
+            <div class="kv"><span class="k">Country</span><span class="v">${esc(b.country || '—')}</span></div>
+            ${b.note ? `<div class="tiny mt6" style="color:var(--warn)">${esc(b.note)}</div>` : ''}
+          </div>`).join('') : `<div class="empty" style="padding:18px"><p>No bank details configured yet. Contact support.</p></div>`}
+          <div class="field mt16"><label class="label">Payment reference (optional)</label><input class="input" id="depRef" placeholder="Bank transfer reference / sender name"/></div>
+        </div>
+        <div class="panel mt16" style="padding:12px"><div class="row gap6 tiny" style="font-weight:600;color:var(--accent)">${ic('shield', 13)} Reviewed by our team</div>
+          <div class="tiny muted mt6" style="line-height:1.6">${esc(s.depositNote || '')}</div></div>
+        <button class="btn btn-primary btn-block btn-lg mt16" id="depSubmit">${ic('check', 16)} I have sent the payment</button>
+      </div>
+      <div>
+        <div class="card">
+          <h3 style="font-size:15px">Conversion</h3>
+          <div class="mt16"><div class="kv"><span class="k">USD amount</span><span class="v" id="sumUsd">$0.00</span></div>
+            <div class="kv"><span class="k">Rate</span><span class="v">1 WC = $0.50</span></div>
+            <div class="kv"><span class="k">Whale Coin received</span><span class="v" id="sumCoins" style="color:var(--accent)">0 WC</span></div>
+            <div class="kv"><span class="k">Method</span><span class="v" id="sumMethod">Crypto</span></div></div>
+          <div class="divider"></div>
+          <div class="tiny muted" style="line-height:1.65">Deposits usually confirm within 30 minutes after payment. You'll receive a notification the moment your balance is credited.</div>
+        </div>
+        <div class="card mt14">
+          <div class="row gap8">${ic('help', 16)}<span class="small" style="font-weight:600">Need help?</span></div>
+          <p class="tiny muted mt6" style="line-height:1.6">Chat with our team if a deposit has not appeared after 1 hour.</p>
+          <button class="btn btn-ghost btn-sm mt10" data-act="support-chat" style="width:100%">${ic('chat', 14)} Contact support</button>
+        </div>
+      </div>
+    </div>
+    <style>@media(max-width:860px){.cart-grid{grid-template-columns:1fr!important}}</style>`;
+};
+AFTER.deposit = function () {
+  const amt = document.getElementById('depUsd');
+  const upd = () => {
+    const v = Number(amt.value) || 0;
+    document.getElementById('depCoins').textContent = coins(usdToCoins(v)) + ' WC';
+    const a = document.getElementById('sumUsd'), b = document.getElementById('sumCoins');
+    if (a) a.textContent = usd(v);
+    if (b) b.textContent = coins(usdToCoins(v)) + ' WC';
+  };
+  amt.addEventListener('input', upd);
+  let mode = 'crypto';
+  $$('[data-depmode]').forEach(t => t.onclick = () => {
+    $$('[data-depmode]').forEach(x => x.classList.remove('on')); t.classList.add('on');
+    mode = t.getAttribute('data-depmode');
+    document.getElementById('depCrypto').classList.toggle('hidden', mode !== 'crypto');
+    document.getElementById('depBank').classList.toggle('hidden', mode !== 'bank');
+    document.getElementById('sumMethod').textContent = mode === 'crypto' ? 'Crypto' : 'Bank transfer';
+  });
+  document.getElementById('depSubmit').onclick = () => App.submitDeposit(mode);
+};
+App.depQuick = function (v) {
+  const i = document.getElementById('depUsd');
+  i.value = v; i.dispatchEvent(new Event('input'));
+};
+App.submitDeposit = function (mode) {
+  const u = me(); clearErrors();
+  const usdAmt = Math.round(Number(document.getElementById('depUsd').value) * 100) / 100;
+  if (!(usdAmt >= 1)) return formError('depUsd', 'Enter at least $1');
+  let methodName = '', detail = '';
+  if (mode === 'crypto') {
+    const sel = document.querySelector('input[name="depm"]:checked');
+    if (!sel) return toast('Select a crypto payment method', 'err');
+    const m = (DB.settings.crypto || []).find(x => x.id === sel.value);
+    methodName = m ? m.name : 'Crypto';
+    detail = m ? m.address : '';
+  } else {
+    methodName = 'Bank transfer';
+    detail = (document.getElementById('depRef') || {}).value || '';
+    if (!(DB.settings.banks || []).length) return toast('No bank details configured', 'err');
+  }
+  DB.deposits.unshift({
+    id: uid('dep'), userId: u.id, usd: usdAmt, coins: usdToCoins(usdAmt),
+    method: mode, methodName, detail, status: 'pending', createdAt: Date.now(), note: ''
+  });
+  notify('usr_admin', 'New deposit request', `${u.fullName} (@${u.username}) submitted ${usd(usdAmt)} via ${methodName}.`, '#/admin/deposits', 'wallet');
+  notify(u.id, 'Deposit submitted', `Your ${usd(usdAmt)} deposit is pending review. You'll be credited ${coins(usdToCoins(usdAmt))} WC once approved.`, '#/wallet', 'wallet');
+  sync();
+  openModal(modalShell('Deposit submitted', `
+    <div class="center">
+      <div style="width:58px;height:58px;border-radius:50%;background:rgba(255,176,32,.14);color:var(--warn);display:flex;align-items:center;justify-content:center;margin:0 auto">${ic('clock', 26)}</div>
+      <h3 class="mt16" style="font-size:17px">Awaiting confirmation</h3>
+      <p class="small muted mt10" style="line-height:1.7">We've received your ${usd(usdAmt)} request via ${esc(methodName)}. Our team will verify and credit <b style="color:var(--accent)">${coins(usdToCoins(usdAmt))} WC</b> to your wallet.</p>
+    </div>`,
+    `<a href="#/wallet" class="btn btn-primary" data-close style="width:100%">Back to wallet</a>`));
+  setTimeout(() => render(), 60);
+};
+
+/* ---------------- withdraw ---------------- */
+VIEWS.withdraw = function () {
+  const u = me();
+  const nets = DB.settings.networks || [];
+  if (!u.pin) {
+    return `<div class="page-head"><div><button class="btn btn-ghost btn-sm mb10" data-nav="#/wallet">${ic('back', 14)} Wallet</button><h1>Withdraw</h1></div></div>
+      <div class="card empty"><div class="ic">${ic('lock', 26)}</div><h3>Set your withdrawal PIN first</h3>
+      <p>For your security, withdrawals require a 4–6 digit PIN.</p><button class="btn btn-primary" data-act="set-pin-now">Create withdrawal PIN</button></div>`;
+  }
+  return `<div class="page-head"><div><button class="btn btn-ghost btn-sm mb10" data-nav="#/wallet">${ic('back', 14)} Wallet</button>
+      <h1>Withdraw USDT</h1><p>Withdrawals are processed on the network you choose and reviewed by our team.</p></div></div>
+    <div style="display:grid;grid-template-columns:1fr 360px;gap:20px" class="cart-grid">
+      <div class="card">
+        <div class="field"><label class="label">Network</label>
+          <select class="input" id="wdNet">${nets.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('')}</select>
+          <div class="help">USDT only. Make sure the network matches your wallet.</div></div>
+        ${field('USDT wallet address', 'wdAddr', { ph: 'Paste your USDT address', icon: 'wallet' })}
+        <div class="field"><label class="label">Amount in Whale Coin</label>
+          <div class="input-wrap"><span class="ic">${ic('wallet', 16)}</span><input class="input" id="wdCoins" type="number" min="1" step="1" placeholder="0" inputmode="decimal"/></div>
+          <div class="row between"><span class="help">Available: ${coins(u.balance)} WC</span><button class="link tiny" data-act="wd-max">Use max</button></div></div>
+        <div class="panel" style="padding:12px;margin-bottom:14px">
+          <div class="between"><span class="tiny muted">You receive</span><span id="wdUsd" style="font-weight:700">$0.00</span></div>
+          <div class="between mt6"><span class="tiny muted">Network fee</span><span class="tiny">Paid by WhaleChat</span></div>
+          <div class="between mt6"><span class="tiny muted">Rate</span><span class="tiny">1 WC = $0.50</span></div>
+        </div>
+        ${field('Withdrawal PIN', 'wdPin', { type: 'password', ph: '4–6 digit PIN', icon: 'lock', inputmode: 'numeric', maxlength: '6' })}
+        <label class="checkline" style="margin-bottom:14px"><input type="checkbox" id="wdConfirm"/>
+          <span>I confirm this USDT address is correct. Blockchain transfers cannot be reversed.</span></label>
+        <button class="btn btn-primary btn-block btn-lg" id="wdSubmit">${ic('lock', 16)} Request withdrawal</button>
+        <div class="tiny muted center mt10">Withdrawals are reviewed and usually paid within 24 hours.</div>
+      </div>
+      <div class="card" style="height:fit-content">
+        <h3 style="font-size:15px">Withdrawal policy</h3>
+        <div class="mt10">
+          <div class="kv"><span class="k">Minimum</span><span class="v">5 WC</span></div>
+          <div class="kv"><span class="k">Currency</span><span class="v">USDT</span></div>
+          <div class="kv"><span class="k">Networks</span><span class="v">${nets.length} available</span></div>
+          <div class="kv"><span class="k">Review time</span><span class="v">≤ 24 hours</span></div>
+        </div>
+        <div class="panel mt14" style="padding:11px 12px"><div class="row gap6 tiny" style="font-weight:600;color:var(--warn)">${ic('shield', 13)} Double-check the network</div>
+          <div class="tiny muted mt6" style="line-height:1.6">Sending USDT on the wrong network can result in permanent loss.</div></div>
+      </div>
+    </div>
+    <style>@media(max-width:860px){.cart-grid{grid-template-columns:1fr!important}}</style>`;
+};
+AFTER.withdraw = function () {
+  const i = document.getElementById('wdCoins');
+  if (!i) return;
+  const upd = () => {
+    const v = Number(i.value) || 0;
+    const el = document.getElementById('wdUsd');
+    if (el) el.textContent = usd(coinsToUsd(v));
+  };
+  i.addEventListener('input', upd);
+  document.getElementById('wdSubmit').onclick = () => App.submitWithdraw();
+};
+App.wdMax = function () {
+  const i = document.getElementById('wdCoins'); i.value = Math.floor(me().balance);
+  i.dispatchEvent(new Event('input'));
+};
+App.submitWithdraw = async function () {
+  const u = me(); clearErrors();
+  const net = document.getElementById('wdNet').value;
+  const addr = document.getElementById('wdAddr').value.trim();
+  const amt = Math.round((Number(document.getElementById('wdCoins').value) || 0) * 100) / 100;
+  const pin = document.getElementById('wdPin').value;
+  if (!addr || addr.length < 12) return formError('wdAddr', 'Enter a valid USDT wallet address');
+  if (!(amt >= 5)) return formError('wdCoins', 'Minimum withdrawal is 5 WC');
+  if (amt > u.balance) return formError('wdCoins', 'Amount exceeds your available balance');
+  if (!/^\d{4,6}$/.test(pin)) return formError('wdPin', 'Enter your 4–6 digit PIN');
+  if (!document.getElementById('wdConfirm').checked) return toast('Please confirm the wallet address', 'err');
+  if (await hash('pin::' + pin) !== u.pin) return formError('wdPin', 'Incorrect PIN');
+  u.balance = Math.round((u.balance - amt) * 100) / 100;
+  const wdId = uid('wd');
+  const activity = tx(u.id, 'withdrawal', 'Withdrawal request · ' + net, -amt, { withdrawalId: wdId });
+  DB.withdrawals.unshift({
+    id: wdId, userId: u.id, network: net, address: addr, coins: amt,
+    usd: coinsToUsd(amt), status: 'pending', createdAt: Date.now(), note: '',
+    txId: activity.id
+  });
+  notify('usr_admin', 'New withdrawal request', `${u.fullName} requested ${coins(amt)} WC (${usd(coinsToUsd(amt))}) via ${net}.`, '#/admin/withdrawals', 'download');
+  notify(u.id, 'Withdrawal submitted', `Your request for ${coins(amt)} WC is pending review.`, '#/wallet', 'download');
+  sync();
+  openModal(modalShell('Withdrawal requested', `
+    <div class="center"><div style="width:58px;height:58px;border-radius:50%;background:rgba(46,230,201,.14);color:var(--accent);display:flex;align-items:center;justify-content:center;margin:0 auto">${ic('check', 26)}</div>
+    <h3 class="mt16" style="font-size:17px">Request received</h3>
+    <p class="small muted mt10" style="line-height:1.7">${coins(amt)} WC (${usd(coinsToUsd(amt))}) via ${esc(net)}. Our team will review and send USDT to your address.</p></div>`,
+    `<a href="#/wallet" class="btn btn-primary" data-close style="width:100%">Done</a>`));
+  setTimeout(() => render(), 60);
+};
+App.setPinNow = async function () { await App.startSetPin(); render(); };
+
+/* ---------------- referrals ---------------- */
+VIEWS.referrals = function () {
+  const u = me();
+  const invited = DB.users.filter(x => x.referredBy === u.id && x.id !== u.id);
+  const paid = invited.filter(x => x.referralPaid);
+  const pending = invited.filter(x => !x.referralPaid);
+  const earned = DB.txs.filter(t => t.userId === u.id && t.type === 'referral').length * 10;
+  const inviter = u.referredBy ? findUser(u.referredBy) : null;
+  const link = referralLink(u.referralCode);
+
+  return `<div class="page-head"><div><button class="btn btn-ghost btn-sm mb10" data-nav="#/profile">${ic('back', 14)} Profile</button>
+      <h1>Invite friends to earn</h1><p>Earn 10 Whale Coins for every friend who signs up and makes their first deposit.</p></div></div>
+
+    ${u.pendingReferralCode ? `<div class="card mb16" style="border-color:rgba(255,176,32,.35);background:linear-gradient(120deg,rgba(255,176,32,.10),rgba(46,230,201,.05))">
+      <div class="row gap10" style="align-items:flex-start"><span style="width:32px;height:32px;border-radius:9px;background:rgba(255,176,32,.15);color:var(--warn);display:flex;align-items:center;justify-content:center;flex:none">${ic('clock', 16)}</span>
+      <div><div class="small" style="font-weight:650">Referral pending · ${esc(u.pendingReferralCode)}</div>
+      <div class="tiny muted mt6" style="line-height:1.6">Your code is saved. It links to your inviter automatically as soon as their account is on this server.</div></div></div>
+    </div>` : ''}
+
+    ${inviter ? `<div class="card mb16" style="padding:13px 14px">
+      <div class="between gap10 wrap">
+        <div class="row gap10">${avatarHTML(inviter, 'sm')}
+          <div><div class="tiny muted">You were invited by</div>
+          <div class="small" style="font-weight:650">${esc(inviter.fullName)} <span class="muted">@${esc(inviter.username)}</span></div></div></div>
+        ${u.referralPaid ? `<span class="badge badge-success">${ic('check', 11)} Bonus credited</span>` : (DB.deposits.some(d => d.userId === u.id && d.status === 'approved') ? `<span class="badge badge-success">Deposit approved</span>` : `<span class="badge badge-warn">First deposit pending</span>`)}
+      </div>
+    </div>` : ''}
+
+    <div class="wallet-card mb16">
+      <div class="between"><div class="tiny" style="opacity:.85;letter-spacing:.08em;font-weight:700">REFERRAL EARNINGS</div>${ic('gift', 18)}</div>
+      <div class="row" style="gap:8px;align-items:baseline;margin-top:6px"><span class="wallet-bal" style="font-size:34px">${coins(earned)}</span><span class="small" style="opacity:.8">WC earned</span></div>
+      <div class="small" style="opacity:.8;margin-top:2px">≈ ${usd(coinsToUsd(earned))} · 10 WC per qualified friend</div>
+      <div class="row" style="gap:22px;margin-top:14px;flex-wrap:wrap">
+        <div><div class="tiny" style="opacity:.7">Friends invited</div><div style="font-weight:800;font-size:20px">${invited.length}</div></div>
+        <div><div class="tiny" style="opacity:.7">Bonus paid</div><div style="font-weight:800;font-size:20px">${paid.length}</div></div>
+        <div><div class="tiny" style="opacity:.7">Awaiting deposit</div><div style="font-weight:800;font-size:20px">${pending.length}</div></div>
+      </div>
+      <div class="wallet-actions"><button class="btn" data-act="share-invite">${ic('link', 14)} Share invite</button>
+        <button class="btn" data-act="copy" data-id="${esc(u.referralCode)}">${ic('copy', 14)} Copy code</button>
+        <button class="btn" data-act="copy" data-id="${esc(link)}">${ic('copy', 14)} Copy link</button></div>
+    </div>
+
+    <div class="card">
+      <div class="section-title"><h3>Your referral code</h3></div>
+      <div class="copy-row"><span style="font-family:var(--display);font-weight:700;letter-spacing:.12em;color:var(--accent)">${esc(u.referralCode)}</span>
+        <span class="grow"></span><button class="btn btn-xs btn-ghost" data-act="copy" data-id="${esc(u.referralCode)}">${ic('copy', 12)} Copy</button></div>
+      <div class="copy-row mt10"><span class="tiny ellipsis grow" style="color:var(--muted)">${esc(link)}</span>
+        <button class="btn btn-xs btn-ghost" data-act="copy" data-id="${esc(link)}">${ic('copy', 12)}</button></div>
+      <div class="row gap6 mt10 wrap">
+        <button class="btn btn-xs btn-ghost" data-act="share-invite">${ic('forward', 12)} Share short link</button>
+        <button class="btn btn-xs btn-ghost" data-act="copy" data-id="${esc(appLink())}">${ic('link', 12)} App link</button>
+      </div>
+      <div class="tiny muted mt8">Short link opens <b style="color:var(--text)">#/signup</b> with your code already filled in.</div>
+      <div class="panel mt16" style="padding:12px"><div class="tiny" style="font-weight:600;color:var(--accent)">How it works</div>
+        <ol class="tiny muted" style="margin:8px 0 0;padding-left:18px;line-height:1.8">
+          <li>Share your code or link — friends appear below as soon as they sign up.</li>
+          <li>Their first deposit is reviewed and approved by our team.</li>
+          <li>10 Whale Coins are credited to your balance automatically, once per friend.</li>
+        </ol></div>
+    </div>
+
+    <div class="card mt16">
+      <div class="between"><div class="section-title" style="margin:0"><h3>Referred friends</h3></div>
+        <span class="badge">${invited.length} total</span></div>
+      ${invited.length ? `<div class="list mt14">${invited.slice().sort((a,b)=>b.createdAt-a.createdAt).map(f => {
+        const approved = DB.deposits.some(d => d.userId === f.id && d.status === 'approved');
+        return `<div class="list-item">${avatarHTML(f, 'sm')}
+          <div class="grow" style="min-width:0"><div class="small" style="font-weight:600">${esc(f.fullName)} <span class="tiny muted">@${esc(f.username)}</span></div>
+          <div class="tiny muted mt6">Joined ${dateLabel(f.createdAt)}${approved ? ' · first deposit approved' : ''}</div></div>
+          ${f.referralPaid
+            ? `<span class="badge badge-success">${ic('check', 11)} +10 WC credited</span>`
+            : approved
+              ? `<span class="badge badge-accent">${ic('clock', 11)} Processing bonus</span>`
+              : `<span class="badge badge-warn">${ic('clock', 11)} First deposit pending</span>`}
+        </div>`;
+      }).join('')}</div>`
+        : `<div class="empty" style="padding:22px"><div class="ic">${ic('users', 24)}</div><h3>No referrals yet</h3><p>Share your link — every friend who joins will appear here automatically.</p><button class="btn btn-primary btn-sm" data-act="share-invite">${ic('link', 14)} Share your link</button></div>`}
+    </div>`;
+};
+
+App.inviteFriends = function () {
+  const u = me();
+  if (!u) return;
+  const link = referralLink(u.referralCode);
+  openModal(modalShell('Invite friends', `
+    <div class="center" style="padding:4px 0 0">
+      <div style="width:56px;height:56px;border-radius:17px;margin:0 auto;background:rgba(46,230,201,.12);color:var(--accent);display:flex;align-items:center;justify-content:center">${ic('gift', 27)}</div>
+      <h3 style="margin-top:12px;font-size:17px">Share your invite link</h3>
+      <p class="small muted mt6" style="line-height:1.6">Earn 10 Whale Coins when a friend joins with your link and their first deposit is approved.</p>
+    </div>
+    <div class="field mt16"><label class="label">Your referral link</label>
+      <input class="input" id="invLink" readonly value="${esc(link)}"/>
+      <div class="help">Your code <b style="color:var(--accent)">${esc(u.referralCode)}</b> · opens signup with the code filled in${appDestinationBase() && urlHost(appDestinationBase()) !== urlHost(link) ? ' · this branded link redirects to the live app' : ''}</div></div>
+    <div class="row gap8 wrap">
+      <button class="btn btn-primary btn-sm" data-act="invite-copy">${ic('copy', 14)} Copy link</button>
+      <button class="btn btn-ghost btn-sm" data-act="invite-share">${ic('forward', 14)} Share…</button>
+      <button class="btn btn-ghost btn-sm" data-act="invite-stats">${ic('users', 14)} Invite stats</button>
+    </div>`,
+    `<button class="btn btn-ghost" data-close style="width:100%">Close</button>`), { width: '480px' });
+  setTimeout(() => { const i = document.getElementById('invLink'); if (i) { i.focus(); i.select(); } }, 90);
+};
+
+App.inviteCopy = function () {
+  const u = me();
+  copyText(referralLink(u.referralCode));
+};
+
+App.inviteShare = async function () {
+  const u = me();
+  const link = referralLink(u.referralCode);
+  const text = inviteMessageFor(u, link);
+  if (navigator.share) {
+    try { await navigator.share({ title: 'WhaleChat', text, url: link }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
+  }
+  copyText(text + ' ' + link);
+};
+
+App.inviteStats = function () { closeModal(); go('referrals'); };
+
+App.shareInvite = async function () {
+  const u = me();
+  const link = referralLink(u.referralCode);
+  const text = inviteMessageFor(u, link);
+  if (navigator.share) {
+    try { await navigator.share({ title: 'WhaleChat', text, url: link }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
+  }
+  copyText(text + ' ' + link);
+};
+
+/* ---------------- profile / dashboard ---------------- */
+VIEWS.profile = function () {
+  const u = me();
+  if (u.role === 'admin') return adminProfile();
+  const v = vendorOf(u.id);
+  const orders = DB.orders.filter(o => o.buyerId === u.id);
+  const referrals = DB.users.filter(x => x.referredBy === u.id).length;
+  return `<div class="page-head"><div><h1>My account</h1><p>Dashboard, profile and quick actions.</p></div>
+      <a href="#/settings" class="btn btn-ghost btn-sm">${ic('settings', 15)} Settings</a></div>
+    <div class="card mb16 profile-banner">
+      <img src="data:image/jpeg;base64,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cyI6eyJrZXlfdHJhbnNmb3JtX2Jhc2VfbWF0cml4IjpbMi4zNDU1Mzc3LDAuMCwwLjAsMC4wLDAuMCwyLjM0NTUxNDgsMC4wLDAuMCwwLjAsMC4wLDIuMzQ1NTQzMSwwLjAsLTEwNTMuMTY5MiwxNzEuODYzODMsMC4wLDEuMCwwLjAsMC4wLDAuMCwwLjAsMC4wLDAuMCwwLjAsMC4wLDAuMCwwLjAsMC4wLDAuMCwwLjAsMC4wLDAuMCwwLjBdLCJydWxlQW5nbGUiOjAsInZlcnRpY2FsVGlsdFN3aXRjaCI6dHJ1ZSwiaG9yaXpvbnRhbFRpbHRTd2l0Y2giOnRydWUsImtleV90cmFuc2Zvcm1fdmlld3BvcnRfd2lkdGgiOjEwODAsInJ1bGVBbmdsZVN3aXRjaCI6dHJ1ZSwia2V5X3RyYW5zZm9ybV9kaXNwbGF5X2JvdW5kcyI6WzAuMCwwLjAsOTI0LjAsNTc2LjBdLCJob3Jpem9udGFsVGlsdCI6MCwiYXV0b1RpbHRTd2l0Y2giOmZhbHNlLCJ2ZXJ0aWNhbFRpbHQiOjAsInJhdGlvIjowLjAsImtleV90cmFuc2Zvcm1fdmlld3BvcnRfaGVpZ2h0IjoyNDAwLCJrZXlfdHJhbnNmb3JtX2NsaXBfcmVjdCI6WzExMy45OTk5NTQsNDE3Ljc5MzE4LDk2Ni4wLDEwNjMuMjA2OF0sImdsb2JhbF9rZXlfY2FjaGVfa2V5d29yZCI6IlRyYW5zZm9ybUVmZmVjdF8xNzk0MTcyNDQxMDgxIiwiZ2xvYmFsX2tleV9leGVjdXRlX2NvbW1hbmQiOiJjbWRfdHJhbnNmb3JtX2RyYXciLCJyb3RhdGVPcmllbnRhdGlvbiI6MCwiaXNIb3Jpem9udGFsTWlycm9yIjpmYWxzZSwicm90YXRlQW5nbGUiOjAuMCwia2V5X3RyYW5zZm9ybV9tYXRyaXgiOlsyLjM0NTUzNzcsMC4wLDAuMCwwLjAsMC4wLDIuMzQ1NTE0OCwwLjAsMC4wLDAuMCwwLjAsMi4zNDU1NDMxLDAuMCwtMTA1My4xNjkyLDE3MS44NjM4MywwLjAsMS4wLDAuMCwwLjAsMC4wLDAuMCwwLjAsMC4wLDAuMCwwLjAsMC4wLDAuMCwwLjAsMC4wLDAuMCwwLjAsMC4wLDAuMF0sInJvdGF0ZV9heGlzIjpbMC4wLDEuMCwwLjAsMS4wXX0sInZlcnNpb24iOjAuMn1dAHsib3JpZ2luYWxGaWxlU3ViUGF0aCI6Ii9lZGl0L3BhcmFtZXRyaWMvZmlsZXMvb3JpZ2luXzE3OTQxNzI0NDQzNjAuanBnIiwiY29udGVudEVkaXRGaWxlU3ViUGF0aCI6Ii9lZGl0L3BhcmFtZXRyaWMvZmlsZXMvY29udGVudF9lZGl0XzE3OTQxNzI0NDQ0NDIuanBnIiwiaGFzQ29udGVudEVkaXQiOmZhbHNlfQCamZk/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAE9QUE8gUmVubzEyIEYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABbeyJsZW5ndGgiOjk5NywibmFtZSI6ImVkaXQucHJvamVjdC5jb25maWciLCJvZmZzZXQiOjEyNTYsInZlcnNpb24iOjF9LHsibGVuZ3RoIjoxNzgsIm5hbWUiOiJlZGl0LnByb2plY3QuZW50aXR5Iiwib2Zmc2V0IjoyNTksInZlcnNpb24iOjF9LHsibGVuZ3RoIjoxLCJuYW1lIjoiaW1hZ2UucXVhbGl0eS5lbmhhbmNlZCIsIm9mZnNldCI6MSwidmVyc2lvbiI6MX0seyJsZW5ndGgiOjEsIm5hbWUiOiJwcml2YXRlLmVtcHR5c3BhY2UiLCJvZmZzZXQiOjEyNTcsInZlcnNpb24iOjF9LHsibGVuZ3RoIjo4MCwibmFtZSI6IndhdGVybWFyay5kZXZpY2UiLCJvZmZzZXQiOjgxLCJ2ZXJzaW9uIjoxfV0Ad3Rta1wBAAA=" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center 42%;opacity:.32"/>
+      <div style="position:relative;display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+        <div style="position:relative">
+          ${avatarHTML(u, 'xl', 'avatar-ring')}
+          <button class="btn-icon" data-act="avatar-menu" style="position:absolute;right:-2px;bottom:-2px;width:30px;height:30px;border-radius:50%;background:var(--surface);border-color:var(--border-strong)">${ic('camera', 14)}</button>
+        </div>
+        <div class="grow" style="min-width:180px">
+          <div class="row gap6"><h2 style="font-size:20px">${esc(u.fullName)}</h2>
+            ${u.verified ? `<span class="verified" style="width:17px;height:17px">${ic('check', 10)}</span>` : ''}</div>
+          <div class="small muted">@${esc(u.username)} · ${esc(u.email)}</div>
+          <div class="row gap6 mt10 wrap">
+            ${v ? `<span class="badge badge-accent">${ic('store', 12)} Vendor @${esc(v.username)}</span>` : `<span class="badge">${ic('user', 12)} Member</span>`}
+            <span class="badge">${ic('shield', 12)} Trust ${u.trustScore}/100</span>
+            <span class="badge">${ic('clock', 12)} Since ${dateLabel(u.createdAt)}</span>
+          </div>
+        </div>
+        <div class="row gap8">
+          <button class="btn btn-ghost btn-sm" data-act="edit-profile">${ic('edit', 14)} Edit profile</button>
+          <button class="btn btn-ghost btn-sm" data-act="logout" style="color:var(--danger)">${ic('logout', 14)}</button>
+        </div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px" class="wallet-grid">
+      <div class="wallet-card">
+        <div class="between"><div class="tiny" style="opacity:.8;letter-spacing:.08em;font-weight:700">ACCOUNT BALANCE</div>${u.verified ? `<span class="badge" style="background:rgba(255,255,255,.15);border-color:rgba(255,255,255,.25);color:#fff">Verified</span>` : ''}</div>
+        <div class="row" style="gap:8px;align-items:baseline;margin-top:6px"><span class="wallet-bal">${coins(u.balance)}</span><span class="small" style="opacity:.8">WC</span></div>
+        <div class="small" style="opacity:.8;margin-top:2px">≈ ${usd(coinsToUsd(u.balance))} USD</div>
+        <div class="wallet-actions"><a href="#/deposit" class="btn">Deposit</a><a href="#/withdraw" class="btn">Withdraw</a><button class="btn" data-act="invite-friends">${ic('gift', 14)} Invite friends</button></div>
+      </div>
+      <div class="col gap12">
+        <div class="grid-kpi" style="grid-template-columns:1fr 1fr">
+          ${[['Deposits', coins(u.totalDeposits || 0) + ' WC'], ['Withdrawals', coins(u.totalWithdrawals || 0) + ' WC'], ['Earnings', coins(u.totalEarnings || 0) + ' WC'], ['Referrals', String(referrals)]]
+            .map(([k, val]) => `<div class="kpi"><div class="v" style="font-size:18px">${val}</div><div class="k">${k}</div></div>`).join('')}
+        </div>
+        <div class="card" style="padding:14px">
+          <div class="between gap10 wrap">
+            <div class="row gap10"><div style="width:38px;height:38px;border-radius:11px;background:rgba(46,230,201,.12);color:var(--accent);display:flex;align-items:center;justify-content:center">${ic('store', 18)}</div>
+              <div><div class="small" style="font-weight:650">${v ? 'Your vendor profile' : 'Become a vendor'}</div>
+              <div class="tiny muted">${v ? '@' + esc(v.username) + ' · ' + (v.sales || 0) + ' sales' : 'Open your store and start selling'}</div></div></div>
+            <button class="btn ${v ? 'btn-ghost' : 'btn-primary'} btn-sm" data-nav="#/vendor">${v ? 'Go to vendor profile' : 'Become a Vendor'} ${ic('chevron', 14)}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="section-title mt22"><h3>Quick navigation</h3></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px">
+      ${[['bag', 'Marketplace', '#/market'], ['truck', 'My orders', '#/orders'], ['cart', 'Cart', '#/cart'], ['chat', 'Chats', '#/home'], ['status', 'Status', '#/status'], ['bell', 'Notifications', '#/notifications'], ['gift', 'Referrals', '#/referrals'], ['settings', 'Settings', '#/settings']]
+        .map(([i, t, h]) => `<a href="${h}" class="card card-hover" style="padding:14px;display:flex;flex-direction:column;gap:9px;align-items:flex-start">
+          <span style="width:32px;height:32px;border-radius:9px;background:var(--surface-2);color:var(--accent);display:flex;align-items:center;justify-content:center">${ic(i, 16)}</span>
+          <span class="small" style="font-weight:600">${t}</span></a>`).join('')}
+    </div>
+    <div class="card mt16">
+      <div class="section-title"><h3>Recent orders</h3><a href="#/orders" class="link tiny">View all</a></div>
+      ${orders.slice(0, 3).length ? orders.slice(0, 3).map(o => `<div class="between" style="padding:9px 0;border-bottom:1px dashed var(--border)">
+        <div><div class="small" style="font-weight:600">${esc(o.ref)}</div><div class="tiny muted">${o.items.map(i => esc(i.name)).join(', ').slice(0, 60)}</div></div>
+        <div class="row gap8">${statusBadge(o.status)}<span class="small" style="font-weight:700">${coins(o.totalCoins)} WC</span></div></div>`).join('')
+        : `<div class="empty" style="padding:18px"><p>No orders yet.</p><a href="#/market" class="btn btn-primary btn-sm">Start shopping</a></div>`}
+    </div>
+    <style>@media(max-width:860px){.wallet-grid{grid-template-columns:1fr!important}}</style>`;
+};
+
+function adminProfile() {
+  const u = me();
+  return `<div class="page-head"><div><h1>Administrator</h1><p>WhaleChat management account.</p></div></div>
+    <div class="card"><div class="row gap14">${avatarHTML(u, 'lg')}
+      <div class="grow"><h3>${esc(u.fullName)}</h3><div class="small muted">@${esc(u.username)} · ${esc(u.email)}</div>
+      <div class="row gap6 mt10"><span class="badge badge-accent">${ic('shield', 12)} Admin</span><span class="badge">Full access</span></div></div></div>
+      <div class="divider"></div>
+      <div class="row gap8 wrap"><a href="#/admin" class="btn btn-primary btn-sm">Open console</a>
+        <a href="#/admin/settings" class="btn btn-ghost btn-sm">Change password</a>
+        <a href="#/settings" class="btn btn-ghost btn-sm">Settings</a>
+        <button class="btn btn-ghost btn-sm" data-act="logout" style="color:var(--danger)">Sign out</button></div>
+    </div>`;
+}
+
+App.avatarMenu = function () {
+  const u = me();
+  openModal(modalShell('Profile photo', `
+    <div class="center">${avatarHTML(u, 'xl')}</div>
+    <div class="list mt16">
+      <button class="list-item" data-act="avatar-upload" style="width:100%;text-align:left">${ic('image', 17)} <span class="grow">Upload from gallery</span></button>
+      <button class="list-item" data-act="avatar-camera" style="width:100%;text-align:left">${ic('camera', 17)} <span class="grow">Take a photo</span></button>
+      ${u.avatar ? `<button class="list-item" data-act="avatar-remove" style="width:100%;text-align:left;color:var(--danger)">${ic('trash', 17)} <span class="grow">Remove photo</span></button>` : ''}
+    </div>`, `<button class="btn btn-ghost" data-close style="width:100%">Close</button>`));
+};
+App.avatarUpload = async function (camera) {
+  closeModal();
+  const f = await pickFile({ accept: 'image/*', capture: camera });
+  if (!f) return;
+  const c = await compressImage(f, 512, 0.8);
+  const data = await fileToDataURL(c);
+  const u = me();
+  u.avatar = data;
+  if (u.vendorId) { const v = vendorById(u.vendorId); if (v) v.avatar = data; }
+  sync(); toast('Profile photo updated', 'ok'); render();
+};
+App.avatarRemove = async function () {
+  const u = me();
+  if (!await confirmDialog({ title: 'Remove photo?', body: 'Your default avatar will be shown instead.', danger: true, ok: 'Remove' })) return;
+  u.avatar = null; closeModal(); sync(); toast('Photo removed', 'ok'); render();
+};
+function fileToDataURL(file) {
+  return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); });
+}
+
+App.editProfile = function () {
+  const u = me();
+  openModal(modalShell('Edit profile', `
+    ${field('Full name', 'epName', { value: u.fullName })}
+    ${field('Username', 'epUser', { value: u.username, help: 'Your unique @handle.' })}
+    ${field('Email', 'epEmail', { type: 'email', value: u.email })}
+    ${field('Phone', 'epPhone', { value: u.phone || '' })}
+    ${field('Bio / status text', 'epBio', { value: u.bio || '', ph: 'A short line about you' })}`,
+    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="save-profile">Save changes</button>`));
+};
+App.saveProfile = async function () {
+  const u = me(); clearErrors();
+  const fullName = document.getElementById('epName').value.trim();
+  const username = document.getElementById('epUser').value.trim();
+  const email = document.getElementById('epEmail').value.trim();
+  const phone = document.getElementById('epPhone').value.trim();
+  if (fullName.length < 3) return formError('epName', 'Enter your full name');
+  if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) return formError('epUser', '3–20 characters: letters, numbers, underscores');
+  if (DB.users.some(x => x.id !== u.id && x.username.toLowerCase() === username.toLowerCase())) return formError('epUser', 'Username already taken');
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return formError('epEmail', 'Enter a valid email');
+  if (DB.users.some(x => x.id !== u.id && x.email.toLowerCase() === email.toLowerCase())) return formError('epEmail', 'Email already in use');
+  u.fullName = fullName; u.username = username; u.email = email; u.phone = phone; u.bio = document.getElementById('epBio').value.trim();
+  sync(); closeModal(); toast('Profile saved', 'ok'); render();
+};
+
+App.logout = async function () {
+  if (!await confirmDialog({ title: 'Sign out?', body: 'You can sign back in at any time.', ok: 'Sign out' })) return;
+  SESSION = null; localStorage.removeItem(LS_SESSION);
+  ACTIVE_CHAT = null; closeModal(); closeViewer();
+  go('welcome');
+};
+
+/* ---------------- notifications ---------------- */
+VIEWS.notifications = function () {
+  const u = me();
+  const list = DB.notifications.filter(n => n.userId === u.id);
+  const unread = list.filter(n => !n.read).length;
+  return `<div class="page-head"><div><button class="btn btn-ghost btn-sm mb10" data-act="back">${ic('back', 14)} Back</button>
+      <h1>Notifications</h1><p>${unread ? unread + ' unread' : 'You are all caught up'} · ${list.length} total</p></div>
+    ${list.length ? `<div class="row gap8"><button class="btn btn-ghost btn-sm" data-act="read-all">Mark all read</button>
+      <button class="btn btn-ghost btn-sm" data-act="clear-notifs" style="color:var(--danger)">${ic('trash', 14)}</button></div>` : ''}</div>
+    ${list.length ? `<div class="list">${list.slice(0, 80).map(n => `<div class="notif-item ${n.read ? '' : 'unread'}" ${n.link ? `data-act="open-notif" data-id="${n.id}" style="cursor:pointer"` : ''}>
+      <div style="width:36px;height:36px;border-radius:10px;background:var(--surface-3);color:var(--accent);display:flex;align-items:center;justify-content:center;flex:none">${ic(n.icon || 'bell', 16)}</div>
+      <div class="grow" style="min-width:0"><div class="small" style="font-weight:650">${esc(n.title)}</div>
+        <div class="tiny muted mt6" style="line-height:1.55">${esc(n.body)}</div>
+        <div class="tiny" style="color:var(--muted-2);margin-top:5px">${timeAgo(n.createdAt)} ago</div></div>
+      ${!n.read ? '<span class="dot" style="background:var(--accent)"></span>' : ''}
+    </div>`).join('')}</div>` : `<div class="card empty"><div class="ic">${ic('bell', 26)}</div><h3>No notifications</h3><p>Messages, orders and wallet updates will appear here.</p></div>`}`;
+};
+App.openNotif = function (id) {
+  const u = me(); const n = DB.notifications.find(x => x.id === id);
+  if (!n) return;
+  n.read = true; persist(true);
+  if (n.link) go(n.link.replace(/^#\/?/, '')); else render();
+};
+App.readAll = function () {
+  const u = me();
+  DB.notifications.forEach(n => { if (n.userId === u.id) n.read = true; });
+  sync(); render();
+};
+App.clearNotifs = async function () {
+  const u = me();
+  if (!await confirmDialog({ title: 'Clear notifications?', body: 'This removes all your notifications.', danger: true, ok: 'Clear' })) return;
+  DB.notifications = DB.notifications.filter(n => n.userId !== u.id);
+  sync(); render();
+};
+
+/* ---------------- settings ---------------- */
+VIEWS.settings = function () {
+  const u = me();
+  const notif = u.settings && u.settings.notifications !== false;
+  const theme = document.documentElement.getAttribute('data-theme');
+  return `<div class="page-head"><div><button class="btn btn-ghost btn-sm mb10" data-act="back">${ic('back', 14)} Back</button>
+      <h1>Settings</h1><p>Manage your account, security and notifications.</p></div></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px" class="wallet-grid">
+      <div class="card">
+        <h3 style="font-size:15px">Preferences</h3>
+        <div class="between mt16"><div><div class="small" style="font-weight:600">Push notifications</div><div class="tiny muted mt6">Message, order and wallet alerts</div></div>
+          <div class="switch ${notif ? 'on' : ''}" data-act="toggle-notif"></div></div>
+        <div class="divider"></div>
+        <div class="between"><div><div class="small" style="font-weight:600">Read receipts</div><div class="tiny muted mt6">${u.settings && u.settings.readReceipts === false ? 'Off — senders only see ✓✓ delivered, never a green read tick' : 'On — senders see green ✓✓ when you read their message'}</div></div>
+          <div class="switch ${!(u.settings && u.settings.readReceipts === false) ? 'on' : ''}" data-act="toggle-read-receipts"></div></div>
+        <div class="divider"></div>
+        <div class="between"><div><div class="small" style="font-weight:600">Dark mode</div><div class="tiny muted mt6">Switch between light and dark</div></div>
+          <div class="switch ${theme === 'dark' ? 'on' : ''}" data-act="toggle-theme"></div></div>
+        <div class="divider"></div>
+        <div class="between"><div><div class="small" style="font-weight:600">Enable device alerts</div><div class="tiny muted mt6">Allow browser notifications</div></div>
+          <button class="btn btn-sm btn-ghost" data-act="enable-notifications">Enable</button></div>
+      </div>
+      <div class="card">
+        <h3 style="font-size:15px">Security</h3>
+        <div class="list mt16">
+          <button class="list-item" data-act="change-password" style="width:100%;text-align:left">${ic('lock', 16)} <span class="grow"><span class="small" style="font-weight:600;display:block">Change password</span><span class="tiny muted">Update your sign-in password</span></span>${ic('chevron', 15)}</button>
+          <button class="list-item" data-act="change-pin" style="width:100%;text-align:left">${ic('key', 16)} <span class="grow"><span class="small" style="font-weight:600;display:block">${u.pin ? 'Change withdrawal PIN' : 'Create withdrawal PIN'}</span><span class="tiny muted">4–6 digits, required for withdrawals</span></span>${ic('chevron', 15)}</button>
+          <button class="list-item" data-act="support-chat" style="width:100%;text-align:left">${ic('help', 16)} <span class="grow"><span class="small" style="font-weight:600;display:block">Contact support</span><span class="tiny muted">Chat with the WhaleChat team</span></span>${ic('chevron', 15)}</button>
+          <button class="list-item" data-act="logout" style="width:100%;text-align:left;color:var(--danger)">${ic('logout', 16)} <span class="grow"><span class="small" style="font-weight:600;display:block">Sign out</span><span class="tiny muted">End this session</span></span></button>
+        </div>
+      </div>
+    </div>
+    <div class="card mt16">
+      <div class="between wrap gap10">
+        <div><h3 style="font-size:15px">Cross-device sync & push</h3>
+          <p class="tiny muted mt6">Share chats, orders and wallet across every device, with alerts when the app is closed.</p></div>
+        ${typeof syncBadge === 'function' ? syncBadge() : ''}
+      </div>
+      <div class="row gap8 mt14 wrap">
+        <button class="btn btn-primary btn-sm" data-act="server-dialog">${ic('refresh', 14)} ${Remote.enabled ? 'Manage sync server' : 'Connect sync server'}</button>
+        <button class="btn btn-ghost btn-sm" data-act="server-details">${ic('shield', 14)} Server details</button>
+        <button class="btn btn-ghost btn-sm" data-act="push-enable">${ic('bell', 14)} Enable push alerts</button>
+        <button class="btn btn-ghost btn-sm" data-act="push-test">${ic('send', 14)} Send test</button>
+        <button class="btn btn-ghost btn-sm" data-act="install-app">${ic('download', 14)} Install app</button>
+        <button class="btn btn-ghost btn-sm" data-act="live-chat">${ic('chat', 14)} Live support</button>
+      </div>
+      ${Remote.enabled ? `<div class="tiny muted mt10">Connected to <b>${esc(Remote.base || location.origin)}</b> · revision ${Remote.rev}</div>` : `<div class="tiny muted mt10">Running in local mode — data stays on this device until you connect a server.</div>`}
+      <div class="tiny muted mt8" id="pushDeviceCount">${typeof Notification !== 'undefined' && Notification.permission === 'granted' ? 'Checking registered alert devices…' : 'Alerts are off — turn them on to receive messages when the app is closed.'}</div>
+    </div>
+    <div class="card mt16">
+      <h3 style="font-size:15px">Account</h3>
+      <div class="kv"><span class="k">Username</span><span class="v">@${esc(u.username)}</span></div>
+      <div class="kv"><span class="k">Email</span><span class="v">${esc(u.email)}</span></div>
+      <div class="kv"><span class="k">Phone</span><span class="v">${esc(u.phone || '—')}</span></div>
+      <div class="kv"><span class="k">Referral code</span><span class="v">${esc(u.referralCode)}</span></div>
+      <div class="kv"><span class="k">Member since</span><span class="v">${dateLabel(u.createdAt)}</span></div>
+      <div class="row gap8 mt14"><button class="btn btn-ghost btn-sm" data-act="edit-profile">Edit profile</button>
+        <a href="#/referrals" class="btn btn-ghost btn-sm">Referrals</a></div>
+    </div>
+    <div class="card mt16">
+      <div class="between wrap gap10">
+        <div><h3 style="font-size:15px">App version</h3>
+          <p class="tiny muted mt6">WhaleChat ${esc(APP_VERSION)} · build ${esc(String(APP_BUILD).slice(0, 10))}. Updates install automatically — no re-download needed.</p></div>
+        <button class="btn btn-ghost btn-sm" data-act="check-update">${ic('refresh', 14)} Check for updates</button>
+      </div>
+    </div>
+    <div class="tiny muted center mt22">WhaleChat · v${esc(APP_VERSION)} · 1 Whale Coin = $0.50 USD</div>
+    <style>@media(max-width:860px){.wallet-grid{grid-template-columns:1fr!important}}</style>`;
+};
+App.toggleNotif = function () {
+  const u = me();
+  u.settings = u.settings || {};
+  u.settings.notifications = u.settings.notifications === false;
+  sync();
+  if (u.settings.notifications) requestNotifyPermission(false);
+  toast(u.settings.notifications ? 'Notifications on' : 'Notifications off', 'ok');
+  render();
+};
+App.toggleTheme = function () { toggleTheme(); };
+App.changePassword = function () {
+  openModal(modalShell('Change password', `
+    ${field('Current password', 'cpOld', { type: 'password', icon: 'lock' })}
+    ${field('New password', 'cpNew', { type: 'password', icon: 'lock', help: 'At least 6 characters' })}
+    ${field('Confirm new password', 'cpNew2', { type: 'password', icon: 'lock' })}`,
+    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="save-password">Update password</button>`));
+};
+App.savePassword = async function () {
+  const u = me(); clearErrors();
+  const oldp = document.getElementById('cpOld').value;
+  const n1 = document.getElementById('cpNew').value, n2 = document.getElementById('cpNew2').value;
+  if (await hash(oldp) !== u.pass) return formError('cpOld', 'Current password is incorrect');
+  if (n1.length < 6) return formError('cpNew', 'At least 6 characters');
+  if (n1 !== n2) return formError('cpNew2', 'Passwords do not match');
+  u.pass = await hash(n1);
+  sync(); closeModal(); toast('Password updated', 'ok');
+};
+App.changePin = async function () {
+  const u = me();
+  if (u.pin) {
+    const old = await askPin({ title: 'Current PIN', sub: 'Confirm your existing withdrawal PIN' });
+    if (!old) return;
+    if (await hash('pin::' + old) !== u.pin) return toast('Incorrect PIN', 'err');
+  }
+  const np = await askPin({ title: 'New withdrawal PIN', sub: 'Choose 4–6 digits', confirm: true });
+  if (!np) return;
+  u.pin = await hash('pin::' + np);
+  sync(); toast('Withdrawal PIN updated', 'ok'); render();
+};
+App.supportChat = function () {
+  const admin = DB.users.find(x => x.role === 'admin');
+  if (!admin) return toast('Support unavailable', 'err');
+  const u = me();
+  if (!isContact(u.id, admin.id)) DB.contacts.push({ id: uid('ct'), ownerId: u.id, userId: admin.id, createdAt: Date.now() });
+  if (!isContact(admin.id, u.id)) DB.contacts.push({ id: uid('ct'), ownerId: admin.id, userId: u.id, createdAt: Date.now() });
+  sync(); go('chat/' + admin.id);
+};
+/* =========================================================================
+   Admin console
+   ========================================================================= */
+VIEWS.admin = function (parts, params) {
+  const u = me();
+  if (!u || u.role !== 'admin') {
+    return `<div class="card empty"><div class="ic">${ic('lock', 26)}</div><h3>Admin access only</h3><p>This area is restricted to WhaleChat administrators.</p><a href="#/home" class="btn btn-primary">Back to app</a></div>`;
+  }
+  const sub = parts[1] || '';
+  const tabs = `<div class="admin-nav">
+    ${ADMIN_NAV.map(n => {
+      const key = n.href.replace('#/admin', '') || '';
+      const on = (sub === '' && key === '') || (key && sub === key.replace('/', ''));
+      return `<a href="${n.href}" class="${on ? 'on' : ''}">${n.label}</a>`;
+    }).join('')}
+  </div>`;
+  let body = '';
+  if (!sub) body = adminOverview();
+  else if (sub === 'users') body = adminUsers(params);
+  else if (sub === 'vendors') body = adminVendors();
+  else if (sub === 'vendor-requests') body = adminVendorRequests();
+  else if (sub === 'products') body = adminProducts();
+  else if (sub === 'orders') body = adminOrders();
+  else if (sub === 'refunds') body = adminRefunds();
+  else if (sub === 'deposits') body = adminDeposits();
+  else if (sub === 'withdrawals') body = adminWithdrawals();
+  else if (sub === 'notifications') body = adminNotifications();
+  else if (sub === 'release') body = adminRelease();
+  else if (sub === 'settings') body = adminSettings();
+  else if (sub === 'chat') body = adminChat();
+  else body = adminOverview();
+  return `<div class="page-head"><div><span class="badge badge-accent mb10">${ic('shield', 12)} Admin console</span>
+      <h1 style="font-size:24px">${esc(ADMIN_NAV.find(n => (n.href === '#/admin' + (sub ? '/' + sub : '')))?.label || 'Overview')}</h1>
+      <p>Manage users, vendors, orders, products and payments.</p></div>
+      <div class="row gap8"><a href="#/home" class="btn btn-ghost btn-sm">${ic('chat', 14)} Open chats</a>
+      <a href="#/admin/notifications" class="btn btn-primary btn-sm">${ic('bell', 14)} Send notice</a></div></div>
+    ${tabs}${body}`;
+};
+let ADMIN_MAINT_TIMER = null;
+AFTER.admin = function (parts) {
+  const sub = parts[1] || '';
+  clearInterval(ADMIN_MAINT_TIMER);
+  if (sub === 'settings') {
+    ADMIN_MAINT_TIMER = setInterval(() => {
+      const el = document.getElementById('adminMaintRemaining');
+      if (!el) { clearInterval(ADMIN_MAINT_TIMER); return; }
+      const mi = maintenanceInfo();
+      if (!mi.active) { clearInterval(ADMIN_MAINT_TIMER); render(); return; }
+      const c = fmtCountdown(mi.until - Date.now());
+      el.textContent = (c.d ? c.d + 'd ' : '') + c.h + ':' + c.m + ':' + c.s;
+    }, 1000);
+  }
+  if (sub === 'products') bindProductForm();
+  if (sub === 'users') {
+    const s = document.getElementById('adminUserSearch');
+    if (s) s.oninput = () => { ADMIN_USER_Q = s.value.toLowerCase(); render(); const n = document.getElementById('adminUserSearch'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } };
+  }
+  if (sub === 'settings') bindSettings();
+  if (sub === 'release') loadReleasePanel();
+};
+
+/* ---------------- release / version panel ---------------- */
+function adminRelease() {
+  const notes = DB.settings.releaseNotes || {};
+  return `<div class="grid-kpi k4 mb16">
+      <div class="kpi"><div class="ic">${ic('tag', 15)}</div><div class="v" style="font-size:17px">${esc(APP_VERSION)}</div><div class="k">App version</div></div>
+      <div class="kpi"><div class="ic">${ic('refresh', 15)}</div><div class="v" style="font-size:13px;letter-spacing:0" id="relServerBuild">Checking…</div><div class="k">Published build</div></div>
+      <div class="kpi"><div class="ic">${ic('clock', 15)}</div><div class="v" style="font-size:17px" id="relUptime">—</div><div class="k">Server uptime</div></div>
+      <div class="kpi"><div class="ic">${ic('users', 15)}</div><div class="v" style="font-size:17px" id="relClients">—</div><div class="k">Live tabs connected</div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1.1fr .9fr;gap:16px" class="dash2">
+      <div class="card">
+        <div class="between wrap gap10">
+          <div><h3 style="font-size:15px">Release status</h3>
+            <p class="tiny muted mt6">This device runs one self-contained build. Update checks and forced refreshes keep every user on the latest release.</p></div>
+          <span id="relBadge" class="badge">Checking…</span>
+        </div>
+        <div class="mt16">
+          <div class="kv"><span class="k">This device build</span><span class="v mono" style="font-size:12px">${esc(APP_BUILD)}</span></div>
+          <div class="kv"><span class="k">Published build</span><span class="v mono" style="font-size:12px" id="relServerBuildRow">—</span></div>
+          <div class="kv"><span class="k">Database revision</span><span class="v" id="relRev">—</span></div>
+          <div class="kv"><span class="k">Push devices registered</span><span class="v" id="relDevices">—</span></div>
+          <div class="kv"><span class="k">Sync mode</span><span class="v">${Remote.enabled ? 'Cross-device' : 'Local only'}</span></div>
+          <div class="kv"><span class="k">App URL</span><span class="v"><a href="${esc(appLink())}" class="link">${esc(appLink())}</a></span></div>
+          <div class="kv"><span class="k">Public URL</span><span class="v" id="relPublicUrl">${esc((DB.settings && DB.settings.publicUrl) || 'not set')}</span></div>
+        </div>
+        <div class="field mt14"><label class="label">Public app URL</label>
+          <input class="input" id="publicAppUrl" placeholder="https://chat.yourdomain.com" value="${esc((DB.settings && DB.settings.publicUrl) || '')}"/>
+          <div class="help">Your permanent HTTPS domain. Stored on the server and shown in release/health data.</div>
+        </div>
+        <div class="row gap8 wrap mt6">
+          <button class="btn btn-primary btn-sm" data-act="save-public-url">${ic('check', 14)} Save public URL</button>
+          <button class="btn btn-ghost btn-sm" data-act="admin-check-updates">${ic('refresh', 14)} Check for updates</button>
+          <button class="btn btn-ghost btn-sm" data-act="admin-reload-all">${ic('send', 14)} Force refresh all devices</button>
+          <button class="btn btn-ghost btn-sm" data-act="admin-copy-release">${ic('copy', 14)} Copy version.json</button>
+        </div>
+        <div class="tiny muted mt10" style="line-height:1.6">“Force refresh” asks every open app to clear its cache and reload the newest build. Closed or offline apps update automatically the next time they open.</div>
+      </div>
+      <div class="card">
+        <div class="between"><h3 style="font-size:15px">Release notes</h3>
+          <span class="tiny muted">${notes.updatedAt ? 'updated ' + timeAgo(notes.updatedAt) + ' ago' : 'not published yet'}</span></div>
+        <p class="tiny muted mt6">Shown here and in the update prompt so users know what changed.</p>
+        <div class="field mt14"><label class="label">Version label</label>
+          <input class="input" id="relVersion" value="${esc(notes.version || APP_VERSION)}" placeholder="e.g. 3.2.0"/></div>
+        <div class="field"><label class="label">What's new</label>
+          <textarea class="input" id="relNotes" style="min-height:120px" placeholder="Short summary of this release…">${esc(notes.notes || '')}</textarea></div>
+        <button class="btn btn-primary btn-sm" data-act="save-release-notes">${ic('check', 14)} Publish release notes</button>
+      </div>
+    </div>
+    <div class="card mt16">
+      <div class="between wrap gap10">
+        <div><h3 style="font-size:15px">Data safety</h3>
+          <p class="tiny muted mt6">Every release replaces only the app files. Accounts, wallets, orders and chats live in the database directory and are backed up automatically.</p></div>
+        <span id="relDataBadge" class="badge">Checking…</span>
+      </div>
+      <div class="mt14" id="relDataInfo">
+        <div class="kv"><span class="k">Registered accounts</span><span class="v" id="relDataUsers">—</span></div>
+        <div class="kv"><span class="k">Automatic backups</span><span class="v" id="relDataBackups">—</span></div>
+        <div class="kv"><span class="k">Last backup</span><span class="v" id="relDataLast">—</span></div>
+        <div class="kv"><span class="k">Storage</span><span class="v" id="relDataStore">—</span></div>
+      </div>
+      <div class="row gap8 wrap mt14">
+        <button class="btn btn-primary btn-sm" data-act="admin-backup-now">${ic('download', 14)} Backup now</button>
+        <button class="btn btn-ghost btn-sm" data-act="admin-backup-download">${ic('link', 14)} Download backup</button>
+        <button class="btn btn-ghost btn-sm" data-act="admin-backup-restore">${ic('refresh', 14)} Restore from file</button>
+      </div>
+      <div class="tiny muted mt10" style="line-height:1.6">Restoring is manual and confirmed — publishing a build never deletes or replaces user accounts.</div>
+    </div>
+    <div class="card mt16">
+      <h3 style="font-size:15px">Deployment</h3>
+      <p class="tiny muted mt6">The whole product is one <b>whalechat.html</b> plus <b>server.js</b>. A new release means replacing those files — every installed app updates itself.</p>
+      <div class="grid2 mt16" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="panel" style="padding:12px">
+          <div class="tiny" style="font-weight:700;color:var(--accent)">This deployment</div>
+          <div class="kv mt6"><span class="k">Origin</span><span class="v">${esc(location.origin)}</span></div>
+          <div class="kv"><span class="k">Sync server</span><span class="v">${Remote.enabled ? 'connected' : 'local mode'}</span></div>
+          <div class="kv"><span class="k">Build file</span><span class="v">whalechat.html</span></div>
+        </div>
+        <div class="panel" style="padding:12px">
+          <div class="tiny" style="font-weight:700;color:var(--accent)">Publish a new version</div>
+          <div class="tiny muted mt6" style="line-height:1.8">1. Replace <b>whalechat.html</b> + <b>version.json</b><br/>2. Restart <b>server.js</b><br/>3. Users update automatically (or use “Force refresh”)</div>
+        </div>
+      </div>
+    </div>
+    <style>@media(max-width:860px){.dash2{grid-template-columns:1fr!important}}</style>`;
+}
+
+async function loadReleasePanel() {
+  const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
+  try {
+    const r = await fetch('/api/release?t=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) throw new Error('no-server');
+    const d = await r.json();
+    const same = d.build && d.build === APP_BUILD;
+    set('relServerBuild', d.build ? d.build.replace('T', ' ').replace('Z', '') : 'unknown');
+    set('relServerBuildRow', d.build || 'unknown');
+    set('relUptime', Math.floor((d.uptimeSec || 0) / 3600) + 'h ' + Math.floor(((d.uptimeSec || 0) % 3600) / 60) + 'm');
+    set('relClients', String(d.clients || 0));
+    set('relRev', String(d.rev || 0));
+    set('relDevices', String(d.devices || 0));
+    const badge = document.getElementById('relBadge');
+    if (badge) {
+      badge.className = 'badge ' + (same ? 'badge-success' : 'badge-warn');
+      badge.textContent = same ? 'Up to date' : 'Update available';
+    }
+    try {
+      const bk = await fetch('/api/backup', { cache: 'no-store' }).then(x => x.json());
+      const du = document.getElementById('relDataUsers'); if (du) du.textContent = String(bk.users || 0);
+      const db = document.getElementById('relDataBackups'); if (db) db.textContent = (bk.count || 0) + ' snapshot' + ((bk.count || 0) === 1 ? '' : 's');
+      const dl = document.getElementById('relDataLast'); if (dl) dl.textContent = bk.last ? new Date(bk.last).toLocaleString() : 'none yet';
+      const ds = document.getElementById('relDataStore'); if (ds) ds.textContent = bk.persistent ? 'Persistent disk' : (bk.recoverable ? 'Ephemeral storage + persistent backups' : 'Ephemeral — set DATA_DIR to a disk');
+      const dgb = document.getElementById('relDataBadge');
+      if (dgb) {
+        if (bk.persistent) { dgb.className = 'badge badge-success'; dgb.textContent = 'Protected'; }
+        else if (bk.recoverable) { dgb.className = 'badge badge-success'; dgb.textContent = 'Protected via backups'; }
+        else { dgb.className = 'badge badge-danger'; dgb.textContent = 'At risk'; }
+      }
+    } catch (e2) {}
+  } catch (e) {
+    set('relServerBuild', 'local mode');
+    set('relServerBuildRow', 'unavailable');
+    set('relRev', '—'); set('relDevices', '—'); set('relUptime', '—'); set('relClients', '—');
+    const badge = document.getElementById('relBadge');
+    if (badge) { badge.className = 'badge badge-warn'; badge.textContent = 'No sync server'; }
+  }
+}
+
+App.saveReleaseNotes = function () {
+  const v = document.getElementById('relVersion');
+  const n = document.getElementById('relNotes');
+  DB.settings.releaseNotes = {
+    version: (v && v.value.trim()) || APP_VERSION,
+    notes: (n && n.value.trim()) || '',
+    updatedAt: Date.now(),
+    by: me().username
+  };
+  sync();
+  toast('Release notes published', 'ok');
+  render();
+};
+
+App.adminReloadAll = async function () {
+  if (!Remote.enabled) return toast('Connect the sync server to refresh remote devices', 'err');
+  if (!await confirmDialog({ title: 'Force refresh all devices?', body: 'Every app that is open right now will clear its cache and reload the latest build. Users may lose an unsent draft.', ok: 'Refresh everyone', danger: true })) return;
+  try {
+    const r = await fetch('/api/reload', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ build: APP_BUILD, version: APP_VERSION })
+    }).then(x => x.json());
+    toast('Refresh signal sent to ' + (r.clients || 0) + ' connected device(s)', 'ok');
+  } catch (e) { toast('Could not reach the server', 'err'); }
+};
+
+App.adminCheckUpdates = function () {
+  checkForUpdates(true);
+  setTimeout(loadReleasePanel, 1500);
+};
+
+App.adminCopyRelease = function () {
+  copyText(JSON.stringify({ version: APP_VERSION, build: APP_BUILD, file: 'whalechat.html' }, null, 2));
+};
+
+function adminOverview() {
+  const users = DB.users.filter(u => u.role !== 'admin');
+  const vendors = DB.vendors;
+  const orders = DB.orders;
+  const revenueUsd = orders.reduce((s, o) => s + o.totalUsd, 0);
+  const pendingW = DB.withdrawals.filter(w => w.status === 'pending');
+  const pendingD = DB.deposits.filter(d => d.status === 'pending');
+  const pendingO = orders.filter(o => o.status === 'processing');
+  const totalDeposits = DB.deposits.filter(d => d.status === 'approved').reduce((s, d) => s + d.usd, 0);
+  return `<div class="grid-kpi k4 mb16">
+      ${[['Total users', fmtNum(users.length), 'users'], ['Total vendors', fmtNum(vendors.length), 'store'],
+         ['Total orders', fmtNum(orders.length), 'truck'], ['Total revenue', usd(revenueUsd), 'trend'],
+         ['Pending withdrawals', fmtNum(pendingW.length), 'download'], ['Pending deposits', fmtNum(pendingD.length), 'wallet'],
+         ['Pending orders', fmtNum(pendingO.length), 'clock'], ['Pending refunds', fmtNum((DB.refunds || []).filter(r => r.status === 'pending').length), 'refresh']]
+        .map(([k, v, i]) => `<div class="kpi"><div class="ic">${ic(i, 15)}</div><div class="v">${v}</div><div class="k">${k}</div><span class="spark">${ic(i, 54)}</span></div>`).join('')}
+    </div>
+    <div class="card mb16">
+      <div class="between wrap gap10">
+        <div><h3 style="font-size:15px">Access controls</h3>
+          <p class="tiny muted mt6">Password-free sign-in and site-wide maintenance, one tap away.</p></div>
+        <a href="#/admin/settings" class="btn btn-ghost btn-xs">${ic('settings', 12)} Open settings</a>
+      </div>
+      <div class="row wrap gap14 mt14">
+        <div class="panel grow" style="padding:11px 13px;min-width:220px">
+          <div class="between gap10"><div><div class="small" style="font-weight:600">Password-free login</div>
+            <div class="tiny muted mt6">Any password opens a known account</div></div>
+            <div class="switch ${DB.settings.allowAnyPassword ? 'on' : ''}" data-act="toggle-anypass"></div></div>
+        </div>
+        <div class="panel grow" style="padding:11px 13px;min-width:220px">
+          <div class="between gap10"><div><div class="small" style="font-weight:600">Maintenance mode</div>
+            <div class="tiny muted mt6">${maintenanceInfo().active ? 'Active · ends ' + new Date(maintenanceInfo().until).toLocaleTimeString() : 'Site is live for everyone'}</div></div>
+            <div class="switch ${maintenanceInfo().active ? 'on' : ''}" data-act="${maintenanceInfo().active ? 'maint-end' : 'maint-quick'}"></div></div>
+        </div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1.1fr .9fr;gap:16px" class="dash2">
+      <div class="card">
+        <div class="section-title"><h3>Latest orders</h3><a href="#/admin/orders" class="link tiny">View all</a></div>
+        ${orders.slice(0, 5).length ? orders.slice(0, 5).map(o => {
+          const b = findUser(o.buyerId);
+          return `<div class="between" style="padding:9px 0;border-bottom:1px dashed var(--border);gap:10px">
+            <div class="grow" style="min-width:0"><div class="small" style="font-weight:600">${esc(o.ref)} · ${coins(o.totalCoins)} WC</div>
+            <div class="tiny muted ellipsis">${esc(b ? b.fullName : 'Unknown')} · ${o.items.map(i => esc(i.name)).join(', ')}</div></div>
+            <div class="row gap6" style="flex:none">${statusBadge(o.status)}<button class="btn btn-xs btn-ghost" data-act="admin-order" data-id="${o.id}">Open</button></div></div>`;
+        }).join('') : `<div class="empty" style="padding:18px"><p>No orders yet.</p></div>`}
+      </div>
+      <div class="card">
+        <div class="section-title"><h3>Pending withdrawals</h3><a href="#/admin/withdrawals" class="link tiny">Manage</a></div>
+        ${pendingW.slice(0, 4).length ? pendingW.slice(0, 4).map(w => {
+          const b = findUser(w.userId);
+          return `<div class="between" style="padding:9px 0;border-bottom:1px dashed var(--border)">
+            <div><div class="small" style="font-weight:600">${coins(w.coins)} WC · ${esc(w.network)}</div>
+            <div class="tiny muted">${esc(b ? b.username : '')} · ${usd(w.usd)}</div></div>
+            <div class="row gap6"><button class="btn btn-xs btn-primary" data-act="wd-approve" data-id="${w.id}">Approve</button>
+            <button class="btn btn-xs btn-danger" data-act="wd-reject" data-id="${w.id}">Reject</button></div></div>`;
+        }).join('') : `<div class="empty" style="padding:18px"><p>No pending withdrawals.</p></div>`}
+        <div class="divider"></div>
+        <div class="section-title"><h3>Pending deposits</h3><a href="#/admin/deposits" class="link tiny">Manage</a></div>
+        ${pendingD.slice(0, 3).length ? pendingD.slice(0, 3).map(d => {
+          const b = findUser(d.userId);
+          return `<div class="between" style="padding:9px 0;border-bottom:1px dashed var(--border)">
+            <div><div class="small" style="font-weight:600">${usd(d.usd)} · ${coins(d.
