@@ -31,10 +31,12 @@ const cfg = {
   pass: process.env.SMTP_PASS || process.env.OUTLOOK_APP_PASSWORD || '',
   resendKey: process.env.RESEND_API_KEY || '',
   resendFrom: process.env.RESEND_FROM || '',
+  brevoKey: process.env.BREVO_API_KEY || '',
   from: process.env.MAIL_FROM || process.env.SMTP_USER || process.env.OUTLOOK_EMAIL || 'onboarding@resend.dev',
   fromName: process.env.MAIL_FROM_NAME || 'WhaleChat'
 };
 function provider() {
+  if (cfg.brevoKey) return 'brevo';
   if (cfg.resendKey) return 'resend';
   if (cfg.user && cfg.pass) return 'smtp';
   return 'none';
@@ -47,6 +49,7 @@ let transport = null;
 let timer = null;
 
 function configured() {
+  if (cfg.brevoKey) return !!cfg.from;
   if (cfg.resendKey) return !!cfg.from;
   return !!(nodemailer && cfg.user && cfg.pass && cfg.from);
 }
@@ -185,7 +188,25 @@ async function flush() {
   try {
     for (const item of [...queue]) {
       try {
-        if (provider() === 'resend') {
+        if (provider() === 'brevo') {
+          const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+            method: 'POST',
+            headers: { 'api-key': cfg.brevoKey, 'content-type': 'application/json', accept: 'application/json' },
+            body: JSON.stringify({
+              sender: { name: cfg.fromName, email: cfg.from },
+              to: [{ email: item.to }],
+              subject: item.subject,
+              htmlContent: item.html,
+              textContent: item.text
+            })
+          });
+          if (!res.ok) {
+            const body = await res.text().catch(() => '');
+            let msg = body.slice(0, 300);
+            try { const j = JSON.parse(body); msg = j.message || msg; } catch (e) {}
+            throw new Error('Brevo ' + res.status + ': ' + msg);
+          }
+        } else if (provider() === 'resend') {
           const res = await fetch('https://api.resend.com/emails', {
             method: 'POST',
             headers: { authorization: 'Bearer ' + cfg.resendKey, 'content-type': 'application/json' },
@@ -246,8 +267,8 @@ function status() {
     configured: configured(),
     provider: provider(),
     from: cfg.from || null,
-    host: provider() === 'resend' ? 'api.resend.com' : cfg.host,
-    port: provider() === 'resend' ? 443 : cfg.port,
+    host: provider() === 'brevo' ? 'api.brevo.com' : (provider() === 'resend' ? 'api.resend.com' : cfg.host),
+    port: provider() === 'smtp' ? cfg.port : 443,
     queued: queue.length,
     sent: state.sent,
     failed: state.failed,
