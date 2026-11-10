@@ -354,6 +354,20 @@ async function api(req, res, pathname, query) {
   if (pathname === '/api/email/status' && req.method === 'GET') {
     return json(res, 200, email ? email.status() : { ok: true, configured: false, queued: 0 });
   }
+  if (pathname === '/api/email/backfill' && req.method === 'POST') {
+    if (!email || !email.configured()) return json(res, 503, { ok: false, error: 'smtp_not_configured' });
+    const body = await readBody(req).catch(() => ({}));
+    const type = body.type || 'welcome';
+    const appUrl = PUBLIC_URL || ('http://localhost:' + PORT);
+    let queued = 0;
+    if (type === 'welcome') {
+      for (const u of (store.db.users || [])) {
+        if (!u.email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(u.email)) continue;
+        if (email.enqueue({ key: 'welcome:' + u.id, to: u.email, template: 'welcome', data: u, appUrl })) queued++;
+      }
+    }
+    return json(res, 200, { ok: true, queued, type, users: (store.db.users || []).length, status: email.status() });
+  }
   if (pathname === '/api/email/test' && req.method === 'POST') {
     if (!email) return json(res, 503, { ok: false, error: 'email_unavailable' });
     const body = await readBody(req);
