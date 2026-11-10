@@ -69,6 +69,7 @@ function load() {
   clearInterval(timer);
   timer = setInterval(() => { flush().catch(() => {}); }, 60 * 1000);
   if (timer.unref) timer.unref();
+  if (configured() && queue.length) setTimeout(() => { flush().catch(() => {}); }, 1200);
 }
 function save() {
   state.queued = queue.length;
@@ -162,9 +163,11 @@ function enqueue({ key, to, template, data, appUrl }) {
   if (key && queue.some(q => q.key === key)) return false;
   queue.push(item);
   save();
-  flush().catch(() => {});
+  kickFlush();
   return true;
 }
+
+function kickFlush(delay) { setTimeout(() => { flush().catch(() => {}); }, delay || 300); }
 
 async function flush() {
   if (!configured() || !queue.length) return { sent: 0, failed: 0 };
@@ -204,6 +207,7 @@ async function flush() {
   } finally {
     flush.running = false;
     save();
+    if (queue.length && failed === 0) kickFlush(800);
   }
   return { sent, failed };
 }
