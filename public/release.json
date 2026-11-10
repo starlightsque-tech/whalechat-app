@@ -1,8 +1,8 @@
 {
-  "version": "3.7.1",
-  "build": "2026-11-10T11:53:04Z",
+  "version": "3.7.2",
+  "build": "2026-11-10T16:24:42Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.7.1 - Resend email delivery enabled (welcome + delivery emails), provider-aware status.",
-  "releasedAt": "2026-11-10T11:53:04Z",
+  "notes": "WhaleChat 3.7.2 - new Smartsupp widget key installed across every page.",
+  "releasedAt": "2026-11-10T16:24:42Z",
   "minimum": "3.0.0"
 }
