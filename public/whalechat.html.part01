@@ -612,10 +612,10 @@ window.smartsupp||(function(d) {
 'use strict';
 
 const COIN_USD = 0.5;                 // 1 Whale Coin = $0.50
-const APP_VERSION = '3.7.0';
+const APP_VERSION = '3.7.1';
 // Set to your permanent sync server to auto-connect from any static host, e.g. 'https://sync.yourdomain.com'
 const DEFAULT_SYNC_SERVER = '';
-const APP_BUILD = '2026-11-10T11:43:45Z';    // replaced at build time
+const APP_BUILD = '2026-11-10T11:53:04Z';    // replaced at build time
 const LS_DB = 'whalechat.db.v1';
 const LS_SESSION = 'whalechat.session.v1';
 const LS_THEME = 'whalechat.theme';
