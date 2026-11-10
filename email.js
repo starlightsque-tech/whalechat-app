@@ -29,9 +29,16 @@ const cfg = {
   secure: String(process.env.SMTP_SECURE || '').toLowerCase() === 'true',
   user: process.env.SMTP_USER || process.env.OUTLOOK_EMAIL || '',
   pass: process.env.SMTP_PASS || process.env.OUTLOOK_APP_PASSWORD || '',
-  from: process.env.MAIL_FROM || process.env.SMTP_USER || process.env.OUTLOOK_EMAIL || '',
+  resendKey: process.env.RESEND_API_KEY || '',
+  resendFrom: process.env.RESEND_FROM || '',
+  from: process.env.MAIL_FROM || process.env.SMTP_USER || process.env.OUTLOOK_EMAIL || 'onboarding@resend.dev',
   fromName: process.env.MAIL_FROM_NAME || 'WhaleChat'
 };
+function provider() {
+  if (cfg.resendKey) return 'resend';
+  if (cfg.user && cfg.pass) return 'smtp';
+  return 'none';
+}
 
 const state = { queued: 0, sent: 0, failed: 0, lastError: '', lastSentAt: null };
 let queue = [];
@@ -40,6 +47,7 @@ let transport = null;
 let timer = null;
 
 function configured() {
+  if (cfg.resendKey) return !!cfg.from;
   return !!(nodemailer && cfg.user && cfg.pass && cfg.from);
 }
 function readJSON(file, fallback) { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return fallback; } }
@@ -58,7 +66,7 @@ function load() {
   if (!Array.isArray(queue)) queue = [];
   if (!Array.isArray(sentKeys)) sentKeys = [];
   state.queued = queue.length;
-  if (configured()) {
+  if (configured() && provider() === 'smtp') {
     transport = nodemailer.createTransport({
       host: cfg.host, port: cfg.port, secure: cfg.secure,
       auth: { user: cfg.user, pass: cfg.pass },
@@ -177,13 +185,33 @@ async function flush() {
   try {
     for (const item of [...queue]) {
       try {
-        await transport.sendMail({
-          from: `"${cfg.fromName}" <${cfg.from}>`,
-          to: item.to,
-          subject: item.subject,
-          text: item.text,
-          html: item.html
-        });
+        if (provider() === 'resend') {
+          const res = await fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: { authorization: 'Bearer ' + cfg.resendKey, 'content-type': 'application/json' },
+            body: JSON.stringify({
+              from: `${cfg.fromName} <${cfg.from}>`,
+              to: [item.to],
+              subject: item.subject,
+              html: item.html,
+              text: item.text
+            })
+          });
+          if (!res.ok) {
+            const body = await res.text().catch(() => '');
+            let msg = body.slice(0, 300);
+            try { msg = JSON.parse(body).message || msg; } catch (e) {}
+            throw new Error('Resend ' + res.status + ': ' + msg);
+          }
+        } else {
+          await transport.sendMail({
+            from: `"${cfg.fromName}" <${cfg.from}>`,
+            to: item.to,
+            subject: item.subject,
+            text: item.text,
+            html: item.html
+          });
+        }
         item.sentAt = Date.now();
         if (item.key) markSent(item.key);
         queue = queue.filter(q => q.id !== item.id);
@@ -216,9 +244,10 @@ function status() {
   return {
     ok: true,
     configured: configured(),
+    provider: provider(),
     from: cfg.from || null,
-    host: cfg.host,
-    port: cfg.port,
+    host: provider() === 'resend' ? 'api.resend.com' : cfg.host,
+    port: provider() === 'resend' ? 443 : cfg.port,
     queued: queue.length,
     sent: state.sent,
     failed: state.failed,
