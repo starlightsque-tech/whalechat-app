@@ -1,4 +1,373 @@
-at in Chrome or Safari to install.</div></div>
+T' }).then(x => x.json());
+    if (!r.ok) throw new Error(r.error || 'failed');
+    toast('Backup created (' + r.count + ' snapshots kept)', 'ok');
+    loadReleasePanel();
+  } catch (e) { toast('Backup failed: ' + e.message, 'err'); }
+};
+
+App.adminBackupDownload = async function () {
+  try {
+    const res = await fetch('/api/backup/latest', { cache: 'no-store' });
+    if (!res.ok) throw new Error('no backup yet');
+    const blob = await res.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'whalechat-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    toast('Backup downloaded', 'ok');
+  } catch (e) { toast('No backup available yet — create one first', 'err'); }
+};
+
+App.adminBackupRestore = function () {
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = 'application/json,.json';
+  input.onchange = async () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    let data = null;
+    try { data = JSON.parse(await file.text()); } catch (e) { return toast('That file is not valid JSON', 'err'); }
+    const db = data && data.db ? data.db : data;
+    if (!db || !Array.isArray(db.users) || !db.users.length) return toast('Backup contains no accounts — restore cancelled', 'err');
+    if (!await confirmDialog({
+      title: 'Restore this backup?',
+      body: 'This replaces the live database with ' + db.users.length + ' accounts from the file. The current database is backed up first. Publishing builds never does this automatically.',
+      danger: true, ok: 'Restore backup'
+    })) return;
+    try {
+      const r = await fetch('/api/state/restore', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ db })
+      }).then(x => x.json());
+      if (!r.ok) throw new Error(r.error || 'restore failed');
+      try { const keys = await caches.keys(); await Promise.all(keys.map(k => caches.delete(k))); } catch (e) {}
+      toast('Database restored · reloading…', 'ok');
+      setTimeout(() => location.reload(), 900);
+    } catch (e) { toast('Restore failed: ' + e.message, 'err'); }
+  };
+  input.click();
+};
+
+/* ---------------- vendor activation fee ---------------- */
+App.saveVendorFee = function () {
+  const noteEl = document.getElementById('vendorPayNote');
+  DB.settings.vendorPayments = DB.settings.vendorPayments || { methods: [] };
+  DB.settings.vendorPayments.note = (noteEl && noteEl.value.trim()) || 'Pay the exact vendor activation fee, then upload your payment receipt for review.';
+  sync(); toast('Vendor payment instructions saved', 'ok'); render();
+};
+
+/* ---- vendor duration plans ---- */
+App.vendorPlanNew = function () {
+  openModal(modalShell('Add vendor plan', `
+    ${field('Duration (months)', 'vpMonths', { type: 'number', min: '1', step: '1', value: '1' })}
+    ${field('Fee (USD)', 'vpPrice', { type: 'number', min: '0', step: '1', value: '50' })}
+    <input type="hidden" id="vpId" value=""/>`,
+    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="vendor-plan-save">Add plan</button>`), { width: '420px' });
+};
+App.vendorPlanEdit = function (id) {
+  const pl = vendorPlanById(id); if (!pl) return;
+  openModal(modalShell('Edit vendor plan', `
+    ${field('Duration (months)', 'vpMonths', { type: 'number', min: '1', step: '1', value: pl.months })}
+    ${field('Fee (USD)', 'vpPrice', { type: 'number', min: '0', step: '1', value: pl.priceUsd })}
+    <input type="hidden" id="vpId" value="${esc(pl.id)}"/>`,
+    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="vendor-plan-save">Save plan</button>`), { width: '420px' });
+};
+App.vendorPlanSave = function () {
+  const months = Math.max(1, Math.round(Number((document.getElementById('vpMonths') || {}).value) || 0));
+  const price = Math.max(0, Number((document.getElementById('vpPrice') || {}).value) || 0);
+  const id = (document.getElementById('vpId') || {}).value || '';
+  if (!months) return toast('Enter a duration in months', 'err');
+  DB.settings.vendorPlans = DB.settings.vendorPlans || [];
+  if (id) {
+    const pl = DB.settings.vendorPlans.find(x => x.id === id);
+    if (pl) { pl.months = months; pl.priceUsd = price; }
+  } else {
+    DB.settings.vendorPlans.push({ id: uid('vpl'), months, priceUsd: price });
+  }
+  DB.settings.vendorPlans.sort((a, b) => a.months - b.months);
+  if (DB.settings.vendorPlans[0]) DB.settings.vendorFeeUsd = DB.settings.vendorPlans[0].priceUsd;
+  sync(); closeModal(); toast(id ? 'Plan updated' : 'Plan added', 'ok'); render();
+};
+App.vendorPlanDel = async function (id) {
+  if ((DB.settings.vendorPlans || []).length <= 1) return toast('Keep at least one vendor plan', 'err');
+  if (!await confirmDialog({ title: 'Remove plan?', body: 'Applicants will no longer see this duration.', danger: true, ok: 'Remove' })) return;
+  DB.settings.vendorPlans = DB.settings.vendorPlans.filter(p => p.id !== id);
+  sync(); toast('Plan removed', 'ok'); render();
+};
+
+App.vendorExtend = async function (id) {
+  const v = vendorById(id); if (!v) return;
+  if (!await confirmDialog({ title: 'Extend vendor by 30 days?', body: 'Adds one month to @' + v.username + (v.expiresAt ? ' from the current expiry.' : ' from today.'), ok: 'Extend 30 days' })) return;
+  const base = Math.max(Date.now(), Number(v.expiresAt) || 0);
+  v.expiresAt = base + 30 * 86400000;
+  notify(v.userId, 'Vendor account extended', 'Admin added 30 days to your vendor subscription. New expiry: ' + new Date(v.expiresAt).toLocaleDateString() + '.', '#/vendor', 'check');
+  sync(); toast('Vendor extended by 30 days', 'ok'); render();
+};
+
+App.vendorMethodNew = function () {
+  openModal(modalShell('Add vendor payment account', `
+    ${field('Label', 'vmLabel', { ph: 'e.g. USDT (TRC20)' })}
+    ${field('Network / bank', 'vmNetwork', { ph: 'TRC20 / Bank name', help: 'Shown as a badge next to the label.' })}
+    ${field('Wallet address / account number', 'vmAddress', { ph: 'Paste the company payment address' })}
+    <input type="hidden" id="vmId" value=""/>`,
+    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="vendor-method-save">Add account</button>`), { width: '460px' });
+};
+App.vendorMethodEdit = function (id) {
+  const m = ((DB.settings.vendorPayments || {}).methods || []).find(x => x.id === id);
+  if (!m) return;
+  openModal(modalShell('Edit vendor payment account', `
+    ${field('Label', 'vmLabel', { value: m.label })}
+    ${field('Network / bank', 'vmNetwork', { value: m.network || '' })}
+    ${field('Wallet address / account number', 'vmAddress', { value: m.address })}
+    <input type="hidden" id="vmId" value="${esc(m.id)}"/>`,
+    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="vendor-method-save">Save changes</button>`), { width: '460px' });
+};
+App.vendorMethodSave = function () {
+  const label = document.getElementById('vmLabel').value.trim();
+  const network = document.getElementById('vmNetwork').value.trim();
+  const address = document.getElementById('vmAddress').value.trim();
+  const id = (document.getElementById('vmId') || {}).value || '';
+  if (!label || !address) return toast('Label and address are required', 'err');
+  DB.settings.vendorPayments = DB.settings.vendorPayments || { methods: [] };
+  DB.settings.vendorPayments.methods = DB.settings.vendorPayments.methods || [];
+  if (id) {
+    const m = DB.settings.vendorPayments.methods.find(x => x.id === id);
+    if (m) Object.assign(m, { label, network, address });
+  } else {
+    DB.settings.vendorPayments.methods.push({ id: uid('vpm'), label, network, address });
+  }
+  sync(); closeModal(); toast(id ? 'Payment account updated' : 'Payment account added', 'ok'); render();
+};
+App.vendorMethodDel = async function (id) {
+  if (!await confirmDialog({ title: 'Remove payment account?', body: 'Applicants will no longer see this address.', danger: true, ok: 'Remove' })) return;
+  DB.settings.vendorPayments.methods = (DB.settings.vendorPayments.methods || []).filter(m => m.id !== id);
+  sync(); toast('Payment account removed', 'ok'); render();
+};
+
+App.vendorAppApprove = async function (id) {
+  const a = (DB.vendorApplications || []).find(x => x.id === id);
+  if (!a || a.status !== 'pending') return;
+  const applicant = findUser(a.userId);
+  if (!applicant) return toast('Applicant account not found', 'err');
+  const isRenewal = a.kind === 'renewal' || !!a.vendorId;
+  if (!isRenewal && DB.vendors.some(v => v.username.toLowerCase() === a.vendorUsername.toLowerCase())) {
+    return toast('Vendor username @' + a.vendorUsername + ' is already taken — reject with a note', 'err');
+  }
+  if (!await confirmDialog({ title: 'Approve vendor account?', body: `Confirm you received ${usd(a.feeUsd)} from @${applicant.username} and activate @${a.vendorUsername}.`, ok: 'Approve & activate' })) return;
+  const months = Math.max(1, Number(a.months) || 1);
+  const plan = vendorPlanById(a.planId);
+  if (a.kind === 'renewal' || a.vendorId) {
+    const v = vendorById(a.vendorId);
+    if (!v) return toast('Vendor account not found', 'err');
+    const base = Math.max(Date.now(), Number(v.expiresAt) || 0);
+    v.expiresAt = base + months * 30 * 86400000;
+    v.planId = a.planId || v.planId;
+    v.planMonths = months;
+    a.status = 'approved'; a.reviewedAt = Date.now(); a.reviewedBy = me().id;
+    notify(applicant.id, 'Vendor renewal approved 🎉', `Payment confirmed. Your store is active until ${new Date(v.expiresAt).toLocaleDateString()} (+${months} month${months > 1 ? 's' : ''}).`, '#/vendor', 'store');
+    notify('usr_admin', 'Vendor renewed', `@${v.username} extended by ${months} month${months > 1 ? 's' : ''} · ${usd(a.feeUsd)} confirmed.`, '#/admin/vendors', 'check');
+    sync(); toast('Renewal approved — vendor account active', 'ok', 3600); render();
+    return;
+  }
+  const v = {
+    id: uid('vnd'), userId: applicant.id, username: a.vendorUsername, name: a.vendorUsername,
+    avatar: applicant.avatar, rating: 5, trustScore: 80, sales: 0, revenue: 0,
+    createdAt: Date.now(), status: 'active', completedSales: 0, activationFee: a.feeUsd,
+    planId: a.planId || (plan && plan.id) || null, planMonths: months,
+    expiresAt: Date.now() + months * 30 * 86400000
+  };
+  DB.vendors.push(v);
+  applicant.vendorId = v.id;
+  a.status = 'approved'; a.reviewedAt = Date.now(); a.reviewedBy = me().id;
+  notify(applicant.id, 'Vendor account approved 🎉', `Your payment was confirmed. @${a.vendorUsername} is live until ${new Date(v.expiresAt).toLocaleDateString()}.`, '#/vendor', 'store');
+  notify('usr_admin', 'Vendor activated', `@${a.vendorUsername} approved · ${usd(a.feeUsd)} for ${months} month${months > 1 ? 's' : ''}.`, '#/admin/vendors', 'check');
+  sync(); toast('Vendor approved and activated', 'ok', 3600); render();
+};
+
+App.vendorAppReject = async function (id) {
+  const a = (DB.vendorApplications || []).find(x => x.id === id);
+  if (!a || a.status !== 'pending') return;
+  const reason = await promptDialog({ title: 'Reject vendor application', label: 'Reason (sent to applicant)', placeholder: 'e.g. payment slip not legible' });
+  if (reason === null) return;
+  a.status = 'rejected'; a.reviewedAt = Date.now(); a.note = reason || '';
+  notify(a.userId, 'Vendor application rejected', reason || 'Your application was rejected. You can apply again with a new payment slip.', '#/vendor', 'ban');
+  sync(); toast('Application rejected', 'ok'); render();
+};
+
+App.vendorAppDel = async function (id) {
+  if (!await confirmDialog({ title: 'Delete application record?', danger: true, ok: 'Delete' })) return;
+  DB.vendorApplications = (DB.vendorApplications || []).filter(x => x.id !== id);
+  sync(); toast('Application deleted', 'ok'); render();
+};
+
+App.saveAppLink = function () {
+  const el = document.getElementById('asAppLink');
+  const destEl = document.getElementById('asAppDest');
+  const msg = document.getElementById('asInviteMsg');
+  let url = ((el && el.value) || '').trim();
+  let dest = ((destEl && destEl.value) || '').trim();
+
+  if (url && !/^https?:\/\//i.test(url)) url = 'https://' + url;
+  if (url && !/^https?:\/\/[^\s]+$/i.test(url)) return toast('Enter a valid custom link starting with https://', 'err');
+  url = url.replace(/\/+$/, '');
+
+  if (dest && !/^https?:\/\//i.test(dest)) dest = 'https://' + dest;
+  if (dest && !/^https?:\/\/[^\s]+$/i.test(dest)) return toast('Enter a valid main app link starting with https://', 'err');
+  dest = dest.replace(/\/+$/, '');
+
+  // a branded link without a destination would send visitors nowhere
+  if (url && !dest) {
+    dest = location.origin + (window.__WC_SERVER__ ? '/whalechat.html' : location.pathname);
+    if (destEl) destEl.value = dest;
+  }
+  if (url && dest && urlHost(url) === urlHost(dest) && url.replace(/\/+$/, '') === dest.replace(/\/+$/, '').replace(/\.html?$/i, '')) {
+    return toast('The custom link and the main app link are the same — use a different branded link.', 'err');
+  }
+
+  DB.settings.appLink = url;
+  DB.settings.appLinkDestination = url ? dest : '';
+  DB.settings.inviteMessage = ((msg && msg.value) || '').trim();
+  if (url) DB.settings.publicUrl = dest || url;
+  sync();
+  toast(url ? 'Saved — ' + url + ' now redirects to ' + DB.settings.appLinkDestination : 'Custom link cleared — invite links use this server', 'ok');
+  render();
+};
+
+async function loadEmailPanel() {
+  const box = document.getElementById('emailStatus');
+  const badge = document.getElementById('emailBadge');
+  if (!box || !badge) return;
+  try {
+    const d = await fetch('/api/email/status', { cache: 'no-store' }).then(r => r.json());
+    if (!d || d.ok === false) throw new Error('unavailable');
+    badge.className = 'badge ' + (d.configured ? 'badge-success' : 'badge-warn');
+    badge.textContent = d.configured ? 'Connected' : 'Not configured';
+    box.innerHTML = `<div class="kv"><span class="k">Mailbox</span><span class="v">${esc(d.from || '—')}</span></div>
+      <div class="kv"><span class="k">SMTP host</span><span class="v">${esc((d.host || '') + ':' + (d.port || ''))}</span></div>
+      <div class="kv"><span class="k">Queued</span><span class="v">${d.queued || 0}</span></div>
+      <div class="kv"><span class="k">Sent this session</span><span class="v">${d.sent || 0}</span></div>
+      ${d.lastError ? `<div class="tiny mt8" style="color:var(--danger)">${esc(d.lastError)}</div>` : ''}`;
+  } catch (e) {
+    badge.className = 'badge badge-warn'; badge.textContent = 'No sync server';
+    box.innerHTML = '<div class="tiny muted">Email runs on the sync server. Connect this device to a server to see its status.</div>';
+  }
+}
+App.emailTest = async function () {
+  const input = document.getElementById('emailTestTo');
+  const to = ((input && input.value) || '').trim();
+  if (!to) return toast('Enter an email address', 'err');
+  toast('Sending test email…');
+  let r = null;
+  try {
+    r = await fetch('/api/email/test', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ to }) }).then(x => x.json());
+  } catch (e) { return toast('Could not reach the server', 'err'); }
+  if (r && r.ok) toast('Test email sent to ' + to, 'ok');
+  else if (r && r.error === 'smtp_not_configured') toast('Mailbox not connected on the server yet', 'err');
+  else toast('Email failed: ' + ((r && r.error) || 'unknown'), 'err');
+  loadEmailPanel();
+};
+
+App.savePublicUrl = function () {
+  const el = document.getElementById('publicAppUrl');
+  let url = ((el && el.value) || '').trim();
+  if (url && !/^https?:\/\//i.test(url)) url = 'https://' + url;
+  url = url.replace(/\/+$/, '');
+  DB.settings.publicUrl = url;
+  sync();
+  toast(url ? 'Public URL saved: ' + url : 'Public URL cleared', 'ok');
+  render();
+};
+/* =========================================================================
+   Live chat, install helper, seasonal wishes
+   ========================================================================= */
+App.dismissLocalNote = function () {
+  try { localStorage.setItem('wc_local_note', '1'); } catch (e) {}
+  render();
+};
+
+/* ---------------- Smartsupp live chat ---------------- */
+function smartsuppReady() {
+  return typeof window.smartsupp === 'function';
+}
+function smartsuppIdentify() {
+  const u = me();
+  if (!u || !smartsuppReady()) return;
+  try {
+    if (u.fullName) window.smartsupp('name', u.fullName);
+    if (u.email) window.smartsupp('email', u.email);
+  } catch (e) {}
+}
+App.openLiveChat = function () {
+  const u = me();
+  closeModal();
+  const tryOpen = () => {
+    try {
+      if (smartsuppReady()) {
+        if (u) { window.smartsupp('name', u.fullName); window.smartsupp('email', u.email); }
+        window.smartsupp('chat:open');
+        return true;
+      }
+    } catch (e) {}
+    return false;
+  };
+  if (tryOpen()) { toast('Opening live chat…', 'ok'); return; }
+  // the widget may still be loading — retry briefly, then show a fallback
+  let tries = 0;
+  const timer = setInterval(() => {
+    tries += 1;
+    if (tryOpen()) { clearInterval(timer); toast('Opening live chat…', 'ok'); }
+    else if (tries > 16) { clearInterval(timer); App.liveChatHelp(true); }
+  }, 350);
+};
+App.liveChatHelp = function (failed) {
+  const u = me();
+  openModal(modalShell('Customer support live chat', `
+    <div class="center" style="padding:4px 0 8px">
+      <div style="width:64px;height:64px;border-radius:20px;background:linear-gradient(135deg,rgba(46,230,201,.2),rgba(58,160,255,.16));
+        display:flex;align-items:center;justify-content:center;margin:0 auto;color:var(--accent)">${ic('chat', 30)}</div>
+      <h3 class="mt16" style="font-size:18px">Talk to our team in real time</h3>
+      <p class="small muted mt10" style="line-height:1.7">Live chat connects you straight to the WhaleChat support team — no waiting for a reply here. Share your username and order reference for faster help.</p>
+    </div>
+    ${failed ? `<div class="panel" style="padding:10px 12px;border-color:rgba(255,176,32,.35)"><div class="tiny" style="color:var(--warn)">The chat widget could not load. Check your connection or email us at ${esc((DB.settings && DB.settings.supportEmail) || 'support@whalechat.app')}.</div></div>` : ''}
+    <div class="kv mt14"><span class="k">Your username</span><span class="v">@${esc(u ? u.username : '—')}</span></div>
+    <div class="kv"><span class="k">Email</span><span class="v">${esc(u ? u.email : '—')}</span></div>
+    <div class="row gap8 mt16">
+      <button class="btn btn-primary grow" data-act="live-chat-open">${ic('chat', 15)} Open live chat</button>
+      <button class="btn btn-ghost" data-act="copy" data-id="${esc(u ? u.email : '')}">${ic('copy', 15)}</button>
+    </div>`,
+    `<button class="btn btn-ghost" data-close style="width:100%">Close</button>`), { width: '440px' });
+};
+App.liveChatOpen = function () {
+  try {
+    if (smartsuppReady()) { window.smartsupp('chat:open'); closeModal(); return; }
+  } catch (e) {}
+  toast('Live chat is still loading — try again in a moment', 'err');
+};
+
+/* ---------------- install helpers ---------------- */
+App.installApp = async function () {
+  if (isStandalone()) return toast('WhaleChat is already installed on this device', 'ok');
+  if (deferredPrompt) {
+    try {
+      deferredPrompt.prompt();
+      const choice = await deferredPrompt.userChoice;
+      deferredPrompt = null;
+      if (choice && choice.outcome === 'accepted') toast('Installing WhaleChat…', 'ok');
+      return;
+    } catch (e) {}
+  }
+  const ua = navigator.userAgent || '';
+  const isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  openModal(modalShell('Install WhaleChat', `
+    ${isIOS ? `<div class="col gap14">
+      <p class="small muted" style="line-height:1.7">On iPhone and iPad, Safari installs apps through the Share menu:</p>
+      <div class="row gap12"><div class="avatar" style="background:var(--surface-2)">1</div><div><b class="small">Tap Share</b><div class="tiny muted mt6">The square icon with an arrow, in Safari's toolbar.</div></div></div>
+      <div class="row gap12"><div class="avatar" style="background:var(--surface-2)">2</div><div><b class="small">Add to Home Screen</b><div class="tiny muted mt6">Scroll the share sheet to find it.</div></div></div>
+      <div class="row gap12"><div class="avatar" style="background:var(--surface-2)">3</div><div><b class="small">Tap Add</b><div class="tiny muted mt6">WhaleChat appears like a native app.</div></div></div>
+    </div>` : `<div class="col gap12">
+      <p class="small muted" style="line-height:1.7">Your browser will install WhaleChat to your home screen or desktop:</p>
+      <div class="panel" style="padding:12px"><b class="small">Chrome / Edge (Android, Windows, Mac)</b><div class="tiny muted mt6">Open the browser menu → “Install app”, or click the install icon in the address bar.</div></div>
+      <div class="panel" style="padding:12px"><b class="small">Safari on Mac</b><div class="tiny muted mt6">File → “Add to Dock”, or Share → “Add to Home Screen”.</div></div>
+      <div class="panel" style="padding:12px"><b class="small">Firefox</b><div class="tiny muted mt6">Firefox does not install web apps; open WhaleChat in Chrome or Safari to install.</div></div>
     </div>`}
     <div class="panel mt14" style="padding:11px 12px"><div class="tiny muted" style="line-height:1.6">Installed apps open full-screen, keep you signed in and receive push notifications when closed.</div></div>`,
     `<button class="btn btn-primary" data-close style="width:100%">Got it</button>`), { width: '460px' });
