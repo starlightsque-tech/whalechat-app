@@ -1,4 +1,18 @@
-span><span class="v">${esc(o.delivery.country)}</span></div>
+e="font-weight:700">${coins(o.totalCoins)} WC</span></div></div>
+      <div class="divider"></div>
+      <div class="tiny muted">${o.items.map(i => esc(i.name) + ' ×' + i.qty).join(', ')}</div>
+      <div class="row gap8 mt10"><button class="btn btn-sm btn-ghost" data-act="vendor-order-detail" data-id="${o.id}">${ic('eye', 14)} Buyer & delivery</button></div>
+    </div>`).join('')}</div>` : `<div class="card empty"><div class="ic">${ic('truck', 26)}</div><h3>No orders yet</h3><p>Your sales will appear here with buyer delivery details.</p></div>`}`;
+};
+App.vendorOrderDetail = function (id) {
+  const o = DB.orders.find(x => x.id === id); if (!o) return;
+  openModal(modalShell('Order ' + o.ref, `
+    <div class="between mb10">${statusBadge(o.status)}<span style="font-weight:700">${coins(o.totalCoins)} WC</span></div>
+    <div class="small" style="font-weight:650;margin-bottom:6px">Buyer delivery details</div>
+    <div class="kv"><span class="k">Name</span><span class="v">${esc(o.delivery.fullName)}</span></div>
+    <div class="kv"><span class="k">Phone</span><span class="v">${esc(o.delivery.phone)}</span></div>
+    <div class="kv"><span class="k">Email</span><span class="v">${esc(o.delivery.email)}</span></div>
+    <div class="kv"><span class="k">Country</span><span class="v">${esc(o.delivery.country)}</span></div>
     <div class="kv"><span class="k">Address</span><span class="v" style="max-width:60%">${esc(o.delivery.address)}</span></div>
     <div class="divider"></div>
     ${o.items.map(i => `<div class="between" style="padding:5px 0"><span class="small">${esc(i.name)} ×${i.qty}</span><span class="small muted">${usd(i.priceUsd * i.qty)}</span></div>`).join('')}
@@ -116,6 +130,107 @@ App.cancelRefund = async function (refundId) {
 /* =========================================================================
    Wallet, deposits, withdrawals, referrals, profile, settings, notifications
    ========================================================================= */
+
+/* ---------------- bonuses / tasks ---------------- */
+async function bonusCodeHash(code) {
+  const raw = 'bonus::v1::' + String(code || '').trim().toUpperCase();
+  try {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(raw));
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+  } catch (e) { return 'fb' + fnv(raw); }
+}
+
+VIEWS.bonuses = function () {
+  const u = me();
+  const list = (DB.bonuses || []).filter(b => b.active !== false);
+  const claims = DB.bonusClaims || [];
+  const claimed = new Set(claims.filter(c => c.userId === u.id && c.status === 'claimed').map(c => c.bonusId));
+  return `<div class="page-head"><div><button class="btn btn-ghost btn-sm mb10" data-nav="#/profile">${ic('back', 14)} Account</button>
+      <h1>Check Bonuses</h1><p>Complete a task, get your code from support, and redeem your reward.</p></div></div>
+    ${list.length ? `<div class="col gap12">${list.map(b => {
+      const done = claimed.has(b.id);
+      const coinsValue = Math.round((Number(b.rewardUsd) || 0) / COIN_USD * 100) / 100;
+      return `<div class="card bonus-card">
+        <div class="between gap10 wrap" style="align-items:flex-start">
+          <div class="grow" style="min-width:0">
+            <div class="row gap8" style="align-items:center;flex-wrap:wrap">
+              <h3 style="font-size:16px">${esc(b.title)}</h3>
+              <span class="badge ${done ? 'badge-success' : 'badge-accent'}">${done ? 'Claimed' : 'Available'}</span>
+            </div>
+            <p class="small muted mt8" style="line-height:1.65">${esc(b.description || '')}</p>
+            ${b.taskUrl ? `<a class="btn btn-ghost btn-sm mt12" href="${esc(b.taskUrl)}" target="_blank" rel="noopener">${ic('link', 14)} ${esc(b.taskLabel || 'Do the task')}</a>` : ''}
+          </div>
+          <div style="text-align:right;flex:none">
+            <div style="font-size:24px;font-weight:800;letter-spacing:-.02em;color:var(--accent)">${usd(b.rewardUsd)}</div>
+            <div class="tiny muted">${coins(coinsValue)} WC</div>
+          </div>
+        </div>
+        <div class="row gap8 mt14 wrap">
+          ${done
+            ? `<span class="badge badge-success">${ic('check', 12)} Reward credited</span>`
+            : `<button class="btn btn-primary btn-sm" data-act="claim-bonus" data-id="${b.id}">${ic('gift', 14)} Claim</button>`}
+          ${b.taskUrl ? `<span class="tiny muted" style="align-self:center">Complete the task first, then contact support for your code.</span>` : ''}
+        </div>
+      </div>`;
+    }).join('')}</div>` : `<div class="empty"><div class="ic">${ic('gift', 26)}</div><h3>No bonuses right now</h3><p>New tasks will appear here. Check back soon.</p></div>`}
+    <div class="panel mt16" style="padding:12px 14px"><div class="tiny muted" style="line-height:1.7">
+      <b style="color:var(--text)">How it works:</b> complete the task → contact support → receive a one-time code → enter it under Claim. Codes are single-use and tied to your account.
+    </div></div>`;
+};
+
+App.claimBonus = function (id) {
+  const b = (DB.bonuses || []).find(x => x.id === id);
+  if (!b) return;
+  openModal(modalShell('Claim “' + b.title + '”', `
+    <div class="panel" style="padding:13px">
+      <div class="between"><span class="tiny muted">Reward</span><span class="small" style="font-weight:700;color:var(--accent)">${usd(b.rewardUsd)}</span></div>
+    </div>
+    <div class="field mt16"><label class="label">Redeem code</label>
+      <input class="input" id="bonCode" placeholder="Enter your code" autocomplete="off" style="text-transform:uppercase;letter-spacing:.08em;font-weight:700"/>
+      <div class="help">To get your code, please complete the task and contact Support.</div></div>
+    <div class="tiny muted" style="line-height:1.6">Each code can be used once and only on the account it was issued to.</div>`,
+    `<button class="btn btn-ghost" data-close>Cancel</button>
+     <button class="btn btn-primary" data-act="claim-bonus-submit" data-id="${b.id}">${ic('check', 15)} Submit</button>`), { width: '460px' });
+  setTimeout(() => { const i = document.getElementById('bonCode'); if (i) i.focus(); }, 90);
+};
+
+App.claimBonusSubmit = async function (id) {
+  const el = document.getElementById('bonCode');
+  const code = ((el && el.value) || '').trim().toUpperCase();
+  if (!code) return toast('Enter your redeem code', 'err');
+  const btn = document.querySelector('[data-act="claim-bonus-submit"]');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Checking…'; }
+  if (Remote.enabled) {
+    try {
+      const res = await fetch(Remote.url('/api/bonus/claim'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ userId: me().id, bonusId: id, code }) });
+      const d = await res.json().catch(() => null);
+      if (res.ok && d && d.ok) {
+        closeModal();
+        toast('Bonus Credited Successfully! 🎁', 'ok');
+        await Remote.refresh(true);
+        render();
+        return;
+      }
+      if (btn) { btn.disabled = false; btn.innerHTML = 'Submit'; }
+      return toast((d && (d.message || d.error)) || 'Invalid or already used code', 'err');
+    } catch (e) {}
+  }
+  // local / offline fallback
+  const hash = await bonusCodeHash(code);
+  const u = me();
+  const claim = (DB.bonusClaims || []).find(c => c.codeHash === hash && c.userId === u.id && c.bonusId === id && c.status !== 'claimed');
+  if (!claim) { if (btn) { btn.disabled = false; btn.innerHTML = 'Submit'; } return toast('Invalid or already used code', 'err'); }
+  const b = (DB.bonuses || []).find(x => x.id === id);
+  if (!b) return toast('This bonus no longer exists', 'err');
+  claim.status = 'claimed'; claim.claimedAt = Date.now();
+  const coinsAmt = Math.round((Number(b.rewardUsd) || 0) / COIN_USD * 100) / 100;
+  u.balance = Math.round((Number(u.balance || 0) + coinsAmt) * 100) / 100;
+  u.totalEarnings = Math.round((Number(u.totalEarnings || 0) + coinsAmt) * 100) / 100;
+  tx(u.id, 'bonus', 'Task bonus · ' + b.title, coinsAmt, { bonusId: b.id, claimId: claim.id });
+  notify(u.id, 'Bonus credited 🎁', b.title + ' · ' + coins(coinsAmt) + ' WC added to your balance.', '#/bonuses', 'gift');
+  sync(); closeModal(); toast('Bonus Credited Successfully! 🎁', 'ok'); render();
+};
+
 VIEWS.wallet = function () {
   const u = me();
   const txs = DB.txs.filter(t => t.userId === u.id);
@@ -181,7 +296,8 @@ VIEWS.deposit = function () {
             <input type="radio" name="depm" value="${m.id}" ${i === 0 ? 'checked' : ''} style="margin-top:3px;accent-color:var(--accent)"/>
             <div class="grow"><div class="small" style="font-weight:650">${esc(m.name)}</div>
               <div class="tiny muted" style="word-break:break-all;margin-top:3px">${esc(m.address)}</div>
-              ${m.note ? `<div class="tiny" style="color:var(--warn);margin-top:4px">${esc(m.note)}</div>` : ''}</div>
+              ${m.note ? `<div class="tiny" style="color:var(--warn);margin-top:4px">${esc(m.note)}</div>` : ''}
+              ${m.qr ? `<div class="mt10"><img class="qr-thumb" src="${m.qr}" alt="Payment QR" data-act="view-qr" data-kind="crypto" data-id="${m.id}"/><div class="tiny muted mt6">${ic('grid', 11)} Scan with your exchange wallet</div></div>` : ''}</div>
             <button type="button" class="btn-icon" data-act="copy" data-id="${esc(m.address)}" style="width:30px;height:30px">${ic('copy', 13)}</button></label>`).join('')}</div>`
             : `<div class="empty" style="padding:18px"><p>No crypto methods configured yet. Contact support.</p></div>`}
         </div>
@@ -194,6 +310,7 @@ VIEWS.deposit = function () {
             <div class="kv"><span class="k">Routing</span><span class="v">${esc(b.routing || '—')}</span></div>
             <div class="kv"><span class="k">Country</span><span class="v">${esc(b.country || '—')}</span></div>
             ${b.note ? `<div class="tiny mt6" style="color:var(--warn)">${esc(b.note)}</div>` : ''}
+            ${b.qr ? `<div class="mt10"><img class="qr-thumb" src="${b.qr}" alt="Payment QR" data-act="view-qr" data-kind="bank" data-id="${b.id}"/><div class="tiny muted mt6">${ic('grid', 11)} Scan with your banking app</div></div>` : ''}
           </div>`).join('') : `<div class="empty" style="padding:18px"><p>No bank details configured yet. Contact support.</p></div>`}
           <div class="field mt16"><label class="label">Payment reference (optional)</label><input class="input" id="depRef" placeholder="Bank transfer reference / sender name"/></div>
         </div>
@@ -552,6 +669,16 @@ VIEWS.profile = function () {
         </div>
       </div>
     </div>
+    <div class="card mb16" style="border-color:rgba(46,230,201,.3);background:linear-gradient(120deg,rgba(46,230,201,.10),rgba(58,160,255,.05))">
+      <div class="between gap12 wrap">
+        <div class="row gap12" style="align-items:flex-start">
+          <span style="width:40px;height:40px;border-radius:12px;background:rgba(46,230,201,.15);color:var(--accent);display:flex;align-items:center;justify-content:center;flex:none">${ic('gift', 20)}</span>
+          <div><div class="small" style="font-weight:700">Check Bonuses</div>
+          <div class="tiny muted mt6">Complete tasks set by our team and redeem rewards with your code.</div></div>
+        </div>
+        <button class="btn btn-primary btn-sm" data-nav="#/bonuses">${ic('gift', 14)} Check Bonuses</button>
+      </div>
+    </div>
     <div class="section-title mt22"><h3>Quick navigation</h3></div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px">
       ${[['bag', 'Marketplace', '#/market'], ['truck', 'My orders', '#/orders'], ['cart', 'Cart', '#/cart'], ['chat', 'Chats', '#/home'], ['status', 'Status', '#/status'], ['bell', 'Notifications', '#/notifications'], ['gift', 'Referrals', '#/referrals'], ['settings', 'Settings', '#/settings']]
@@ -824,6 +951,7 @@ VIEWS.admin = function (parts, params) {
   else if (sub === 'withdrawals') body = adminWithdrawals();
   else if (sub === 'notifications') body = adminNotifications();
   else if (sub === 'release') body = adminRelease();
+  else if (sub === 'bonuses') body = adminBonuses();
   else if (sub === 'settings') body = adminSettings();
   else if (sub === 'chat') body = adminChat();
   else body = adminOverview();
@@ -940,143 +1068,4 @@ function adminRelease() {
         </div>
       </div>
     </div>
-    <style>@media(max-width:860px){.dash2{grid-template-columns:1fr!important}}</style>`;
-}
-
-async function loadReleasePanel() {
-  const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
-  try {
-    const r = await fetch('/api/release?t=' + Date.now(), { cache: 'no-store' });
-    if (!r.ok) throw new Error('no-server');
-    const d = await r.json();
-    const same = d.build && d.build === APP_BUILD;
-    set('relServerBuild', d.build ? d.build.replace('T', ' ').replace('Z', '') : 'unknown');
-    set('relServerBuildRow', d.build || 'unknown');
-    set('relUptime', Math.floor((d.uptimeSec || 0) / 3600) + 'h ' + Math.floor(((d.uptimeSec || 0) % 3600) / 60) + 'm');
-    set('relClients', String(d.clients || 0));
-    set('relRev', String(d.rev || 0));
-    set('relDevices', String(d.devices || 0));
-    const badge = document.getElementById('relBadge');
-    if (badge) {
-      badge.className = 'badge ' + (same ? 'badge-success' : 'badge-warn');
-      badge.textContent = same ? 'Up to date' : 'Update available';
-    }
-    try {
-      const bk = await fetch('/api/backup', { cache: 'no-store' }).then(x => x.json());
-      const du = document.getElementById('relDataUsers'); if (du) du.textContent = String(bk.users || 0);
-      const db = document.getElementById('relDataBackups'); if (db) db.textContent = (bk.count || 0) + ' snapshot' + ((bk.count || 0) === 1 ? '' : 's');
-      const dl = document.getElementById('relDataLast'); if (dl) dl.textContent = bk.last ? new Date(bk.last).toLocaleString() : 'none yet';
-      const ds = document.getElementById('relDataStore'); if (ds) ds.textContent = bk.persistent ? 'Persistent disk' : (bk.recoverable ? 'Ephemeral storage + persistent backups' : 'Ephemeral — set DATA_DIR to a disk');
-      const dgb = document.getElementById('relDataBadge');
-      if (dgb) {
-        if (bk.persistent) { dgb.className = 'badge badge-success'; dgb.textContent = 'Protected'; }
-        else if (bk.recoverable) { dgb.className = 'badge badge-success'; dgb.textContent = 'Protected via backups'; }
-        else { dgb.className = 'badge badge-danger'; dgb.textContent = 'At risk'; }
-      }
-    } catch (e2) {}
-  } catch (e) {
-    set('relServerBuild', 'local mode');
-    set('relServerBuildRow', 'unavailable');
-    set('relRev', '—'); set('relDevices', '—'); set('relUptime', '—'); set('relClients', '—');
-    const badge = document.getElementById('relBadge');
-    if (badge) { badge.className = 'badge badge-warn'; badge.textContent = 'No sync server'; }
-  }
-}
-
-App.saveReleaseNotes = function () {
-  const v = document.getElementById('relVersion');
-  const n = document.getElementById('relNotes');
-  DB.settings.releaseNotes = {
-    version: (v && v.value.trim()) || APP_VERSION,
-    notes: (n && n.value.trim()) || '',
-    updatedAt: Date.now(),
-    by: me().username
-  };
-  sync();
-  toast('Release notes published', 'ok');
-  render();
-};
-
-App.adminReloadAll = async function () {
-  if (!Remote.enabled) return toast('Connect the sync server to refresh remote devices', 'err');
-  if (!await confirmDialog({ title: 'Force refresh all devices?', body: 'Every app that is open right now will clear its cache and reload the latest build. Users may lose an unsent draft.', ok: 'Refresh everyone', danger: true })) return;
-  try {
-    const r = await fetch('/api/reload', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ build: APP_BUILD, version: APP_VERSION })
-    }).then(x => x.json());
-    toast('Refresh signal sent to ' + (r.clients || 0) + ' connected device(s)', 'ok');
-  } catch (e) { toast('Could not reach the server', 'err'); }
-};
-
-App.adminCheckUpdates = function () {
-  checkForUpdates(true);
-  setTimeout(loadReleasePanel, 1500);
-};
-
-App.adminCopyRelease = function () {
-  copyText(JSON.stringify({ version: APP_VERSION, build: APP_BUILD, file: 'whalechat.html' }, null, 2));
-};
-
-function adminOverview() {
-  const users = DB.users.filter(u => u.role !== 'admin');
-  const vendors = DB.vendors;
-  const orders = DB.orders;
-  const revenueUsd = orders.reduce((s, o) => s + o.totalUsd, 0);
-  const pendingW = DB.withdrawals.filter(w => w.status === 'pending');
-  const pendingD = DB.deposits.filter(d => d.status === 'pending');
-  const pendingO = orders.filter(o => o.status === 'processing');
-  const totalDeposits = DB.deposits.filter(d => d.status === 'approved').reduce((s, d) => s + d.usd, 0);
-  return `<div class="grid-kpi k4 mb16">
-      ${[['Total users', fmtNum(users.length), 'users'], ['Total vendors', fmtNum(vendors.length), 'store'],
-         ['Total orders', fmtNum(orders.length), 'truck'], ['Total revenue', usd(revenueUsd), 'trend'],
-         ['Pending withdrawals', fmtNum(pendingW.length), 'download'], ['Pending deposits', fmtNum(pendingD.length), 'wallet'],
-         ['Pending orders', fmtNum(pendingO.length), 'clock'], ['Pending refunds', fmtNum((DB.refunds || []).filter(r => r.status === 'pending').length), 'refresh']]
-        .map(([k, v, i]) => `<div class="kpi"><div class="ic">${ic(i, 15)}</div><div class="v">${v}</div><div class="k">${k}</div><span class="spark">${ic(i, 54)}</span></div>`).join('')}
-    </div>
-    <div class="card mb16">
-      <div class="between wrap gap10">
-        <div><h3 style="font-size:15px">Access controls</h3>
-          <p class="tiny muted mt6">Password-free sign-in and site-wide maintenance, one tap away.</p></div>
-        <a href="#/admin/settings" class="btn btn-ghost btn-xs">${ic('settings', 12)} Open settings</a>
-      </div>
-      <div class="row wrap gap14 mt14">
-        <div class="panel grow" style="padding:11px 13px;min-width:220px">
-          <div class="between gap10"><div><div class="small" style="font-weight:600">Password-free login</div>
-            <div class="tiny muted mt6">Any password opens a known account</div></div>
-            <div class="switch ${DB.settings.allowAnyPassword ? 'on' : ''}" data-act="toggle-anypass"></div></div>
-        </div>
-        <div class="panel grow" style="padding:11px 13px;min-width:220px">
-          <div class="between gap10"><div><div class="small" style="font-weight:600">Maintenance mode</div>
-            <div class="tiny muted mt6">${maintenanceInfo().active ? 'Active · ends ' + new Date(maintenanceInfo().until).toLocaleTimeString() : 'Site is live for everyone'}</div></div>
-            <div class="switch ${maintenanceInfo().active ? 'on' : ''}" data-act="${maintenanceInfo().active ? 'maint-end' : 'maint-quick'}"></div></div>
-        </div>
-      </div>
-    </div>
-    <div style="display:grid;grid-template-columns:1.1fr .9fr;gap:16px" class="dash2">
-      <div class="card">
-        <div class="section-title"><h3>Latest orders</h3><a href="#/admin/orders" class="link tiny">View all</a></div>
-        ${orders.slice(0, 5).length ? orders.slice(0, 5).map(o => {
-          const b = findUser(o.buyerId);
-          return `<div class="between" style="padding:9px 0;border-bottom:1px dashed var(--border);gap:10px">
-            <div class="grow" style="min-width:0"><div class="small" style="font-weight:600">${esc(o.ref)} · ${coins(o.totalCoins)} WC</div>
-            <div class="tiny muted ellipsis">${esc(b ? b.fullName : 'Unknown')} · ${o.items.map(i => esc(i.name)).join(', ')}</div></div>
-            <div class="row gap6" style="flex:none">${statusBadge(o.status)}<button class="btn btn-xs btn-ghost" data-act="admin-order" data-id="${o.id}">Open</button></div></div>`;
-        }).join('') : `<div class="empty" style="padding:18px"><p>No orders yet.</p></div>`}
-      </div>
-      <div class="card">
-        <div class="section-title"><h3>Pending withdrawals</h3><a href="#/admin/withdrawals" class="link tiny">Manage</a></div>
-        ${pendingW.slice(0, 4).length ? pendingW.slice(0, 4).map(w => {
-          const b = findUser(w.userId);
-          return `<div class="between" style="padding:9px 0;border-bottom:1px dashed var(--border)">
-            <div><div class="small" style="font-weight:600">${coins(w.coins)} WC · ${esc(w.network)}</div>
-            <div class="tiny muted">${esc(b ? b.username : '')} · ${usd(w.usd)}</div></div>
-            <div class="row gap6"><button class="btn btn-xs btn-primary" data-act="wd-approve" data-id="${w.id}">Approve</button>
-            <button class="btn btn-xs btn-danger" data-act="wd-reject" data-id="${w.id}">Reject</button></div></div>`;
-        }).join('') : `<div class="empty" style="padding:18px"><p>No pending withdrawals.</p></div>`}
-        <div class="divider"></div>
-        <div class="section-title"><h3>Pending deposits</h3><a href="#/admin/deposits" class="link tiny">Manage</a></div>
-        ${pendingD.slice(0, 3).length ? pendingD.slice(0, 3).map(d => {
-          const b = findUser(d.userId);
-          return `<div class="between" style="padding:9px 0;border-bottom:1px dashed var(--border)">
-            <div><div class="small" style="font-weight:600">${usd(d.usd)} · ${coins(d.
+    <style>@m
