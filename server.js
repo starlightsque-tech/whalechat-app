@@ -239,7 +239,7 @@ function serveStatic(req, res, pathname) {
   });
 }
 
-const COLLECTIONS = ['users', 'vendors', 'companyProducts', 'products', 'orders', 'deposits', 'withdrawals', 'messages', 'statuses', 'notifications', 'contacts', 'blocks', 'txs', 'referrals', 'purchases', 'refunds', 'vendorApplications', 'reports'];
+const COLLECTIONS = ['users', 'vendors', 'companyProducts', 'products', 'orders', 'deposits', 'withdrawals', 'messages', 'statuses', 'notifications', 'contacts', 'blocks', 'txs', 'referrals', 'purchases', 'refunds', 'vendorApplications', 'reports', 'bonuses', 'bonusClaims'];
 function applyOps(db, ops) {
   const pushes = [];
   const events = [];
@@ -321,6 +321,34 @@ async function api(req, res, pathname, query) {
     const ping = setInterval(() => { try { res.write(': ping\n\n'); } catch (e) {} }, 25000);
     req.on('close', () => { clearInterval(ping); clients.delete(res); });
     return;
+  }
+  // --- bonus claim (atomic one-time code) -------------------------------
+  if (pathname === '/api/bonus/claim' && req.method === 'POST') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    const body = await readBody(req);
+    const code = String(body.code || '').trim().toUpperCase();
+    if (!code) return json(res, 400, { ok: false, error: 'invalid_code', message: 'Enter your redeem code' });
+    const hash = require('crypto').createHash('sha256').update('bonus::v1::' + code).digest('hex');
+    const db = store.db;
+    const claim = (db.bonusClaims || []).find(c => c.codeHash === hash);
+    if (!claim || claim.status !== 'issued') return json(res, 400, { ok: false, error: 'invalid_code', message: 'Invalid or already used code' });
+    if (body.userId && claim.userId !== body.userId) return json(res, 403, { ok: false, error: 'wrong_user', message: 'This code belongs to another account' });
+    if (body.bonusId && claim.bonusId !== body.bonusId) return json(res, 400, { ok: false, error: 'wrong_bonus', message: 'This code is for a different bonus' });
+    const bonus = (db.bonuses || []).find(b => b.id === claim.bonusId);
+    if (!bonus) return json(res, 404, { ok: false, error: 'bonus_missing', message: 'This bonus no longer exists' });
+    const user = (db.users || []).find(u => u.id === claim.userId);
+    if (!user) return json(res, 404, { ok: false, error: 'user_missing', message: 'Account not found' });
+    const coinsAmt = Math.round(((Number(bonus.rewardUsd) || 0) / 0.5) * 100) / 100;
+    claim.status = 'claimed'; claim.claimedAt = Date.now();
+    user.balance = Math.round((Number(user.balance || 0) + coinsAmt) * 100) / 100;
+    user.totalEarnings = Math.round((Number(user.totalEarnings || 0) + coinsAmt) * 100) / 100;
+    const now = Date.now();
+    const rid = () => now.toString(36) + Math.random().toString(36).slice(2, 7);
+    (db.txs = db.txs || []).unshift({ id: 'tx_' + rid(), userId: user.id, type: 'bonus', label: 'Task bonus · ' + bonus.title, coins: coinsAmt, meta: { bonusId: bonus.id, claimId: claim.id }, createdAt: now });
+    (db.notifications = db.notifications || []).unshift({ id: 'nt_' + rid(), userId: user.id, title: 'Bonus credited 🎁', body: bonus.title + ' · ' + coinsAmt + ' WC added to your balance.', link: '#/bonuses', icon: 'gift', read: false, createdAt: now });
+    store.rev += 1; store.updatedAt = now; persist();
+    broadcast('change', { rev: store.rev, source: 'bonus-claim', at: now });
+    return json(res, 200, { ok: true, coins: coinsAmt, balance: user.balance, status: claim.status, bonus: bonus.title });
   }
   // --- email -----------------------------------------------------------
   if (pathname === '/api/email/status' && req.method === 'GET') {
