@@ -455,7 +455,7 @@ server.headersTimeout = 70000;
     console.log(`[whalechat] listening on http://localhost:${PORT}`);
     console.log(`[whalechat] data: ${DATA_DIR}`);
     console.log(`[whalechat] db: ${store.loadedFrom} · rev ${store.rev}`);
-    console.log(`[whalechat] storage: ${pool ? 'postgres' : 'file'} · email: ${email && email.configured() ? 'smtp ' + email.status().from : 'not configured'}`);
+    console.log(`[whalechat] storage: ${pool ? 'postgres' : 'file'} · email: ${email && email.configured() ? email.status().provider + ' ' + email.status().from : 'not configured'}`);
   });
 })();
 let stopping = false;
