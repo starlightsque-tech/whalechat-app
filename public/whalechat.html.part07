@@ -1,4 +1,4 @@
-it fetch('/api/backup', { method: 'POST' }).then(x => x.json());
+    const r = await fetch('/api/backup', { method: 'POST' }).then(x => x.json());
     if (!r.ok) throw new Error(r.error || 'failed');
     toast('Backup created (' + r.count + ' snapshots kept)', 'ok');
     loadReleasePanel();
