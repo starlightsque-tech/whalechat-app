@@ -412,6 +412,17 @@ table.tbl tr:hover td{background:rgba(255,255,255,.02)}
 /* never let the support bubble block the chat composer */
 body.chat-open #smartsupp-widget-container > div,
 body.modal-open #smartsupp-widget-container > div { display: none !important; }
+/* never let the chat launcher cover a payment / checkout action */
+body[data-route="deposit"] #smartsupp-widget-container > div,
+body[data-route="withdraw"] #smartsupp-widget-container > div,
+body[data-route="cart"] #smartsupp-widget-container > div { display: none !important; }
+body[data-route="bonuses"] #smartsupp-widget-container > div,
+body[data-route="product"] #smartsupp-widget-container > div,
+body[data-route="checkout"] #smartsupp-widget-container > div { bottom: calc(var(--nav-h) + 96px + env(safe-area-inset-bottom)) !important; }
+.qr-thumb{width:108px;height:108px;object-fit:contain;background:#fff;border-radius:10px;padding:6px;cursor:zoom-in;border:1px solid var(--border);display:block}
+.qr-preview{width:64px;height:64px;border-radius:10px;background:var(--surface-2);display:flex;align-items:center;justify-content:center;overflow:hidden;color:var(--muted);flex:none}
+.qr-preview img{width:100%;height:100%;object-fit:contain;background:#fff}
+.qr-big{width:min(78vw,320px);height:min(78vw,320px);object-fit:contain;background:#fff;border-radius:14px;padding:10px;margin:0 auto;display:block}
 /* keep the Smartsupp launcher clear of the bottom navigation and app buttons */
 @media (max-width:1023px){
   #smartsupp-widget-container > div { bottom: calc(var(--nav-h) + 30px + env(safe-area-inset-bottom)) !important; right: 12px !important; }
@@ -420,7 +431,7 @@ body.modal-open #smartsupp-widget-container > div { display: none !important; }
   #smartsupp-widget-container > div { bottom: 20px !important; right: 20px !important; }
 }
 /* when the install banner is on screen, lift the support bubble above it */
-body.has-install-banner #smartsupp-widget-container > div { bottom: calc(var(--nav-h) + 118px + env(safe-area-inset-bottom)) !important; }
+body.has-install-banner #smartsupp-widget-container > div { bottom: calc(var(--nav-h) + 138px + env(safe-area-inset-bottom)) !important; }
 @media (min-width:1024px){
   body.has-install-banner #smartsupp-widget-container > div { bottom: 110px !important; }
 }
@@ -439,7 +450,7 @@ body.chat-open #smartsupp-widget-container > div { display: none !important; }
   #smartsupp-widget-container > div { bottom: 20px !important; right: 20px !important; }
 }
 /* when the install banner is on screen, lift the support bubble above it */
-body.has-install-banner #smartsupp-widget-container > div { bottom: calc(var(--nav-h) + 118px + env(safe-area-inset-bottom)) !important; }
+body.has-install-banner #smartsupp-widget-container > div { bottom: calc(var(--nav-h) + 138px + env(safe-area-inset-bottom)) !important; }
 @media (min-width:1024px){
   body.has-install-banner #smartsupp-widget-container > div { bottom: 110px !important; }
 }
@@ -601,10 +612,10 @@ window.smartsupp||(function(d) {
 'use strict';
 
 const COIN_USD = 0.5;                 // 1 Whale Coin = $0.50
-const APP_VERSION = '3.6.0';
+const APP_VERSION = '3.7.0';
 // Set to your permanent sync server to auto-connect from any static host, e.g. 'https://sync.yourdomain.com'
 const DEFAULT_SYNC_SERVER = '';
-const APP_BUILD = '2026-11-09T22:02:24Z';    // replaced at build time
+const APP_BUILD = '2026-11-10T11:43:45Z';    // replaced at build time
 const LS_DB = 'whalechat.db.v1';
 const LS_SESSION = 'whalechat.session.v1';
 const LS_THEME = 'whalechat.theme';
@@ -772,7 +783,7 @@ function blankDB() {
     version: 1,
     users: [], vendors: [], companyProducts: [], products: [], orders: [],
     deposits: [], withdrawals: [], messages: [], statuses: [], chatsMeta: {}, referrals: [], purchases: [],
-    contacts: [], blocks: [], notifications: [], txs: [], reports: [], refunds: [], vendorApplications: [],
+    contacts: [], blocks: [], notifications: [], txs: [], reports: [], refunds: [], vendorApplications: [], bonuses: [], bonusClaims: [],
     settings: {
       crypto: [
         { id: 'cr_1', name: 'USDT (TRC20)', address: 'TQn9Y2khEsLJW1ChVWFMSMeRDow5KcbLSE', network: 'TRC20', note: 'Send only USDT on TRC20. Minimum $5.' },
@@ -1186,20 +1197,4 @@ function openModal(html, opts = {}) {
 }
 function closeModal() { const ov = document.getElementById('overlay'); ov.innerHTML = ''; document.body.classList.remove('modal-open'); }
 function modalShell(title, body, foot, sub) {
-  return `<div class="modal-head"><div><div style="font-family:var(--display);font-weight:700;font-size:16px">${esc(title)}</div>${sub ? `<div class="small muted" style="margin-top:2px">${esc(sub)}</div>` : ''}</div>
-    <button class="btn-icon" data-close style="width:34px;height:34px">${ic('x', 17)}</button></div>
-    <div class="modal-body">${body}</div>${foot ? `<div class="modal-foot">${foot}</div>` : ''}`;
-}
-document.addEventListener('click', (e) => {
-  if (e.target.closest('[data-close]')) { closeModal(); return; }
-  const ov = document.getElementById('overlay');
-  if (ov && ov.innerHTML && e.target.matches('[data-modal-back]') && !e.target.closest('.modal')) { closeModal(); }
-});
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeModal(); closeViewer(); } });
-
-function confirmDialog(opts) {
-  return new Promise((resolve) => {
-    openModal(modalShell(opts.title || 'Are you sure?', `<p class="muted" style="font-size:13.5px;line-height:1.6">${esc(opts.body || '')}</p>`,
-      `<button class="btn btn-ghost" data-cancel>${esc(opts.cancel || 'Cancel')}</button><button class="btn ${opts.danger ? 'btn-danger' : 'btn-primary'}" data-ok>${esc(opts.ok || 'Confirm')}</button>`));
-    $('[data-cancel]').onclick = () => { closeModal(); resolve(false); };
-    $('[data-ok]').onclick = () => { closeModal(); re
+  return `<div class="modal-head"><div><div style="font-family:var(--display);font-weight:700;font-size:16px">${esc(title)}</div>${sub ? `<div class="small muted" style="margin-top:2px">${esc(sub)}</div>
