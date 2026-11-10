@@ -1028,7 +1028,7 @@ function adminSettings() {
   <div class="card mt16">
     <div class="between wrap gap10">
       <div><h3 style="font-size:15px">Email notifications</h3>
-        <p class="tiny muted mt6">Account-creation and package-delivery emails are sent through the app's Outlook mailbox. Delivery is queued and retried, so a temporary mail outage never loses a notification.</p></div>
+        <p class="tiny muted mt6">Account-creation and package-delivery emails are sent through the app's mail provider (Resend, with Outlook SMTP as fallback). Delivery is queued and retried, so a temporary mail outage never loses a notification.</p></div>
       <span class="badge" id="emailBadge">Checking…</span>
     </div>
     <div class="mt14" id="emailStatus"><div class="tiny muted">Reading mail settings…</div></div>
@@ -1367,4 +1367,4 @@ App.refundDel = async function (id) {
 /* ---------------- data backups ---------------- */
 App.adminBackupNow = async function () {
   try {
-    const r = await fetch('/api/backup', { method: 'POS
+    const r = awa
