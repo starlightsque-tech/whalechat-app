@@ -1,4 +1,31 @@
-k');
+ntain = now;
+  const u = me();
+  if (!u) return;
+  let changed = false;
+  // mark my messages delivered after a moment (simulates server delivery ack)
+  DB.messages.forEach(m => {
+    if (m.from === u.id && m.status === 'sent' && now - m.createdAt > 900) { m.status = 'delivered'; changed = true; }
+  });
+  // expire statuses
+  const before = DB.statuses.length;
+  DB.statuses = DB.statuses.filter(s => s.createdAt + 24 * 3600 * 1000 > now);
+  if (DB.statuses.length !== before) changed = true;
+  // expire vanish mode etc
+  if (changed) persist();
+}
+setInterval(() => {
+  if (!DB || !me()) return;
+  const had = DB.messages.filter(m => m.from === me().id && m.status === 'sent' && Date.now() - m.createdAt > 900).length;
+  if (had) { doMaintenance(); render(); }
+}, 4000);
+
+/* ---------------- install prompt ---------------- */
+let deferredPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); deferredPrompt = e; setTimeout(maybeShowInstall, 1200); });
+window.addEventListener('appinstalled', () => {
+  try { localStorage.setItem(LS_INSTALL, JSON.stringify({ installed: true })); } catch (e) {}
+  const b = document.getElementById('installBanner'); if (b) b.remove();
+  toast('WhaleChat installed. Open it from your home screen.', 'ok');
 });
 function isStandalone() {
   return (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
@@ -1287,23 +1314,4 @@ App.reactStatus = function (id, ds) {
   s.reactions = s.reactions || {};
   if (s.reactions[u.id] === ds.emoji) delete s.reactions[u.id];
   else s.reactions[u.id] = ds.emoji;
-  if (!Object.keys(s.reactions).length) delete s.reactions;
-  sync();
-  renderStatusViewer();
-};
-/* =========================================================================
-   Marketplace, cart, checkout, orders, vendor system
-   ========================================================================= */
-const CATEGORIES = ['All', 'Phones', 'Laptops', 'Tablets', 'Headphones', 'Chargers', 'Video Games', 'Phone Pouches', 'Accessories'];
-let MARKET_FILTER = { cat: 'All', q: '' };
-
-VIEWS.market = function () {
-  const u = me();
-  const list = DB.products.filter(p => p.active && p.stock > 0 && !p.hidden && vendorIsActive(vendorById(p.vendorId)));
-  const cats = CATEGORIES.filter(c => c === 'All' || list.some(p => p.category === c) || DB.companyProducts.some(cp => cp.category === c));
-  const filtered = list.filter(p => (MARKET_FILTER.cat === 'All' || p.category === MARKET_FILTER.cat) && (!MARKET_FILTER.q || p.name.toLowerCase().includes(MARKET_FILTER.q.toLowerCase())));
-  const featured = list.slice(0, 3);
-
-  return `<div style="display:flex;gap:10px;align-items:center;margin-bottom:14px" class="hide-desktop">
-      <div class="searchbar grow">${ic('search', 17)}<input id="marketSearch" placeholder="Search products…" value="${esc(MARKET_FILTER.q)}"/></div>
-      <a href="#/cart"
+  if (!Object.keys(s.re
