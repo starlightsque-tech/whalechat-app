@@ -1,4 +1,20 @@
-solve(true); };
+` : ''}</div>
+    <button class="btn-icon" data-close style="width:34px;height:34px">${ic('x', 17)}</button></div>
+    <div class="modal-body">${body}</div>${foot ? `<div class="modal-foot">${foot}</div>` : ''}`;
+}
+document.addEventListener('click', (e) => {
+  if (e.target.closest('[data-close]')) { closeModal(); return; }
+  const ov = document.getElementById('overlay');
+  if (ov && ov.innerHTML && e.target.matches('[data-modal-back]') && !e.target.closest('.modal')) { closeModal(); }
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeModal(); closeViewer(); } });
+
+function confirmDialog(opts) {
+  return new Promise((resolve) => {
+    openModal(modalShell(opts.title || 'Are you sure?', `<p class="muted" style="font-size:13.5px;line-height:1.6">${esc(opts.body || '')}</p>`,
+      `<button class="btn btn-ghost" data-cancel>${esc(opts.cancel || 'Cancel')}</button><button class="btn ${opts.danger ? 'btn-danger' : 'btn-primary'}" data-ok>${esc(opts.ok || 'Confirm')}</button>`));
+    $('[data-cancel]').onclick = () => { closeModal(); resolve(false); };
+    $('[data-ok]').onclick = () => { closeModal(); resolve(true); };
   });
 }
 function promptDialog(opts) {
@@ -513,6 +529,7 @@ const ADMIN_NAV = [
   { key: 'admin-deposits', label: 'Deposits', icon: 'wallet', href: '#/admin/deposits' },
   { key: 'admin-withdrawals', label: 'Withdrawals', icon: 'download', href: '#/admin/withdrawals' },
   { key: 'admin-notifications', label: 'Notifications', icon: 'bell', href: '#/admin/notifications' },
+  { key: 'admin-bonuses', label: 'Bonuses', icon: 'gift', href: '#/admin/bonuses' },
   { key: 'admin-release', label: 'Release', icon: 'refresh', href: '#/admin/release' },
   { key: 'admin-settings', label: 'Settings', icon: 'settings', href: '#/admin/settings' },
   { key: 'admin-chat', label: 'Support Chat', icon: 'chat', href: '#/admin/chat' }
@@ -731,6 +748,7 @@ function render() {
   }
 
   const routeKey = parts[0] === 'admin' ? (parts[1] ? 'admin-' + parts[1] : 'admin') : (parts[0] || 'home');
+  document.body.dataset.route = routeKey;
   const isChatRoom = parts[0] === 'chat';
   document.body.classList.toggle('chat-open', isChatRoom);
   if (isChatRoom) {
@@ -826,31 +844,4 @@ let lastMaintain = 0;
 function doMaintenance() {
   const now = Date.now();
   if (now - lastMaintain < 1500) return;
-  lastMaintain = now;
-  const u = me();
-  if (!u) return;
-  let changed = false;
-  // mark my messages delivered after a moment (simulates server delivery ack)
-  DB.messages.forEach(m => {
-    if (m.from === u.id && m.status === 'sent' && now - m.createdAt > 900) { m.status = 'delivered'; changed = true; }
-  });
-  // expire statuses
-  const before = DB.statuses.length;
-  DB.statuses = DB.statuses.filter(s => s.createdAt + 24 * 3600 * 1000 > now);
-  if (DB.statuses.length !== before) changed = true;
-  // expire vanish mode etc
-  if (changed) persist();
-}
-setInterval(() => {
-  if (!DB || !me()) return;
-  const had = DB.messages.filter(m => m.from === me().id && m.status === 'sent' && Date.now() - m.createdAt > 900).length;
-  if (had) { doMaintenance(); render(); }
-}, 4000);
-
-/* ---------------- install prompt ---------------- */
-let deferredPrompt = null;
-window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); deferredPrompt = e; setTimeout(maybeShowInstall, 1200); });
-window.addEventListener('appinstalled', () => {
-  try { localStorage.setItem(LS_INSTALL, JSON.stringify({ installed: true })); } catch (e) {}
-  const b = document.getElementById('installBanner'); if (b) b.remove();
-  toast('WhaleChat installed. Open it from your home screen.', 'o
+  lastMai
