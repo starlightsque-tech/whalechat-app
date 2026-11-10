@@ -1,8 +1,8 @@
 {
-  "version": "3.6.0",
-  "build": "2026-11-09T22:02:24Z",
+  "version": "3.7.0",
+  "build": "2026-11-10T11:43:45Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.6.0 - Outlook transactional email (welcome + delivery), Postgres-backed storage so releases never wipe accounts.",
-  "releasedAt": "2026-11-09T22:02:24Z",
+  "notes": "WhaleChat 3.7.0 - Check Bonuses (tasks, one-time codes, ledger), QR payment uploads, chat launcher that never covers payment buttons.",
+  "releasedAt": "2026-11-10T11:43:45Z",
   "minimum": "3.0.0"
 }
