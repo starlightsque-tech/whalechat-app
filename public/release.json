@@ -1,8 +1,8 @@
 {
-  "version": "3.7.0",
-  "build": "2026-11-10T11:43:45Z",
+  "version": "3.7.1",
+  "build": "2026-11-10T11:53:04Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.7.0 - Check Bonuses (tasks, one-time codes, ledger), QR payment uploads, chat launcher that never covers payment buttons.",
-  "releasedAt": "2026-11-10T11:43:45Z",
+  "notes": "WhaleChat 3.7.1 - Resend email delivery enabled (welcome + delivery emails), provider-aware status.",
+  "releasedAt": "2026-11-10T11:53:04Z",
   "minimum": "3.0.0"
 }
