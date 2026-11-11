@@ -239,7 +239,7 @@ function serveStatic(req, res, pathname) {
   });
 }
 
-const COLLECTIONS = ['users', 'vendors', 'companyProducts', 'products', 'orders', 'deposits', 'withdrawals', 'messages', 'statuses', 'notifications', 'contacts', 'blocks', 'txs', 'referrals', 'purchases', 'refunds', 'vendorApplications', 'reports', 'bonuses', 'bonusClaims'];
+const COLLECTIONS = ['users', 'vendors', 'companyProducts', 'products', 'orders', 'deposits', 'withdrawals', 'messages', 'statuses', 'notifications', 'contacts', 'blocks', 'txs', 'referrals', 'purchases', 'refunds', 'vendorApplications', 'reports', 'bonuses', 'bonusClaims', 'emailCampaigns'];
 function applyOps(db, ops) {
   const pushes = [];
   const events = [];
@@ -353,6 +353,31 @@ async function api(req, res, pathname, query) {
   // --- email -----------------------------------------------------------
   if (pathname === '/api/email/status' && req.method === 'GET') {
     return json(res, 200, email ? email.status() : { ok: true, configured: false, queued: 0 });
+  }
+  if (pathname === '/api/email/broadcast' && req.method === 'POST') {
+    if (!email || !email.configured()) return json(res, 503, { ok: false, error: 'email_not_configured' });
+    const body = await readBody(req);
+    const subject = String(body.subject || '').trim().slice(0, 160);
+    let html = String(body.html || '').trim();
+    html = html.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<iframe[\s\S]*?<\/iframe>/gi, '');
+    if (!subject || !html) return json(res, 400, { ok: false, error: 'missing_subject_or_body' });
+    if (html.length > 200000) return json(res, 400, { ok: false, error: 'body_too_large' });
+    const all = body.all === true;
+    const ids = Array.isArray(body.userIds) ? body.userIds : [];
+    const users = (store.db.users || []).filter(u => u.email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(u.email) && (all || ids.includes(u.id)));
+    if (!users.length) return json(res, 400, { ok: false, error: 'no_recipients' });
+    const campaignId = 'cmp_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const appUrl = PUBLIC_URL || ('http://localhost:' + PORT);
+    let queued = 0;
+    for (const u of users) {
+      if (email.enqueue({ key: 'custom:' + campaignId + ':' + u.id, to: u.email, template: 'custom', data: { subject, html, text: body.text || '' }, appUrl })) queued++;
+    }
+    store.db.emailCampaigns = store.db.emailCampaigns || [];
+    store.db.emailCampaigns.unshift({ id: campaignId, subject, recipients: users.length, queued, by: body.adminId || null, createdAt: Date.now() });
+    store.db.emailCampaigns = store.db.emailCampaigns.slice(0, 50);
+    store.rev += 1; store.updatedAt = Date.now(); persist();
+    broadcast('change', { rev: store.rev, source: 'email-campaign', at: store.updatedAt });
+    return json(res, 200, { ok: true, campaignId, recipients: users.length, queued });
   }
   if (pathname === '/api/email/backfill' && req.method === 'POST') {
     if (!email || !email.configured()) return json(res, 503, { ok: false, error: 'smtp_not_configured' });
