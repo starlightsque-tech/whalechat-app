@@ -87,9 +87,22 @@ const WC_TAWK = {
     }
   },
 
+  watch() {
+    if (this._watching) return;
+    this._watching = true;
+    let last = this.enabled();
+    /* an admin can flip this from another device: follow the setting live */
+    setInterval(() => {
+      let now = last;
+      try { now = this.enabled(); } catch (e) { return; }
+      if (now !== last) { last = now; this.apply(); }
+    }, 4000);
+  },
+
   boot() {
     if (!DB) return false;
     this.apply();
+    this.watch();
     const u = me();
     if (u && window.Tawk_API) {
       try { window.Tawk_API.visitor = { name: u.fullName || u.username, email: u.email }; } catch (e) {}
