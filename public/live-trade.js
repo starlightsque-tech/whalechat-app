@@ -731,6 +731,65 @@ setTimeout(function () {
   });
 }, 0);
 
+/* ==================== admin: generate the wholesale catalogue ==================== */
+App.admGenerateProducts = async function () {
+  if (!await confirmDialog({ title: 'Generate wholesale products?',
+    body: 'Adds 8 products with real product photography, specifications, wholesale prices and stock, ready for vendors to buy.',
+    ok: 'Generate products' })) return;
+  let cat = null;
+  try {
+    const res = await fetch('./products.json?t=' + Date.now(), { cache: 'no-store' });
+    if (!res.ok) throw new Error('catalogue not found');
+    cat = await res.json();
+  } catch (e) { return toast('Could not load the catalogue: ' + e.message, 'err'); }
+  const items = (cat && cat.products) || [];
+  if (!items.length) return toast('Catalogue is empty', 'err');
+  if (!Array.isArray(DB.companyProducts)) DB.companyProducts = [];
+  let added = 0, updated = 0;
+  items.forEach(it => {
+    const existing = DB.companyProducts.find(p => p.id === it.id)
+      || DB.companyProducts.find(p => (p.name || '').toLowerCase() === String(it.name).toLowerCase());
+    if (existing) {
+      existing.name = it.name; existing.category = it.category; existing.priceUsd = it.priceUsd;
+      existing.stock = Number(it.stock) || existing.stock || 0;
+      existing.description = it.description; existing.image = it.image; existing.emoji = null;
+      updated++;
+    } else {
+      DB.companyProducts.push({
+        id: it.id, name: it.name, category: it.category, priceUsd: it.priceUsd,
+        stock: Number(it.stock) || 0, description: it.description, image: it.image,
+        emoji: null, createdAt: Date.now()
+      });
+      added++;
+    }
+  });
+  try { AUDIT.log('Wholesale catalogue generated', added + ' added · ' + updated + ' updated'); } catch (e) {}
+  try { sync(); } catch (e) {}
+  persist();
+  toast('Generated ' + items.length + ' products with real photos', 'ok');
+  render();
+};
+
+function ltProductsCard() {
+  const total = (DB.companyProducts || []).length;
+  const withPics = (DB.companyProducts || []).filter(p => p.image).length;
+  return `<div class="card mt16">
+    <div class="between" style="align-items:center;flex-wrap:wrap;gap:10px">
+      <div><div class="card-title" style="margin:0 0 4px">Generate products</div>
+        <div class="small muted">8 wholesale products with real photography, specifications, prices and stock — ready for vendors to buy.</div></div>
+      <button class="btn btn-primary" data-act="adm-generate-products">${ic('box', 15)} Generate products</button>
+    </div>
+    <div class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap">
+      <span class="badge">${total} products</span>
+      <span class="badge ${withPics ? 'badge-success' : 'badge-warn'}">${withPics} with photos</span>
+      <span class="badge">Vendors only</span>
+    </div>
+    <div class="tiny muted mt10" style="line-height:1.7">
+      Running it again refreshes names, specs, prices and photos on the same 8 products — it never duplicates them.
+      Product photos are real studio shots shipped with the app, not illustrations or emoji.</div>
+  </div>`;
+}
+
 function ltAuditView() {
   const rows = AUDIT.list();
   const tabs = `<div class="admin-nav">${ADMIN_NAV.map(n => {
@@ -757,6 +816,25 @@ function ltAuditView() {
 
 const _adminAudit = VIEWS.admin;
 VIEWS.admin = function (parts, params) {
+  if ((parts[1] || '') === 'products') {
+    const u = me();
+    if (u && u.role === 'admin') {
+      const html = _adminAudit.apply(this, arguments);
+      if (document.getElementById('ltProdCard')) return html;   /* one card only */
+      setTimeout(() => {
+        const anchorEl = document.querySelector('.admin-nav');
+        if (!anchorEl || document.getElementById('ltProdCard')) return;
+        const wrap = document.createElement('div');
+        wrap.id = 'ltProdCard';
+        wrap.innerHTML = ltProductsCard();
+        const firstCard = document.querySelector('.admin-nav + .card, .admin-nav ~ .card');
+        if (firstCard && firstCard.parentNode) firstCard.parentNode.insertBefore(wrap, firstCard);
+        else document.getElementById('content').appendChild(wrap);
+      }, 30);
+      return html;
+    }
+    return _adminAudit.apply(this, arguments);
+  }
   if ((parts[1] || '') === 'audit') {
     const u = me();
     if (!u || u.role !== 'admin') return `<div class="card empty"><div class="ic">${ic('lock', 26)}</div><h3>Admin access only</h3></div>`;
