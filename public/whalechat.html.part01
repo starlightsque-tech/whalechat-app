@@ -1,6 +1,19 @@
 <!DOCTYPE html>
 <html lang="en" data-theme="dark">
 <head>
+<!--Start of Tawk.to Script-->
+<script type="text/javascript">
+var Tawk_API=Tawk_API||{}, Tawk_LoadStart=new Date();
+(function(){
+var s1=document.createElement("script"),s0=document.getElementsByTagName("script")[0];
+s1.async=true;
+s1.src='https://embed.tawk.to/6af412c51859cf3c3d81d341/1k74milq6';
+s1.charset='UTF-8';
+s1.setAttribute('crossorigin','*');
+s0.parentNode.insertBefore(s1,s0);
+})();
+</script>
+<!--End of Tawk.to Script-->
 <script async src="https://www.googletagmanager.com/gtm.js?id=GTM-5WNCBL8N"></script><script>window.dataLayer = window.dataLayer || [];function gtag(){dataLayer.push(arguments);}gtag('js', new Date());</script>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
@@ -585,21 +598,7 @@ html[data-theme="light"] .profile-banner>img{opacity:.10}
 @keyframes confetti{0%{transform:translateY(-20px) rotate(0);opacity:0}10%{opacity:.9}100%{transform:translateY(420px) rotate(420deg);opacity:0}}
 </style>
 
-<!-- Smartsupp Live Chat -->
-<script type="text/javascript">
-var _smartsupp = _smartsupp || {};
-_smartsupp.key = '004c6a93d71def446ae723b2e72cde1bde97114d';
-window.smartsupp||(function(d) {
-  var s,c,o=smartsupp=function(){ o._.push(arguments)};o._=[];
-  s=d.getElementsByTagName('script')[0];c=d.createElement('script');
-  c.type='text/javascript';c.charset='utf-8';c.async=true;
-  c.src='https://www.smartsuppchat.com/loader.js?';s.parentNode.insertBefore(c,s);
-})(document);
-</script>
-<noscript>Powered by <a href="https://www.smartsupp.com" target="_blank" rel="noopener">Smartsupp</a></noscript>
-</head>
-<body>
-<noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-5WNCBL8N" height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
+
 <div id="app"></div>
 <div id="overlay"></div>
 <div class="toasts" id="toasts"></div>
@@ -612,10 +611,10 @@ window.smartsupp||(function(d) {
 'use strict';
 
 const COIN_USD = 0.5;                 // 1 Whale Coin = $0.50
-const APP_VERSION = '3.7.3';
+const APP_VERSION = '3.8.0';
 // Set to your permanent sync server to auto-connect from any static host, e.g. 'https://sync.yourdomain.com'
 const DEFAULT_SYNC_SERVER = '';
-const APP_BUILD = '2026-11-10T16:34:39Z';    // replaced at build time
+const APP_BUILD = '2026-11-11T07:08:21Z';    // replaced at build time
 const LS_DB = 'whalechat.db.v1';
 const LS_SESSION = 'whalechat.session.v1';
 const LS_THEME = 'whalechat.theme';
@@ -783,7 +782,7 @@ function blankDB() {
     version: 1,
     users: [], vendors: [], companyProducts: [], products: [], orders: [],
     deposits: [], withdrawals: [], messages: [], statuses: [], chatsMeta: {}, referrals: [], purchases: [],
-    contacts: [], blocks: [], notifications: [], txs: [], reports: [], refunds: [], vendorApplications: [], bonuses: [], bonusClaims: [],
+    contacts: [], blocks: [], notifications: [], txs: [], reports: [], refunds: [], vendorApplications: [], bonuses: [], bonusClaims: [], emailCampaigns: [],
     settings: {
       crypto: [
         { id: 'cr_1', name: 'USDT (TRC20)', address: 'TQn9Y2khEsLJW1ChVWFMSMeRDow5KcbLSE', network: 'TRC20', note: 'Send only USDT on TRC20. Minimum $5.' },
@@ -1197,4 +1196,9 @@ function openModal(html, opts = {}) {
 }
 function closeModal() { const ov = document.getElementById('overlay'); ov.innerHTML = ''; document.body.classList.remove('modal-open'); }
 function modalShell(title, body, foot, sub) {
-  return `<div class="modal-head"><div><div style="font-family:var(--display);font-weight:700;font-size:16px">${esc(title)}</div>${sub ? `<div class="small muted" style="margin-top:2px">${esc(sub)}</div>
+  return `<div class="modal-head"><div><div style="font-family:var(--display);font-weight:700;font-size:16px">${esc(title)}</div>${sub ? `<div class="small muted" style="margin-top:2px">${esc(sub)}</div>` : ''}</div>
+    <button class="btn-icon" data-close style="width:34px;height:34px">${ic('x', 17)}</button></div>
+    <div class="modal-body">${body}</div>${foot ? `<div class="modal-foot">${foot}</div>` : ''}`;
+}
+document.addEventListener('click', (e) => {
+  if (e.target.closest('[data-close]')) { closeModal(); return;
