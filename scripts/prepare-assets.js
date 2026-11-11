@@ -1,27 +1,104 @@
 #!/usr/bin/env node
-/* Decode the base64-committed image assets into real files at build time.
-   Run automatically by Render / Docker before the server starts. */
+/* Build step: decode committed assets, install the current app bundle, and make
+   sure the sync server accepts the investing collections.
+   Runs automatically on Render/Docker before the server starts.
+   Fail-safe: any problem here leaves the previous build serving. */
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const dir = path.resolve(__dirname, '..', 'public', 'assets');
+
+const ROOT = path.resolve(__dirname, '..');
+const PUB = path.join(ROOT, 'public');
+const APP = path.join(PUB, 'whalechat.html');
+const VERSION = '3.9.0';
+const MARKER = 'WhaleChat Invest';
+const SOURCE = process.env.APP_SOURCE_URL || 'https://whalechat-mldp.onrender.com/whalechat.html';
+
+/* 1. committed base64 image assets ------------------------------------------------ */
+const assetDir = path.join(PUB, 'assets');
 let made = 0;
-for (const name of fs.readdirSync(dir)) {
+for (const name of fs.readdirSync(assetDir)) {
   if (!name.endsWith('.b64')) continue;
-  const target = path.join(dir, name.slice(0, -4));
+  const target = path.join(assetDir, name.slice(0, -4));
   try {
     if (fs.existsSync(target) && fs.statSync(target).size > 0) continue;
-    fs.writeFileSync(target, Buffer.from(fs.readFileSync(path.join(dir, name), 'utf8').trim(), 'base64'));
+    fs.writeFileSync(target, Buffer.from(fs.readFileSync(path.join(assetDir, name), 'utf8').trim(), 'base64'));
     made++;
   } catch (e) { console.error('[assets] failed', name, e.message); }
 }
 console.log('[assets] decoded', made, 'file(s)');
 
-/* The app bundle is committed in <120KB text parts (API/arg limits); join them. */
-const pub = path.resolve(__dirname, '..', 'public');
-const appFile = path.join(pub, 'whalechat.html');
-const parts = fs.readdirSync(pub).filter((f) => /^whalechat\.html\.part\d+$/.test(f)).sort();
-if (parts.length && (!fs.existsSync(appFile) || fs.statSync(appFile).size === 0)) {
-  fs.writeFileSync(appFile, parts.map((f) => fs.readFileSync(path.join(pub, f), 'utf8')).join(''));
-  console.log('[assets] assembled whalechat.html from', parts.length, 'parts');
+/* 2. app bundle ------------------------------------------------------------------- */
+function current() {
+  try { return fs.readFileSync(APP, 'utf8'); } catch (e) { return ''; }
 }
+function isCurrent(html) {
+  return html.includes(MARKER) && html.includes("APP_VERSION = '" + VERSION + "'");
+}
+
+(async () => {
+  let html = current();
+  if (isCurrent(html)) {
+    console.log('[app] whalechat.html ' + VERSION + ' already in place');
+  } else {
+    let fetched = '';
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 45000);
+      const res = await fetch(SOURCE, { signal: ctrl.signal, cache: 'no-store' });
+      clearTimeout(t);
+      if (res.ok) fetched = await res.text();
+    } catch (e) { console.error('[app] fetch failed:', e.message); }
+
+    if (fetched.length > 600000 && fetched.includes(MARKER) && fetched.trimEnd().endsWith('</html>')) {
+      fs.writeFileSync(APP, fetched);
+      console.log('[app] installed whalechat.html ' + VERSION + ' (' + fetched.length + ' bytes)');
+      html = fetched;
+    } else {
+      // last resort: the repo's committed parts (previous release)
+      const parts = fs.readdirSync(PUB).filter((f) => /^whalechat\.html\.part\d+$/.test(f)).sort();
+      if (parts.length && !html) {
+        html = parts.map((f) => fs.readFileSync(path.join(PUB, f), 'utf8')).join('');
+        fs.writeFileSync(APP, html);
+        console.log('[app] fell back to', parts.length, 'committed part(s)');
+      } else {
+        console.error('[app] keeping existing bundle — deploy will still start');
+      }
+    }
+  }
+
+  /* 3. sync server must persist the investing collections --------------------------- */
+  const need = ['stocks', 'holdings', 'trades', 'watchlist', 'alerts'];
+  const serverFile = path.join(ROOT, 'server.js');
+  try {
+    let src = fs.readFileSync(serverFile, 'utf8');
+    const m = src.match(/const COLLECTIONS = \[([^\]]*)\];/);
+    if (!m) throw new Error('COLLECTIONS not found');
+    const have = m[1].split(',').map((s) => s.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean);
+    const missing = need.filter((c) => !have.includes(c));
+    if (missing.length) {
+      const next = have.concat(missing).map((c) => "'" + c + "'").join(', ');
+      src = src.replace(m[0], 'const COLLECTIONS = [' + next + '];');
+      fs.writeFileSync(serverFile, src);
+      console.log('[sync] added collections:', missing.join(', '));
+    } else {
+      console.log('[sync] collections already complete');
+    }
+  } catch (e) {
+    console.error('[sync] could not patch server.js:', e.message);
+  }
+
+  /* 4. release metadata ------------------------------------------------------------- */
+  try {
+    const meta = JSON.parse(fs.readFileSync(path.join(PUB, 'version.json'), 'utf8'));
+    if (meta.version !== VERSION) {
+      meta.version = VERSION;
+      meta.build = new Date().toISOString();
+      meta.releasedAt = meta.build;
+      meta.notes = 'WhaleChat ' + VERSION + ' — stock investing dashboard, buy/sell with PIN, watchlist and alerts, admin stock panel. Fixed Add to cart, added save-contact-to-phone.';
+      fs.writeFileSync(path.join(PUB, 'version.json'), JSON.stringify(meta, null, 2));
+      fs.writeFileSync(path.join(PUB, 'release.json'), JSON.stringify(meta, null, 2));
+      console.log('[app] version.json bumped to ' + VERSION);
+    }
+  } catch (e) { console.error('[app] version.json skip:', e.message); }
+})();
