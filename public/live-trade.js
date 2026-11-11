@@ -674,6 +674,193 @@ LT.paintDash = function () {
 /* the dashboard itself */
 INV.viewDash = function (params) { return LT.dash(params); };
 
+/* ============================ admin audit log ============================ */
+const AUDIT = {
+  log(action, detail) {
+    if (!DB) return;
+    if (!Array.isArray(DB.audit)) DB.audit = [];
+    const u = me();
+    DB.audit.unshift({
+      id: uid('au'), at: Date.now(),
+      userId: u ? u.id : null, username: u ? u.username : 'system',
+      action: String(action || 'action'), detail: String(detail || '').slice(0, 200)
+    });
+    if (DB.audit.length > 500) DB.audit.length = 500;
+    try { sync(); } catch (e) {}
+    persist();
+  },
+  list() { return (DB && Array.isArray(DB.audit)) ? DB.audit.slice() : []; }
+};
+
+/* record every admin action that changes the platform (deferred so every
+   handler — including the ones defined further down — is already in place) */
+setTimeout(function () {
+  const wrap = (name, label, describe) => {
+    const orig = App[name];
+    if (typeof orig !== 'function' || orig.__audited) return;
+    const wrapped = function (id, ds) {
+      try { AUDIT.log(label, describe ? describe(id, ds) : (ds && ds.t ? ds.t : (id || ''))); } catch (e) {}
+      return orig.apply(this, arguments);
+    };
+    wrapped.__audited = true;
+    App[name] = wrapped;
+  };
+  wrap('invAdminAdd', 'Stock listed', () => 'new stock added');
+  wrap('invAdminEdit', 'Stock edited', (id, ds) => (ds && ds.t) || '');
+  wrap('invAdminDel', 'Stock deleted', (id, ds) => (ds && ds.t) || '');
+  wrap('invAdminPause', 'Stock trading toggled', (id, ds) => (ds && ds.t) || '');
+  wrap('invAdminFee', 'Trading fee changed', () => {
+    const v = (document.getElementById('ivFeeInput') || {}).value;
+    return v != null ? 'fee → ' + v + '%' : '';
+  });
+  wrap('invAdminBal', 'User balance edited', (id) => {
+    const u = findUser(id); return u ? '@' + u.username : String(id || '');
+  });
+  wrap('ltSaveLeverage', 'Trade leverage changed', () => {
+    const v = (document.getElementById('ltLeverage') || {}).value;
+    return v != null ? 'leverage → ' + v + 'x' : '';
+  });
+  wrap('admPublish', 'Release published to all users', () => APP_VERSION);
+  wrap('admMailSave', 'Email server configured', () => {
+    const f = (document.getElementById('admMailFrom') || {}).value;
+    return f ? 'sender ' + f : 'updated';
+  });
+  wrap('admPushToggle', 'Push notifications toggled for all users', () => {
+    const on = !!(DB.settings && DB.settings.push && DB.settings.push.enabled);
+    return on ? 'turning off' : 'turning on';
+  });
+}, 0);
+
+function ltAuditView() {
+  const rows = AUDIT.list();
+  const tabs = `<div class="admin-nav">${ADMIN_NAV.map(n => {
+    const key = n.href.replace('#/admin', '') || '';
+    return `<a href="${n.href}" class="${key === '/audit' ? 'on' : ''}">${n.label}</a>`;
+  }).join('')}</div>`;
+  const groups = {};
+  rows.forEach(r => { groups[r.action] = (groups[r.action] || 0) + 1; });
+  return `${tabs}
+  <div class="page-head"><div class="between">
+    <div><div class="section-title" style="margin:0">Audit log</div>
+      <div class="tiny muted">Every admin change, newest first</div></div>
+    <span class="badge">${rows.length} entries</span>
+  </div></div>
+  ${rows.length ? `<div class="card"><div class="inv-list">
+    ${rows.slice(0, 120).map(r => `<div class="inv-row" style="align-items:flex-start">
+      <div class="grow" style="min-width:0">
+        <div class="small" style="font-weight:650">${esc(r.action)}${r.detail ? ' · ' + esc(r.detail) : ''}</div>
+        <div class="tiny muted">@${esc(r.username || 'system')} · ${dateLabel(r.at)} ${clockTime(r.at)}</div>
+      </div>
+      <span class="badge">${timeAgo(r.at)}</span></div>`).join('')}
+  </div></div>` : `<div class="card"><div class="inv-empty">${ic('shield', 26)}<p class="small muted">No admin activity recorded yet.</p></div></div>`}`;
+}
+
+const _adminAudit = VIEWS.admin;
+VIEWS.admin = function (parts, params) {
+  if ((parts[1] || '') === 'audit') {
+    const u = me();
+    if (!u || u.role !== 'admin') return `<div class="card empty"><div class="ic">${ic('lock', 26)}</div><h3>Admin access only</h3></div>`;
+    return ltAuditView();
+  }
+  return _adminAudit.apply(this, arguments);
+};
+if (!ADMIN_NAV.some(n => n.key === 'admin-audit')) {
+  ADMIN_NAV.splice(Math.max(0, ADMIN_NAV.length - 2), 0,
+    { key: 'admin-audit', label: 'Audit', icon: 'eye', href: '#/admin/audit' });
+}
+
+/* ===================== vendor earnings + invest view ===================== */
+LT.vendorStats = function (v) {
+  const orders = (DB.orders || []).filter(o => o.vendorId === v.id && !['cancelled', 'refunded'].includes(o.status));
+  const grossUsd = orders.reduce((s, o) => s + (Number(o.totalUsd) || 0), 0);
+  const units = orders.reduce((s, o) => s + (o.items || []).reduce((n, i) => n + (Number(i.qty) || 0), 0), 0);
+  const pending = orders.filter(o => ['processing', 'pending'].includes(o.status)).length;
+  const paidCoins = orders.reduce((s, o) => s + (Number(o.totalCoins) || 0), 0);
+  const u = findUser(v.userId) || {};
+  return { orders: orders.length, grossUsd, units, pending, paidCoins, balance: u.balance || 0 };
+};
+
+function ltVendorInvestCard(v) {
+  const p = LT.summary(v.userId);
+  const stat = (label, value, cls) => `<div><span class="tiny muted">${label}</span>
+    <b class="${cls || ''}">${value}</b></div>`;
+  return `<div class="card mt14">
+    <div class="between" style="align-items:center">
+      <div class="card-title" style="margin:0">Investments</div>
+      <a href="#/invest" class="btn btn-xs btn-soft">${ic('trend', 12)} Open Invest</a>
+    </div>
+    <div class="inv-hero-grid" style="border-top:none;padding-top:2px;margin-top:6px">
+      ${stat('Portfolio value', coins(p.valueCoins) + ' WC')}
+      ${stat('Invested', coins(p.capital) + ' WC')}
+      ${stat('Live earnings', (p.pnl >= 0 ? '+' : '−') + coins(Math.abs(p.pnl)) + ' WC', p.pnl >= 0 ? 'up' : 'down')}
+    </div>
+    <div class="tiny muted mt6">${p.live ? p.live + ' live trade' + (p.live === 1 ? '' : 's') + ' running' : 'No live trades'}
+      · ${p.pos.length} position${p.pos.length === 1 ? '' : 's'}</div>
+  </div>`;
+}
+
+const _vendorView = VIEWS.vendor;
+VIEWS.vendor = function (parts, params) {
+  const html = _vendorView.apply(this, arguments);
+  try {
+    if (parts[1]) return html;
+    const v = vendorOf(me().id);
+    if (!v) return html;
+    const st = LT.vendorStats(v);
+    const card = `<div class="card mt14">
+      <div class="card-title">Store earnings</div>
+      <div class="inv-hero-grid" style="border-top:none;padding-top:2px;margin-top:6px">
+        <div><span class="tiny muted">Gross sales</span><b>${usd(st.grossUsd)}</b></div>
+        <div><span class="tiny muted">Orders</span><b>${st.orders}</b>${st.pending ? `<span class="tiny muted"> · ${st.pending} open</span>` : ''}</div>
+        <div><span class="tiny muted">Units sold</span><b>${st.units}</b></div>
+      </div>
+      <div class="between mt10"><span class="tiny muted">Credited to your wallet</span>
+        <b class="small">${coins(st.paidCoins)} WC</b></div>
+      <div class="between mt6"><span class="tiny muted">Wallet balance</span>
+        <b class="small">${coins(st.balance)} WC</b></div>
+    </div>` + ltVendorInvestCard(v);
+    return html + card;
+  } catch (e) { console.error('vendor card', e); return html; }
+};
+
+/* ======================= per-stock P&L history =========================== */
+LT.stockHistory = function (ticker) {
+  const u = me(); if (!u) return '';
+  const rows = (DB.trades || []).filter(t => t.userId === u.id && t.ticker === ticker && t.type === 'live' && t.status !== 'Open')
+    .sort((a, b) => (b.closedAt || 0) - (a.closedAt || 0));
+  const spot = (DB.trades || []).filter(t => t.userId === u.id && t.ticker === ticker && t.type !== 'live' && t.status === 'Completed')
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  if (!rows.length && !spot.length) return '';
+  const realized = rows.reduce((s, t) => s + (Number(t.pnlCoins) || 0), 0)
+                 + spot.reduce((s, t) => s + usdToCoins(Number(t.plUsd) || 0), 0);
+  const wins = rows.filter(t => (Number(t.pnlCoins) || 0) > 0).length;
+  const losses = rows.filter(t => (Number(t.pnlCoins) || 0) < 0).length;
+  const best = rows.reduce((m, t) => Math.max(m, Number(t.pnlCoins) || 0), 0);
+  const worst = rows.reduce((m, t) => Math.min(m, Number(t.pnlCoins) || 0), 0);
+  const total = rows.length + spot.length;
+  return `<div class="card mt14">
+    <div class="between"><div class="card-title" style="margin:0">Your ${esc(ticker)} history</div>
+      <span class="badge ${realized >= 0 ? 'badge-success' : 'badge-danger'}">
+        ${realized >= 0 ? '+' : '−'}${coins(Math.abs(realized))} WC realised</span></div>
+    <div class="inv-hero-grid" style="border-top:none;padding-top:2px;margin-top:6px">
+      <div><span class="tiny muted">Closed trades</span><b>${total}</b></div>
+      <div><span class="tiny muted">Win / loss</span><b>${wins} / ${losses}</b></div>
+      <div><span class="tiny muted">Best / worst</span>
+        <b class="tiny">+${coins(best)} / −${coins(Math.abs(worst))}</b></div>
+    </div>
+    <div class="inv-list mt10">
+      ${rows.slice(0, 6).map(t => `<div class="inv-row" style="align-items:flex-start">
+        <div class="grow" style="min-width:0">
+          <div class="small" style="font-weight:650">${t.side === 'short' ? 'Short' : 'Long'} ${t.leverage}×
+            <span class="tiny muted">· ${esc(t.closeReason || 'closed')}</span></div>
+          <div class="tiny muted">${coins(t.capitalCoins)} WC · ${usd(t.entryPrice)} → ${usd(t.exitPrice || 0)} · ${dateLabel(t.closedAt)}</div>
+        </div>
+        <span class="tiny ${(t.pnlCoins || 0) >= 0 ? 'up' : 'down'}">${(t.pnlCoins || 0) >= 0 ? '+' : '−'}${coins(Math.abs(t.pnlCoins || 0))} WC</span>
+      </div>`).join('')}
+    </div>
+  </div>`;
+};
+
 /* ===================== admin → servers & publishing ===================== */
 App.admPublish = async function () {
   if (!await confirmDialog({ title: 'Publish this version to everyone?',
@@ -946,7 +1133,7 @@ function ltMountStock() {
 
   const host = document.createElement('div');
   host.id = 'ltTicketMount';
-  host.innerHTML = LT.ticketHTML(ticker) + LT.activeBlock();
+  host.innerHTML = LT.ticketHTML(ticker) + LT.activeBlock() + LT.stockHistory(ticker);
 
   /* the old spot panel (Market/Limit + Buy stock/Sell) is replaced entirely:
      a trade starts immediately and is exited with Take profit / Take loss. */
