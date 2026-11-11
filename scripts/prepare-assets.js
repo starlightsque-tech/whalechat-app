@@ -10,7 +10,7 @@ const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 const PUB = path.join(ROOT, 'public');
 const APP = path.join(PUB, 'whalechat.html');
-const VERSION = '3.9.0';
+const RELEASE = { version: '3.9.2', build: '2026-11-11T16:40:00Z' };
 const MARKER = 'WhaleChat Invest';
 /* 1. committed base64 image assets ------------------------------------------------ */
 const assetDir = path.join(PUB, 'assets');
@@ -52,30 +52,41 @@ function isCurrent(html) {
     }
   }
 
-  /* 2b. live chat: remove the hardcoded Tawk embed, inject the controlled loader -- */
+  /* 2b. app modules injected from the repo (live chat + live trades) ---------- */
+  const MODULES = [
+    { file: 'tawk-control.js', marker: 'wc-tawk-control' },
+    { file: 'live-trade.js', marker: 'wc-live-trade' }
+  ];
   try {
-    const before = fs.readFileSync(APP, 'utf8');
-    let page = before;
+    let page = fs.readFileSync(APP, 'utf8');
+    const before = page;
     page = page.replace(/<!--Start of Tawk\.to Script-->[\s\S]*?<!--End of Tawk\.to Script-->\s*/g, '');
     // their server injects this marker per request; keep the file free of it so copies never stack up
     page = page.replace(/<script>window\.__WC_SERVER__[^\n]*<\/script>\s*/g, '');
-    const ctrl = path.join(PUB, 'tawk-control.js');
-    if (fs.existsSync(ctrl)) {
-      const js = fs.readFileSync(ctrl, 'utf8');
-      const block = '<script>\n/* wc-tawk-control */\n' + js + '\n</script>';
-      if (/<script>\s*\/\* wc-tawk-control \*\/[\s\S]*?<\/script>/.test(page)) {
-        page = page.replace(/<script>\s*\/\* wc-tawk-control \*\/[\s\S]*?<\/script>/, function () { return block; });
-        console.log('[chat] live chat loader refreshed');
-      } else {
-        page = page.replace('</body>', block + '\n</body>');
-        console.log('[chat] live chat loader injected');
-      }
+
+    for (const mod of MODULES) {
+      const src = path.join(PUB, mod.file);
+      if (!fs.existsSync(src)) { console.error('[app] missing module ' + mod.file); continue; }
+      const js = fs.readFileSync(src, 'utf8');
+      const block = '<script>\n/* ' + mod.marker + ' */\n' + js + '\n</script>';
+      const re = new RegExp('<script>\\s*\\/\\* ' + mod.marker + ' \\*\\/[\\s\\S]*?<\\/script>');
+      if (re.test(page)) { page = page.replace(re, function () { return block; }); console.log('[app] ' + mod.file + ' refreshed'); }
+      else { page = page.replace('</body>', block + '\n</body>'); console.log('[app] ' + mod.file + ' injected'); }
     }
     if (page !== before) {
       fs.writeFileSync(APP, page);
-      console.log('[chat] removed hardcoded Tawk embed (' + before.length + ' -> ' + page.length + ' bytes)');
+      console.log('[app] bundle finalised (' + before.length + ' -> ' + page.length + ' bytes)');
     }
-  } catch (e) { console.error('[chat] patch failed:', e.message); }
+  } catch (e) { console.error('[app] module injection failed:', e.message); }
+
+  /* 2d. stamp the release version (single lever for shipping a new build) ------ */
+  try {
+    let page = fs.readFileSync(APP, 'utf8');
+    const before = page;
+    page = page.replace(/const APP_VERSION = '[^']*';/, "const APP_VERSION = '" + RELEASE.version + "';")
+               .replace(/const APP_BUILD = '[^']*';/, "const APP_BUILD = '" + RELEASE.build + "';");
+    if (page !== before) { fs.writeFileSync(APP, page); console.log('[app] stamped ' + RELEASE.version + ' @ ' + RELEASE.build); }
+  } catch (e) { console.error('[app] stamp failed:', e.message); }
 
   /* 3. sync server must persist the investing collections --------------------------- */
   const need = ['stocks', 'holdings', 'trades', 'watchlist', 'alerts'];
@@ -124,10 +135,10 @@ function isCurrent(html) {
   /* 5. release metadata — mirror the build stamp baked into the bundle ------- */
   try {
     const app = fs.readFileSync(APP, 'utf8');
-    const ver = (app.match(/APP_VERSION = '([^']+)'/) || [])[1] || VERSION;
-    const build = (app.match(/APP_BUILD = '([^']+)'/) || [])[1] || new Date().toISOString();
+    const ver = RELEASE.version || (app.match(/APP_VERSION = '([^']+)'/) || [])[1];
+    const build = RELEASE.build || (app.match(/APP_BUILD = '([^']+)'/) || [])[1];
     const meta = { version: ver, build, file: 'whalechat.html',
-      notes: 'WhaleChat ' + ver + ' — stock investing dashboard, live chat switch, in-app update prompt, self-contained builds.',
+      notes: 'WhaleChat ' + ver + ' — live trades with real-time P/L, take-profit and stop-loss, timed auto-close, charts on every holding.',
       releasedAt: build, minimum: '3.0.0' };
     fs.writeFileSync(path.join(PUB, 'version.json'), JSON.stringify(meta, null, 2));
     fs.writeFileSync(path.join(PUB, 'release.json'), JSON.stringify(meta, null, 2));
