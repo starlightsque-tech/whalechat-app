@@ -12,15 +12,6 @@ const PUB = path.join(ROOT, 'public');
 const APP = path.join(PUB, 'whalechat.html');
 const VERSION = '3.9.0';
 const MARKER = 'WhaleChat Invest';
-/* Where to get the current bundle. Own service first (a failed deploy keeps the
-   previous container serving, so this is safe), then the known-good mirror. */
-const SOURCES = [
-  process.env.APP_SOURCE_URL,
-  process.env.APP_URL ? new URL('/whalechat.html', process.env.APP_URL).toString() : null,
-  'https://whalechat-qkgd.onrender.com/whalechat.html',
-  'https://whalechat-mldp.onrender.com/whalechat.html'
-].filter(Boolean);
-
 /* 1. committed base64 image assets ------------------------------------------------ */
 const assetDir = path.join(PUB, 'assets');
 let made = 0;
@@ -44,42 +35,20 @@ function isCurrent(html) {
 }
 
 (async () => {
-  let html = current();
-  if (isCurrent(html)) {
-    console.log('[app] whalechat.html ' + VERSION + ' already in place');
-  } else {
-    let fetched = '';
-    for (const src of SOURCES) {
-      try {
-        const ctrl = new AbortController();
-        const t = setTimeout(() => ctrl.abort(), 30000);
-        const res = await fetch(src, { signal: ctrl.signal, cache: 'no-store' });
-        clearTimeout(t);
-        if (!res.ok) { console.error('[app] ' + src + ' -> HTTP ' + res.status); continue; }
-        const body = await res.text();
-        if (body.length > 600000 && body.includes(MARKER) && body.trimEnd().endsWith('</html>')) {
-          fetched = body;
-          console.log('[app] fetched bundle from ' + src);
-          break;
-        }
-        console.error('[app] ' + src + ' did not look like a bundle');
-      } catch (e) { console.error('[app] ' + src + ' failed: ' + e.message); }
-    }
+  /* Assemble the app from the committed parts — builds are hermetic, no network. */
+  const parts = fs.readdirSync(PUB)
+    .filter((f) => /^whalechat\.html\.part\d+$/.test(f))
+    .sort((x, y) => parseInt(x.match(/(\d+)$/)[1], 10) - parseInt(y.match(/(\d+)$/)[1], 10));
 
-    if (fetched.length > 600000 && fetched.includes(MARKER) && fetched.trimEnd().endsWith('</html>')) {
-      fs.writeFileSync(APP, fetched);
-      console.log('[app] installed whalechat.html ' + VERSION + ' (' + fetched.length + ' bytes)');
-      html = fetched;
+  if (!parts.length) {
+    console.error('[app] no committed parts found — keeping whatever is already there');
+  } else {
+    const html = parts.map((f) => fs.readFileSync(path.join(PUB, f), 'utf8')).join('');
+    if (!html.trimEnd().endsWith('</html>')) {
+      console.error('[app] parts look incomplete (' + html.length + ' bytes) — not writing a broken bundle');
     } else {
-      // last resort: the repo's committed parts (previous release)
-      const parts = fs.readdirSync(PUB).filter((f) => /^whalechat\.html\.part\d+$/.test(f)).sort();
-      if (parts.length && !html) {
-        html = parts.map((f) => fs.readFileSync(path.join(PUB, f), 'utf8')).join('');
-        fs.writeFileSync(APP, html);
-        console.log('[app] fell back to', parts.length, 'committed part(s)');
-      } else {
-        console.error('[app] keeping existing bundle — deploy will still start');
-      }
+      fs.writeFileSync(APP, html);
+      console.log('[app] assembled whalechat.html from ' + parts.length + ' committed part(s) (' + html.length + ' bytes)');
     }
   }
 
@@ -152,17 +121,16 @@ function isCurrent(html) {
     }
   } catch (e) { console.error('[mail] could not patch email.js:', e.message); }
 
-  /* 5. release metadata ------------------------------------------------------------- */
+  /* 5. release metadata — mirror the build stamp baked into the bundle ------- */
   try {
-    const meta = JSON.parse(fs.readFileSync(path.join(PUB, 'version.json'), 'utf8'));
-    if (meta.version !== VERSION) {
-      meta.version = VERSION;
-      meta.build = new Date().toISOString();
-      meta.releasedAt = meta.build;
-      meta.notes = 'WhaleChat ' + VERSION + ' — stock investing dashboard, buy/sell with PIN, watchlist and alerts, admin stock panel. Fixed Add to cart, added save-contact-to-phone.';
-      fs.writeFileSync(path.join(PUB, 'version.json'), JSON.stringify(meta, null, 2));
-      fs.writeFileSync(path.join(PUB, 'release.json'), JSON.stringify(meta, null, 2));
-      console.log('[app] version.json bumped to ' + VERSION);
-    }
+    const app = fs.readFileSync(APP, 'utf8');
+    const ver = (app.match(/APP_VERSION = '([^']+)'/) || [])[1] || VERSION;
+    const build = (app.match(/APP_BUILD = '([^']+)'/) || [])[1] || new Date().toISOString();
+    const meta = { version: ver, build, file: 'whalechat.html',
+      notes: 'WhaleChat ' + ver + ' — stock investing dashboard, live chat switch, in-app update prompt, self-contained builds.',
+      releasedAt: build, minimum: '3.0.0' };
+    fs.writeFileSync(path.join(PUB, 'version.json'), JSON.stringify(meta, null, 2));
+    fs.writeFileSync(path.join(PUB, 'release.json'), JSON.stringify(meta, null, 2));
+    console.log('[app] release metadata -> ' + ver + ' @ ' + build);
   } catch (e) { console.error('[app] version.json skip:', e.message); }
 })();
