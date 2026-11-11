@@ -1,1546 +1,1091 @@
-nc(); closeModal(); toast('Bank method saved', 'ok'); render();
+e: 'Current PIN', sub: 'Confirm your existing withdrawal PIN' });
+    if (!old) return;
+    if (await hash('pin::' + old) !== u.pin) return toast('Incorrect PIN', 'err');
+  }
+  const np = await askPin({ title: 'New withdrawal PIN', sub: 'Choose 4–6 digits', confirm: true });
+  if (!np) return;
+  u.pin = await hash('pin::' + np);
+  sync(); toast('Withdrawal PIN updated', 'ok'); render();
 };
-App.bankDel = async function (id) {
-  if (!await confirmDialog({ title: 'Remove bank method?', danger: true, ok: 'Remove' })) return;
-  DB.settings.banks = (DB.settings.banks || []).filter(b => b.id !== id); sync(); render();
+App.supportChat = function () {
+  const admin = DB.users.find(x => x.role === 'admin');
+  if (!admin) return toast('Support unavailable', 'err');
+  const u = me();
+  if (!isContact(u.id, admin.id)) DB.contacts.push({ id: uid('ct'), ownerId: u.id, userId: admin.id, createdAt: Date.now() });
+  if (!isContact(admin.id, u.id)) DB.contacts.push({ id: uid('ct'), ownerId: admin.id, userId: u.id, createdAt: Date.now() });
+  sync(); go('chat/' + admin.id);
 };
-App.networkAdd = async function () {
-  const n = await promptDialog({ title: 'Add USDT network', label: 'Network name', placeholder: 'e.g. TON' });
-  if (!n) return;
-  DB.settings.networks = DB.settings.networks || [];
-  if (!DB.settings.networks.includes(n)) DB.settings.networks.push(n);
-  sync(); toast('Network added', 'ok'); render();
+/* =========================================================================
+   Admin console
+   ========================================================================= */
+VIEWS.admin = function (parts, params) {
+  const u = me();
+  if (!u || u.role !== 'admin') {
+    return `<div class="card empty"><div class="ic">${ic('lock', 26)}</div><h3>Admin access only</h3><p>This area is restricted to WhaleChat administrators.</p><a href="#/home" class="btn btn-primary">Back to app</a></div>`;
+  }
+  const sub = parts[1] || '';
+  const tabs = `<div class="admin-nav">
+    ${ADMIN_NAV.map(n => {
+      const key = n.href.replace('#/admin', '') || '';
+      const on = (sub === '' && key === '') || (key && sub === key.replace('/', ''));
+      return `<a href="${n.href}" class="${on ? 'on' : ''}">${n.label}</a>`;
+    }).join('')}
+  </div>`;
+  let body = '';
+  if (!sub) body = adminOverview();
+  else if (sub === 'users') body = adminUsers(params);
+  else if (sub === 'vendors') body = adminVendors();
+  else if (sub === 'vendor-requests') body = adminVendorRequests();
+  else if (sub === 'products') body = adminProducts();
+  else if (sub === 'orders') body = adminOrders();
+  else if (sub === 'refunds') body = adminRefunds();
+  else if (sub === 'deposits') body = adminDeposits();
+  else if (sub === 'withdrawals') body = adminWithdrawals();
+  else if (sub === 'notifications') body = adminNotifications();
+  else if (sub === 'release') body = adminRelease();
+  else if (sub === 'bonuses') body = adminBonuses();
+  else if (sub === 'email') body = adminEmail();
+  else if (sub === 'settings') body = adminSettings();
+  else if (sub === 'chat') body = adminChat();
+  else body = adminOverview();
+  return `<div class="page-head"><div><span class="badge badge-accent mb10">${ic('shield', 12)} Admin console</span>
+      <h1 style="font-size:24px">${esc(ADMIN_NAV.find(n => (n.href === '#/admin' + (sub ? '/' + sub : '')))?.label || 'Overview')}</h1>
+      <p>Manage users, vendors, orders, products and payments.</p></div>
+      <div class="row gap8"><a href="#/home" class="btn btn-ghost btn-sm">${ic('chat', 14)} Open chats</a>
+      <a href="#/admin/notifications" class="btn btn-primary btn-sm">${ic('bell', 14)} Send notice</a></div></div>
+    ${tabs}${body}`;
 };
-App.networkDel = async function (n) {
-  if (!await confirmDialog({ title: 'Remove network?', body: n, danger: true, ok: 'Remove' })) return;
-  DB.settings.networks = (DB.settings.networks || []).filter(x => x !== n); sync(); render();
-};
-App.editNetworks = function () {
-  openModal(modalShell('USDT withdrawal networks', `
-    <div class="row wrap gap8 mb16">${(DB.settings.networks || []).map(n => `<span class="badge" style="padding:7px 10px">${esc(n)}
-      <button data-act="network-del" data-id="${esc(n)}" style="color:var(--danger);margin-left:4px">${ic('x', 11)}</button></span>`).join('')}</div>
-    <div class="row gap8"><input class="input" id="nnInput" placeholder="New network name"/><button class="btn btn-primary" data-act="network-add-inline">Add</button></div>
-    <div class="help mt6">Shown in the user withdrawal dropdown.</div>`,
-    `<button class="btn btn-ghost" data-close style="width:100%">Done</button>`), { width: '420px' });
-};
-App.networkAddInline = function () {
-  const v = document.getElementById('nnInput').value.trim();
-  if (!v) return;
-  DB.settings.networks = DB.settings.networks || [];
-  if (!DB.settings.networks.includes(v)) DB.settings.networks.push(v);
-  sync(); closeModal(); toast('Network added', 'ok'); render();
-};
-App.adminChangePassword = function () {
-  openModal(modalShell('Change admin password', `
-    ${field('Current password', 'apOld', { type: 'password', icon: 'lock' })}
-    ${field('New password', 'apNew', { type: 'password', icon: 'lock', help: 'At least 8 characters' })}
-    ${field('Confirm new password', 'apNew2', { type: 'password', icon: 'lock' })}`,
-    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="admin-save-password">Update password</button>`));
-};
-App.adminSavePassword = async function () {
-  const u = me(); clearErrors();
-  const oldp = document.getElementById('apOld').value;
-  const n1 = document.getElementById('apNew').value, n2 = document.getElementById('apNew2').value;
-  if (await hash(oldp) !== u.pass) return formError('apOld', 'Current password is incorrect');
-  if (n1.length < 8) return formError('apNew', 'Use at least 8 characters');
-  if (n1 !== n2) return formError('apNew2', 'Passwords do not match');
-  u.pass = await hash(n1);
-  sync(); closeModal(); toast('Admin password updated', 'ok');
+let ADMIN_MAINT_TIMER = null;
+AFTER.admin = function (parts) {
+  const sub = parts[1] || '';
+  clearInterval(ADMIN_MAINT_TIMER);
+  if (sub === 'settings') {
+    ADMIN_MAINT_TIMER = setInterval(() => {
+      const el = document.getElementById('adminMaintRemaining');
+      if (!el) { clearInterval(ADMIN_MAINT_TIMER); return; }
+      const mi = maintenanceInfo();
+      if (!mi.active) { clearInterval(ADMIN_MAINT_TIMER); render(); return; }
+      const c = fmtCountdown(mi.until - Date.now());
+      el.textContent = (c.d ? c.d + 'd ' : '') + c.h + ':' + c.m + ':' + c.s;
+    }, 1000);
+  }
+  if (sub === 'products') bindProductForm();
+  if (sub === 'users') {
+    const s = document.getElementById('adminUserSearch');
+    if (s) s.oninput = () => { ADMIN_USER_Q = s.value.toLowerCase(); render(); const n = document.getElementById('adminUserSearch'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } };
+  }
+  if (sub === 'settings') bindSettings();
+  if (sub === 'release') loadReleasePanel();
 };
 
-/* ---------------- admin support chat ---------------- */
-function adminChat() {
+/* ---------------- release / version panel ---------------- */
+function adminRelease() {
+  const notes = DB.settings.releaseNotes || {};
+  return `<div class="grid-kpi k4 mb16">
+      <div class="kpi"><div class="ic">${ic('tag', 15)}</div><div class="v" style="font-size:17px">${esc(APP_VERSION)}</div><div class="k">App version</div></div>
+      <div class="kpi"><div class="ic">${ic('refresh', 15)}</div><div class="v" style="font-size:13px;letter-spacing:0" id="relServerBuild">Checking…</div><div class="k">Published build</div></div>
+      <div class="kpi"><div class="ic">${ic('clock', 15)}</div><div class="v" style="font-size:17px" id="relUptime">—</div><div class="k">Server uptime</div></div>
+      <div class="kpi"><div class="ic">${ic('users', 15)}</div><div class="v" style="font-size:17px" id="relClients">—</div><div class="k">Live tabs connected</div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1.1fr .9fr;gap:16px" class="dash2">
+      <div class="card">
+        <div class="between wrap gap10">
+          <div><h3 style="font-size:15px">Release status</h3>
+            <p class="tiny muted mt6">This device runs one self-contained build. Update checks and forced refreshes keep every user on the latest release.</p></div>
+          <span id="relBadge" class="badge">Checking…</span>
+        </div>
+        <div class="mt16">
+          <div class="kv"><span class="k">This device build</span><span class="v mono" style="font-size:12px">${esc(APP_BUILD)}</span></div>
+          <div class="kv"><span class="k">Published build</span><span class="v mono" style="font-size:12px" id="relServerBuildRow">—</span></div>
+          <div class="kv"><span class="k">Database revision</span><span class="v" id="relRev">—</span></div>
+          <div class="kv"><span class="k">Push devices registered</span><span class="v" id="relDevices">—</span></div>
+          <div class="kv"><span class="k">Sync mode</span><span class="v">${Remote.enabled ? 'Cross-device' : 'Local only'}</span></div>
+          <div class="kv"><span class="k">App URL</span><span class="v"><a href="${esc(appLink())}" class="link">${esc(appLink())}</a></span></div>
+          <div class="kv"><span class="k">Public URL</span><span class="v" id="relPublicUrl">${esc((DB.settings && DB.settings.publicUrl) || 'not set')}</span></div>
+        </div>
+        <div class="field mt14"><label class="label">Public app URL</label>
+          <input class="input" id="publicAppUrl" placeholder="https://chat.yourdomain.com" value="${esc((DB.settings && DB.settings.publicUrl) || '')}"/>
+          <div class="help">Your permanent HTTPS domain. Stored on the server and shown in release/health data.</div>
+        </div>
+        <div class="row gap8 wrap mt6">
+          <button class="btn btn-primary btn-sm" data-act="save-public-url">${ic('check', 14)} Save public URL</button>
+          <button class="btn btn-ghost btn-sm" data-act="admin-check-updates">${ic('refresh', 14)} Check for updates</button>
+          <button class="btn btn-ghost btn-sm" data-act="admin-reload-all">${ic('send', 14)} Force refresh all devices</button>
+          <button class="btn btn-ghost btn-sm" data-act="admin-copy-release">${ic('copy', 14)} Copy version.json</button>
+        </div>
+        <div class="tiny muted mt10" style="line-height:1.6">“Force refresh” asks every open app to clear its cache and reload the newest build. Closed or offline apps update automatically the next time they open.</div>
+      </div>
+      <div class="card">
+        <div class="between"><h3 style="font-size:15px">Release notes</h3>
+          <span class="tiny muted">${notes.updatedAt ? 'updated ' + timeAgo(notes.updatedAt) + ' ago' : 'not published yet'}</span></div>
+        <p class="tiny muted mt6">Shown here and in the update prompt so users know what changed.</p>
+        <div class="field mt14"><label class="label">Version label</label>
+          <input class="input" id="relVersion" value="${esc(notes.version || APP_VERSION)}" placeholder="e.g. 3.2.0"/></div>
+        <div class="field"><label class="label">What's new</label>
+          <textarea class="input" id="relNotes" style="min-height:120px" placeholder="Short summary of this release…">${esc(notes.notes || '')}</textarea></div>
+        <button class="btn btn-primary btn-sm" data-act="save-release-notes">${ic('check', 14)} Publish release notes</button>
+      </div>
+    </div>
+    <div class="card mt16">
+      <div class="between wrap gap10">
+        <div><h3 style="font-size:15px">Data safety</h3>
+          <p class="tiny muted mt6">Every release replaces only the app files. Accounts, wallets, orders and chats live in the database directory and are backed up automatically.</p></div>
+        <span id="relDataBadge" class="badge">Checking…</span>
+      </div>
+      <div class="mt14" id="relDataInfo">
+        <div class="kv"><span class="k">Registered accounts</span><span class="v" id="relDataUsers">—</span></div>
+        <div class="kv"><span class="k">Automatic backups</span><span class="v" id="relDataBackups">—</span></div>
+        <div class="kv"><span class="k">Last backup</span><span class="v" id="relDataLast">—</span></div>
+        <div class="kv"><span class="k">Storage</span><span class="v" id="relDataStore">—</span></div>
+      </div>
+      <div class="row gap8 wrap mt14">
+        <button class="btn btn-primary btn-sm" data-act="admin-backup-now">${ic('download', 14)} Backup now</button>
+        <button class="btn btn-ghost btn-sm" data-act="admin-backup-download">${ic('link', 14)} Download backup</button>
+        <button class="btn btn-ghost btn-sm" data-act="admin-backup-restore">${ic('refresh', 14)} Restore from file</button>
+      </div>
+      <div class="tiny muted mt10" style="line-height:1.6">Restoring is manual and confirmed — publishing a build never deletes or replaces user accounts.</div>
+    </div>
+    <div class="card mt16">
+      <h3 style="font-size:15px">Deployment</h3>
+      <p class="tiny muted mt6">The whole product is one <b>whalechat.html</b> plus <b>server.js</b>. A new release means replacing those files — every installed app updates itself.</p>
+      <div class="grid2 mt16" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="panel" style="padding:12px">
+          <div class="tiny" style="font-weight:700;color:var(--accent)">This deployment</div>
+          <div class="kv mt6"><span class="k">Origin</span><span class="v">${esc(location.origin)}</span></div>
+          <div class="kv"><span class="k">Sync server</span><span class="v">${Remote.enabled ? 'connected' : 'local mode'}</span></div>
+          <div class="kv"><span class="k">Build file</span><span class="v">whalechat.html</span></div>
+        </div>
+        <div class="panel" style="padding:12px">
+          <div class="tiny" style="font-weight:700;color:var(--accent)">Publish a new version</div>
+          <div class="tiny muted mt6" style="line-height:1.8">1. Replace <b>whalechat.html</b> + <b>version.json</b><br/>2. Restart <b>server.js</b><br/>3. Users update automatically (or use “Force refresh”)</div>
+        </div>
+      </div>
+    </div>
+    <style>@media(max-width:860px){.dash2{grid-template-columns:1fr!important}}</style>`;
+}
+
+async function loadReleasePanel() {
+  const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
+  try {
+    const r = await fetch('/api/release?t=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) throw new Error('no-server');
+    const d = await r.json();
+    const same = d.build && d.build === APP_BUILD;
+    set('relServerBuild', d.build ? d.build.replace('T', ' ').replace('Z', '') : 'unknown');
+    set('relServerBuildRow', d.build || 'unknown');
+    set('relUptime', Math.floor((d.uptimeSec || 0) / 3600) + 'h ' + Math.floor(((d.uptimeSec || 0) % 3600) / 60) + 'm');
+    set('relClients', String(d.clients || 0));
+    set('relRev', String(d.rev || 0));
+    set('relDevices', String(d.devices || 0));
+    const badge = document.getElementById('relBadge');
+    if (badge) {
+      badge.className = 'badge ' + (same ? 'badge-success' : 'badge-warn');
+      badge.textContent = same ? 'Up to date' : 'Update available';
+    }
+    try {
+      const bk = await fetch('/api/backup', { cache: 'no-store' }).then(x => x.json());
+      const du = document.getElementById('relDataUsers'); if (du) du.textContent = String(bk.users || 0);
+      const db = document.getElementById('relDataBackups'); if (db) db.textContent = (bk.count || 0) + ' snapshot' + ((bk.count || 0) === 1 ? '' : 's');
+      const dl = document.getElementById('relDataLast'); if (dl) dl.textContent = bk.last ? new Date(bk.last).toLocaleString() : 'none yet';
+      const ds = document.getElementById('relDataStore'); if (ds) ds.textContent = bk.persistent ? 'Persistent disk' : (bk.recoverable ? 'Ephemeral storage + persistent backups' : 'Ephemeral — set DATA_DIR to a disk');
+      const dgb = document.getElementById('relDataBadge');
+      if (dgb) {
+        if (bk.persistent) { dgb.className = 'badge badge-success'; dgb.textContent = 'Protected'; }
+        else if (bk.recoverable) { dgb.className = 'badge badge-success'; dgb.textContent = 'Protected via backups'; }
+        else { dgb.className = 'badge badge-danger'; dgb.textContent = 'At risk'; }
+      }
+    } catch (e2) {}
+  } catch (e) {
+    set('relServerBuild', 'local mode');
+    set('relServerBuildRow', 'unavailable');
+    set('relRev', '—'); set('relDevices', '—'); set('relUptime', '—'); set('relClients', '—');
+    const badge = document.getElementById('relBadge');
+    if (badge) { badge.className = 'badge badge-warn'; badge.textContent = 'No sync server'; }
+  }
+}
+
+App.saveReleaseNotes = function () {
+  const v = document.getElementById('relVersion');
+  const n = document.getElementById('relNotes');
+  DB.settings.releaseNotes = {
+    version: (v && v.value.trim()) || APP_VERSION,
+    notes: (n && n.value.trim()) || '',
+    updatedAt: Date.now(),
+    by: me().username
+  };
+  sync();
+  toast('Release notes published', 'ok');
+  render();
+};
+
+App.adminReloadAll = async function () {
+  if (!Remote.enabled) return toast('Connect the sync server to refresh remote devices', 'err');
+  if (!await confirmDialog({ title: 'Force refresh all devices?', body: 'Every app that is open right now will clear its cache and reload the latest build. Users may lose an unsent draft.', ok: 'Refresh everyone', danger: true })) return;
+  try {
+    const r = await fetch('/api/reload', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ build: APP_BUILD, version: APP_VERSION })
+    }).then(x => x.json());
+    toast('Refresh signal sent to ' + (r.clients || 0) + ' connected device(s)', 'ok');
+  } catch (e) { toast('Could not reach the server', 'err'); }
+};
+
+App.adminCheckUpdates = function () {
+  checkForUpdates(true);
+  setTimeout(loadReleasePanel, 1500);
+};
+
+App.adminCopyRelease = function () {
+  copyText(JSON.stringify({ version: APP_VERSION, build: APP_BUILD, file: 'whalechat.html' }, null, 2));
+};
+
+function adminOverview() {
   const users = DB.users.filter(u => u.role !== 'admin');
-  const rows = users.map(u => {
-    const msgs = DB.messages.filter(m => m.chatId === chatId(u.id, 'usr_admin'));
-    return { u, last: msgs[msgs.length - 1], count: msgs.filter(m => m.from === u.id && m.status !== 'seen').length };
-  }).sort((a, b) => (b.last ? b.last.createdAt : 0) - (a.last ? a.last.createdAt : 0));
+  const vendors = DB.vendors;
+  const orders = DB.orders;
+  const revenueUsd = orders.reduce((s, o) => s + o.totalUsd, 0);
+  const pendingW = DB.withdrawals.filter(w => w.status === 'pending');
+  const pendingD = DB.deposits.filter(d => d.status === 'pending');
+  const pendingO = orders.filter(o => o.status === 'processing');
+  const totalDeposits = DB.deposits.filter(d => d.status === 'approved').reduce((s, d) => s + d.usd, 0);
+  return `<div class="grid-kpi k4 mb16">
+      ${[['Total users', fmtNum(users.length), 'users'], ['Total vendors', fmtNum(vendors.length), 'store'],
+         ['Total orders', fmtNum(orders.length), 'truck'], ['Total revenue', usd(revenueUsd), 'trend'],
+         ['Pending withdrawals', fmtNum(pendingW.length), 'download'], ['Pending deposits', fmtNum(pendingD.length), 'wallet'],
+         ['Pending orders', fmtNum(pendingO.length), 'clock'], ['Pending refunds', fmtNum((DB.refunds || []).filter(r => r.status === 'pending').length), 'refresh']]
+        .map(([k, v, i]) => `<div class="kpi"><div class="ic">${ic(i, 15)}</div><div class="v">${v}</div><div class="k">${k}</div><span class="spark">${ic(i, 54)}</span></div>`).join('')}
+    </div>
+    <div class="card mb16">
+      <div class="between wrap gap10">
+        <div><h3 style="font-size:15px">Access controls</h3>
+          <p class="tiny muted mt6">Password-free sign-in and site-wide maintenance, one tap away.</p></div>
+        <a href="#/admin/settings" class="btn btn-ghost btn-xs">${ic('settings', 12)} Open settings</a>
+      </div>
+      <div class="row wrap gap14 mt14">
+        <div class="panel grow" style="padding:11px 13px;min-width:220px">
+          <div class="between gap10"><div><div class="small" style="font-weight:600">Password-free login</div>
+            <div class="tiny muted mt6">Any password opens a known account</div></div>
+            <div class="switch ${DB.settings.allowAnyPassword ? 'on' : ''}" data-act="toggle-anypass"></div></div>
+        </div>
+        <div class="panel grow" style="padding:11px 13px;min-width:220px">
+          <div class="between gap10"><div><div class="small" style="font-weight:600">Maintenance mode</div>
+            <div class="tiny muted mt6">${maintenanceInfo().active ? 'Active · ends ' + new Date(maintenanceInfo().until).toLocaleTimeString() : 'Site is live for everyone'}</div></div>
+            <div class="switch ${maintenanceInfo().active ? 'on' : ''}" data-act="${maintenanceInfo().active ? 'maint-end' : 'maint-quick'}"></div></div>
+        </div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1.1fr .9fr;gap:16px" class="dash2">
+      <div class="card">
+        <div class="section-title"><h3>Latest orders</h3><a href="#/admin/orders" class="link tiny">View all</a></div>
+        ${orders.slice(0, 5).length ? orders.slice(0, 5).map(o => {
+          const b = findUser(o.buyerId);
+          return `<div class="between" style="padding:9px 0;border-bottom:1px dashed var(--border);gap:10px">
+            <div class="grow" style="min-width:0"><div class="small" style="font-weight:600">${esc(o.ref)} · ${coins(o.totalCoins)} WC</div>
+            <div class="tiny muted ellipsis">${esc(b ? b.fullName : 'Unknown')} · ${o.items.map(i => esc(i.name)).join(', ')}</div></div>
+            <div class="row gap6" style="flex:none">${statusBadge(o.status)}<button class="btn btn-xs btn-ghost" data-act="admin-order" data-id="${o.id}">Open</button></div></div>`;
+        }).join('') : `<div class="empty" style="padding:18px"><p>No orders yet.</p></div>`}
+      </div>
+      <div class="card">
+        <div class="section-title"><h3>Pending withdrawals</h3><a href="#/admin/withdrawals" class="link tiny">Manage</a></div>
+        ${pendingW.slice(0, 4).length ? pendingW.slice(0, 4).map(w => {
+          const b = findUser(w.userId);
+          return `<div class="between" style="padding:9px 0;border-bottom:1px dashed var(--border)">
+            <div><div class="small" style="font-weight:600">${coins(w.coins)} WC · ${esc(w.network)}</div>
+            <div class="tiny muted">${esc(b ? b.username : '')} · ${usd(w.usd)}</div></div>
+            <div class="row gap6"><button class="btn btn-xs btn-primary" data-act="wd-approve" data-id="${w.id}">Approve</button>
+            <button class="btn btn-xs btn-danger" data-act="wd-reject" data-id="${w.id}">Reject</button></div></div>`;
+        }).join('') : `<div class="empty" style="padding:18px"><p>No pending withdrawals.</p></div>`}
+        <div class="divider"></div>
+        <div class="section-title"><h3>Pending deposits</h3><a href="#/admin/deposits" class="link tiny">Manage</a></div>
+        ${pendingD.slice(0, 3).length ? pendingD.slice(0, 3).map(d => {
+          const b = findUser(d.userId);
+          return `<div class="between" style="padding:9px 0;border-bottom:1px dashed var(--border)">
+            <div><div class="small" style="font-weight:600">${usd(d.usd)} · ${coins(d.coins)} WC</div>
+            <div class="tiny muted">${esc(b ? b.username : '')} · ${esc(d.methodName)}</div></div>
+            <div class="row gap6"><button class="btn btn-xs btn-primary" data-act="dep-approve" data-id="${d.id}">Approve</button></div></div>`;
+        }).join('') : `<div class="empty" style="padding:18px"><p>No pending deposits.</p></div>`}
+      </div>
+    </div>
+    <div class="card mt16">
+      <div class="section-title"><h3>Newest users</h3><a href="#/admin/users" class="link tiny">All users</a></div>
+      ${users.slice().sort((a, b) => b.createdAt - a.createdAt).slice(0, 5).map(x => `<div class="between" style="padding:9px 0;border-bottom:1px dashed var(--border)">
+        <div class="row gap10">${avatarHTML(x, 'sm')}<div><div class="small" style="font-weight:600">${esc(x.fullName)}</div><div class="tiny muted">@${esc(x.username)} · ${dateLabel(x.createdAt)}</div></div></div>
+        <div class="row gap8"><span class="small" style="font-weight:600">${coins(x.balance)} WC</span><button class="btn btn-xs btn-ghost" data-act="admin-user" data-id="${x.id}">Manage</button></div></div>`).join('') || '<p class="muted small">No users yet.</p>'}
+    </div>
+    <style>@media(max-width:860px){.dash2{grid-template-columns:1fr!important}}</style>`;
+}
+
+let ADMIN_USER_Q = '';
+function adminUsers(params) {
+  const q = (params.q || ADMIN_USER_Q || '').toLowerCase();
+  const users = DB.users.filter(u => u.role !== 'admin' && (!q || u.fullName.toLowerCase().includes(q) || u.username.toLowerCase().includes(q) || u.email.toLowerCase().includes(q)));
   return `<div class="card">
-    <div class="between mb16"><div><h3 style="font-size:15px">Support inbox</h3><p class="tiny muted mt6">Chat with users and vendors about orders, tracking and payments.</p></div>
-      <span class="badge">${rows.filter(r => r.count).length} unread chats</span></div>
-    ${rows.length ? `<div class="list">${rows.map(({ u, last, count }) => `<div class="list-item" data-act="admin-msg-user" data-id="${u.id}" style="cursor:pointer">
-      <div class="avatar-wrap">${avatarHTML(u, 'sm')}${Presence.isOnline(u.id) ? '<span class="status-dot" style="width:10px;height:10px"></span>' : ''}</div>
-      <div class="grow" style="min-width:0"><div class="small" style="font-weight:600">${esc(u.fullName)} <span class="tiny muted">@${esc(u.username)}</span></div>
-        <div class="tiny muted ellipsis">${last ? esc(previewOf(last)).slice(0, 60) : 'No messages yet'}</div></div>
-      ${count ? `<span class="unread">${count}</span>` : `<span class="tiny muted">${last ? timeAgo(last.createdAt) : ''}</span>`}
-      ${ic('chevron', 15)}</div>`).join('')}</div>` : `<div class="empty"><p>No users to chat with yet.</p></div>`}
+    <div class="between wrap gap10 mb16">
+      <div class="searchbar" style="width:min(100%,320px)">${ic('search', 16)}<input id="adminUserSearch" placeholder="Search users…" value="${esc(q)}"/></div>
+      <div class="row gap8"><span class="badge">${users.length} users</span><button class="btn btn-sm btn-ghost" data-act="admin-export" data-id="users">${ic('download', 14)} Export</button></div>
+    </div>
+    <div class="table-wrap"><table class="tbl"><thead><tr><th>User</th><th>Balance</th><th>Trust</th><th>Status</th><th>Joined</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+      ${users.length ? users.map(x => `<tr>
+        <td><div class="row gap8">${avatarHTML(x, 'sm')}<div><div style="font-weight:600">${esc(x.fullName)} ${vendorOf(x.id) ? '<span class="badge" style="font-size:9px">Vendor</span>' : ''}</div><div class="tiny muted">@${esc(x.username)} · ${esc(x.email)}</div></div></div></td>
+        <td style="font-weight:600">${coins(x.balance)} <span class="tiny muted">WC</span></td>
+        <td>${x.trustScore}/100</td>
+        <td>${x.banned ? '<span class="badge badge-danger">Banned</span>' : '<span class="badge badge-success">Active</span>'}</td>
+        <td class="muted">${dateLabel(x.createdAt)}</td>
+        <td><div class="row gap6" style="justify-content:flex-end">
+          <button class="btn btn-xs btn-ghost" data-act="admin-user" data-id="${x.id}">Manage</button>
+          <button class="btn btn-xs btn-ghost" data-act="admin-msg-user" data-id="${x.id}" title="Support chat">${ic('chat', 12)}</button>
+          <button class="btn btn-xs btn-ghost" data-act="admin-login-as" data-id="${x.id}" title="Log in as user">${ic('key', 12)}</button>
+          <button class="btn btn-xs ${x.banned ? 'btn-soft' : 'btn-danger'}" data-act="admin-ban" data-id="${x.id}">${x.banned ? 'Unban' : 'Ban'}</button>
+          <button class="btn btn-xs btn-danger" data-act="admin-del-user" data-id="${x.id}">${ic('trash', 12)}</button>
+        </div></td></tr>`).join('') : `<tr><td colspan="6" class="center muted" style="padding:30px">No users found</td></tr>`}
+    </tbody></table></div>
   </div>`;
 }
-/* =========================================================================
-   Admin access controls, maintenance mode, impersonation
-   ========================================================================= */
-App.toggleAnyPass = function () {
-  DB.settings.allowAnyPassword = !DB.settings.allowAnyPassword;
-  sync();
-  toast(DB.settings.allowAnyPassword ? 'Password-free login enabled' : 'Password-free login disabled', 'ok');
-  render();
-};
-
-App.maintStart = function () {
-  const minsEl = document.getElementById('maintMinutes');
-  const msgEl = document.getElementById('maintMessage');
-  const mins = Math.max(1, Math.min(10080, Number(minsEl && minsEl.value) || 30));
-  const message = (msgEl && msgEl.value.trim()) || 'WhaleChat is being upgraded to serve you better. We will be back very soon.';
-  const now = Date.now();
-  DB.settings.maintenance = {
-    enabled: true, startedAt: now, until: now + mins * 60000,
-    message, startedBy: me().id
-  };
-  sync();
-  toast('Maintenance mode on — back in ' + mins + ' minute' + (mins === 1 ? '' : 's'), 'ok');
-  render();
-};
-
-App.adminLoginAs = async function (id) {
-  const target = findUser(id);
-  if (!target || target.role === 'admin') return toast('Choose a user or vendor account', 'err');
-  if (!await confirmDialog({
-    title: 'Log in as ' + target.fullName + '?',
-    body: 'You will see WhaleChat exactly as this user sees it, without their password. Your admin session is kept so you can return at any time.',
-    ok: 'Continue as user'
-  })) return;
-  const adminId = me().id;
-  SESSION = { userId: target.id, impersonator: adminId, at: Date.now() };
-  localStorage.setItem(LS_SESSION, JSON.stringify(SESSION));
-  closeModal();
-  toast('Signed in as ' + target.fullName, 'ok');
-  go('home');
-};
-
-App.maintQuick = function () {
-  // one-tap 30 minute maintenance from the overview
-  const now = Date.now();
-  DB.settings.maintenance = {
-    enabled: true, startedAt: now, until: now + 30 * 60000,
-    message: (DB.settings.maintenance && DB.settings.maintenance.message) || 'WhaleChat is being upgraded to serve you better. We will be back very soon.',
-    startedBy: me().id
-  };
-  sync();
-  toast('Maintenance mode on for 30 minutes — adjust it in settings', 'ok');
-  render();
-};
-
-/* ---------------- refund approvals ---------------- */
-App.refundApprove = async function (id) {
-  const r = (DB.refunds || []).find(x => x.id === id);
-  if (!r || r.status !== 'pending') return;
-  const v = vendorById(r.vendorId);
-  const vu = v ? findUser(v.userId) : null;
-  const inv = DB.products.find(x => x.id === r.inventoryId);
-  const company = DB.companyProducts.find(c => c.id === r.companyProductId);
-  if (!vu) return toast('Vendor account not found', 'err');
-  if (!inv || inv.stock < r.qty) return toast('Cannot approve — vendor no longer holds all ' + r.qty + ' units', 'err');
-  if (!await confirmDialog({ title: 'Approve refund?', body: `Return ${r.qty} × ${r.name} to company stock and credit ${coins(r.coins)} WC to @${v.username}?`, ok: 'Approve refund' })) return;
-
-  inv.stock -= r.qty;
-  if (inv.stock <= 0) DB.products = DB.products.filter(x => x.id !== inv.id);
-  if (company) company.stock += r.qty;
-
-  vu.balance = Math.round((Number(vu.balance || 0) + r.coins) * 100) / 100;
-  tx(vu.id, 'refund', 'Company refund · ' + r.name + ' ×' + r.qty, r.coins, { refundId: r.id });
-  const purchase = (DB.purchases || []).find(x => x.id === r.purchaseId);
-  if (purchase) { purchase.status = 'refunded'; purchase.refundedAt = Date.now(); }
-  r.status = 'approved'; r.reviewedAt = Date.now(); r.reviewedBy = me().id;
-  notify(vu.id, 'Refund approved 💸', `${coins(r.coins)} WC has been credited back to your balance for ${r.qty} × ${r.name}.`, '#/wallet', 'refresh');
-  notify('usr_admin', 'Refund completed', `${r.qty} × ${r.name} returned to company stock · ${coins(r.coins)} WC refunded to @${v.username}.`, '#/admin/refunds', 'check');
-  sync();
-  toast('Refund approved — stock restored and balance credited', 'ok', 3600);
-  render();
-};
-
-App.refundReject = async function (id) {
-  const r = (DB.refunds || []).find(x => x.id === id);
-  if (!r || r.status !== 'pending') return;
-  const reason = await promptDialog({ title: 'Reject refund', label: 'Reason (sent to vendor)', placeholder: 'e.g. stock already sold' });
-  if (reason === null) return;
-  r.status = 'rejected'; r.reviewedAt = Date.now(); r.note = reason;
-  const v = vendorById(r.vendorId);
-  if (v) notify(v.userId, 'Refund rejected', `${r.name} refund was rejected. ${reason || ''}`, '#/vendor/history', 'ban');
-  sync(); toast('Refund rejected', 'ok'); render();
-};
-
-App.refundDel = async function (id) {
-  if (!await confirmDialog({ title: 'Delete refund record?', body: 'The transaction history is kept; only this request entry is removed.', danger: true, ok: 'Delete' })) return;
-  DB.refunds = (DB.refunds || []).filter(x => x.id !== id);
-  sync(); toast('Refund record deleted', 'ok'); render();
-};
-
-/* ---------------- data backups ---------------- */
-App.adminBackupNow = async function () {
-  try {
-    const r = await fetch('/api/backup', { method: 'POST' }).then(x => x.json());
-    if (!r.ok) throw new Error(r.error || 'failed');
-    toast('Backup created (' + r.count + ' snapshots kept)', 'ok');
-    loadReleasePanel();
-  } catch (e) { toast('Backup failed: ' + e.message, 'err'); }
-};
-
-App.adminBackupDownload = async function () {
-  try {
-    const res = await fetch('/api/backup/latest', { cache: 'no-store' });
-    if (!res.ok) throw new Error('no backup yet');
-    const blob = await res.blob();
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'whalechat-backup-' + new Date().toISOString().slice(0, 10) + '.json';
-    document.body.appendChild(a); a.click(); a.remove();
-    toast('Backup downloaded', 'ok');
-  } catch (e) { toast('No backup available yet — create one first', 'err'); }
-};
-
-App.adminBackupRestore = function () {
-  const input = document.createElement('input');
-  input.type = 'file'; input.accept = 'application/json,.json';
-  input.onchange = async () => {
-    const file = input.files && input.files[0];
-    if (!file) return;
-    let data = null;
-    try { data = JSON.parse(await file.text()); } catch (e) { return toast('That file is not valid JSON', 'err'); }
-    const db = data && data.db ? data.db : data;
-    if (!db || !Array.isArray(db.users) || !db.users.length) return toast('Backup contains no accounts — restore cancelled', 'err');
-    if (!await confirmDialog({
-      title: 'Restore this backup?',
-      body: 'This replaces the live database with ' + db.users.length + ' accounts from the file. The current database is backed up first. Publishing builds never does this automatically.',
-      danger: true, ok: 'Restore backup'
-    })) return;
-    try {
-      const r = await fetch('/api/state/restore', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ db })
-      }).then(x => x.json());
-      if (!r.ok) throw new Error(r.error || 'restore failed');
-      try { const keys = await caches.keys(); await Promise.all(keys.map(k => caches.delete(k))); } catch (e) {}
-      toast('Database restored · reloading…', 'ok');
-      setTimeout(() => location.reload(), 900);
-    } catch (e) { toast('Restore failed: ' + e.message, 'err'); }
-  };
-  input.click();
-};
-
-/* ---------------- vendor activation fee ---------------- */
-App.saveVendorFee = function () {
-  const noteEl = document.getElementById('vendorPayNote');
-  DB.settings.vendorPayments = DB.settings.vendorPayments || { methods: [] };
-  DB.settings.vendorPayments.note = (noteEl && noteEl.value.trim()) || 'Pay the exact vendor activation fee, then upload your payment receipt for review.';
-  sync(); toast('Vendor payment instructions saved', 'ok'); render();
-};
-
-/* ---- vendor duration plans ---- */
-App.vendorPlanNew = function () {
-  openModal(modalShell('Add vendor plan', `
-    ${field('Duration (months)', 'vpMonths', { type: 'number', min: '1', step: '1', value: '1' })}
-    ${field('Fee (USD)', 'vpPrice', { type: 'number', min: '0', step: '1', value: '50' })}
-    <input type="hidden" id="vpId" value=""/>`,
-    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="vendor-plan-save">Add plan</button>`), { width: '420px' });
-};
-App.vendorPlanEdit = function (id) {
-  const pl = vendorPlanById(id); if (!pl) return;
-  openModal(modalShell('Edit vendor plan', `
-    ${field('Duration (months)', 'vpMonths', { type: 'number', min: '1', step: '1', value: pl.months })}
-    ${field('Fee (USD)', 'vpPrice', { type: 'number', min: '0', step: '1', value: pl.priceUsd })}
-    <input type="hidden" id="vpId" value="${esc(pl.id)}"/>`,
-    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="vendor-plan-save">Save plan</button>`), { width: '420px' });
-};
-App.vendorPlanSave = function () {
-  const months = Math.max(1, Math.round(Number((document.getElementById('vpMonths') || {}).value) || 0));
-  const price = Math.max(0, Number((document.getElementById('vpPrice') || {}).value) || 0);
-  const id = (document.getElementById('vpId') || {}).value || '';
-  if (!months) return toast('Enter a duration in months', 'err');
-  DB.settings.vendorPlans = DB.settings.vendorPlans || [];
-  if (id) {
-    const pl = DB.settings.vendorPlans.find(x => x.id === id);
-    if (pl) { pl.months = months; pl.priceUsd = price; }
-  } else {
-    DB.settings.vendorPlans.push({ id: uid('vpl'), months, priceUsd: price });
-  }
-  DB.settings.vendorPlans.sort((a, b) => a.months - b.months);
-  if (DB.settings.vendorPlans[0]) DB.settings.vendorFeeUsd = DB.settings.vendorPlans[0].priceUsd;
-  sync(); closeModal(); toast(id ? 'Plan updated' : 'Plan added', 'ok'); render();
-};
-App.vendorPlanDel = async function (id) {
-  if ((DB.settings.vendorPlans || []).length <= 1) return toast('Keep at least one vendor plan', 'err');
-  if (!await confirmDialog({ title: 'Remove plan?', body: 'Applicants will no longer see this duration.', danger: true, ok: 'Remove' })) return;
-  DB.settings.vendorPlans = DB.settings.vendorPlans.filter(p => p.id !== id);
-  sync(); toast('Plan removed', 'ok'); render();
-};
-
-App.vendorExtend = async function (id) {
-  const v = vendorById(id); if (!v) return;
-  if (!await confirmDialog({ title: 'Extend vendor by 30 days?', body: 'Adds one month to @' + v.username + (v.expiresAt ? ' from the current expiry.' : ' from today.'), ok: 'Extend 30 days' })) return;
-  const base = Math.max(Date.now(), Number(v.expiresAt) || 0);
-  v.expiresAt = base + 30 * 86400000;
-  notify(v.userId, 'Vendor account extended', 'Admin added 30 days to your vendor subscription. New expiry: ' + new Date(v.expiresAt).toLocaleDateString() + '.', '#/vendor', 'check');
-  sync(); toast('Vendor extended by 30 days', 'ok'); render();
-};
-
-App.vendorMethodNew = function () {
-  openModal(modalShell('Add vendor payment account', `
-    ${field('Label', 'vmLabel', { ph: 'e.g. USDT (TRC20)' })}
-    ${field('Network / bank', 'vmNetwork', { ph: 'TRC20 / Bank name', help: 'Shown as a badge next to the label.' })}
-    ${field('Wallet address / account number', 'vmAddress', { ph: 'Paste the company payment address' })}
-    <input type="hidden" id="vmId" value=""/>`,
-    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="vendor-method-save">Add account</button>`), { width: '460px' });
-};
-App.vendorMethodEdit = function (id) {
-  const m = ((DB.settings.vendorPayments || {}).methods || []).find(x => x.id === id);
-  if (!m) return;
-  openModal(modalShell('Edit vendor payment account', `
-    ${field('Label', 'vmLabel', { value: m.label })}
-    ${field('Network / bank', 'vmNetwork', { value: m.network || '' })}
-    ${field('Wallet address / account number', 'vmAddress', { value: m.address })}
-    <input type="hidden" id="vmId" value="${esc(m.id)}"/>`,
-    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="vendor-method-save">Save changes</button>`), { width: '460px' });
-};
-App.vendorMethodSave = function () {
-  const label = document.getElementById('vmLabel').value.trim();
-  const network = document.getElementById('vmNetwork').value.trim();
-  const address = document.getElementById('vmAddress').value.trim();
-  const id = (document.getElementById('vmId') || {}).value || '';
-  if (!label || !address) return toast('Label and address are required', 'err');
-  DB.settings.vendorPayments = DB.settings.vendorPayments || { methods: [] };
-  DB.settings.vendorPayments.methods = DB.settings.vendorPayments.methods || [];
-  if (id) {
-    const m = DB.settings.vendorPayments.methods.find(x => x.id === id);
-    if (m) Object.assign(m, { label, network, address });
-  } else {
-    DB.settings.vendorPayments.methods.push({ id: uid('vpm'), label, network, address });
-  }
-  sync(); closeModal(); toast(id ? 'Payment account updated' : 'Payment account added', 'ok'); render();
-};
-App.vendorMethodDel = async function (id) {
-  if (!await confirmDialog({ title: 'Remove payment account?', body: 'Applicants will no longer see this address.', danger: true, ok: 'Remove' })) return;
-  DB.settings.vendorPayments.methods = (DB.settings.vendorPayments.methods || []).filter(m => m.id !== id);
-  sync(); toast('Payment account removed', 'ok'); render();
-};
-
-App.vendorAppApprove = async function (id) {
-  const a = (DB.vendorApplications || []).find(x => x.id === id);
-  if (!a || a.status !== 'pending') return;
-  const applicant = findUser(a.userId);
-  if (!applicant) return toast('Applicant account not found', 'err');
-  const isRenewal = a.kind === 'renewal' || !!a.vendorId;
-  if (!isRenewal && DB.vendors.some(v => v.username.toLowerCase() === a.vendorUsername.toLowerCase())) {
-    return toast('Vendor username @' + a.vendorUsername + ' is already taken — reject with a note', 'err');
-  }
-  if (!await confirmDialog({ title: 'Approve vendor account?', body: `Confirm you received ${usd(a.feeUsd)} from @${applicant.username} and activate @${a.vendorUsername}.`, ok: 'Approve & activate' })) return;
-  const months = Math.max(1, Number(a.months) || 1);
-  const plan = vendorPlanById(a.planId);
-  if (a.kind === 'renewal' || a.vendorId) {
-    const v = vendorById(a.vendorId);
-    if (!v) return toast('Vendor account not found', 'err');
-    const base = Math.max(Date.now(), Number(v.expiresAt) || 0);
-    v.expiresAt = base + months * 30 * 86400000;
-    v.planId = a.planId || v.planId;
-    v.planMonths = months;
-    a.status = 'approved'; a.reviewedAt = Date.now(); a.reviewedBy = me().id;
-    notify(applicant.id, 'Vendor renewal approved 🎉', `Payment confirmed. Your store is active until ${new Date(v.expiresAt).toLocaleDateString()} (+${months} month${months > 1 ? 's' : ''}).`, '#/vendor', 'store');
-    notify('usr_admin', 'Vendor renewed', `@${v.username} extended by ${months} month${months > 1 ? 's' : ''} · ${usd(a.feeUsd)} confirmed.`, '#/admin/vendors', 'check');
-    sync(); toast('Renewal approved — vendor account active', 'ok', 3600); render();
-    return;
-  }
-  const v = {
-    id: uid('vnd'), userId: applicant.id, username: a.vendorUsername, name: a.vendorUsername,
-    avatar: applicant.avatar, rating: 5, trustScore: 80, sales: 0, revenue: 0,
-    createdAt: Date.now(), status: 'active', completedSales: 0, activationFee: a.feeUsd,
-    planId: a.planId || (plan && plan.id) || null, planMonths: months,
-    expiresAt: Date.now() + months * 30 * 86400000
-  };
-  DB.vendors.push(v);
-  applicant.vendorId = v.id;
-  a.status = 'approved'; a.reviewedAt = Date.now(); a.reviewedBy = me().id;
-  notify(applicant.id, 'Vendor account approved 🎉', `Your payment was confirmed. @${a.vendorUsername} is live until ${new Date(v.expiresAt).toLocaleDateString()}.`, '#/vendor', 'store');
-  notify('usr_admin', 'Vendor activated', `@${a.vendorUsername} approved · ${usd(a.feeUsd)} for ${months} month${months > 1 ? 's' : ''}.`, '#/admin/vendors', 'check');
-  sync(); toast('Vendor approved and activated', 'ok', 3600); render();
-};
-
-App.vendorAppReject = async function (id) {
-  const a = (DB.vendorApplications || []).find(x => x.id === id);
-  if (!a || a.status !== 'pending') return;
-  const reason = await promptDialog({ title: 'Reject vendor application', label: 'Reason (sent to applicant)', placeholder: 'e.g. payment slip not legible' });
-  if (reason === null) return;
-  a.status = 'rejected'; a.reviewedAt = Date.now(); a.note = reason || '';
-  notify(a.userId, 'Vendor application rejected', reason || 'Your application was rejected. You can apply again with a new payment slip.', '#/vendor', 'ban');
-  sync(); toast('Application rejected', 'ok'); render();
-};
-
-App.vendorAppDel = async function (id) {
-  if (!await confirmDialog({ title: 'Delete application record?', danger: true, ok: 'Delete' })) return;
-  DB.vendorApplications = (DB.vendorApplications || []).filter(x => x.id !== id);
-  sync(); toast('Application deleted', 'ok'); render();
-};
-
-App.saveAppLink = function () {
-  const el = document.getElementById('asAppLink');
-  const destEl = document.getElementById('asAppDest');
-  const msg = document.getElementById('asInviteMsg');
-  let url = ((el && el.value) || '').trim();
-  let dest = ((destEl && destEl.value) || '').trim();
-
-  if (url && !/^https?:\/\//i.test(url)) url = 'https://' + url;
-  if (url && !/^https?:\/\/[^\s]+$/i.test(url)) return toast('Enter a valid custom link starting with https://', 'err');
-  url = url.replace(/\/+$/, '');
-
-  if (dest && !/^https?:\/\//i.test(dest)) dest = 'https://' + dest;
-  if (dest && !/^https?:\/\/[^\s]+$/i.test(dest)) return toast('Enter a valid main app link starting with https://', 'err');
-  dest = dest.replace(/\/+$/, '');
-
-  // a branded link without a destination would send visitors nowhere
-  if (url && !dest) {
-    dest = location.origin + (window.__WC_SERVER__ ? '/whalechat.html' : location.pathname);
-    if (destEl) destEl.value = dest;
-  }
-  if (url && dest && urlHost(url) === urlHost(dest) && url.replace(/\/+$/, '') === dest.replace(/\/+$/, '').replace(/\.html?$/i, '')) {
-    return toast('The custom link and the main app link are the same — use a different branded link.', 'err');
-  }
-
-  DB.settings.appLink = url;
-  DB.settings.appLinkDestination = url ? dest : '';
-  DB.settings.inviteMessage = ((msg && msg.value) || '').trim();
-  if (url) DB.settings.publicUrl = dest || url;
-  sync();
-  toast(url ? 'Saved — ' + url + ' now redirects to ' + DB.settings.appLinkDestination : 'Custom link cleared — invite links use this server', 'ok');
-  render();
-};
-
-async function loadEmailPanel() {
-  const box = document.getElementById('emailStatus');
-  const badge = document.getElementById('emailBadge');
-  if (!box || !badge) return;
-  try {
-    const d = await fetch('/api/email/status', { cache: 'no-store' }).then(r => r.json());
-    if (!d || d.ok === false) throw new Error('unavailable');
-    badge.className = 'badge ' + (d.configured ? 'badge-success' : 'badge-warn');
-    badge.textContent = d.configured ? 'Connected' : 'Not configured';
-    box.innerHTML = `<div class="kv"><span class="k">Mailbox</span><span class="v">${esc(d.from || '—')}</span></div>
-      <div class="kv"><span class="k">SMTP host</span><span class="v">${esc((d.host || '') + ':' + (d.port || ''))}</span></div>
-      <div class="kv"><span class="k">Queued</span><span class="v">${d.queued || 0}</span></div>
-      <div class="kv"><span class="k">Sent this session</span><span class="v">${d.sent || 0}</span></div>
-      ${d.lastError ? `<div class="tiny mt8" style="color:var(--danger)">${esc(d.lastError)}</div>` : ''}`;
-  } catch (e) {
-    badge.className = 'badge badge-warn'; badge.textContent = 'No sync server';
-    box.innerHTML = '<div class="tiny muted">Email runs on the sync server. Connect this device to a server to see its status.</div>';
-  }
-}
-App.emailTest = async function () {
-  const input = document.getElementById('emailTestTo');
-  const to = ((input && input.value) || '').trim();
-  if (!to) return toast('Enter an email address', 'err');
-  toast('Sending test email…');
-  let r = null;
-  try {
-    r = await fetch('/api/email/test', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ to }) }).then(x => x.json());
-  } catch (e) { return toast('Could not reach the server', 'err'); }
-  if (r && r.ok) toast('Test email sent to ' + to, 'ok');
-  else if (r && r.error === 'smtp_not_configured') toast('Mailbox not connected on the server yet', 'err');
-  else toast('Email failed: ' + ((r && r.error) || 'unknown'), 'err');
-  loadEmailPanel();
-};
-
-App.savePublicUrl = function () {
-  const el = document.getElementById('publicAppUrl');
-  let url = ((el && el.value) || '').trim();
-  if (url && !/^https?:\/\//i.test(url)) url = 'https://' + url;
-  url = url.replace(/\/+$/, '');
-  DB.settings.publicUrl = url;
-  sync();
-  toast(url ? 'Public URL saved: ' + url : 'Public URL cleared', 'ok');
-  render();
-};
-/* =========================================================================
-   Live chat, install helper, seasonal wishes
-   ========================================================================= */
-App.dismissLocalNote = function () {
-  try { localStorage.setItem('wc_local_note', '1'); } catch (e) {}
-  render();
-};
-
-/* ---------------- Smartsupp live chat ---------------- */
-function smartsuppReady() {
-  return !!(window.Tawk_API && typeof window.Tawk_API.maximize === 'function');
-}
-function smartsuppIdentify() {
-  const u = me();
-  if (!u || !window.Tawk_API) return;
-  try {
-    window.Tawk_API.visitor = { name: u.fullName || u.username, email: u.email };
-  } catch (e) {}
-}
-App.openLiveChat = function () {
-  const u = me();
-  closeModal();
-  const tryOpen = () => {
-    try {
-      if (smartsuppReady()) {
-        smartsuppIdentify();
-        window.Tawk_API.maximize();
-        return true;
-      }
-    } catch (e) {}
-    return false;
-  };
-  if (tryOpen()) { toast('Opening live chat…', 'ok'); return; }
-  // the widget may still be loading — retry briefly, then show a fallback
-  let tries = 0;
-  const timer = setInterval(() => {
-    tries += 1;
-    if (tryOpen()) { clearInterval(timer); toast('Opening live chat…', 'ok'); }
-    else if (tries > 16) { clearInterval(timer); App.liveChatHelp(true); }
-  }, 350);
-};
-App.liveChatHelp = function (failed) {
-  const u = me();
-  openModal(modalShell('Customer support live chat', `
-    <div class="center" style="padding:4px 0 8px">
-      <div style="width:64px;height:64px;border-radius:20px;background:linear-gradient(135deg,rgba(46,230,201,.2),rgba(58,160,255,.16));
-        display:flex;align-items:center;justify-content:center;margin:0 auto;color:var(--accent)">${ic('chat', 30)}</div>
-      <h3 class="mt16" style="font-size:18px">Talk to our team in real time</h3>
-      <p class="small muted mt10" style="line-height:1.7">Live chat connects you straight to the WhaleChat support team — no waiting for a reply here. Share your username and order reference for faster help.</p>
+App.adminUser = function (id) {
+  const x = findUser(id); if (!x) return;
+  const v = vendorOf(id);
+  openModal(modalShell('Manage user', `
+    <div class="row gap12 mb16">${avatarHTML(x, 'lg')}
+      <div><div style="font-weight:650">${esc(x.fullName)}</div><div class="small muted">@${esc(x.username)}</div>
+      <div class="row gap6 mt6">${v ? `<span class="badge badge-accent">Vendor @${esc(v.username)}</span>` : ''}<span class="badge">${x.banned ? 'Banned' : 'Active'}</span></div></div></div>
+    <div class="grid2" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      ${field('Whale Coin balance', 'auBal', { type: 'number', value: x.balance, inputmode: 'decimal' })}
+      ${field('Trust score (0–100)', 'auTrust', { type: 'number', value: x.trustScore })}
+      ${field('Completed sales', 'auSales', { type: 'number', value: x.completedSales || 0 })}
+      ${field('Total earnings (WC)', 'auEarn', { type: 'number', value: x.totalEarnings || 0 })}
     </div>
-    ${failed ? `<div class="panel" style="padding:10px 12px;border-color:rgba(255,176,32,.35)"><div class="tiny" style="color:var(--warn)">The chat widget could not load. Check your connection or email us at ${esc((DB.settings && DB.settings.supportEmail) || 'support@whalechat.app')}.</div></div>` : ''}
-    <div class="kv mt14"><span class="k">Your username</span><span class="v">@${esc(u ? u.username : '—')}</span></div>
-    <div class="kv"><span class="k">Email</span><span class="v">${esc(u ? u.email : '—')}</span></div>
-    <div class="row gap8 mt16">
-      <button class="btn btn-primary grow" data-act="live-chat-open">${ic('chat', 15)} Open live chat</button>
-      <button class="btn btn-ghost" data-act="copy" data-id="${esc(u ? u.email : '')}">${ic('copy', 15)}</button>
+    <div class="kv"><span class="k">Email</span><span class="v">${esc(x.email)}</span></div>
+    <div class="kv"><span class="k">Phone</span><span class="v">${esc(x.phone || '—')}</span></div>
+    <div class="kv"><span class="k">Total deposits</span><span class="v">${coins(x.totalDeposits || 0)} WC</span></div>
+    <div class="kv"><span class="k">Total withdrawals</span><span class="v">${coins(x.totalWithdrawals || 0)} WC</span></div>
+    <div class="kv"><span class="k">Withdrawal PIN</span><span class="v">${x.pin ? 'Set' : 'Not set'}</span></div>
+    <div class="mt16 col gap8">
+      <button class="btn btn-ghost btn-block" data-act="admin-credit" data-id="${x.id}">${ic('wallet', 15)} Add Whale Coin</button>
+      <button class="btn btn-ghost btn-block" data-act="admin-notify-user" data-id="${x.id}">${ic('bell', 15)} Send notification</button>
+      <button class="btn btn-ghost btn-block" data-act="admin-msg-user" data-id="${x.id}" data-close>${ic('chat', 15)} Open support chat</button>
+      <button class="btn btn-soft btn-block" data-act="admin-login-as" data-id="${x.id}">${ic('key', 15)} Log in as this user (no password)</button>
+      <button class="btn ${x.banned ? 'btn-soft' : 'btn-danger'} btn-block" data-act="admin-ban" data-id="${x.id}">${x.banned ? 'Unban account' : 'Ban account'}</button>
     </div>`,
-    `<button class="btn btn-ghost" data-close style="width:100%">Close</button>`), { width: '440px' });
+    `<button class="btn btn-ghost" data-close style="flex:1">Close</button><button class="btn btn-primary" data-act="admin-save-user" data-id="${x.id}" style="flex:1">Save changes</button>`), { width: '520px' });
 };
-App.liveChatOpen = function () {
-  try {
-    if (smartsuppReady()) { smartsuppIdentify(); window.Tawk_API.maximize(); closeModal(); return; }
-  } catch (e) {}
-  toast('Live chat is still loading — try again in a moment', 'err');
+App.adminSaveUser = function (id) {
+  const x = findUser(id); if (!x) return;
+  const bal = Number(document.getElementById('auBal').value);
+  const trust = Number(document.getElementById('auTrust').value);
+  const sales = Number(document.getElementById('auSales').value);
+  const earn = Number(document.getElementById('auEarn').value);
+  if (isNaN(bal) || bal < 0) return toast('Invalid balance', 'err');
+  const diff = Math.round((bal - x.balance) * 100) / 100;
+  x.balance = Math.round(bal * 100) / 100;
+  x.trustScore = Math.max(0, Math.min(100, trust || 0));
+  x.completedSales = Math.max(0, sales || 0);
+  x.totalEarnings = Math.round((earn || 0) * 100) / 100;
+  if (diff) tx(x.id, diff > 0 ? 'deposit' : 'withdrawal', 'Admin balance adjustment', diff);
+  notify(x.id, 'Account updated', 'Your account settings were updated by the WhaleChat team.', '#/profile', 'settings');
+  sync(); closeModal(); toast('User updated', 'ok'); render();
 };
-
-/* ---------------- install helpers ---------------- */
-App.installApp = async function () {
-  if (isStandalone()) return toast('WhaleChat is already installed on this device', 'ok');
-  if (deferredPrompt) {
-    try {
-      deferredPrompt.prompt();
-      const choice = await deferredPrompt.userChoice;
-      deferredPrompt = null;
-      if (choice && choice.outcome === 'accepted') toast('Installing WhaleChat…', 'ok');
-      return;
-    } catch (e) {}
-  }
-  const ua = navigator.userAgent || '';
-  const isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  openModal(modalShell('Install WhaleChat', `
-    ${isIOS ? `<div class="col gap14">
-      <p class="small muted" style="line-height:1.7">On iPhone and iPad, Safari installs apps through the Share menu:</p>
-      <div class="row gap12"><div class="avatar" style="background:var(--surface-2)">1</div><div><b class="small">Tap Share</b><div class="tiny muted mt6">The square icon with an arrow, in Safari's toolbar.</div></div></div>
-      <div class="row gap12"><div class="avatar" style="background:var(--surface-2)">2</div><div><b class="small">Add to Home Screen</b><div class="tiny muted mt6">Scroll the share sheet to find it.</div></div></div>
-      <div class="row gap12"><div class="avatar" style="background:var(--surface-2)">3</div><div><b class="small">Tap Add</b><div class="tiny muted mt6">WhaleChat appears like a native app.</div></div></div>
-    </div>` : `<div class="col gap12">
-      <p class="small muted" style="line-height:1.7">Your browser will install WhaleChat to your home screen or desktop:</p>
-      <div class="panel" style="padding:12px"><b class="small">Chrome / Edge (Android, Windows, Mac)</b><div class="tiny muted mt6">Open the browser menu → “Install app”, or click the install icon in the address bar.</div></div>
-      <div class="panel" style="padding:12px"><b class="small">Safari on Mac</b><div class="tiny muted mt6">File → “Add to Dock”, or Share → “Add to Home Screen”.</div></div>
-      <div class="panel" style="padding:12px"><b class="small">Firefox</b><div class="tiny muted mt6">Firefox does not install web apps; open WhaleChat in Chrome or Safari to install.</div></div>
-    </div>`}
-    <div class="panel mt14" style="padding:11px 12px"><div class="tiny muted" style="line-height:1.6">Installed apps open full-screen, keep you signed in and receive push notifications when closed.</div></div>`,
-    `<button class="btn btn-primary" data-close style="width:100%">Got it</button>`), { width: '460px' });
+App.adminCredit = async function (id) {
+  const v = await promptDialog({ title: 'Add Whale Coin', label: 'Amount in WC (negative to deduct)', type: 'number', placeholder: '10' });
+  if (!v) return;
+  const amt = Number(v);
+  if (!isFinite(amt) || amt === 0) return toast('Enter a valid amount', 'err');
+  const x = findUser(id); if (!x) return;
+  x.balance = Math.round((x.balance + amt) * 100) / 100;
+  tx(x.id, amt > 0 ? 'deposit' : 'withdrawal', 'Admin credit', amt);
+  notify(x.id, amt > 0 ? 'Wallet credited' : 'Wallet adjusted', `${coins(Math.abs(amt))} WC ${amt > 0 ? 'added to' : 'deducted from'} your balance by the WhaleChat team.`, '#/wallet', 'wallet');
+  sync(); closeModal(); toast('Balance updated', 'ok'); render();
 };
-
-/* ---------------- happy new month ---------------- */
-let WISH_SHOWN = false;
-function maybeNewMonthWish() {
-  const u = me();
-  if (!u || WISH_SHOWN) return;
-  const now = new Date();
-  if (now.getDate() > 7) return;
-  const key = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
-  if (u.lastMonthWish === key) return;
-  if (document.getElementById('overlay') && document.getElementById('overlay').innerHTML.trim()) return;
-  if (document.getElementById('storyRoot')) return;
-
-  WISH_SHOWN = true;
-  u.lastMonthWish = key;
-  const month = now.toLocaleString('en-US', { month: 'long' });
-  const year = now.getFullYear();
-  notify(u.id, 'Happy new month 🎉', `Welcome to ${month}! Wishing you a month full of great chats, sales and Whale Coin rewards.`, '#/home', 'gift');
-  persist();
-  const colors = ['#2ee6c9', '#3aa0ff', '#ffc861', '#ff5f74', '#b388ff'];
-  let confetti = '';
-  for (let i = 0; i < 26; i++) {
-    confetti += `<i style="left:${(i * 3.7) % 100}%;top:${-10 - (i % 5) * 16}px;background:${colors[i % colors.length]};animation-delay:${(i % 10) * .22}s"></i>`;
-  }
-  openModal(`<div class="month-wish">
-    <div class="confetti">${confetti}</div>
-    <div class="mw-emoji">🎉</div>
-    <h2>Happy New Month!</h2>
-    <div class="mw-month">${month} ${year}</div>
-    <p>Wishing you a wonderful month ahead, ${esc(u.fullName.split(' ')[0] || u.username)}. Thank you for being part of WhaleChat — enjoy new chats, new sales and new rewards.</p>
-    <div class="row" style="justify-content:center;margin-top:20px">
-      <button class="btn btn-primary" data-close>Let's go 🐋</button>
-    </div>
-  </div>`, { width: '440px' });
-  const box = document.querySelector('.modal-back');
-  if (box) box.style.background = 'rgba(2,8,14,.82)';
-}
-
-/* keep Smartsupp in sync with the signed-in user */
-let LAST_SMARTSUPP_USER = null;
-function maybeIdentifySmartsupp() {
-  const u = me();
-  if (!u) return;
-  if (LAST_SMARTSUPP_USER === u.id) return;
-  if (smartsuppReady()) { LAST_SMARTSUPP_USER = u.id; smartsuppIdentify(); }
-}
-setInterval(maybeIdentifySmartsupp, 2500);
-/* =========================================================================
-   Clean links, referral capture, automatic update check
-   ========================================================================= */
-function appLinkBase() {
-  // Admins can publish a custom public link (Admin -> Settings -> App link).
-  // It is only honoured when a destination exists, so a half-filled setting can
-  // never produce a shareable link that goes nowhere.
-  try {
-    const raw = (DB && DB.settings && DB.settings.appLink) || '';
-    const dest = (DB && DB.settings && DB.settings.appLinkDestination) || '';
-    if (!/^https?:\/\/[^\s]+$/i.test(String(dest).trim())) return '';
-    const v = String(raw).trim().replace(/\/+$/, '');
-    if (/^https?:\/\/[^\s]+$/i.test(v)) return v;
-  } catch (e) {}
-  return '';
-}
-function appLink() {
-  const custom = appLinkBase();
-  if (custom) return custom + '/';
-  if (window.__WC_SERVER__) return location.origin + '/';
-  return location.origin + location.pathname;
-}
-function urlHost(u) {
-  try { return new URL(u, location.origin).hostname.toLowerCase(); } catch (e) { return ''; }
-}
-/* The main app URL that every custom/branded link redirects to. */
-function appDestinationBase() {
-  try {
-    const raw = String((DB && DB.settings && DB.settings.appLinkDestination) || '').trim();
-    if (/^https?:\/\/[^\s]+$/i.test(raw)) return raw.replace(/\/+$/, '');
-  } catch (e) {}
-  return '';
-}
-function destinationLink(code) {
-  const raw = appDestinationBase();
-  if (!raw) return '';
-  try {
-    const u = new URL(raw, location.origin);
-    if (code) {
-      const c = String(code).toUpperCase();
-      if (/\.html?$/i.test(u.pathname)) u.searchParams.set('ref', c);
-      else u.pathname = u.pathname.replace(/\/+$/, '') + '/ref/' + encodeURIComponent(c);
-    }
-    return u.href;
-  } catch (e) { return ''; }
-}
-function referralLink(code) {
-  const c = encodeURIComponent(String(code || '').toUpperCase());
-  const custom = appLinkBase();
-  if (custom) return custom + '/ref/' + c;   // branded link → redirects to the main app
-  if (window.__WC_SERVER__) return location.origin + '/ref/' + c;
-  return location.origin + location.pathname + '#/ref=' + c;
-}
-/* If this page is opened on the branded domain, hand the visitor to the main app. */
-function maybeBrandedRedirect() {
-  const custom = appLinkBase();
-  if (!custom) return false;
-  const dest = destinationLink(referralFromURL());
-  if (!dest) return false;
-  const here = location.hostname.toLowerCase();
-  if (urlHost(custom) !== here) return false;      // not on the branded link
-  if (urlHost(dest) === here) return false;        // already on the main app
-  location.replace(dest);
-  return true;
-}
-/* ---------------- Google Analytics (GA4 / Tag Manager) ---------------- */
-const GA = { loaded: false, id: '', last: '', mode: '' };
-function gaMeasurementId() {
-  try {
-    const v = String((DB && DB.settings && DB.settings.gaMeasurementId) || '').trim().toUpperCase();
-    return /^G-[A-Z0-9]{4,20}$/.test(v) ? v : '';
-  } catch (e) { return ''; }
-}
-/* The GTM container is installed in <head> on every page. When it is present we push
-   events into its dataLayer instead of adding a second Google tag. */
-function gtmInstalled() {
-  try {
-    return !!(document.querySelector('script[src*="googletagmanager.com/gtm.js"]') || window.google_tag_manager);
-  } catch (e) { return false; }
-}
-function gaLoad(force) {
-  if (gtmInstalled()) {
-    GA.loaded = true; GA.mode = 'gtm'; GA.id = 'GTM';
-    return true;
-  }
-  const id = gaMeasurementId();
-  if (!id) { GA.loaded = false; GA.id = ''; GA.mode = ''; return false; }
-  if (GA.loaded && GA.id === id && GA.mode === 'gtag' && !force) return true;
-  GA.id = id; GA.mode = 'gtag';
-  window.dataLayer = window.dataLayer || [];
-  window.gtag = window.gtag || function () { window.dataLayer.push(arguments); };
-  window.gtag('js', new Date());
-  window.gtag('config', id, { send_page_view: false, anonymize_ip: true });
-  if (!document.getElementById('ga4Script')) {
-    const t = document.createElement('script');
-    t.id = 'ga4Script';
-    t.async = true;
-    t.src = 'https://www.googletagmanager.com/gtag/js?id=' + encodeURIComponent(id);
-    document.head.appendChild(t);
-  }
-  GA.loaded = true;
-  GA.last = '';
-  return true;
-}
-function gaTrack(path) {
-  if (!GA.loaded) gaLoad();
-  if (!GA.loaded) return;
-  const p = path || (location.hash || '/');
-  if (GA.last === p) return;
-  GA.last = p;
-  const payload = {
-    page_location: location.origin + location.pathname + location.hash,
-    page_path: p,
-    page_title: document.title
-  };
-  try {
-    if (GA.mode === 'gtm') {
-      window.dataLayer = window.dataLayer || [];
-      window.dataLayer.push(Object.assign({ event: 'page_view' }, payload));
-    } else if (typeof window.gtag === 'function') {
-      window.gtag('event', 'page_view', payload);
-    }
-  } catch (e) {}
-}
-function inviteMessageFor(u, link) {
-  const raw = ((DB && DB.settings && DB.settings.inviteMessage) || '').trim();
-  const base = raw || 'Join me on WhaleChat 🐋 — chat, shop and get paid in one calm place. Use my code {code}.';
-  return base
-    .replace(/\{link\}/g, link)
-    .replace(/\{code\}/g, (u && u.referralCode) || '')
-    .replace(/\{name\}/g, (u && (u.fullName || u.username)) || '');
-}
-function referralFromURL() {
-  let code = null;
-  const m = location.pathname.match(/\/(?:ref|r)[=\/]([A-Za-z0-9_-]{3,24})\/?$/i);
-  if (m) code = m[1];
-  if (!code) {
-    try { const q = new URLSearchParams(location.search); if (q.get('ref')) code = q.get('ref'); } catch (e) {}
-  }
-  if (!code) {
-    const h = location.hash || '';
-    const hm = h.match(/(?:ref|r)[=\/]([A-Za-z0-9_-]{3,24})/i);
-    if (hm) code = hm[1];
-  }
-  return code ? String(code).toUpperCase() : null;
-}
-
-let UPDATE_READY = false;
-let UPDATE_TIMER = null;
-
-async function checkForUpdates(manual) {
-  if (!APP_BUILD || !/^\d{4}-\d{2}-\d{2}T/.test(APP_BUILD)) {
-    if (manual) toast('You are running the latest version', 'ok');
-    return false;
-  }
-  let v = null;
-  for (const name of ['release.json', 'version.json']) {
-    try {
-      const res = await fetch(name + '?t=' + Date.now(), { cache: 'no-store' });
-      if (!res.ok) continue;
-      const data = await res.json();
-      if (data && data.build) { v = data; break; }
-    } catch (e) { /* try next manifest */ }
-  }
-  if (!v) { if (manual) toast('Update check is unavailable right now', 'err'); return false; }
-  if (v.build > APP_BUILD) {
-    showUpdateBar(v);
-    if (manual) toast('A new version is ready — update to get it', 'ok');
-    return true;
-  }
-  if (manual) toast('You are running the latest version', 'ok');
-  return false;
-}
-
-function showUpdateBar(v) {
-  if (UPDATE_READY || document.getElementById('updateBar')) return;
-  UPDATE_READY = true;
-  const bar = document.createElement('div');
-  bar.className = 'update-bar';
-  bar.id = 'updateBar';
-  bar.innerHTML = `<span class="dot" style="background:var(--accent)"></span>
-    <div style="flex:1;min-width:0"><div class="small" style="font-weight:650">New WhaleChat version ready</div>
-    <div class="tiny" style="color:#9cb6c6">Version ${esc(v.version || '')} · updating in a moment</div></div>
-    <button class="btn btn-primary btn-xs" id="updateNow">Update now</button>
-    <button class="btn-icon" id="updateLater" style="width:28px;height:28px" title="Later">${ic('x', 13)}</button>`;
-  document.body.appendChild(bar);
-  document.getElementById('updateNow').onclick = applyUpdate;
-  document.getElementById('updateLater').onclick = () => { clearTimeout(UPDATE_TIMER); bar.remove(); UPDATE_READY = false; };
-  UPDATE_TIMER = setTimeout(applyUpdate, 20000);
-}
-
-async function applyUpdate() {
-  clearTimeout(UPDATE_TIMER);
-  try {
-    if ('serviceWorker' in navigator) {
-      const regs = await navigator.serviceWorker.getRegistrations();
-      await Promise.all(regs.map(r => r.update().catch(() => {})));
-      regs.forEach(r => { if (r.waiting) r.waiting.postMessage({ type: 'SKIP_WAITING' }); });
-    }
-  } catch (e) {}
-  try {
-    if (window.caches) { const keys = await caches.keys(); await Promise.all(keys.map(k => caches.delete(k))); }
-  } catch (e) {}
-  location.reload();
-}
-
-App.checkUpdate = function () { checkForUpdates(true); };
-setInterval(() => { checkForUpdates(false); }, 10 * 60 * 1000);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) checkForUpdates(false); });
-setTimeout(() => checkForUpdates(false), 5000);
-
-App.dismissNotifNudge = function () {
-  try { localStorage.setItem('wc_notif_nudge_' + new Date().toDateString(), '1'); } catch (e) {}
-  render();
+App.adminBan = async function (id) {
+  const x = findUser(id); if (!x) return;
+  if (!x.banned) {
+    if (!await confirmDialog({ title: 'Ban this user?', body: 'They will not be able to sign in.', danger: true, ok: 'Ban' })) return;
+    x.banned = true;
+    notify(x.id, 'Account suspended', 'Your account has been suspended. Contact support for assistance.', null, 'ban');
+  } else x.banned = false;
+  sync(); closeModal(); toast(x.banned ? 'User banned' : 'User unbanned', 'ok'); render();
+};
+App.adminDeleteUser = async function (id) {
+  const x = findUser(id); if (!x) return;
+  if (!await confirmDialog({ title: 'Delete user?', body: 'This permanently removes the account, its vendor profile and notifications. Orders are kept for records.', danger: true, ok: 'Delete' })) return;
+  DB.users = DB.users.filter(u => u.id !== id);
+  DB.vendors = DB.vendors.filter(v => v.userId !== id);
+  DB.contacts = DB.contacts.filter(c => c.ownerId !== id && c.userId !== id);
+  DB.notifications = DB.notifications.filter(n => n.userId !== id);
+  sync(); toast('User deleted', 'ok'); render();
+};
+App.adminMsgUser = function (id) {
+  const admin = me();
+  if (!isContact(admin.id, id)) DB.contacts.push({ id: uid('ct'), ownerId: admin.id, userId: id, createdAt: Date.now() });
+  sync(); closeModal(); go('chat/' + id);
 };
 
-AFTER.settings = function () {
-  const el = document.getElementById('pushDeviceCount');
-  if (!el || !Remote.enabled) return;
-  fetch('/api/push/status?userId=' + encodeURIComponent(me() ? me().id : ''), { cache: 'no-store' })
-    .then(r => r.json()).then(d => {
-      if (!d || !d.ok) return;
-      el.textContent = (d.push ? 'Push service ready' : 'Push service unavailable on this server') +
-        ' · ' + (d.devices || 0) + ' device' + ((d.devices || 0) === 1 ? '' : 's') + ' registered for @' + (me() ? me().username : '');
-    }).catch(() => { el.textContent = 'Could not read push status'; });
-};
-
-App.toggleReadReceipts = function () {
-  const u = me();
-  u.settings = u.settings || {};
-  const off = u.settings.readReceipts === false;
-  u.settings.readReceipts = off; // turning back on
-  sync();
-  toast(off ? 'Read receipts on — green ✓✓ when you read' : 'Read receipts off — senders will not see read ticks', 'ok');
-  render();
-};
-
-/* ---------------- server connection details ---------------- */
-App.serverDetails = async function () {
-  openModal(modalShell('Sync server details', `
-    <div id="srvDetails"><div class="row gap10"><span class="spinner"></span><span class="small muted">Reading server status…</span></div></div>`,
-    `<button class="btn btn-ghost" data-close style="flex:1">Close</button><button class="btn btn-primary" data-act="server-dialog" style="flex:1">Manage connection</button>`), { width: '540px' });
-  const box = document.getElementById('srvDetails');
-  const row = (k, v, mono) => `<div class="kv"><span class="k">${k}</span><span class="v" style="${mono ? 'font-family:ui-monospace,monospace;font-size:11.5px;word-break:break-all' : ''}">${esc(String(v))}</span></div>`;
-  try {
-    const [health, release, backup, push] = await Promise.all([
-      fetch('/api/health', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch('/api/release', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch('/api/backup', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch('/api/push/status?userId=' + encodeURIComponent(me() ? me().id : ''), { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null)
-    ]);
-    if (!health) throw new Error('unreachable');
-    const up = release ? Math.floor(release.uptimeSec / 3600) + 'h ' + Math.floor((release.uptimeSec % 3600) / 60) + 'm' : '—';
-    box.innerHTML = `
-      <div class="panel" style="padding:12px;margin-bottom:12px">
-        <div class="row gap8"><span class="dot" style="background:var(--success)"></span><span class="small" style="font-weight:650">Connected</span>
-          <span class="badge badge-success" style="margin-left:auto">${Remote.enabled ? 'Cross-device' : 'Local mode'}</span></div>
-        <div class="tiny muted mt6" style="word-break:break-all">${esc(Remote.base || location.origin)}</div>
+function adminVendorRequests() {
+  const list = (DB.vendorApplications || []).slice().sort((a, b) => (a.status === 'pending' ? -1 : 1) - (b.status === 'pending' ? -1 : 1) || b.createdAt - a.createdAt);
+  const pending = list.filter(a => a.status === 'pending');
+  return `<div class="card mb16" style="background:linear-gradient(120deg,rgba(46,230,201,.08),rgba(58,160,255,.05))">
+      <div class="between wrap gap10">
+        <div><h3 style="font-size:15px">Vendor activation payments</h3>
+          <p class="tiny muted mt6">Review the uploaded payment slip, then approve to unlock the applicant's vendor dashboard.</p></div>
+        <div class="row gap8"><span class="badge badge-warn">${pending.length} pending</span>
+          <a href="#/admin/settings" class="btn btn-xs btn-ghost">${ic('settings', 12)} Fee & payment accounts</a></div>
       </div>
-      ${row('Sync server URL', Remote.base || location.origin, true)}
-      ${row('App origin', location.origin, true)}
-      ${row('Server app', health.app || 'whalechat')}
-      ${row('Public URL', (release && release.publicUrl) || (DB.settings && DB.settings.publicUrl) || 'not set', true)}
-      ${row('Server build', (release && release.build) || '—', true)}
-      ${row('App build (this device)', APP_BUILD, true)}
-      ${row('Database revision', health.rev)}
-      ${row('Registered users', release ? release.users : '—')}
-      ${row('Connected tabs', release ? release.clients : '—')}
-      ${row('Push devices', push ? push.devices : '—')}
-      ${row('Push service', health.push ? 'VAPID ready' : 'unavailable')}
-      ${health.vapid ? row('VAPID public key', String(health.vapid).slice(0, 28) + '…', true) : ''}
-      ${row('Node runtime', release ? release.node : '—')}
-      ${row('Server uptime', up)}
-      ${backup ? row('Data storage', backup.persistent ? 'Persistent disk' : (backup.recoverable ? 'Ephemeral + persistent backups' : 'Ephemeral')) : ''}
-      ${backup ? row('Backups', backup.count + ' snapshots · last ' + (backup.last ? new Date(backup.last).toLocaleString() : 'none')) : ''}
-      <div class="row gap8 mt14">
-        <button class="btn btn-ghost btn-sm" data-act="copy" data-id="${esc(Remote.base || location.origin)}">${ic('copy', 14)} Copy server URL</button>
-        <button class="btn btn-ghost btn-sm" data-act="push-test">${ic('bell', 14)} Test push</button>
-      </div>`;
-  } catch (e) {
-    box.innerHTML = `<div class="empty" style="padding:18px"><p>This device is not connected to a sync server. Open “Manage connection” and enter your server URL, or visit the app with <code>?server=https://your-server</code>.</p></div>`;
-  }
-};
-/* =========================================================================
-   Cross-device sync (WhaleChat server) + Web Push
-   ========================================================================= */
-const LS_SERVER = 'whalechat.server';
-const LS_PUSH = 'whalechat.push';
-
-const Remote = {
-  base: '',
-  enabled: false,
-  rev: 0,
-  last: null,
-  clientId: 'c_' + Math.random().toString(36).slice(2, 10),
-  es: null,
-  applying: false,
-  flushing: false,
-  dirty: false,
-  timer: null,
-  retry: 0,
-  status: 'local',          // local | connecting | online | syncing | offline | error
-  lastError: '',
-
-  storedBase() {
-    try { return localStorage.getItem(LS_SERVER) || ''; } catch (e) { return ''; }
-  },
-  setStoredBase(v) {
-    try { v ? localStorage.setItem(LS_SERVER, v) : localStorage.removeItem(LS_SERVER); } catch (e) {}
-  },
-  url(p) { return (this.base || '') + p; },
-
-  async fetchJSON(pathname, opts = {}, timeout = 7000) {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), timeout);
-    try {
-      const res = await fetch(this.url(pathname), Object.assign({ signal: ctrl.signal, headers: { 'content-type': 'application/json' } }, opts));
-      const data = await res.json().catch(() => null);
-      return { res, data };
-    } finally { clearTimeout(t); }
-  },
-
-  async init() {
-    try {
-      // ?server=https://sync.domain.com overrides everything (and is remembered)
-      let param = null;
-      try { param = new URLSearchParams(location.search).get('server'); } catch (e) {}
-      if (param) {
-        if (param === 'off') { this.setStoredBase(''); this.status = 'local'; return false; }
-        const url = /^https?:\/\//i.test(param) ? param : 'https://' + param;
-        return await this.connect(url.replace(/\/+$/, ''), { silent: true, initFromLocal: true });
-      }
-      const stored = this.storedBase();
-      if (stored) return await this.connect(stored, { silent: true, initFromLocal: true });
-      // Only a server that served this page injects the marker — avoids failed probes on static hosts
-      if (window.__WC_SERVER__) {
-        return await this.connect('', { silent: true, initFromLocal: true });
-      }
-      if (DEFAULT_SYNC_SERVER) {
-        return await this.connect(DEFAULT_SYNC_SERVER, { silent: true, initFromLocal: true });
-      }
-    } catch (e) {}
-    this.status = 'local';
-    return false;
-  },
-
-  async connect(base, opts = {}) {
-    base = String(base || '').replace(/\/+$/, '');
-    this.status = 'connecting';
-    try {
-      const health = await this.fetchJSON(base + '/api/health', {}, 5000);
-      if (!health.res.ok || !health.data || health.data.app !== 'whalechat') throw new Error('Not a WhaleChat server');
-      this.base = base;
-      this.setStoredBase(base);
-      this.enabled = true;
-      this.status = 'online';
-      this.retry = 0;
-
-      const st = await this.fetchJSON('/api/state');
-      if (!st.res.ok || !st.data) throw new Error('Could not read server state');
-
-      if (!st.data.db) {
-        // brand new server — seed it with this device's database
-        if (!DB) DB = await seedDB();
-        const r = await this.fetchJSON('/api/state/init', { method: 'POST', body: JSON.stringify({ db: DB, rev: 1 }) });
-        if (!r.res.ok && r.res.status !== 409) throw new Error((r.data && r.data.error) || 'Initialise failed');
-        if (r.res.status === 409) return this.connect(base, opts); // another device won the race
-        this.rev = r.data.rev || 1;
-        this.last = cloneDB(DB);
-      } else {
-        DB = migrateDB(st.data.db);
-        this.rev = st.data.rev || 0;
-        this.last = cloneDB(DB);
-        saveLocalNow();
-      }
-      try { resolvePendingReferrals(); reconcileReferralBonuses(); } catch (e) {}
-      // session may point at a user this server doesn't know
-      if (SESSION && !DB.users.some(u => u.id === SESSION.userId)) {
-        SESSION = null; localStorage.removeItem(LS_SESSION);
-      }
-      startEventStream();
-      if (!opts.silent) toast('Connected — syncing across devices', 'ok');
-      return true;
-    } catch (e) {
-      this.lastError = e.message || 'Connection failed';
-      this.status = 'error';
-      if (!opts.silent) toast('Could not connect: ' + this.lastError, 'err');
-      return false;
-    }
-  },
-
-  disconnect() {
-    stopEventStream();
-    this.enabled = false;
-    this.base = '';
-    this.status = 'local';
-    this.setStoredBase('');
-  },
-
-  onLocalChange() {
-    if (!this.enabled || this.applying) return;
-    this.dirty = true;
-    clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.flush(), 140);
-  },
-
-  async flush() {
-    if (!this.enabled || this.applying || this.flushing) return;
-    if (!this.dirty) return;
-    const ops = diffDB(this.last || blankDB(), DB);
-    if (!ops.length) { this.dirty = false; return; }
-    this.flushing = true;
-    this.status = 'syncing';
-    try {
-      const r = await this.fetchJSON('/api/ops', {
-        method: 'POST',
-        body: JSON.stringify({ ops, clientId: this.clientId })
-      }, 10000);
-      if (!r.res.ok) throw new Error((r.data && r.data.error) || ('Sync failed (' + r.res.status + ')'));
-      this.rev = r.data.rev || this.rev;
-      this.last = cloneDB(DB);
-      this.dirty = false;
-      this.status = 'online';
-      this.lastError = '';
-      this.retry = 0;
-    } catch (e) {
-      this.lastError = e.message || 'Sync failed';
-      this.status = 'offline';
-      this.retry = Math.min(this.retry + 1, 12);
-      clearTimeout(this.retryTimer);
-      this.retryTimer = setTimeout(() => { this.flush(); }, 800 * this.retry);
-    } finally {
-      this.flushing = false;
-      if (this.dirty && this.status === 'online') setTimeout(() => this.flush(), 80);
-    }
-  },
-
-  async refresh(force) {
-    if (!this.enabled) return;
-    if (this.flushing) { this.pendingRefresh = true; return; }
-    try {
-      const r = await this.fetchJSON('/api/state', {}, 10000);
-      if (!r.res.ok || !r.data) throw new Error('State fetch failed');
-      if (!force && (r.data.rev === this.rev || r.data.rev === undefined)) return;
-      if (!r.data.db) return;
-      this.applying = true;
-      DB = migrateDB(r.data.db);
-      this.rev = r.data.rev;
-      this.last = cloneDB(DB);
-      saveLocalNow();
-      if (SESSION && !DB.users.some(u => u.id === SESSION.userId)) {
-        SESSION = null; localStorage.removeItem(LS_SESSION);
-      }
-      this.status = 'online';
-      try { resolvePendingReferrals(); reconcileReferralBonuses(); } catch (e) {}
-      render();
-      Media.hydrate(document);
-      if (ACTIVE_CHAT) { const b = document.getElementById('chatBody'); if (b) b.scrollTop = b.scrollHeight; }
-    } catch (e) {
-      this.status = 'offline';
-      this.lastError = e.message || 'Reconnect failed';
-    } finally {
-      this.applying = false;
-      if (this.pendingRefresh) { this.pendingRefresh = false; setTimeout(() => this.refresh(true), 150); }
-    }
-  }
-};
-
-const SYNC_COLLECTIONS = ['users', 'vendors', 'companyProducts', 'products', 'orders', 'deposits', 'withdrawals', 'messages', 'statuses', 'notifications', 'contacts', 'blocks', 'txs', 'referrals', 'purchases', 'refunds', 'vendorApplications'];
-
-function cloneDB(db) { try { return JSON.parse(JSON.stringify(db)); } catch (e) { return db; } }
-function migrateDB(db) {
-  if (!db) return DB;
-  const out = Object.assign(blankDB(), db);
-  out.settings = withSettingsDefaults(Object.assign({}, blankDB().settings, db.settings || {}));
-  migrateVendorExpiry(out);
-  return out;
-}
-function saveLocalNow() {
-  try { localStorage.setItem(LS_DB, JSON.stringify(DB)); } catch (e) {}
-}
-
-function diffDB(prev, next) {
-  prev = prev || blankDB(); next = next || blankDB();
-  const ops = [];
-  for (const col of SYNC_COLLECTIONS) {
-    const a = prev[col] || [], b = next[col] || [];
-    if (a === b) continue;
-    if (a.length === b.length && JSON.stringify(a) === JSON.stringify(b)) continue;
-    const am = new Map(a.map(x => [x && x.id, x]));
-    const bm = new Map(b.map(x => [x && x.id, x]));
-    for (const id of am.keys()) if (id && !bm.has(id)) ops.push({ op: 'remove', col, id });
-    for (const [id, item] of bm) {
-      if (!id) continue;
-      if (!am.has(id)) ops.push({ op: 'push', col, item });
-      else if (JSON.stringify(am.get(id)) !== JSON.stringify(item)) ops.push({ op: 'update', col, id, patch: item });
-    }
-  }
-  for (const key of ['settings', 'chatsMeta', 'meta']) {
-    if (JSON.stringify(prev[key]) !== JSON.stringify(next[key])) ops.push({ op: 'set', key, value: next[key] });
-  }
-  return ops;
-}
-
-function startEventStream() {
-  stopEventStream();
-  if (!Remote.enabled || typeof EventSource === 'undefined') return;
-  try {
-    const es = new EventSource(Remote.url('/api/events?client=' + encodeURIComponent(Remote.clientId)));
-    Remote.es = es;
-    es.addEventListener('hello', (e) => {
-      Remote.status = 'online';
-      try { const d = JSON.parse(e.data); if (d.rev > Remote.rev) Remote.refresh(); } catch (err) {}
-    });
-    es.addEventListener('reload', (e) => {
-      // admin pressed “Force refresh all devices”
-      let d = {};
-      try { d = JSON.parse(e.data || '{}'); } catch (err) {}
-      try { if (typeof showUpdateBar === 'function') showUpdateBar({ version: d.version || APP_VERSION, build: d.build || APP_BUILD }); } catch (err) {}
-      setTimeout(() => { try { if (typeof applyUpdate === 'function') applyUpdate(); } catch (err) { location.reload(); } }, 1500);
-    });
-    es.addEventListener('change', (e) => {
-      let d = {};
-      try { d = JSON.parse(e.data); } catch (err) {}
-      if (d.source === Remote.clientId) { if (d.rev) Remote.rev = d.rev; return; }
-      Remote.refresh();
-    });
-    es.onerror = () => {
-      Remote.status = 'offline';
-      // EventSource reconnects automatically; refresh once it is back
-      setTimeout(() => { if (Remote.enabled) Remote.refresh(); }, 4000);
-    };
-  } catch (e) {}
-}
-function stopEventStream() {
-  if (Remote.es) { try { Remote.es.close(); } catch (e) {} }
-  Remote.es = null;
-}
-
-/* ---------------- Web Push ---------------- */
-const Push = {
-  publicKey: null,
-  async ensure(interactive) {
-    if (!Remote.enabled) return { ok: false, reason: 'no-server' };
-    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return { ok: false, reason: 'unsupported' };
-    const u = me();
-    if (!u) return { ok: false, reason: 'no-user' };
-    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return { ok: false, reason: 'permission' };
-    try {
-      const reg = await withTimeout(navigator.serviceWorker.ready, 8000, 'service-worker-timeout');
-      const keyRes = await withTimeout(fetch(Remote.url('/api/push/key')).then(r => r.json()), 8000, 'key-timeout').catch(() => null);
-      if (!keyRes || !keyRes.publicKey) return { ok: false, reason: 'no-key' };
-      this.publicKey = keyRes.publicKey;
-      let sub = await withTimeout(reg.pushManager.getSubscription(), 8000, 'subscription-timeout');
-      if (!sub) {
-        sub = await withTimeout(reg.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: urlB64ToUint8Array(keyRes.publicKey)
-        }), 12000, 'push-subscribe-timeout');
-      }
-      const res = await fetch(Remote.url('/api/push/subscribe'), {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ userId: u.id, subscription: sub, device: navigator.userAgent })
-      }).then(r => r.json()).catch(() => null);
-      if (res && res.ok) {
-        try { localStorage.setItem(LS_PUSH, JSON.stringify({ at: Date.now(), userId: u.id })); } catch (e) {}
-        return { ok: true, devices: res.devices };
-      }
-      return { ok: false, reason: 'register-failed' };
-    } catch (e) {
-      return { ok: false, reason: e.message || 'subscribe-failed' };
-    }
-  },
-  async test() {
-    const u = me();
-    if (!Remote.enabled) return toast('Connect a sync server first', 'err');
-    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
-      toast('Allow notifications in your browser first', 'err'); return;
-    }
-    const sub = await this.ensure(true);
-    if (!sub.ok) { toast('Push unavailable: ' + sub.reason, 'err'); return; }
-    const r = await fetch(Remote.url('/api/push/test'), {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ userId: u.id, title: 'WhaleChat', body: 'Push notifications are working on this device 🐋', link: '#/notifications' })
-    }).then(x => x.json()).catch(() => null);
-    if (r && r.ok && r.sent > 0) toast('Test notification sent to ' + r.sent + ' device(s)', 'ok');
-    else toast('No push device registered yet — check browser permission', 'err');
-  }
-};
-
-function withTimeout(promise, ms, label) {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => setTimeout(() => reject(new Error(label || 'timeout')), ms))
-  ]);
-}
-
-function urlB64ToUint8Array(base64String) {
-  const padding = '='.repeat((4 - base64String.length % 4) % 4);
-  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
-  const raw = atob(base64);
-  const out = new Uint8Array(raw.length);
-  for (let i = 0; i < raw.length; ++i) out[i] = raw.charCodeAt(i);
-  return out;
-}
-
-/* ---------------- settings UI ---------------- */
-function syncBadge() {
-  const map = {
-    local: ['Local device only', 'var(--muted)'],
-    connecting: ['Connecting…', 'var(--warn)'],
-    online: ['Connected · realtime', 'var(--success)'],
-    syncing: ['Syncing…', 'var(--accent)'],
-    offline: ['Reconnecting…', 'var(--warn)'],
-    error: ['Connection error', 'var(--danger)']
-  };
-  const m = map[Remote.status] || map.local;
-  return `<span class="badge" style="color:${m[1]};border-color:${m[1]}33"><span class="dot" style="background:${m[1]}"></span> ${m[0]}</span>`;
-}
-
-App.serverDialog = function () {
-  const base = Remote.base || '';
-  openModal(modalShell('Cross-device sync', `
-    <p class="small muted" style="line-height:1.7">Connect this app to your WhaleChat sync server to share chats, orders and wallet data across phones, tablets and computers — with live updates and closed-app push notifications.</p>
-    <div class="field mt16"><label class="label">Server URL</label>
-      <input class="input" id="srvUrl" placeholder="https://your-whalechat-server.com" value="${esc(base)}"/>
-      <div class="help">Leave empty to use the same origin that served this app. The server must run <code>server.js</code>.</div></div>
-    <div class="panel" style="padding:12px;margin-bottom:14px">
-      <div class="between"><span class="tiny muted">Status</span>${syncBadge()}</div>
-      ${Remote.lastError ? `<div class="tiny mt6" style="color:var(--danger)">${esc(Remote.lastError)}</div>` : ''}
-      ${Remote.enabled ? `<div class="tiny muted mt6">Revision ${Remote.rev} · device <b>${esc(Remote.clientId)}</b></div>` : ''}
+      <div class="grid-kpi k4 mt14">
+        ${[['Fee', usd(DB.settings.vendorFeeUsd || 0), 'tag'], ['Applications', list.length, 'users'], ['Pending', pending.length, 'clock'], ['Approved', list.filter(a => a.status === 'approved').length, 'check']]
+          .map(([k, v, i]) => `<div class="kpi"><div class="ic">${ic(i, 15)}</div><div class="v" style="font-size:17px">${v}</div><div class="k">${k}</div></div>`).join('')}
+      </div>
     </div>
-    <div class="panel" style="padding:12px">
-      <div class="tiny" style="font-weight:600;color:var(--accent)">Push notifications</div>
-      <div class="tiny muted mt6" style="line-height:1.6">After connecting, enable browser alerts and send a test. Messages and order updates then arrive even when the app is closed.</div>
-      <div class="row gap8 mt10"><button class="btn btn-ghost btn-sm" data-act="push-test">${ic('bell', 14)} Send test</button>
-      <button class="btn btn-ghost btn-sm" data-act="push-enable">${ic('shield', 14)} Enable alerts</button></div>
-    </div>`,
-    `<button class="btn btn-ghost" data-close>Close</button>
-     ${Remote.enabled ? `<button class="btn btn-danger" data-act="server-disconnect">Disconnect</button>` : ''}
-     <button class="btn btn-primary" data-act="server-connect">${ic('refresh', 15)} Connect</button>`), { width: '500px' });
-  setTimeout(() => { const i = document.getElementById('srvUrl'); if (i) i.focus(); }, 80);
+    <div class="card">
+      <div class="table-wrap"><table class="tbl"><thead><tr><th>Applicant</th><th>Vendor name</th><th>Plan</th><th>Fee</th><th>Payment account</th><th>Slip</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+      ${list.length ? list.map(a => {
+        const u = findUser(a.userId);
+        return `<tr>
+          <td><div class="row gap8">${avatarHTML(u || {}, 'sm')}<div><div style="font-weight:600">${esc(u ? u.fullName : a.userName || '—')}</div><div class="tiny muted">@${esc(u ? u.username : a.username || '')} · ${dateLabel(a.createdAt)}</div></div></div></td>
+          <td style="font-weight:600">@${esc(a.vendorUsername)}</td>
+          <td><div style="font-weight:600">${a.months || 1} month${(a.months || 1) > 1 ? 's' : ''}</div><div class="tiny muted">${a.kind === 'renewal' ? 'Renewal' : 'New vendor'}</div></td>
+          <td>${usd(a.feeUsd)}</td>
+          <td class="tiny muted" style="max-width:180px"><div>${esc(a.methodLabel || '—')}</div><div style="word-break:break-all">${esc(a.address || '')}</div></td>
+          <td>${a.proof ? `<img src="${a.proof}" style="width:46px;height:46px;object-fit:cover;border-radius:8px;border:1px solid var(--border);cursor:pointer" data-act="vendor-view-proof" data-id="${a.id}"/>` : '<span class="tiny muted">none</span>'}</td>
+          <td>${statusBadge(a.status)}</td>
+          <td><div class="row gap6" style="justify-content:flex-end">
+            ${a.status === 'pending' ? `<button class="btn btn-xs btn-primary" data-act="vendor-app-approve" data-id="${a.id}">Approve</button>
+              <button class="btn btn-xs btn-danger" data-act="vendor-app-reject" data-id="${a.id}">Reject</button>` : ''}
+            ${a.status !== 'pending' ? `<button class="btn btn-xs btn-ghost" data-act="vendor-app-del" data-id="${a.id}">${ic('trash', 12)}</button>` : ''}
+          </div></td></tr>`;
+      }).join('') : `<tr><td colspan="7" class="center muted" style="padding:30px">No vendor applications yet</td></tr>`}
+      </tbody></table></div>
+    </div>`;
+}
+
+function adminVendors() {
+  return `<div class="card">
+    <div class="between mb16"><h3 style="font-size:15px">Vendors</h3><span class="badge">${DB.vendors.length} total</span></div>
+    <div class="table-wrap"><table class="tbl"><thead><tr><th>Vendor</th><th>Owner</th><th>Products</th><th>Sales</th><th>Expiry</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+    ${DB.vendors.length ? DB.vendors.map(v => {
+      const owner = findUser(v.userId);
+      const prods = DB.products.filter(p => p.vendorId === v.id);
+      const rev = DB.orders.filter(o => o.vendorId === v.id).reduce((s, o) => s + o.usd || 0, 0);
+      return `<tr><td><div style="font-weight:600">@${esc(v.username)}</div><div class="tiny muted">Since ${dateLabel(v.createdAt)}</div></td>
+        <td><div class="row gap6">${owner ? avatarHTML(owner, 'sm') : ''}<div><div class="small">${esc(owner ? owner.fullName : '—')}</div><div class="tiny muted">${esc(owner ? owner.username : '')}</div></div></div></td>
+        <td>${prods.length}</td><td>${v.sales || 0}</td><td>${coins(DB.orders.filter(o => o.vendorId === v.id).reduce((s, o) => s + o.totalUsd, 0) / COIN_USD)} WC</td>
+        <td>${v.rating.toFixed(1)} ★</td>
+        <td><div class="row gap6" style="justify-content:flex-end">
+          <button class="btn btn-xs btn-ghost" data-act="admin-vendor" data-id="${v.id}">View</button>
+          <button class="btn btn-xs btn-ghost" data-act="admin-edit-vendor" data-id="${v.id}">Edit</button>
+          <button class="btn btn-xs btn-ghost" data-act="vendor-extend" data-id="${v.id}" title="Add 30 days">+30d</button>
+          ${owner ? `<button class="btn btn-xs btn-ghost" data-act="admin-msg-user" data-id="${owner.id}">${ic('chat', 12)}</button>` : ''}
+        </div></td></tr>`;
+    }).join('') : `<tr><td colspan="7" class="center muted" style="padding:30px">No vendors yet</td></tr>`}
+    </tbody></table></div></div>`;
+}
+App.adminVendor = function (id) {
+  const v = vendorById(id); if (!v) return;
+  const owner = findUser(v.userId);
+  const prods = DB.products.filter(p => p.vendorId === id);
+  openModal(modalShell('Vendor @' + v.username, `
+    <div class="row gap12 mb16">${avatarHTML(owner || {}, 'lg')}<div><div style="font-weight:650">${esc(v.name)}</div>
+      <div class="small muted">${esc(owner ? owner.fullName : '')}</div><div class="row gap6 mt6"><span class="badge badge-accent">${v.rating.toFixed(1)} ★</span><span class="badge">Trust ${v.trustScore}</span><span class="badge">${v.sales || 0} sales</span></div></div></div>
+    <div class="kv"><span class="k">Wallet balance</span><span class="v">${coins(owner ? owner.balance : 0)} WC</span></div>
+    <div class="kv"><span class="k">Products in inventory</span><span class="v">${prods.length}</span></div>
+    <div class="kv"><span class="k">Created</span><span class="v">${dateLabel(v.createdAt)}</span></div>
+    <div class="divider"></div>
+    <div class="label mb10">Inventory</div>
+    ${prods.length ? `<div class="list">${prods.slice(0, 8).map(p => `<div class="list-item" style="padding:8px 10px">
+      <div style="width:32px;height:32px;border-radius:8px;background:var(--surface-3);display:flex;align-items:center;justify-content:center;font-size:15px">${p.emoji || '📦'}</div>
+      <div class="grow"><div class="tiny" style="font-weight:600">${esc(p.name)}</div><div class="tiny muted">Stock ${p.stock} · ${p.active ? 'Listed' : 'Hidden'}</div></div>
+      <span class="tiny">${p.priceUsd ? coins(p.priceUsd / COIN_USD) + ' WC' : '—'}</span></div>`).join('')}</div>` : '<p class="tiny muted">No products.</p>'}`,
+    `<button class="btn btn-ghost" data-close style="flex:1">Close</button><button class="btn btn-primary" data-act="admin-edit-vendor" data-id="${v.id}" style="flex:1">Edit vendor</button>`));
+};
+App.adminEditVendor = function (id) {
+  const v = vendorById(id); if (!v) return;
+  openModal(modalShell('Edit vendor', `
+    ${field('Vendor username', 'evName', { value: v.username })}
+    ${field('Display name', 'evDisplay', { value: v.name })}
+    ${field('Star rating (0–5)', 'evRating', { type: 'number', value: v.rating, step: '0.1' })}
+    ${field('Trust score (0–100)', 'evTrust', { type: 'number', value: v.trustScore })}`,
+    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="admin-save-vendor" data-id="${v.id}">Save</button>`));
+};
+App.adminSaveVendor = function (id) {
+  const v = vendorById(id); if (!v) return;
+  const name = document.getElementById('evName').value.trim();
+  if (!/^[a-zA-Z0-9._-]{3,24}$/.test(name)) return toast('Invalid vendor username', 'err');
+  v.username = name;
+  v.name = document.getElementById('evDisplay').value.trim() || name;
+  v.rating = Math.max(0, Math.min(5, Number(document.getElementById('evRating').value) || 5));
+  v.trustScore = Math.max(0, Math.min(100, Number(document.getElementById('evTrust').value) || 50));
+  sync(); closeModal(); toast('Vendor updated', 'ok'); render();
 };
 
-App.serverConnect = async function () {
-  const input = document.getElementById('srvUrl');
-  let url = input ? input.value.trim() : '';
-  if (url && !/^https?:\/\//i.test(url)) url = 'https://' + url;
-  url = url.replace(/\/+$/, '');
-  closeModal();
-  toast('Connecting to sync server…');
-  const ok = await Remote.connect(url || '', { initFromLocal: true });
-  if (ok) {
-    await Push.ensure(false);
-    toast('Cross-device sync enabled', 'ok');
-    render();
-    setTimeout(() => App.serverDialog(), 250);
-  } else { render(); setTimeout(() => App.serverDialog(), 250); }
+/* ---------------- products ---------------- */
+let PRODUCT_EDIT = null, PRODUCT_IMAGE = null;
+function adminProducts() {
+  return `<div class="card">
+    <div class="between wrap gap10 mb16">
+      <div><h3 style="font-size:15px">Company marketplace</h3><p class="tiny muted mt6">Wholesale catalogue available to vendors only.</p></div>
+      <button class="btn btn-primary btn-sm" data-act="admin-product-new">${ic('plus', 15)} Add product</button>
+    </div>
+    <div class="table-wrap"><table class="tbl"><thead><tr><th>Product</th><th>Category</th><th>Wholesale price</th><th>Stock</th><th>Listings</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+    ${DB.companyProducts.length ? DB.companyProducts.map(p => {
+      const listings = DB.products.filter(x => x.companyProductId === p.id);
+      return `<tr>
+        <td><div class="row gap8"><div style="width:38px;height:38px;border-radius:9px;overflow:hidden;background:var(--surface-2);display:flex;align-items:center;justify-content:center;font-size:17px">${p.image ? `<img src="${p.image}" style="width:100%;height:100%;object-fit:cover"/>` : (p.emoji || '📦')}</div>
+          <div><div style="font-weight:600">${esc(p.name)}</div><div class="tiny muted">${esc((p.description || '').slice(0, 44))}…</div></div></div></td>
+        <td>${esc(p.category)}</td>
+        <td><div style="font-weight:600">${coins(p.priceUsd / COIN_USD)} WC</div><div class="tiny muted">${usd(p.priceUsd)}</div></td>
+        <td>${p.stock}</td><td>${listings.length} vendors</td>
+        <td><div class="row gap6" style="justify-content:flex-end">
+          <button class="btn btn-xs btn-ghost" data-act="admin-product-edit" data-id="${p.id}">${ic('edit', 12)}</button>
+          <button class="btn btn-xs btn-danger" data-act="admin-product-del" data-id="${p.id}">${ic('trash', 12)}</button></div></td></tr>`;
+    }).join('') : `<tr><td colspan="6" class="center muted" style="padding:30px">No company products yet</td></tr>`}
+    </tbody></table></div>
+  </div>
+  <div class="card mt16">
+    <h3 style="font-size:15px">Vendor listings</h3><p class="tiny muted mt6">Everything currently listed on the public marketplace.</p>
+    <div class="table-wrap mt16"><table class="tbl"><thead><tr><th>Product</th><th>Vendor</th><th>Price</th><th>Stock</th><th>Stars</th><th>Status</th></tr></thead><tbody>
+      ${DB.products.filter(p => p.priceUsd).length ? DB.products.filter(p => p.priceUsd).map(p => {
+        const v = vendorById(p.vendorId);
+        return `<tr><td style="font-weight:600">${esc(p.name)}</td><td>@${esc(v ? v.username : '—')}</td>
+          <td>${coins(p.priceUsd / COIN_USD)} WC <span class="tiny muted">${usd(p.priceUsd)}</span></td>
+          <td>${p.stock}</td><td>${(p.starUsers || []).length}</td>
+          <td>${p.active && p.stock > 0 ? '<span class="badge badge-success">Live</span>' : '<span class="badge">Hidden</span>'}</td></tr>`;
+      }).join('') : `<tr><td colspan="6" class="center muted" style="padding:24px">No vendor listings yet</td></tr>`}
+    </tbody></table></div>
+  </div>`;
+}
+function bindProductForm() {
+  const f = document.getElementById('productForm');
+  if (!f) return;
+  const price = document.getElementById('pfPrice');
+  const calc = () => {
+    const el = document.getElementById('pfCoins');
+    if (el) el.textContent = coins(usdToCoins(Number(price.value) || 0)) + ' WC';
+  };
+  price.addEventListener('input', calc); calc();
+}
+App.adminProductNew = function () {
+  PRODUCT_EDIT = null; PRODUCT_IMAGE = null;
+  openProductModal();
 };
-App.serverDisconnect = async function () {
-  if (!await confirmDialog({ title: 'Disconnect sync?', body: 'This device keeps a local copy and stops receiving updates. Other devices stay connected.', danger: true, ok: 'Disconnect' })) return;
-  Remote.disconnect();
-  closeModal(); toast('Disconnected from sync server', 'ok'); render();
+App.adminProductEdit = function (id) {
+  PRODUCT_EDIT = DB.companyProducts.find(p => p.id === id) || null;
+  PRODUCT_IMAGE = PRODUCT_EDIT ? PRODUCT_EDIT.image : null;
+  openProductModal();
 };
-App.pushEnable = async function () {
-  await requestNotifyPermission(false);
-  const r = await Push.ensure(true);
-  if (r.ok) toast('Push notifications enabled (' + (r.devices || 1) + ' device)', 'ok');
-  else if (r.reason === 'permission') toast('Notifications blocked in browser settings', 'err');
-  else if (r.reason === 'no-server') toast('Connect a sync server first', 'err');
-  else toast('Push unavailable: ' + r.reason, 'err');
+function openProductModal() {
+  const p = PRODUCT_EDIT;
+  openModal(modalShell(p ? 'Edit product' : 'Add company product', `
+    <div id="productForm">
+      <div class="row gap12 mb16">
+        <div id="pfThumb" style="width:74px;height:74px;border-radius:12px;overflow:hidden;background:var(--surface-2);display:flex;align-items:center;justify-content:center;font-size:28px;flex:none">${PRODUCT_IMAGE ? `<img src="${PRODUCT_IMAGE}" style="width:100%;height:100%;object-fit:cover"/>` : (p && p.emoji ? p.emoji : '📦')}</div>
+        <div class="col gap6"><button class="btn btn-ghost btn-sm" data-act="admin-product-image">${ic('image', 14)} Upload image</button>
+          <span class="tiny muted">JPG or PNG, auto-compressed</span></div>
+      </div>
+      ${field('Product name', 'pfName', { value: p ? p.name : '', ph: 'e.g. Whale X1 Pro 5G' })}
+      <div class="field"><label class="label">Category</label>
+        <select class="input" id="pfCat">${['Phones', 'Laptops', 'Tablets', 'Headphones', 'Chargers', 'Video Games', 'Phone Pouches', 'Accessories'].map(c => `<option ${p && p.category === c ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
+      ${field('Wholesale price (USD)', 'pfPrice', { type: 'number', step: '0.01', value: p ? p.priceUsd : '', ph: '100.00' })}
+      <div class="panel" style="padding:10px 12px;margin-bottom:12px"><div class="between"><span class="tiny muted">Vendors pay in Whale Coin</span><span id="pfCoins" style="font-weight:700;color:var(--accent)">0 WC</span></div></div>
+      ${field('Company stock', 'pfStock', { type: 'number', value: p ? p.stock : 0 })}
+      ${field('Emoji fallback', 'pfEmoji', { value: p ? (p.emoji || '') : '📦', maxlength: '4', help: 'Shown when no image is uploaded.' })}
+      <div class="field"><label class="label">Description</label><textarea class="input" id="pfDesc" style="min-height:80px">${esc(p ? p.description || '' : '')}</textarea></div>
+    </div>`,
+    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="admin-product-save">${ic('check', 15)} ${p ? 'Save product' : 'Add product'}</button>`), { width: '520px' });
+  bindProductForm();
+}
+App.adminProductImage = async function () {
+  const f = await pickFile({ accept: 'image/*' });
+  if (!f) return;
+  const c = await compressImage(f, 640, 0.66);
+  PRODUCT_IMAGE = await fileToDataURL(c);
+  const t = document.getElementById('pfThumb');
+  if (t) t.innerHTML = `<img src="${PRODUCT_IMAGE}" style="width:100%;height:100%;object-fit:cover"/>`;
+};
+App.adminProductSave = function () {
+  const name = document.getElementById('pfName').value.trim();
+  const price = Number(document.getElementById('pfPrice').value);
+  const stock = Number(document.getElementById('pfStock').value);
+  if (name.length < 2) return toast('Enter a product name', 'err');
+  if (!(price > 0)) return toast('Enter a valid price', 'err');
+  if (!catValid(document.getElementById('pfCat').value)) return toast('Invalid category', 'err');
+  const data = {
+    name, category: document.getElementById('pfCat').value, priceUsd: Math.round(price * 100) / 100,
+    stock: Math.max(0, Math.round(stock) || 0), emoji: document.getElementById('pfEmoji').value || '📦',
+    description: document.getElementById('pfDesc').value.trim(), image: PRODUCT_IMAGE
+  };
+  if (PRODUCT_EDIT) Object.assign(PRODUCT_EDIT, data);
+  else DB.companyProducts.unshift(Object.assign({ id: uid('cp'), createdAt: Date.now() }, data));
+  sync(); closeModal(); toast(PRODUCT_EDIT ? 'Product updated' : 'Product added', 'ok'); render();
+};
+function catValid(c) { return ['Phones', 'Laptops', 'Tablets', 'Headphones', 'Chargers', 'Video Games', 'Phone Pouches', 'Accessories'].includes(c); }
+App.adminProductDel = async function (id) {
+  if (!await confirmDialog({ title: 'Delete company product?', body: 'Vendors keep their existing inventory, but it can no longer be restocked.', danger: true, ok: 'Delete' })) return;
+  DB.companyProducts = DB.companyProducts.filter(p => p.id !== id);
+  sync(); toast('Product deleted', 'ok'); render();
+};
+
+/* ---------------- orders ---------------- */
+function adminOrders() {
+  const orders = DB.orders;
+  return `<div class="grid-kpi mb16">
+    ${[['Processing', orders.filter(o => o.status === 'processing').length, 'clock'], ['Shipped', orders.filter(o => o.status === 'shipped').length, 'truck'],
+       ['Delivered', orders.filter(o => o.status === 'delivered').length, 'check'], ['Revenue', usd(orders.reduce((s, o) => s + o.totalUsd, 0)), 'trend']]
+      .map(([k, v, i]) => `<div class="kpi"><div class="ic">${ic(i, 15)}</div><div class="v">${v}</div><div class="k">${k}</div></div>`).join('')}
+    </div>
+    <div class="card">
+      <div class="between mb16"><h3 style="font-size:15px">All orders</h3><span class="badge">${orders.length} orders</span></div>
+      <div class="table-wrap"><table class="tbl"><thead><tr><th>Order</th><th>Buyer</th><th>Items</th><th>Total</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+      ${orders.length ? orders.map(o => {
+        const b = findUser(o.buyerId);
+        return `<tr><td><div style="font-weight:600">${esc(o.ref)}</div><div class="tiny muted">${dateLabel(o.createdAt)}</div></td>
+          <td><div class="small" style="font-weight:600">${esc(o.delivery.fullName)}</div><div class="tiny muted">${esc(b ? '@' + b.username : 'deleted user')}</div></td>
+          <td class="muted tiny">${o.items.map(i => esc(i.name) + ' ×' + i.qty).join('<br/>')}</td>
+          <td style="font-weight:600">${coins(o.totalCoins)} WC<div class="tiny muted">${usd(o.totalUsd)}</div></td>
+          <td>${statusBadge(o.status)}</td>
+          <td><div class="row gap6" style="justify-content:flex-end">
+            <button class="btn btn-xs btn-primary" data-act="admin-order" data-id="${o.id}">Manage</button>
+            <button class="btn btn-xs btn-ghost" data-act="admin-order-del" data-id="${o.id}">${ic('trash', 12)}</button></div></td></tr>`;
+      }).join('') : `<tr><td colspan="6" class="center muted" style="padding:30px">No orders yet</td></tr>`}
+      </tbody></table></div>
+    </div>`;
+}
+App.adminOrder = function (id) {
+  const o = DB.orders.find(x => x.id === id); if (!o) return;
+  const b = findUser(o.buyerId);
+  const v = vendorById(o.vendorId); const vu = v ? findUser(v.userId) : null;
+  openModal(modalShell('Order ' + o.ref, `
+    <div class="between mb10"><div class="row gap8">${statusBadge(o.status)}<span class="badge">${dateLabel(o.createdAt)}</span></div>
+      <span style="font-weight:700;font-family:var(--display)">${coins(o.totalCoins)} WC</span></div>
+    <div class="panel" style="padding:12px;margin-bottom:12px">
+      ${o.items.map(i => `<div class="between" style="padding:4px 0"><span class="small">${esc(i.name)} ×${i.qty}</span><span class="small muted">${usd(i.priceUsd * i.qty)}</span></div>`).join('')}
+    </div>
+    <div class="small" style="font-weight:650;margin-bottom:4px">Buyer</div>
+    <div class="kv"><span class="k">Account</span><span class="v">${esc(b ? b.fullName + ' (@' + b.username + ')' : 'Deleted user')}</span></div>
+    <div class="kv"><span class="k">Receiver</span><span class="v">${esc(o.delivery.fullName)}</span></div>
+    <div class="kv"><span class="k">Phone</span><span class="v">${esc(o.delivery.phone)}</span></div>
+    <div class="kv"><span class="k">Email</span><span class="v">${esc(o.delivery.email)}</span></div>
+    <div class="kv"><span class="k">Country</span><span class="v">${esc(o.delivery.country)}</span></div>
+    <div class="kv"><span class="k">Address</span><span class="v" style="max-width:62%">${esc(o.delivery.address)}</span></div>
+    <div class="kv"><span class="k">Vendor</span><span class="v">@${esc(vu ? vu.username : '—')}</span></div>
+    ${field('Tracking reference (optional)', 'aoTrack', { value: o.tracking || '', ph: 'e.g. PKG-88123' })}
+    <div class="field"><label class="label">Update status</label>
+      <select class="input" id="aoStatus">
+        ${['processing', 'shipped', 'delivered', 'cancelled'].map(s => `<option value="${s}" ${o.status === s ? 'selected' : ''}>${s[0].toUpperCase() + s.slice(1)}</option>`).join('')}
+      </select></div>
+    <div class="field"><label class="label">Message to buyer (optional)</label><input class="input" id="aoNote" placeholder="e.g. Dispatched with express courier"/></div>`,
+    `<button class="btn btn-ghost" data-close>Close</button><button class="btn btn-primary" data-act="admin-order-save" data-id="${o.id}">${ic('check', 15)} Save & notify</button>`), { width: '520px' });
+};
+App.adminOrderSave = function (id) {
+  const o = DB.orders.find(x => x.id === id); if (!o) return;
+  const st = document.getElementById('aoStatus').value;
+  const note = document.getElementById('aoNote').value.trim();
+  o.tracking = document.getElementById('aoTrack').value.trim() || o.tracking;
+  if (st !== o.status) {
+    o.status = st;
+    o.timeline.push({ status: st, at: Date.now(), note: note || '' });
+    notify(o.buyerId, 'Order ' + o.ref + ' · ' + st[0].toUpperCase() + st.slice(1),
+      (st === 'shipped' ? 'Your package is on the way. ' : st === 'delivered' ? 'Your package was delivered. ' : '') + (note || 'Track your package movements in the app.'),
+      '#/orders', 'truck');
+    if (o.vendorId) {
+      const v = vendorById(o.vendorId);
+      if (v) notify(v.userId, 'Order ' + o.ref + ' is now ' + st, note || 'Status updated by WhaleChat admin.', '#/vendor/orders', 'truck');
+    }
+  } else if (note) {
+    notify(o.buyerId, 'Update on order ' + o.ref, note, '#/orders', 'chat');
+  }
+  sync(); closeModal(); toast('Order updated', 'ok'); render();
+};
+App.adminOrderDel = async function (id) {
+  if (!await confirmDialog({ title: 'Delete order?', body: 'Removes the order record. Buyer will no longer see tracking.', danger: true, ok: 'Delete' })) return;
+  DB.orders = DB.orders.filter(o => o.id !== id); sync(); toast('Order deleted', 'ok'); render();
+};
+
+/* ---------------- refunds ---------------- */
+function adminRefunds() {
+  const list = DB.refunds || [];
+  const pending = list.filter(r => r.status === 'pending');
+  const approved = list.filter(r => r.status === 'approved');
+  return `<div class="grid-kpi k4 mb16">
+      ${[['Pending refunds', pending.length, 'clock'], ['Approved', approved.length, 'check'],
+         ['Refunded value', coins(approved.reduce((s, r) => s + r.coins, 0)) + ' WC', 'wallet'],
+         ['Requests total', list.length, 'refresh']]
+        .map(([k, v, i]) => `<div class="kpi"><div class="ic">${ic(i, 15)}</div><div class="v" style="font-size:17px">${v}</div><div class="k">${k}</div></div>`).join('')}
+    </div>
+    <div class="card">
+      <div class="between mb16"><div><h3 style="font-size:15px">Company purchase refunds</h3>
+        <p class="tiny muted mt6">Approve to return the vendor's unsold units to company stock and credit the amount back to their balance.</p></div>
+        <span class="badge badge-warn">${pending.length} pending</span></div>
+      <div class="table-wrap"><table class="tbl"><thead><tr><th>Vendor</th><th>Product</th><th>Qty</th><th>Amount</th><th>Reason</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+      ${list.length ? list.map(r => {
+        const v = vendorById(r.vendorId); const vu = v ? findUser(v.userId) : null;
+        return `<tr>
+          <td><div style="font-weight:600">@${esc(v ? v.username : '—')}</div><div class="tiny muted">${esc(vu ? vu.fullName : '')}</div></td>
+          <td style="font-weight:600">${esc(r.name)}</td><td>${r.qty}</td>
+          <td><div style="font-weight:600">${coins(r.coins)} WC</div><div class="tiny muted">${usd(r.usd)}</div></td>
+          <td class="tiny muted" style="max-width:180px">${esc(r.reason || '—')}</td>
+          <td>${statusBadge(r.status)}</td>
+          <td><div class="row gap6" style="justify-content:flex-end">
+            ${r.status === 'pending' ? `<button class="btn btn-xs btn-primary" data-act="refund-approve" data-id="${r.id}">Approve</button>
+              <button class="btn btn-xs btn-danger" data-act="refund-reject" data-id="${r.id}">Reject</button>` : ''}
+            <button class="btn btn-xs btn-ghost" data-act="refund-del" data-id="${r.id}">${ic('trash', 12)}</button>
+          </div></td></tr>`;
+      }).join('') : `<tr><td colspan="7" class="center muted" style="padding:30px">No refund requests yet</td></tr>`}
+      </tbody></table></div>
+    </div>`;
+}
+
+/* ---------------- deposits ---------------- */
+function adminDeposits() {
+  const list = DB.deposits;
+  return `<div class="card">
+    <div class="between mb16"><h3 style="font-size:15px">Deposit requests</h3>
+      <div class="row gap8"><span class="badge badge-warn">${list.filter(d => d.status === 'pending').length} pending</span>
+      <button class="btn btn-sm btn-ghost" data-nav="#/admin/settings">${ic('settings', 14)} Payment methods</button></div></div>
+    <div class="table-wrap"><table class="tbl"><thead><tr><th>User</th><th>Amount</th><th>Whale Coin</th><th>Method</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+    ${list.length ? list.map(d => {
+      const u = findUser(d.userId);
+      return `<tr><td><div style="font-weight:600">${esc(u ? u.fullName : 'Deleted user')}</div><div class="tiny muted">${esc(u ? '@' + u.username : '')} · ${timeAgo(d.createdAt)} ago</div></td>
+        <td style="font-weight:600">${usd(d.usd)}</td><td>${coins(d.coins)} WC</td>
+        <td><div class="small">${esc(d.methodName || d.method)}</div><div class="tiny muted" style="max-width:180px;overflow:hidden;text-overflow:ellipsis">${esc(d.detail || '')}</div></td>
+        <td>${statusBadge(d.status)}</td>
+        <td><div class="row gap6" style="justify-content:flex-end">
+          ${d.status === 'pending' ? `<button class="btn btn-xs btn-primary" data-act="dep-approve" data-id="${d.id}">Approve</button>
+          <button class="btn btn-xs btn-danger" data-act="dep-reject" data-id="${d.id}">Reject</button>` : ''}
+          <button class="btn btn-xs btn-ghost" data-act="dep-del" data-id="${d.id}">${ic('trash', 12)}</button></div></td></tr>`;
+    }).join('') : `<tr><td colspan="6" class="center muted" style="padding:30px">No deposit requests</td></tr>`}
+    </tbody></table></div>
+  </div>`;
+}
+App.depApprove = async function (id) {
+  const d = DB.deposits.find(x => x.id === id); if (!d || d.status !== 'pending') return;
+  const u = findUser(d.userId); if (!u) return toast('User not found', 'err');
+  d.status = 'approved'; d.reviewedAt = Date.now();
+  u.balance = Math.round((u.balance + d.coins) * 100) / 100;
+  u.totalDeposits = Math.round(((u.totalDeposits || 0) + d.usd) * 100) / 100;
+  tx(u.id, 'deposit', 'Deposit approved · ' + (d.methodName || d.method), d.coins);
+  notify(u.id, 'Deposit approved ✅', `${coins(d.coins)} WC has been credited to your wallet.`, '#/wallet', 'wallet');
+  // referral payout on first approved deposit (idempotent)
+  try { resolvePendingReferrals(); } catch (e) {}
+  let bonus = false;
+  try { bonus = referralBonus(u.id); } catch (e) {}
+  sync();
+  toast(bonus ? 'Deposit approved · 10 WC referral bonus paid' : 'Deposit approved and credited', 'ok');
   render();
 };
-App.pushTest = function () { Push.test(); };
+App.depReject = async function (id) {
+  const d = DB.deposits.find(x => x.id === id); if (!d) return;
+  const reason = await promptDialog({ title: 'Reject deposit', label: 'Reason (sent to user)', placeholder: 'Payment not received' });
+  if (reason === null) return;
+  d.status = 'rejected'; d.note = reason; d.reviewedAt = Date.now();
+  notify(d.userId, 'Deposit rejected', `${usd(d.usd)} deposit was rejected. ${reason || ''}`, '#/wallet', 'ban');
+  sync(); toast('Deposit rejected', 'ok'); render();
+};
+App.depDel = async function (id) {
+  if (!await confirmDialog({ title: 'Delete deposit record?', danger: true, ok: 'Delete' })) return;
+  DB.deposits = DB.deposits.filter(d => d.id !== id); sync(); render();
+};
 
-/* Send pending changes before the tab/app is closed (keeps messages + pushes reliable). */
-window.addEventListener('pagehide', () => {
-  try {
-    if (!Remote.enabled || !Remote.dirty) return;
-    const ops = diffDB(Remote.last || blankDB(), DB);
-    if (!ops.length) return;
-    const body = JSON.stringify({ ops, clientId: Remote.clientId });
-    if (navigator.sendBeacon) {
-      navigator.sendBeacon(Remote.url('/api/ops'), new Blob([body], { type: 'application/json' }));
-    } else {
-      fetch(Remote.url('/api/ops'), { method: 'POST', headers: { 'content-type': 'application/json' }, body, keepalive: true }).catch(() => {});
-    }
-  } catch (e) {}
-});
-setInterval(() => {
-  try {
-    if (Remote.enabled && me() && typeof Notification !== 'undefined' && Notification.permission === 'granted') Push.ensure(false);
-  } catch (e) {}
-}, 5 * 60 * 1000);
-/* =========================================================================
-   Boot, global action dispatch, PWA wiring
-   ========================================================================= */
-function camel(act) {
-  return act.replace(/-([a-z])/g, (m, c) => c.toUpperCase());
+/* ---------------- withdrawals ---------------- */
+function adminWithdrawals() {
+  const list = DB.withdrawals;
+  return `<div class="card">
+    <div class="between mb16"><h3 style="font-size:15px">Withdrawal requests</h3>
+      <div class="row gap8"><span class="badge badge-warn">${list.filter(w => w.status === 'pending').length} pending</span>
+      <button class="btn btn-sm btn-ghost" data-act="edit-networks">${ic('settings', 14)} USDT networks</button></div></div>
+    <div class="table-wrap"><table class="tbl"><thead><tr><th>User</th><th>Amount</th><th>Network · Address</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+    ${list.length ? list.map(w => {
+      const u = findUser(w.userId);
+      return `<tr><td><div style="font-weight:600">${esc(u ? u.fullName : 'Deleted user')}</div><div class="tiny muted">${esc(u ? '@' + u.username : '')} · ${timeAgo(w.createdAt)} ago</div></td>
+        <td><div style="font-weight:600">${coins(w.coins)} WC</div><div class="tiny muted">${usd(w.usd)}</div></td>
+        <td><span class="badge">${esc(w.network)}</span><div class="tiny muted" style="max-width:190px;overflow:hidden;text-overflow:ellipsis;margin-top:3px">${esc(w.address)}</div></td>
+        <td>${statusBadge(w.status)}</td>
+        <td><div class="row gap6" style="justify-content:flex-end">
+          ${w.status === 'pending' ? `<button class="btn btn-xs btn-primary" data-act="wd-approve" data-id="${w.id}">Approve</button>
+          <button class="btn btn-xs btn-danger" data-act="wd-reject" data-id="${w.id}">Reject</button>` : ''}
+          <button class="btn btn-xs btn-ghost" data-act="wd-edit" data-id="${w.id}">${ic('edit', 12)}</button>
+          <button class="btn btn-xs btn-ghost" data-act="wd-del" data-id="${w.id}">${ic('trash', 12)}</button></div></td></tr>`;
+    }).join('') : `<tr><td colspan="5" class="center muted" style="padding:30px">No withdrawal requests</td></tr>`}
+    </tbody></table></div>
+  </div>`;
 }
-const ACTION_ALIASES = {
-  'admin-del-user': 'adminDeleteUser',
-  'admin-notif-edit': 'adminNotifEdit',
-  'admin-notif-del': 'adminNotifDel',
-  'admin-notif-save': 'adminNotifSave',
-  'admin-product-del': 'adminProductDel',
-  'admin-send-notif': 'adminSendNotif',
-  'admin-test-notif': 'adminTestNotif',
-  'admin-user': 'adminUser',
-  'admin-order-del': 'adminOrderDel',
-  'admin-order-save': 'adminOrderSave',
-  'admin-export': 'adminExport',
-  'admin-notify-user': 'adminNotifyUser',
-  'edit-msg': 'editMessage',
-  'copy-msg': 'copyMessage',
-  'delete-msg': 'deleteMessage',
-  'forward-msg': 'forwardMessage',
-  'avatar-camera': 'avatarCamera',
-  'live-chat': 'openLiveChat',
-  'search-people': 'mobileSearch',
-  'toggle-anypass': 'toggleAnyPass'
+App.wdApprove = async function (id) {
+  const w = DB.withdrawals.find(x => x.id === id); if (!w) return;
+  const u = findUser(w.userId);
+  const txRef = await promptDialog({ title: 'Approve withdrawal', label: 'Blockchain transaction hash (optional)', placeholder: '0x… or leave blank' });
+  if (txRef === null) return;
+  w.status = 'approved'; w.txHash = txRef; w.reviewedAt = Date.now();
+  const act = DB.txs.find(t => t.id === w.txId || (t.meta && t.meta.withdrawalId === w.id));
+  if (act) { act.label = 'Withdrawal approved · ' + w.network; act.meta = Object.assign({}, act.meta, { withdrawalId: w.id, status: 'approved' }); }
+  if (u) {
+    u.totalWithdrawals = Math.round(((u.totalWithdrawals || 0) + w.coins) * 100) / 100;
+    notify(u.id, 'Withdrawal approved 💸', `${coins(w.coins)} WC (${usd(w.usd)}) was sent via ${w.network}.${txRef ? ' Tx: ' + txRef : ''}`, '#/wallet', 'download');
+  }
+  sync(); toast('Withdrawal approved', 'ok'); render();
+};
+App.wdReject = async function (id) {
+  const w = DB.withdrawals.find(x => x.id === id); if (!w) return;
+  const reason = await promptDialog({ title: 'Reject withdrawal', label: 'Reason (sent to user)', placeholder: 'Invalid wallet address' });
+  if (reason === null) return;
+  const u = findUser(w.userId);
+  w.status = 'rejected'; w.note = reason; w.reviewedAt = Date.now();
+  const actR = DB.txs.find(t => t.id === w.txId || (t.meta && t.meta.withdrawalId === w.id));
+  if (actR) { actR.label = 'Withdrawal rejected · ' + w.network; actR.meta = Object.assign({}, actR.meta, { withdrawalId: w.id, status: 'rejected' }); }
+  if (u) {
+    u.balance = Math.round((u.balance + w.coins) * 100) / 100;
+    tx(u.id, 'refund', 'Withdrawal rejected · refund', w.coins);
+    notify(u.id, 'Withdrawal rejected', `${coins(w.coins)} WC has been returned to your balance. ${reason || ''}`, '#/wallet', 'ban');
+  }
+  sync(); toast('Withdrawal rejected and refunded', 'ok'); render();
+};
+App.wdEdit = function (id) {
+  const w = DB.withdrawals.find(x => x.id === id); if (!w) return;
+  openModal(modalShell('Edit withdrawal', `
+    ${field('Amount (Whale Coin)', 'ewCoins', { type: 'number', value: w.coins })}
+    <div class="field"><label class="label">Network</label><select class="input" id="ewNet">${(DB.settings.networks || []).map(n => `<option ${w.network === n ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></div>
+    ${field('USDT address', 'ewAddr', { value: w.address })}
+    ${field('Admin note', 'ewNote', { value: w.note || '' })}`,
+    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="wd-save" data-id="${w.id}">Save changes</button>`));
+};
+App.wdSave = function (id) {
+  const w = DB.withdrawals.find(x => x.id === id); if (!w) return;
+  const coinsVal = Number(document.getElementById('ewCoins').value);
+  const addr = document.getElementById('ewAddr').value.trim();
+  if (!(coinsVal > 0) || !addr) return toast('Enter a valid amount and address', 'err');
+  const u = findUser(w.userId);
+  const diff = Math.round((coinsVal - w.coins) * 100) / 100;
+  if (diff > 0 && u && u.balance < diff) return toast('User balance too low for this increase', 'err');
+  if (u && diff !== 0) { u.balance = Math.round((u.balance - diff) * 100) / 100; tx(u.id, 'withdrawal', 'Withdrawal adjusted by admin', -diff); }
+  w.coins = coinsVal; w.usd = coinsToUsd(coinsVal);
+  w.network = document.getElementById('ewNet').value;
+  w.address = addr;
+  w.note = document.getElementById('ewNote').value.trim();
+  // keep the user's activity row in sync with admin edits
+  const linked = DB.txs.find(t => t.id === w.txId || (t.meta && t.meta.withdrawalId === w.id));
+  if (linked && (w.status === 'pending' || w.status === 'approved')) {
+    linked.coins = -w.coins;
+    linked.label = (w.status === 'approved' ? 'Withdrawal approved · ' : 'Withdrawal request · ') + w.network;
+    linked.meta = Object.assign({}, linked.meta, { withdrawalId: w.id, network: w.network, editedByAdmin: true });
+  }
+  if (u) notify(u.id, 'Withdrawal request updated', `Your ${coins(w.coins)} WC withdrawal was updated by our team (${w.network}).`, '#/wallet', 'download');
+  sync(); closeModal(); toast('Withdrawal updated', 'ok'); render();
+};
+App.wdDel = async function (id) {
+  if (!await confirmDialog({ title: 'Delete withdrawal history?', body: 'This removes the record only; funds already approved are not affected.', danger: true, ok: 'Delete' })) return;
+  DB.withdrawals = DB.withdrawals.filter(w => w.id !== id); sync(); render();
 };
 
-App.openChat = function (id) {
-  if (!id) return;
-  closeModal();            // a search sheet must not stay on top of the chat
-  go('chat/' + id);
-  const focusComposer = () => {
-    const i = document.getElementById('msgInput');
-    if (!i) return false;
-    i.focus({ preventScroll: true });
-    const b = document.getElementById('chatBody');
-    if (b) b.scrollTop = b.scrollHeight;
-    try { i.setSelectionRange(i.value.length, i.value.length); } catch (e) {}
-    return true;
-  };
-  setTimeout(focusComposer, 60);
-  setTimeout(focusComposer, 260);
-  setTimeout(focusComposer, 600);
+/* ---------------- notification management ---------------- */
+function adminNotifications() {
+  const list = DB.notifications.slice(0, 100);
+  return `<div class="card mb16">
+    <h3 style="font-size:15px">Send a notification</h3>
+    <p class="tiny muted mt6">Delivered instantly to a single account or every user.</p>
+    <div class="mt16" style="display:grid;grid-template-columns:1fr 1fr;gap:12px" class="dash2">
+      <div class="field"><label class="label">Recipient</label><select class="input" id="anUser"><option value="all">All users</option>
+        ${DB.users.filter(x => x.role !== 'admin').map(x => `<option value="${x.id}">${esc(x.fullName)} (@${esc(x.username)})</option>`).join('')}</select></div>
+      ${field('Title', 'anTitle', { ph: 'e.g. Platform update' })}
+    </div>
+    <div class="field"><label class="label">Message</label><textarea class="input" id="anBody" style="min-height:80px" placeholder="Write your message…"></textarea></div>
+    <div class="row gap8"><button class="btn btn-primary btn-sm" data-act="admin-send-notif">${ic('send', 14)} Send notification</button>
+    <button class="btn btn-ghost btn-sm" data-act="admin-test-notif">${ic('bell', 14)} Test on this device</button></div>
+  </div>
+  <div class="card">
+    <div class="between mb16"><h3 style="font-size:15px">All notifications</h3><span class="badge">${DB.notifications.length} total</span></div>
+    <div class="list">
+      ${list.length ? list.map(n => {
+        const u = findUser(n.userId);
+        return `<div class="notif-item">
+          <div style="width:32px;height:32px;border-radius:9px;background:var(--surface-3);color:var(--accent);display:flex;align-items:center;justify-content:center;flex:none">${ic(n.icon || 'bell', 14)}</div>
+          <div class="grow" style="min-width:0"><div class="small" style="font-weight:650">${esc(n.title)}</div>
+            <div class="tiny muted" style="line-height:1.5">${esc(n.body)}</div>
+            <div class="tiny" style="color:var(--muted-2);margin-top:4px">${esc(u ? u.fullName : 'Deleted user')} · ${timeAgo(n.createdAt)} ago</div></div>
+          <div class="row gap4">
+            <button class="btn btn-xs btn-ghost" data-act="admin-notif-edit" data-id="${n.id}">${ic('edit', 11)}</button>
+            <button class="btn btn-xs btn-ghost" data-act="admin-notif-del" data-id="${n.id}">${ic('trash', 11)}</button>
+          </div></div>`;
+      }).join('') : `<div class="empty"><p>No notifications yet.</p></div>`}
+    </div>
+  </div>
+  <style>@media(max-width:860px){.dash2{grid-template-columns:1fr!important}}</style>`;
+}
+App.adminSendNotif = function () {
+  const to = document.getElementById('anUser').value;
+  const title = document.getElementById('anTitle').value.trim();
+  const body = document.getElementById('anBody').value.trim();
+  if (!title || !body) return toast('Title and message are required', 'err');
+  if (to === 'all') {
+    DB.users.filter(u => u.role !== 'admin').forEach(u => notify(u.id, title, body, null, 'bell'));
+    toast('Notification sent to ' + DB.users.filter(u => u.role !== 'admin').length + ' users', 'ok');
+  } else { notify(to, title, body, null, 'bell'); toast('Notification sent', 'ok'); }
+  sync(); render();
 };
-App.openProduct = function (id) { if (id) go('product/' + id); };
-App.back = function () { back(); };
-App.copy = function (v) { if (v) copyText(v); };
-App.copyMessageText = function (id) { App.copyMessage(id); };
-
-document.addEventListener('click', function (ev) {
-  const nav = ev.target.closest('[data-nav]');
-  if (nav) {
-    ev.preventDefault();
-    const h = nav.getAttribute('data-nav');
-    go(h.replace(/^#\/?/, ''));
-    return;
-  }
-  const el = ev.target.closest('[data-act]');
-  if (!el) return;
-  const act = el.getAttribute('data-act');
-  if (!act) return;
-  const ds = Object.assign({}, el.dataset);
-  ev.preventDefault();
-  // special multi-arg handlers
-  if (act === 'cart-qty') return App.cartQty(ds.id, ds.d);
-  if (act === 'remove-media') return App.removeMedia(Number(ds.idx));
-  if (act === 'do-forward') return App.doForward(ds.id, ds.msg);
-  if (act === 'send-status-reply') return;
-  if (act === 'back') return App.back();
-  if (act === 'toggle-theme') return App.toggleTheme();
-  if (act === 'set-pin-now') return App.setPinNow();
-  if (act === 'status-step') return App.statusStep(Number(ds.d));
-  const name = ACTION_ALIASES[act] || camel(act);
-  const fn = App[name];
-  if (typeof fn === 'function') {
-    try { fn(ds.id, ds, ev); }
-    catch (err) { console.error('Action failed', act, err); toast('Something went wrong. Please try again.', 'err'); }
-  } else {
-    console.warn('No handler for action:', act, name);
-  }
-}, false);
-
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') { closeModal(); closeViewer(); }
-  if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
-    e.preventDefault();
-    const s = document.getElementById('globalSearch');
-    if (s) s.focus();
-  }
-});
-
-App.avatarCamera = function () { App.avatarUpload(true); };
-
-App.mobileSearch = function () {
-  openModal(modalShell('Search WhaleChat', `
-    <div class="searchbar" style="height:46px">${ic('search', 17)}<input id="msInput" placeholder="People, chats, products…" autocomplete="off"/></div>
-    <div class="mt16" id="msResults"><p class="small muted">Type to search people, contacts and products.</p></div>`,
-    `<button class="btn btn-ghost" data-close style="width:100%">Close</button>`));
-  const i = document.getElementById('msInput');
-  setTimeout(() => i.focus(), 80);
-  i.addEventListener('keydown', (e) => { if (e.key === 'Enter' && i.value.trim()) { closeModal(); App.openSearch(i.value.trim()); } });
+App.adminTestNotif = async function () {
+  await requestNotifyPermission(false);
+  const title = document.getElementById('anTitle').value.trim() || 'WhaleChat';
+  const body = document.getElementById('anBody').value.trim() || 'Test notification from the admin console.';
+  if (Notification.permission !== 'granted') return toast('Enable notifications in your browser first', 'err');
+  new Notification(title, { body, icon: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMAAAADACAMAAABlApw1AAABgFBMVEUgYWk5WXEiOGAmV2ZQVGRPmaMeNU4RMUYhqZlFfIwLEyoteoNWYJlJiZUvBiQDDx8AYwBGOGRRdo0HGS0AqlVVqqoPLEA8SG0+cIE/cIFmADNDYHv/AAD///8AAAAGFyoDChwWN0oOJTkrV2g0Z3cTK0IWRlQjRlpMhpQEDiBEeIgt6Msw9NVYl6U6dIIoTWEhO1EYWGMTU1xmpLMxc3xOk5wXZmkmt6Y7bYBjnKs1hYoJMj0s3MItyLVUo6oYdXMAAAkhqJkBAAcBADw0lZUq07sFFicAAhFBbYEkpZkAVVUA//8el4wAAFUAf38AAhAbi4QciYMstqkagntAbH0x/dsIJjUAPT0elYoIKjcPR08A/wAjUV0DCyMahn4BBBIFGCsOOUUDER4orqI1qKMAAH8/f38z/+Az/+AAAP8KGjAxhotBcX4CDBwEDSQeTmA/P385doQimZI0wbMIEyozWW4IASIZfXcA/38zJUk0S2UzZ3gJBiQOEjEWKkMKMDqjVgS9AAAAgHRSTlPVZRucFOxapt+dZ9oWswvGAhhakQMDyRV6hAVXAQEA/v7+/v7+/v3+/v7+xsP+/v///vz//v712P7/+vzM1v3qUNUpBfLOrYr/5AMB6AMCctzo4+r/v7gE2tDZAf+J3LDL1vfX5wIEv8ABct3+xq7/BK/b5ZCMKd4CF1KvVVSF0voU6fgAABzUSURBVHjazZ2Hf9tGsoDhS2/X7/VHEG3BApEizCKxiJJMNUuxLLnE7eISx0mcnkte7pIr//qb2b4oBEhJdjb52ZQsgfPt1J1dgFblnMbhs2d/oi/+593f//4/voUxnM16KysrGzBW3nvvrbcu/XTpV+xn//Ts2Wfn9b7WuVzl1WeH9K93f//We6+9dvr0dAKjqQ38+nR28Pk7375y6dVXKfA3V38hAIffXMO/fvffb723svGXv4ybuSOKms2d09PZ7K3/vPQ3/J1r3xy+dAA6j//10yvfzp4mZZ9ow/yX8enB8OcfXv81Ku2blwlw7Rn88atLP78z04QfT8CGhrVhrVGr1VZW1tfXV1ZqvdpwODs4mOzwn4tAFTPrFaqIZ9deDsDhq6D/X//08+dP/wLysDkfbPR6IHatgYPKj4N9p+XDWBv2ng4mAuL04POffwI9HF598QCfvYuT/8M7sx0u/eTprKaPBv1TESBUq9UCLngxfDrhDJOZ9QPGpqsvFuAzsJ1/v2TN+NyPB8PWWoOJ3GM64MMEAIQGfYXKGH405noYWq+DKX3wAgFg9n/3SovPIki/BrZBRav1qMAS4TXNhnD2OWSjCwCeJxhADd4/ryyphSUAIG787tLnp2OY/Aikx9mkwlEARFA6QOnXGQHaT4tRMnegCMhArzOzXq8spYWFAWCa/vbD56fUdiYzJsqaBlDTVEDlxyjUYxYkAHxteP5sABeLmgfWP5fxhQUBrh6C54L4OAazxj6XorXGZQMXkEZEX12+fBkIelpkgldrUvybqAevuyUQrlQO379IAFDx6/5TJj6VyBcaYAArcogvLiOBBEAqZULCkNqh0/mOIszIPxa1I2sx63nbmqHNNgfDBosqTAESYD0JsGJogNqY+C1/bZ/KDwDEcWKKMB4+/vtidrQAwLXKlTe6ExT/o5bf4GNNKCChAT42mAlRL6b2QxXATailAAggkO8wqg76f8C3On8AMM3n9w4wYgzA8SQANaJuqyEMBN328mVdfgHAXUTz4UbjJrOgEOV3nIBs4fVnj9+mb3e+AB/D9A93QMmTLkY/f18nkCFemv3KinyJPqADNGgWoPI3qAZCpgA6+qDhaGd6G9/wXAGuVf5BcPqbQxJ6nq6BxhoLoibAejYAhicIpizxUfvzTIDAOUE7mjmbZc3IKmk+3/dx+gcdh4QaAYvu3IK4Ca2jzBt5ANQF1uj87wsFhEJ8HC4ZoBL635c0I6tc8Hw8xOnvgqcBQIgAN7+QOugaPsAANuhikgFclgAsiEIQwl++eVMC6ARBMEUlnPxbuYBqlTKfe09vwfTTtyFcBTe5zLTG1G2IyQwEUn6pAQyvDdTAvnAftCBCDAAnoEq4dXDv72XMqBDg/b9Wnncw9n/Hr0/CdhtVoNyY12lIgJWDEPryZQkgLei1GvUa+rv7+zQGEZIkcFz3c6yPOs8rfz0zANjh7jsg/rgfiMuDDtpKB1SSm/v7nOC1dT5YGbR+Gf/g1TT7ax88AH4efknGUFN+F4bdgTo1mu4WO0IBwJXK/71xcmscDRwpvxMy+bVAhIsBDrCuALguMA8oH0YA0MC+VEAagBK4ziAa3zq5vQ0inAEA5HdOwfyHSnyHz3+GCdFaYl067sblTB9oAa/mA+20BQUBRTgBRzh1iwis+fJvw0RA8NflN5yYy59yYmxmpaPQCgujGoDvPUhGIZCfEdg3MO0XEVgF84/yx25afjOMJvPAxoaqJEQ1KsNog6dhLYw6WQCuTUoQWMXzb8pPLQgyqUxkMoo21BKAlxLrcxMZryTaCYBAApQisObJT7D2JJr8CMA8oKWVEmulS4kaKyXYGiKrlDABGMHEmUdgzbGfYBJB+HEdw4O5C39hFHONRDW6PreYU9Wob1SjaQDXBhuIJvN0kK+B7QB+d+C6cDnDBaj8MobuywWZ1MC6lJ9rgwOIRbNcUbYS5XTSByiB+1FErWhBgI+p/E0mv6kBE2AtZ0m5UlvRVmTZC5qGtqAxATT5bfsj5gcfLwLw/iGVv+lQ+YN0DOJOzCdzLX9JuZ5cUva0NXEZALAi5sk5q30rp3574xT91w6SAMwDpAYSi/pe1qLeAKhlLOq9lA/oAMyTT2/nVHZWdv381cktlN81NSCqIFRAi8YeLsTammiZcAbZFkL510VfSLRV/ERbxQikBgCzIiC4dfJVtiNbmQHo+ZTLnwCgBuTxWddmMdnY0jpz68IFWo1kZ05qoB3mRSEE4ATTtzMJrKwC9O9xNI6mNv19HSDUAPw1XQoJgAowW4sr6dZiw5Qf45BcUiY0gF4MYwoCkc2s0tTKav84Y1gRMfl1AJ4EPD9raM1drT+tN3eVETVEV1EQSBsKTB9mGmAEzbGT1TCyMuS/C8v3gS0uoABCkcW06dOtqJYeK/oWh2iOMg2IqfB0GwqS8y8A7EEzOniUoQIrbUB/BgcYBzpAkA/gSflbDY2AT7W+PQA/4bMfUgBiaDaUcAAhv+2OwQ3+nCawUvJvdiCAdgz5OQEHkELrr/0UgEpsPc1zmSF1Tfm1gi7ItiAYMQTTOO0GaQB3pxldt11J4CYUIIXWX0svVvLrOgCEVkv9IMIYANIJUvIrgPr1qLnjptzASpYQu0dR8yOmtDSAJ4VW760INPl5jS0Q9NjZatB61PMybGiO/DC2mtHRbrKksBLzf9zHCqIAIDX0VCBDpmFTBkAjC4BkZGHbAMCaon+cMCIrEYHcCfyQrQMIDyDKhLIAfLUFhvaiqSADoOGnnSDMAjBGHSZ3kjQiKxGBpAFlAbTnaICVd6IBralAmJAkUD2tTBvKtB7NiBKRyNQAjUCOCeAGshDNBdDqO+4CjYQNNVotPw3QbqdtyJ1D4LBIlAfwceURpItpPRMgDMtogDcpRGJQXqHVP2ua/KFEKAVQh4Q8eGTUpZaRAqZoZHbChKQLGwTttpo+vcBuNYyASROXIb9ZA4XsMm3lBHMsCAa46NRIBhrAbyuQ7SJSnwcghcY3DBMawPUJn39DJVIrfiKLtMVF2QutqZUnf51ATeTqKrB0Dz6Jou/UD6eCqFIBf0ulA7YooFW2qlIbsuGYiDuyiuaDv1gtBrDtO1F0ovuxArhfIZoH5wDQ6RIzphHwJeL+vmEmay3l1mbyU1rUxiprrs8HCMCPCQibAriCITS6Xi8ASIx2Ih/vr2mFMt/Cp/KvJSM/9ds0QaEGoKLAUHolBXBYgWWPrgDbkD8PIElgVnlron7OByAh3fRJ2pCdOyCUNknlMAnwQUoBpQA0t84EEB7QamUAtEPWWxcAq6UAuAo+SACkFTAfgLVJ5wGI5gvNyWtKA+0kgCMINAB7zggMFVjCA/ZOEgpIAJgMjgBQbpAQXy3+Ufw8AN5PIQrAKdIAVcHJnvACS4QgWAaYCrDN9aQOIBvVCQD6p5estNe4/AKgbWhAXn11tSQAqgAWBvdNAEjC0Xf1+QCOJr4iyC+QpFLWksk3C8Dcn5kHUIdcMN00AD6jVVBsFwCYQ7hfe36N5/P597XQ2T4bAKEV0WcK4OPKdkeV0aYLKIBVCHNMy0mCuQCGBRn5IxvAKQSgZXXM270Wi6HfH0RRP+3CJsCqMFMNgJQDWFPFgwhebVHALQ4AK5vo4HsWSS0WQx+PwS/sEgApK8oAaJuxVSf4OpR2lw+ARjRfAxBxxo9ZJLVoDN0EpDv1bIB8JxAE7bT87XY6P1MbUnnrLAAYSfubNJJatJm+O9Hr6ARAUARgErTnArQJVg+qiF4SANx4skurahaFIAvv2PbSAMmFjiJIA7Tb0obCOQAFBPYOZmNuQmBBN5JZ+LwAvLQGZOxSJXTWNnGxDd2gNmThSuYriEGknpkFFjQh7pv5Gvhar97OAEAgDn2F6xpqQhiDbDs7DSQIkl8nNCAXOySnyCa5AOKypQDQhiAOURN6PysG2UZrV17bCYL0rp9cHGtrNbaZlgugldBqWgL5oowK7tA4hACwEjiImiQbQCMItJFUABqMvtgkAiBVZH+dAAhzAQpyGWlGB7gqsCpXK7cnsNK3swGkFWXK72hZiRl/WACgVEBSGtBGcTXhjpuT2yC8RYNoNLDzANxiBUgAUESby0/CHICvdQCib8wk5C/ygjcjGkitK9jOUu24bA2Y72Fs3DMXQNFlh40C5C2VvQ7Rh5OvgfkEVZQaAikAfD9LB9GsDRr+Tuly1KwkOh0vjuGP9Hag+AFPU8EcDRQAQCA9+gMAXK3cLXQBJxXrRC0qTcUA6HQYQNZupkf/La0B1xC/hArQCe5WrlqVbagjtuw5CshdzWiWMm9B1u126cIe/vb77FudmNOvJgCkzkvoYAuqiW1w4u04r45wC6SPs+zEGExyPmq14XDI9ii5I4h1PFuGLQhQhWoiRoDjoyjq1LOtZ87Ux50YjUHNshrmzA/p6K2sXMZzHr5HHNfxpAq07VV3MS+owsQfHXMAzYddc1vAlFoK36ECtoba+RR2zE97ubGx0pvNZr1eD1/Wur4XE1xvBQAAnjDPCwobjAjgcABMY6O08SjRY+VyMd3OA1uorajj0fyI4kpPDXYXMT97ycQHq5HrRQcjUiemWlD7q64G4RYD1Fkqsyp3x9EkNf9SfI81N1tduudSgynubVxmslKbHg5bicHtyPwWP2C5ynoODv2yQxE8pgQheHkAuz6Ixncr1rbVbA4yGxFwZb8hz4rV9A3IrvxDhJfCwVoSfFVNZESNO9KMEtZTHIYGUfPetiXzsGn6hB6MQ6crCDRZW0cZ4TRxogDSh1GgmuV6KR+wq30sSC2spREAf3zETAevikfpay1/ToD3Fh+sWBVaIG26kwa+HWdVFYUIWEwAwNsn8JctDB9bxT41FU3EVNch+WV73r8b6wTRhmYQWIUQPh2aGsoCwNSfHFu7YEmOzeIOadTQbDytEdvWVrkJMVgdatSigJLxQ2FKeL3FRDwaJbzkKfbCbFB3oYreZQDU9D2fH+SBqh5slMkWFsiz0FjVh2iWoT90Yh+8zTchiqrSKgC8KQCY07IjkGYDet72TO5IdjyFtOy1Nv3sFS2qMDX6PDkkDpDmAwy+4gC4byjw6a+HNFKwAh+yj7MqFoDF0julBqdRLLCK8GoNiMgdTQ3zTk5UmQnhcszhyjMbDPp2HJ7G42/G/uJ2ECYtOncE6aH2NURcoomeERCn8PBHdQvmHgCag5tf6Lu3bbkspAUv/AcOAQR6c13On6P/XVr6xIpbTQAere02kpaUw4AAhAJ4OdpXcxx6q4Gz1MiVnQEkVk1IEkLR0jUQ6I1BoxSCAgBu5l0ZjXT6XSAIA/eMotOS380YmkLYG2MJ0xUVN0nc3uRmAOihItfnVt0gtSjOEDnL2DMnP2fwwz2QTYUh6XW30fGqSx/Qem6qInS0hhwlcEW966h7OoKSw11gsPeFggDcGSvWmHIIi9KUIJw4+ogCKF2mIgUVedWx6TE8NwguQuwEA7zrA7/V7eOgJRM9ytmF9dxIEkiALVfF2yCQIVLs28J3XNSHYzSt3YseWFViGwCWffK0FF1XUAQTwIbpDWTYEb17Vvus4iIQ7+SA/42O3bmMvHYgZyB+Fxfe7JZ73gbxfaIBEAbghuw2CoykROZbmhDwOGFAV7KMwDbfnp/QLitv5nHK/Lam64SeGduxj0O4CnQAJ+Q3dNFcsEr0iqEdOq7oemjXV+9VXjF22aF4V3ECA9GgIrQhI4yIAjgUAGHZ4oinMw0BL8FMyJUEdnJeNQg7LfMCoksE6WXgijI4ERZa+T271AfEekD1UYi4QXaVNp7wf1rQuaLrnZ5Rc3qXmHExL/qXMnOp6Eo8laEhN8v1wCixIEY/EIU0K3w4gS4WO9iccgadYBFz4bFTD3AopS01GlADUsnNcQkDeDNquvqV5MEUgbBKyziGkBRMxVSNxV5AfvaTI74mYIt8mroeoLGHjnbJgHg6ABkxgK8GEsDWYzAuB9hdmrzGo3khSJlOoPv3onaOso8cEos+QUeMvuhxONJqbVdZED8mBQC3rWNc1FdTCuUIjEFDWDUOY4hSDLS/6i4qOn0X1uzjsuPMx2wAA83BlMAWEE6nE8vybjSNotlz1lapZl6cRV0v1JuwcqWkbyZTB3MXkj9g1b9Pm2KdRNlGu5hxRxHIQXSAG7hHQwH61cwZEg0u9uiHMOPGdx7f+J+lJx/Mkt5V3W3lSK8Q4N9lFY2/qXXy3Bu4W29t31OtxZQaZI9O7Gzhgllro7EMzaJTUM5v0Wwe0Kdr9XpDvx+nq37VEKcI3gPHtSUC8YQKRqNBs2lt0+buoJ5rqBwB19qdr79u442noX6ITtWvWhTO3afG2iBE8bsofrffiTOFV41xJOiEgc1rEEhvsTQid9Ic3+Ptdbea72oKwac7XxRC7jARPvk8zzmsfWE4imY6/HZqFL/V73Q6+dJrBB0vDFSKV7mYjJuTV/gGh5MDYIsoDdEC2+td0bOjW5Fgjx71MZXjQAlin5hzqHhDWLBE6WcofjxXekXQ4QTcJFgohQvHUXTwnAPE1cJEg2ro4naA3kv3Or7v8Egk9wTDB+okAcI+oEbD9pxwS6c3FOJL+ZPL7ZG874UhIIGQhScDx+03ozefi02+alHI5vMBgWPIB98WaPmOuZZjla25U0l3PED43sZGb4i2o4k/Qi2ZW+ijkSwJOIIXqiTLN3ccPO5BdymztllzvBmv1u8OZyu9jd5sxkBqvmNUXPgWIDNdCXbprA/pw2txq2mGjqt3THizJG+MhCEBgczJ2ErFS0AQQoCrlUf5XpxyZ7bF16c7fIAAHDA8s02FW0hsylF0usVHZQfh5eQTvU9SBgFTqVQBzdqdcXPnXuWqdaWyh9uU1ZKpnztWjC9AGa0hbpaRBIBLurUebk+iyaCmutM+FV7sTQpLL7061gkCz8ernTSbp69UfiUOe1TLVS9iOoiME3HHHzYc/YgavvIg0qDcKHhfVGhmzhqVWrhp1aokIBgB44NmdPQ6ALDjNltVu85GkRVxnQbq2ETcr/lGvwV/rNuaylnHLfHE+RTilF5zKlMiIUsIAW0SgQtM6YktfuCpOk94daUR04JHZCfOcfrdmmN0lCAIdlpTJn7G4Zos67fnVCEsHY1o5qdZ3oG1b9zENIYHnsAJDqgTFBLIjVjHeeCps2JO7Nc8LQqxWOpTl82W3gkWX+tzA2B2BASQBU7foEfOKvTQ3/VyADIcPfBDeQCHdFqGH9P1QaxlK5J1snXhZTNXAyZ4yDVb9JY+duQM6rnmxC5JIJICFBEy44MX1DySOCWIPamsWmdJ8dXs0cYJFEJQyVX4wdeH0obKKgGbr0RuoUEo6jZEQuNnZhwCOSstf/KhF8usQmH+V/1mdLCLtxazo8dTYUMlAdB3fdZFEl0/cISGo7f7uQpM8Y1Nr2WW0aJ1cIcePf7AOPxdrdeLQqmuA6/rEbEXxRBqDeKqVXJA6G6XOqtGDWupyU9L5eqHv8Xxe5kKSmkBQ33H03ZVkcAoixy/1Yn5vkRqd6a83GyYUT51/F7FIfZjJXQwGkHwfMDPifKs7MtgxLyt2435WRp3mXajkr4K/+N4oh03026AqBxiHEIbqi5gRCO/54tNTVFX1Gqho9VhYcOPSTpt2WUA6olRFQNkq+LR77vqFhSey/pVu1rWD2hJ0pWnWYSlx13diiDW1vpqX2gh22cS5AHgTUD8Xj5+Ixysappb1ScaQAkC3H/gBCol1PyRRuC3YoNgUcdNic8Guw3LuBHuywF149IALC/G4iZVQuP7CBIl+MFId4NhLLrhy0SeLIAnVbwR7kv9RjjwAkwFdzSAkvmsK26VZyKORiPSA891ZCQiw2FMjL3FxQmqJsKTKr0V8X+NeykP6c2g7iKRlDpyhz/CWDYARw49/hOOWEJwnE5tqLZUltNAAqDq0ptBDxN3dO/diKIPFUC9XFYceZwgVLEHkvIXYEcjXlF4kN8c5ywWZAI8qX4IWXivknlDtKYCFgWK25w+606gCmxhRpgBaPSkuyo+EiyognoCoGoqIH1DdIUtjT/ESFo1frUQwa9RglBtlOECsIZ70nRrDXXQJUUAWYqnYicDUBUVcCTvh9YfCuBQFaR+p7Cm8OmxWM81Vv9xg1qOwwrXXhdVkCX3HPltu5o1UAFO+qEAUgWpUezKhD6FPJDfoJWSE9dqBkE2QGIY/5Apf0IB2oMx/lpxIq6CLIi6esM0Ah6fdM34hATdLstw4YPuBuS3hQCqOQMUEDna45z1p9tgILqTC2C+Tb0+Z4eUExCsLGixHUJszdrCMTJVOYA7eggyAa5VoEaCdPyEla6JX9TELxFn+fYd5OUvwEE8z+81UhqoZ4wcu1cDHw5jZz8cBqtqfDxPziWSCihTLI1c2pbHg8Bd4iakzwQoEL/KH8+T84Cka/TRALQonQuwQLXEsgJu6ppGVs+Uvkj+OpShzcFv8h6QhCoguX6chVN6Ez6Zh+kaZdHZ5x5MNuc9Z27vBMvqkqNerZYmsEtE+OKxRZ/pMfcxbWhk/QUuaS81lpQfH9Nmz3tMG4zj/qfljEgALAhRry4/wIA+7R8XPe3y4dECRpTwiwsVn67DTh4WPe3yKk0GPy4FUKbIPIP8P0bNHbvy28IHptJIRM5DA/VU6XEWAJKOQDmPrN2bfgLZ7kwA9breV5BdhrPYjz1ufjLdK/fU49/gI2vPpAKV6pKRvr6sEvCRtV+mDCgT4I/0gXnTpQi06c5p7SwJMKUPyPtjyQdnb5JPx0sRMFeuJwHOIrnIAONPMxwg99Hlx/1b4+ZoSYKzxcrMMWqOb6UywDyA+w/BkZcluAj5wYEf3l/k4fH3d/Hh8aNfjPzR6e79BR4eDyrYxlstm/YvQX4bH99vbx8u+AkQlGDrlwCwReVf4iMsgCD6BRBACT1H/nkf48IIXrIV2QXyz/0gnW138LI9ecQ/iGbJjzJinjx6yfI/2V7+w6ReMkEJ+Ys+zosRTF+O/NMS8hd+oNq2ffrJ0nXRGeWPxp+c2ttn/Ui77d0pfqDaCw9GNn6g2nS3SP4yHyr4ENf5Y/Ji5SdjXME/PI9PRbx2/5jsgCP8+CLl/xHMf4cc3792DgC4Prj7JjjClvuixHe3wPwP7m6e40ebfjnFD9a0Xoz8Fn6w5vTL8/1w2T00oxeiBJh+NJ+98/5w2U375NNm1OxfcDh60oc3+fTEPt8PlxXRCD97d3Ch4Yh+suykTPRZ5iOujx+d4Acg37kwO3Lv4PVPHh1f2IeM79EZan54IQjuh02q4b2FRFrwY943H013LgaBib8zfbRZuUgAQLBvROePwMSPbtibi8qzKAAsrfceH9EPlb9zbu5M7tALHj3eq1QOLxiAuQJDiLZiO3PjabGqLd6KpPiLjyUAcJf/+N4NrI+inevETm065e6oZUhPrrPr3Lh3XKm8IACuBXc6wJmTDHW295jZ3GX/nCk9XmIwdfeWlWNJANTC5m/iA/zs6yiaXCeuvkdTz2+vyy0+l1yfRPjb44P4y01+yRepAbrY2ftXf9KkkzjemhI2x+bJSXOLRk79dGtMvag56d/d2z6LDGcCQDXs3rsBekBhAOJ67LjS2DP3VV0nvr4FP0+hD27c2908owBnA6BqP374r/4BVQSlGAz60z7ubesOjF/DtwcDlJ1N/UH/Xw+PK8vbzjlpgG07b+7dJtMjhIioZeDiobmlDfxa/eNkNiW39zblr79UAGVMABEfHU3GKGPOaI4nR0cx2d3bPLe3PSeAKzSBbm8f792+e2/aPxnAaGoDvz7pT+/dvb13vE2d9vDKLwqAQnBz2N7cPN6Fod/BhF8fb27yeHP1yvm96/8DojByDfzrCAcAAAAASUVORK5CYII=' });
+  toast('Test sent', 'ok');
+};
+App.adminNotifEdit = function (id) {
+  const n = DB.notifications.find(x => x.id === id); if (!n) return;
+  openModal(modalShell('Edit notification', `${field('Title', 'enTitle', { value: n.title })}
+    <div class="field"><label class="label">Message</label><textarea class="input" id="enBody" style="min-height:90px">${esc(n.body)}</textarea></div>`,
+    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="admin-notif-save" data-id="${n.id}">Save</button>`));
+};
+App.adminNotifSave = function (id) {
+  const n = DB.notifications.find(x => x.id === id); if (!n) return;
+  n.title = document.getElementById('enTitle').value.trim() || n.title;
+  n.body = document.getElementById('enBody').value.trim() || n.body;
+  sync(); closeModal(); toast('Notification updated', 'ok'); render();
+};
+App.adminNotifDel = async function (id) {
+  if (!await confirmDialog({ title: 'Delete notification?', danger: true, ok: 'Delete' })) return;
+  DB.notifications = DB.notifications.filter(n => n.id !== id); sync(); render();
 };
 
-App.adminNotifyUser = async function (id) {
-  const u = findUser(id); if (!u) return;
-  const title = await promptDialog({ title: 'Send notification', label: 'Title', placeholder: 'Account update' });
-  if (!title) return;
-  const body = await promptDialog({ title: 'Send notification', label: 'Message', placeholder: 'Write the message…' });
-  if (!body) return;
-  notify(id, title, body, null, 'bell');
-  sync(); toast('Notification sent to ' + u.fullName, 'ok'); render();
-};
+/* ---------------- payment settings ---------------- */
 
-App.adminExport = function (type) {
-  if (type !== 'users') return;
-  const rows = [['Full name', 'Username', 'Email', 'Phone', 'Balance (WC)', 'Trust', 'Vendor', 'Banned', 'Joined']];
-  DB.users.filter(u => u.role !== 'admin').forEach(u => rows.push([u.fullName, u.username, u.email, u.phone || '', u.balance, u.trustScore, vendorOf(u.id) ? 'yes' : 'no', u.banned ? 'yes' : 'no', new Date(u.createdAt).toISOString()]));
-  const csv = rows.map(r => r.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(',')).join('\n');
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'whalechat-users.csv';
-  document.body.appendChild(a); a.click(); a.remove();
-  toast('Export downloaded', 'ok');
-};
+/* ---------------- admin: bonuses ---------------- */
 
-/* Vendor sub-route dispatch */
-const __vendorBase = VIEWS.vendor;
-VIEWS.vendor = function (parts, params) {
-  const u = me();
-  const myVendor = u ? vendorOf(u.id) : null;
-  // applicants/renewals only see their application or renewal page, never vendor tools
-  if (u && u.role !== 'admin' && (!myVendor || !vendorIsActive(myVendor))) return __vendorBase(parts, params);
-  const sub = parts[1];
-  if (sub === 'company') return VIEWS.vendor_company(parts, params);
-  if (sub === 'products') return VIEWS.vendorProducts(parts, params);
-  if (sub === 'orders') return VIEWS.vendorOrders(parts, params);
-  if (sub === 'history') return VIEWS.vendorHistory(parts, params);
-  return __vendorBase(parts, params);
-};
-
-/* boot */
-async function boot() {
-  await initDB();
-  try { if (maybeBrandedRedirect()) return; } catch (e) {}
-  try { if (gaLoad()) gaTrack(location.hash || '/'); } catch (e) {}
-  try { await Remote.init(); } catch (e) { console.warn('sync init failed', e); }
-  try { resolvePendingReferrals(); reconcileReferralBonuses(); } catch (e) {}
-  if (SESSION) {
-    const u = me();
-    if (!u) { SESSION = null; localStorage.removeItem(LS_SESSION); }
-    else if (u.pin) Presence.touch();
-  }
-  initTheme();
-  // referral short links: /ref/CODE, ?ref=CODE, #/ref=CODE
-  let refCode = null;
-  try { refCode = referralFromURL(); } catch (e) {}
-  if (refCode) { try { sessionStorage.setItem('wc_ref', refCode); } catch (e) {} }
-
-  if (!me() && refCode) go('signup?ref=' + encodeURIComponent(refCode));
-
-  const hasHash = !!location.hash;
-  if (!hasHash) {
-    renderSplash();
-    setTimeout(() => {
-      const u = me();
-      if (u) go(u.role === 'admin' ? 'admin' : 'home');
-      else go('welcome');
-    }, 1200);
-  } else {
-    render();
-  }
-  // Global safety net: never leave the user on a dead screen
-  let lastErrToast = 0;
-  window.addEventListener('error', (ev) => {
-    if (ev.target && ev.target.tagName === 'SCRIPT') return;
-    if (Date.now() - lastErrToast < 4000) return;
-    lastErrToast = Date.now();
-    try { toast('Something went wrong — please try that again.', 'err'); } catch (e) {}
-  });
-  window.addEventListener('unhandledrejection', (ev) => {
-    console.warn('Unhandled promise rejection:', ev.reason);
-    if (Date.now() - lastErrToast < 4000) return;
-    lastErrToast = Date.now();
-    try { toast('A request failed — check your connection and retry.', 'err'); } catch (e) {}
-  });
-
-  // Service worker (offline shell + push). If the host forbids sw.js, drop any
-  // stale worker so a cached error page can never be served again.
-  if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
-    window.addEventListener('load', async () => {
-      try {
-        const reg = await navigator.serviceWorker.register('sw.js');
-        if (reg && reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
-      } catch (e) {
-        try {
-          const regs = await navigator.serviceWorker.getRegistrations();
-          await Promise.all(regs.map(r => r.unregister()));
-        } catch (e2) {}
-        try {
-          const keys = await caches.keys();
-          await Promise.all(keys.map(k => caches.delete(k)));
-        } catch (e3) {}
-      }
-    });
-  }
-  // keep this device in sync when it becomes visible / regains network
-  document.addEventListener('visibilitychange', () => { if (!document.hidden && Remote.enabled) Remote.refresh(); });
-  window.addEventListener('online', () => { if (Remote.enabled) { Remote.refresh(); Remote.flush(); } });
-  window.addEventListener('focus', () => { if (Remote.enabled) Remote.refresh(); });
-  if (Remote.enabled && SESSION) setTimeout(() => { Push.ensure(false); }, 1400);
-
-  // periodic maintenance (status expiry, delivery ack, unread badge)
-  setInterval(() => {
-    if (!me()) return;
-    if (DB.statuses.some(s => s.createdAt + 86400000 < Date.now())) {
-      DB.statuses = DB.statuses.filter(s => s.createdAt + 86400000 > Date.now());
-      persist(); render();
-    }
-    if ('setAppBadge' in navigator) {
-      const n = totalUnread() + unreadNotifs();
-      try { n ? navigator.setAppBadge(n) : navigator.clearAppBadge(); } catch (e) {}
-    }
-  }, 30000);
+/* ---------------- admin: email messaging ---------------- */
+function adminEmail() {
+  const users = DB.users.filter(u => u.email);
+  const campaigns = (DB.emailCampaigns || []).slice(0, 12);
+  return `<div class="between wrap gap10 mb16">
+      <div><h2 style="font-size:18px">Email messaging</h2><p class="tiny muted mt6">Compose a rich email and send it to one person, several, or everyone.</p></div>
+      <span class="badge">${users.length} accounts with email</span>
+    </div>
+    <div class="card">
+      <div class="between wrap gap10 mb14"><h3 style="font-size:15px">New message</h3><span class="tiny muted">Delivered through Brevo</span></div>
+      <div class="field"><label class="label">Recipients</label>
+        <div class="row gap16 wrap">
+          <label class="row gap6 small" style="cursor:pointer"><input type="radio" name="emailMode" value="all" checked onchange="App.emailModeChange('all')"/> All users (${users.length})</label>
+          <label class="row gap6 small" style="cursor:pointer"><input type="radio" name="emailMode" value="selected" onchange="App.emailModeChange('selected')"/> Selected users</label>
+        </div>
+      </div>
+      <div id="emailRcpts" class="panel hidden" style="padding:10px;max-height:190px;overflow:auto">
+        <div class="between mb8"><span class="tiny muted">Choose recipients</span>
+          <div class="row gap6"><button class="btn btn-xs btn-ghost" data-act="email-pick" data-id="all">Select all</button>
+          <button class="btn btn-xs btn-ghost" data-act="email-pick" data-id="none">Clear</button></div></div>
+        ${users.map(u => `<label class="row gap8" style="padding:6px 2px;cursor:pointer;border-bottom:1px dashed var(--border)">
+          <input type="checkbox" name="emailRcpt" value="${u.id}" style="accent-color:var(--accent)"/>
+          <span class="grow"><span class="small" style="font-weight:600">${esc(u.fullName)}</span>
+          <span class="tiny muted" style="display:block">@${esc(u.username)} · ${esc(u.email)}</span></span></label>`).join('')}
+      </div>
+      <div class="field mt12"><label class="label">Subject</label>
+        <input class="input" id="emSubject" maxlength="160" placeholder="e.g. New bonuses this week"/></div>
+      <div class="field"><label class="label">Message</label>
+        <div class="composer-toolbar">
+          <button class="btn btn-xs btn-ghost" data-act="email-cmd" data-id="bold" title="Bold"><b>B</b></button>
+          <button class="btn btn-xs btn-ghost" data-act="email-cmd" data-id="italic" title="Italic"><i>I</i></button>
+          <button class="btn btn-xs btn-ghost" data-act="email-cmd" data-id="underline" title="Underline"><u>U</u></button>
+          <button class="btn btn-xs btn-ghost" data-act="email-cmd" data-id="formatBlock" data-val="h2" title="Heading">H2</button>
+          <button class="btn btn-xs btn-ghost" data-act="email-cmd" data-id="insertUnorderedList" title="Bullet list">• List</button>
+          <select class="input" id="emFont" style="width:130px;height:30px;padding:0 8px;font-size:12px" onchange="App.emailFont(this.value)">
+            <option value="">Font</option><option>Inter, Arial, sans-serif</option><option>Arial, sans-serif</option><option>Georgia, serif</option><option>'Times New Roman', serif</option><option>'Courier New', monospace</option><option>Verdana, sans-serif</option><option>Tahoma, sans-serif</option>
+          </select>
+          <select class="input" id="emSize" style="width:88px;height:30px;padding:0 8px;font-size:12px" onchange="App.emailSize(this.value)">
+            <option value="">Size</option><option value="2">Small</option><option value="3">Normal</option><option value="4">Large</option><option value="5">X-Large</option><option value="6">Huge</option>
+          </select>
+          <button class="btn btn-xs btn-ghost" data-act="email-link">${ic('link', 12)} Link</button>
+          <button class="btn btn-xs btn-ghost" data-act="email-logo">${ic('image', 12)} Logo</button>
+          <button class="btn btn-xs btn-ghost" data-act="email-image">${ic('image', 12)} Image</button>
+        </div>
+        <div id="emBody" class="email-editor" contenteditable="true" placeholder="Write your message…"></div>
+        <div class="row gap10 wrap mt10" style="align-items:flex-end">
+          <div class="field grow" style="margin:0;min-width:150px"><label class="label">Button name (optional)</label>
+            <input class="input" id="emCtaLabel" maxlength="40" placeholder="Visit WhaleChat"/></div>
+          <div class="field grow" style="margin:0;min-width:170px"><label class="label">Button link (optional)</label>
+            <input class="input" id="emCtaUrl" placeholder="https://whalechat-qkgd.onrender.com"/></div>
+        </div>
+        <div class="help">Formatting, links, images and the WhaleChat logo are supported. Keep it short and useful.</div>
+      </div>
+      <div class="row gap10 wrap mt14">
+        <button class="btn btn-primary" data-act="email-send">${ic('send', 15)} Send email</button>
+        <span class="tiny muted" id="emHint">Will be sent to all ${users.length} users</span>
+      </div>
+    </div>
+    <div class="card mt16">
+      <div class="between mb12"><h3 style="font-size:15px">Sent campaigns</h3><span class="badge">${campaigns.length}</span></div>
+      ${campaigns.length ? `<div class="table-wrap"><table class="tbl"><thead><tr><th>Subject</th><th>Recipients</th><th>Queued</th><th>Sent by</th><th>Date</th></tr></thead><tbody>
+        ${campaigns.map(c => `<tr><td>${esc(c.subject)}</td><td>${c.recipients}</td><td>${c.queued}</td>
+          <td>${esc((findUser(c.by) || {}).username || 'admin')}</td><td class="tiny muted">${new Date(c.createdAt).toLocaleString()}</td></tr>`).join('')}
+      </tbody></table></div>` : `<div class="empty" style="padding:20px"><p>No campaigns sent yet.</p></div>`}
+    </div>
+    <style>
+      .composer-toolbar{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px}
+      .email-editor{min-height:190px;max-height:420px;overflow:auto;padding:14px;border:1px solid var(--border);border-radius:12px;background:var(--surface-2);line-height:1.65;font-size:14px;outline:none}
+      .email-editor:empty:before{content:attr(placeholder);color:var(--muted)}
+      .email-editor:focus{border-color:rgba(46,230,201,.5);box-shadow:0 0 0 3px rgba(46,230,201,.12)}
+      .email-editor img{max-width:100%;height:auto}
+    </style>`;
 }
 
-window.addEventListener('DOMContentLoaded', boot);
-
-/* Manual recovery: open #/reset-cache (or run A.repair() in the console) to drop a
-   stale service worker/cache that a host may have poisoned with an error page. */
-App.repair = async function () {
-  try {
-    if ('serviceWorker' in navigator) {
-      const regs = await navigator.serviceWorker.getRegistrations();
-      await Promise.all(regs.map(r => r.unregister()));
-    }
-    if (window.caches) {
-      const keys = await caches.keys();
-      await Promise.all(keys.map(k => caches.delete(k)));
-    }
-    toast('App cache cleared — reloading…', 'ok');
-    setTimeout(() => location.replace(location.pathname + location.search + '#/home'), 700);
-  } catch (e) { toast('Could not clear the cache automatically', 'err'); }
+App.emailModeChange = function (mode) {
+  const box = document.getElementById('emailRcpts');
+  const hint = document.getElementById('emHint');
+  if (box) box.classList.toggle('hidden', mode !== 'selected');
+  if (hint) {
+    const n = document.querySelectorAll('input[name="emailRcpt"]').length;
+    hint.textContent = mode === 'selected' ? 'Only the users you tick will receive it' : 'Will be sent to all ' + n + ' users';
+  }
 };
-</script>
-
-<script>
-/* PWA bootstrap — registered independently of the async app boot so install prompts work reliably. */
-if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
-  var __regSW = function () {
-    navigator.serviceWorker.register('sw.js', { scope: './' }).then(function (reg) {
-      if (reg && reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
-    }).catch(function () {});
-  };
-  if (document.readyState === 'complete') __regSW();
-  else window.addEventListener('load', __regSW);
-}
-</script>
-</body>
-</html>
+App.emailPick = function (which) {
+  document.querySelectorAll('input[name="emailRcpt"]').forEach(cb => { cb.checked = which === 'all'; });
+};
+App.emailCmd = function (cmd, ds) {
+  const ed = document.getElementById('emBody');
+  if (!ed) return;
+  ed.focus();
+  try { document.execCommand(cmd, false, (ds && ds.val) || null); } catch (e) {}
+};
+App.emailFont = function (v) { if (!v) return; const ed = document.getElementById('emBody'); if (ed) { ed.focus(); document.execCommand('fontName', false, v); } };
+App.emailSize = function (v) { if (!v) return; const ed = document.getElementById('emBody'); if (ed) { ed.focus(); document.execCommand('fontSize', false, v); } };
+App.emailLink = async function () {
+  const url = await promptDialog({ title: 'Insert link', label: 'Link URL', placeholder: 'https://…' });
+  if (!url) return;
+  const ed = document.getElementById('emBody');
+  if (!ed) return;
+  ed.focus();
+  document.execCommand('createLink', false, /^https?:\/\//i.test(url) ? url : 'https://' + url);
+};
+App.emailLogo = function () {
+  const ed = document.getElementById('emBody');
+  if (!ed) return;
+  ed.focus();
+  const src = location.origin + '/assets/logo-192.png';
+  document.execCommand('insertHTML', false, `<a href="${location.origin}/whalechat.html"><img src="${src}" width="44" height="44" alt="WhaleChat" style="vertical-align:middle;border-radius:8px"/></a>&nbsp;`);
+};
+App.emailImage = async function () {
+  const url = await promptDialog({ title: 'Insert image', label: 'Image URL', placeholder: 'https://…/image.png' });
+  if (!url) return;
+  const ed = document.getElementById('emBody');
+  if (!ed) return;
+  ed.focus();
+  document.execCommand('insertHTML', false, `<img src="${esc(url)}" alt="" style="max-width:100%;border-radius:10px"/>`);
+};
+App.emailSend = async function () {
+  const ed = document.getElementById('emBody');
+  const subjectEl = document.getElementById('emSubject');
+  const subject = ((subjectEl && subjectEl.value) || '').trim();
+  let html = ((ed && ed.innerHTML) || '').trim();
+  const ctaLabelEl = document.getElementById('emCtaLabel');
+  const ctaUrlEl = document.getElementById('emCtaUrl');
+  const ctaLabel = ((ctaLabelEl && ctaLabelEl.value) || '').trim();
+  let ctaUrl = ((ctaUrlEl && ctaUrlEl.value) || '').trim();
+  if (ctaLabel && ctaUrl) {
+    if (!/^https?:\/\//i.test(ctaUrl)) ctaUrl = 'https://' + ctaUrl.replace(/^\/+/, '');
+    const safeUrl = ctaUrl.replace(/"/g, '&quot;');
+    const safeLabel = ctaLabel.replace(/[<>&]/g, '');
+    html += '<div style="margin:24px 0 6px"><a href="' + safeUrl + '" target="_blank" '
+      + 'style="display:inline-block;background:#2ee6c9;color:#03221d;text-decoration:none;font-weight:700;'
+      + 'padding:13px 24px;border-radius:11px;font-size:14px">' + safeLabel + '</a></div>';
+  }
+  if (!subject) return toast('Add a subject', 'err');
+  if (!html || !html.replace(/<[^>]+>/g, '').trim() && !/<img/i.test(html)) return toast('Write a message first', 'err');
+  const modeEl = document.querySelector('input[name="emailMode"]:checked');
+  const all = !modeEl || modeEl.value === 'all';
+  const userIds = all ? [] : Array.from(document.querySelectorAll('input[name="emailRcpt"]:checked')).map(c => c.value);
+  if (!all && !userIds.length) return toast('Select at least one recipient', 'err');
+  if (!await confirmDialog({ title: all ? 'Send to every user?' : 'Send to ' + userIds.length + ' user(s)?', body: 'Subject: ' + subject, ok: 'Send now' })) return;
+  const btn = document.querySelector('[data-act="email-send"]');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span c
