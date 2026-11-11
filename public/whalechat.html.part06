@@ -1,8 +1,4 @@
-edia(max-width:860px){.dash2{grid-template-columns:1fr!important}}</style>`;
-}
-
-async function loadReleasePanel() {
-  const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
+l.textContent = txt; };
   try {
     const r = await fetch('/api/release?t=' + Date.now(), { cache: 'no-store' });
     if (!r.ok) throw new Error('no-server');
@@ -782,6 +778,145 @@ App.adminNotifDel = async function (id) {
 /* ---------------- payment settings ---------------- */
 
 /* ---------------- admin: bonuses ---------------- */
+
+/* ---------------- admin: email messaging ---------------- */
+function adminEmail() {
+  const users = DB.users.filter(u => u.email);
+  const campaigns = (DB.emailCampaigns || []).slice(0, 12);
+  return `<div class="between wrap gap10 mb16">
+      <div><h2 style="font-size:18px">Email messaging</h2><p class="tiny muted mt6">Compose a rich email and send it to one person, several, or everyone.</p></div>
+      <span class="badge">${users.length} accounts with email</span>
+    </div>
+    <div class="card">
+      <div class="between wrap gap10 mb14"><h3 style="font-size:15px">New message</h3><span class="tiny muted">Delivered through Brevo</span></div>
+      <div class="field"><label class="label">Recipients</label>
+        <div class="row gap16 wrap">
+          <label class="row gap6 small" style="cursor:pointer"><input type="radio" name="emailMode" value="all" checked onchange="App.emailModeChange('all')"/> All users (${users.length})</label>
+          <label class="row gap6 small" style="cursor:pointer"><input type="radio" name="emailMode" value="selected" onchange="App.emailModeChange('selected')"/> Selected users</label>
+        </div>
+      </div>
+      <div id="emailRcpts" class="panel hidden" style="padding:10px;max-height:190px;overflow:auto">
+        <div class="between mb8"><span class="tiny muted">Choose recipients</span>
+          <div class="row gap6"><button class="btn btn-xs btn-ghost" data-act="email-pick" data-id="all">Select all</button>
+          <button class="btn btn-xs btn-ghost" data-act="email-pick" data-id="none">Clear</button></div></div>
+        ${users.map(u => `<label class="row gap8" style="padding:6px 2px;cursor:pointer;border-bottom:1px dashed var(--border)">
+          <input type="checkbox" name="emailRcpt" value="${u.id}" style="accent-color:var(--accent)"/>
+          <span class="grow"><span class="small" style="font-weight:600">${esc(u.fullName)}</span>
+          <span class="tiny muted" style="display:block">@${esc(u.username)} · ${esc(u.email)}</span></span></label>`).join('')}
+      </div>
+      <div class="field mt12"><label class="label">Subject</label>
+        <input class="input" id="emSubject" maxlength="160" placeholder="e.g. New bonuses this week"/></div>
+      <div class="field"><label class="label">Message</label>
+        <div class="composer-toolbar">
+          <button class="btn btn-xs btn-ghost" data-act="email-cmd" data-id="bold" title="Bold"><b>B</b></button>
+          <button class="btn btn-xs btn-ghost" data-act="email-cmd" data-id="italic" title="Italic"><i>I</i></button>
+          <button class="btn btn-xs btn-ghost" data-act="email-cmd" data-id="underline" title="Underline"><u>U</u></button>
+          <button class="btn btn-xs btn-ghost" data-act="email-cmd" data-id="formatBlock" data-val="h2" title="Heading">H2</button>
+          <button class="btn btn-xs btn-ghost" data-act="email-cmd" data-id="insertUnorderedList" title="Bullet list">• List</button>
+          <select class="input" id="emFont" style="width:130px;height:30px;padding:0 8px;font-size:12px" onchange="App.emailFont(this.value)">
+            <option value="">Font</option><option>Inter, Arial, sans-serif</option><option>Arial, sans-serif</option><option>Georgia, serif</option><option>'Times New Roman', serif</option><option>'Courier New', monospace</option><option>Verdana, sans-serif</option><option>Tahoma, sans-serif</option>
+          </select>
+          <select class="input" id="emSize" style="width:88px;height:30px;padding:0 8px;font-size:12px" onchange="App.emailSize(this.value)">
+            <option value="">Size</option><option value="2">Small</option><option value="3">Normal</option><option value="4">Large</option><option value="5">X-Large</option><option value="6">Huge</option>
+          </select>
+          <button class="btn btn-xs btn-ghost" data-act="email-link">${ic('link', 12)} Link</button>
+          <button class="btn btn-xs btn-ghost" data-act="email-logo">${ic('image', 12)} Logo</button>
+          <button class="btn btn-xs btn-ghost" data-act="email-image">${ic('image', 12)} Image</button>
+        </div>
+        <div id="emBody" class="email-editor" contenteditable="true" placeholder="Write your message…"></div>
+        <div class="help">Formatting, links, images and the WhaleChat logo are supported. Keep it short and useful.</div>
+      </div>
+      <div class="row gap10 wrap mt14">
+        <button class="btn btn-primary" data-act="email-send">${ic('send', 15)} Send email</button>
+        <span class="tiny muted" id="emHint">Will be sent to all ${users.length} users</span>
+      </div>
+    </div>
+    <div class="card mt16">
+      <div class="between mb12"><h3 style="font-size:15px">Sent campaigns</h3><span class="badge">${campaigns.length}</span></div>
+      ${campaigns.length ? `<div class="table-wrap"><table class="tbl"><thead><tr><th>Subject</th><th>Recipients</th><th>Queued</th><th>Sent by</th><th>Date</th></tr></thead><tbody>
+        ${campaigns.map(c => `<tr><td>${esc(c.subject)}</td><td>${c.recipients}</td><td>${c.queued}</td>
+          <td>${esc((findUser(c.by) || {}).username || 'admin')}</td><td class="tiny muted">${new Date(c.createdAt).toLocaleString()}</td></tr>`).join('')}
+      </tbody></table></div>` : `<div class="empty" style="padding:20px"><p>No campaigns sent yet.</p></div>`}
+    </div>
+    <style>
+      .composer-toolbar{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px}
+      .email-editor{min-height:190px;max-height:420px;overflow:auto;padding:14px;border:1px solid var(--border);border-radius:12px;background:var(--surface-2);line-height:1.65;font-size:14px;outline:none}
+      .email-editor:empty:before{content:attr(placeholder);color:var(--muted)}
+      .email-editor:focus{border-color:rgba(46,230,201,.5);box-shadow:0 0 0 3px rgba(46,230,201,.12)}
+      .email-editor img{max-width:100%;height:auto}
+    </style>`;
+}
+
+App.emailModeChange = function (mode) {
+  const box = document.getElementById('emailRcpts');
+  const hint = document.getElementById('emHint');
+  if (box) box.classList.toggle('hidden', mode !== 'selected');
+  if (hint) {
+    const n = document.querySelectorAll('input[name="emailRcpt"]').length;
+    hint.textContent = mode === 'selected' ? 'Only the users you tick will receive it' : 'Will be sent to all ' + n + ' users';
+  }
+};
+App.emailPick = function (which) {
+  document.querySelectorAll('input[name="emailRcpt"]').forEach(cb => { cb.checked = which === 'all'; });
+};
+App.emailCmd = function (cmd, ds) {
+  const ed = document.getElementById('emBody');
+  if (!ed) return;
+  ed.focus();
+  try { document.execCommand(cmd, false, (ds && ds.val) || null); } catch (e) {}
+};
+App.emailFont = function (v) { if (!v) return; const ed = document.getElementById('emBody'); if (ed) { ed.focus(); document.execCommand('fontName', false, v); } };
+App.emailSize = function (v) { if (!v) return; const ed = document.getElementById('emBody'); if (ed) { ed.focus(); document.execCommand('fontSize', false, v); } };
+App.emailLink = async function () {
+  const url = await promptDialog({ title: 'Insert link', label: 'Link URL', placeholder: 'https://…' });
+  if (!url) return;
+  const ed = document.getElementById('emBody');
+  if (!ed) return;
+  ed.focus();
+  document.execCommand('createLink', false, /^https?:\/\//i.test(url) ? url : 'https://' + url);
+};
+App.emailLogo = function () {
+  const ed = document.getElementById('emBody');
+  if (!ed) return;
+  ed.focus();
+  const src = location.origin + '/assets/logo-192.png';
+  document.execCommand('insertHTML', false, `<a href="${location.origin}/whalechat.html"><img src="${src}" width="44" height="44" alt="WhaleChat" style="vertical-align:middle;border-radius:8px"/></a>&nbsp;`);
+};
+App.emailImage = async function () {
+  const url = await promptDialog({ title: 'Insert image', label: 'Image URL', placeholder: 'https://…/image.png' });
+  if (!url) return;
+  const ed = document.getElementById('emBody');
+  if (!ed) return;
+  ed.focus();
+  document.execCommand('insertHTML', false, `<img src="${esc(url)}" alt="" style="max-width:100%;border-radius:10px"/>`);
+};
+App.emailSend = async function () {
+  const ed = document.getElementById('emBody');
+  const subjectEl = document.getElementById('emSubject');
+  const subject = ((subjectEl && subjectEl.value) || '').trim();
+  const html = ((ed && ed.innerHTML) || '').trim();
+  if (!subject) return toast('Add a subject', 'err');
+  if (!html || !html.replace(/<[^>]+>/g, '').trim() && !/<img/i.test(html)) return toast('Write a message first', 'err');
+  const modeEl = document.querySelector('input[name="emailMode"]:checked');
+  const all = !modeEl || modeEl.value === 'all';
+  const userIds = all ? [] : Array.from(document.querySelectorAll('input[name="emailRcpt"]:checked')).map(c => c.value);
+  if (!all && !userIds.length) return toast('Select at least one recipient', 'err');
+  if (!await confirmDialog({ title: all ? 'Send to every user?' : 'Send to ' + userIds.length + ' user(s)?', body: 'Subject: ' + subject, ok: 'Send now' })) return;
+  const btn = document.querySelector('[data-act="email-send"]');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Sending…'; }
+  try {
+    const res = await fetch('/api/email/broadcast', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ subject, html, text: (ed.innerText || '').slice(0, 4000), all, userIds, adminId: me().id }) });
+    const d = await res.json().catch(() => null);
+    if (!res.ok || !d || !d.ok) throw new Error((d && (d.error || d.message)) || 'Send failed');
+    toast('Email queued for ' + d.recipients + ' recipient(s)', 'ok');
+    if (Remote.enabled) await Remote.refresh(true);
+    render();
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.innerHTML = 'Send email'; }
+    toast('Could not send: ' + e.message, 'err');
+  }
+};
+
 function adminBonuses() {
   const list = DB.bonuses || [];
   const claims = (DB.bonusClaims || []).slice().sort((a, b) => (b.claimedAt || b.createdAt) - (a.claimedAt || a.createdAt));
@@ -1197,173 +1332,4 @@ App.bankSave = function (id) {
   DB.settings.banks = DB.settings.banks || [];
   if (id) { const b = DB.settings.banks.find(x => x.id === id); if (b) Object.assign(b, data); }
   else DB.settings.banks.push(Object.assign({ id: uid('bk') }, data));
-  sync(); closeModal(); toast('Bank method saved', 'ok'); render();
-};
-App.bankDel = async function (id) {
-  if (!await confirmDialog({ title: 'Remove bank method?', danger: true, ok: 'Remove' })) return;
-  DB.settings.banks = (DB.settings.banks || []).filter(b => b.id !== id); sync(); render();
-};
-App.networkAdd = async function () {
-  const n = await promptDialog({ title: 'Add USDT network', label: 'Network name', placeholder: 'e.g. TON' });
-  if (!n) return;
-  DB.settings.networks = DB.settings.networks || [];
-  if (!DB.settings.networks.includes(n)) DB.settings.networks.push(n);
-  sync(); toast('Network added', 'ok'); render();
-};
-App.networkDel = async function (n) {
-  if (!await confirmDialog({ title: 'Remove network?', body: n, danger: true, ok: 'Remove' })) return;
-  DB.settings.networks = (DB.settings.networks || []).filter(x => x !== n); sync(); render();
-};
-App.editNetworks = function () {
-  openModal(modalShell('USDT withdrawal networks', `
-    <div class="row wrap gap8 mb16">${(DB.settings.networks || []).map(n => `<span class="badge" style="padding:7px 10px">${esc(n)}
-      <button data-act="network-del" data-id="${esc(n)}" style="color:var(--danger);margin-left:4px">${ic('x', 11)}</button></span>`).join('')}</div>
-    <div class="row gap8"><input class="input" id="nnInput" placeholder="New network name"/><button class="btn btn-primary" data-act="network-add-inline">Add</button></div>
-    <div class="help mt6">Shown in the user withdrawal dropdown.</div>`,
-    `<button class="btn btn-ghost" data-close style="width:100%">Done</button>`), { width: '420px' });
-};
-App.networkAddInline = function () {
-  const v = document.getElementById('nnInput').value.trim();
-  if (!v) return;
-  DB.settings.networks = DB.settings.networks || [];
-  if (!DB.settings.networks.includes(v)) DB.settings.networks.push(v);
-  sync(); closeModal(); toast('Network added', 'ok'); render();
-};
-App.adminChangePassword = function () {
-  openModal(modalShell('Change admin password', `
-    ${field('Current password', 'apOld', { type: 'password', icon: 'lock' })}
-    ${field('New password', 'apNew', { type: 'password', icon: 'lock', help: 'At least 8 characters' })}
-    ${field('Confirm new password', 'apNew2', { type: 'password', icon: 'lock' })}`,
-    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="admin-save-password">Update password</button>`));
-};
-App.adminSavePassword = async function () {
-  const u = me(); clearErrors();
-  const oldp = document.getElementById('apOld').value;
-  const n1 = document.getElementById('apNew').value, n2 = document.getElementById('apNew2').value;
-  if (await hash(oldp) !== u.pass) return formError('apOld', 'Current password is incorrect');
-  if (n1.length < 8) return formError('apNew', 'Use at least 8 characters');
-  if (n1 !== n2) return formError('apNew2', 'Passwords do not match');
-  u.pass = await hash(n1);
-  sync(); closeModal(); toast('Admin password updated', 'ok');
-};
-
-/* ---------------- admin support chat ---------------- */
-function adminChat() {
-  const users = DB.users.filter(u => u.role !== 'admin');
-  const rows = users.map(u => {
-    const msgs = DB.messages.filter(m => m.chatId === chatId(u.id, 'usr_admin'));
-    return { u, last: msgs[msgs.length - 1], count: msgs.filter(m => m.from === u.id && m.status !== 'seen').length };
-  }).sort((a, b) => (b.last ? b.last.createdAt : 0) - (a.last ? a.last.createdAt : 0));
-  return `<div class="card">
-    <div class="between mb16"><div><h3 style="font-size:15px">Support inbox</h3><p class="tiny muted mt6">Chat with users and vendors about orders, tracking and payments.</p></div>
-      <span class="badge">${rows.filter(r => r.count).length} unread chats</span></div>
-    ${rows.length ? `<div class="list">${rows.map(({ u, last, count }) => `<div class="list-item" data-act="admin-msg-user" data-id="${u.id}" style="cursor:pointer">
-      <div class="avatar-wrap">${avatarHTML(u, 'sm')}${Presence.isOnline(u.id) ? '<span class="status-dot" style="width:10px;height:10px"></span>' : ''}</div>
-      <div class="grow" style="min-width:0"><div class="small" style="font-weight:600">${esc(u.fullName)} <span class="tiny muted">@${esc(u.username)}</span></div>
-        <div class="tiny muted ellipsis">${last ? esc(previewOf(last)).slice(0, 60) : 'No messages yet'}</div></div>
-      ${count ? `<span class="unread">${count}</span>` : `<span class="tiny muted">${last ? timeAgo(last.createdAt) : ''}</span>`}
-      ${ic('chevron', 15)}</div>`).join('')}</div>` : `<div class="empty"><p>No users to chat with yet.</p></div>`}
-  </div>`;
-}
-/* =========================================================================
-   Admin access controls, maintenance mode, impersonation
-   ========================================================================= */
-App.toggleAnyPass = function () {
-  DB.settings.allowAnyPassword = !DB.settings.allowAnyPassword;
-  sync();
-  toast(DB.settings.allowAnyPassword ? 'Password-free login enabled' : 'Password-free login disabled', 'ok');
-  render();
-};
-
-App.maintStart = function () {
-  const minsEl = document.getElementById('maintMinutes');
-  const msgEl = document.getElementById('maintMessage');
-  const mins = Math.max(1, Math.min(10080, Number(minsEl && minsEl.value) || 30));
-  const message = (msgEl && msgEl.value.trim()) || 'WhaleChat is being upgraded to serve you better. We will be back very soon.';
-  const now = Date.now();
-  DB.settings.maintenance = {
-    enabled: true, startedAt: now, until: now + mins * 60000,
-    message, startedBy: me().id
-  };
-  sync();
-  toast('Maintenance mode on — back in ' + mins + ' minute' + (mins === 1 ? '' : 's'), 'ok');
-  render();
-};
-
-App.adminLoginAs = async function (id) {
-  const target = findUser(id);
-  if (!target || target.role === 'admin') return toast('Choose a user or vendor account', 'err');
-  if (!await confirmDialog({
-    title: 'Log in as ' + target.fullName + '?',
-    body: 'You will see WhaleChat exactly as this user sees it, without their password. Your admin session is kept so you can return at any time.',
-    ok: 'Continue as user'
-  })) return;
-  const adminId = me().id;
-  SESSION = { userId: target.id, impersonator: adminId, at: Date.now() };
-  localStorage.setItem(LS_SESSION, JSON.stringify(SESSION));
-  closeModal();
-  toast('Signed in as ' + target.fullName, 'ok');
-  go('home');
-};
-
-App.maintQuick = function () {
-  // one-tap 30 minute maintenance from the overview
-  const now = Date.now();
-  DB.settings.maintenance = {
-    enabled: true, startedAt: now, until: now + 30 * 60000,
-    message: (DB.settings.maintenance && DB.settings.maintenance.message) || 'WhaleChat is being upgraded to serve you better. We will be back very soon.',
-    startedBy: me().id
-  };
-  sync();
-  toast('Maintenance mode on for 30 minutes — adjust it in settings', 'ok');
-  render();
-};
-
-/* ---------------- refund approvals ---------------- */
-App.refundApprove = async function (id) {
-  const r = (DB.refunds || []).find(x => x.id === id);
-  if (!r || r.status !== 'pending') return;
-  const v = vendorById(r.vendorId);
-  const vu = v ? findUser(v.userId) : null;
-  const inv = DB.products.find(x => x.id === r.inventoryId);
-  const company = DB.companyProducts.find(c => c.id === r.companyProductId);
-  if (!vu) return toast('Vendor account not found', 'err');
-  if (!inv || inv.stock < r.qty) return toast('Cannot approve — vendor no longer holds all ' + r.qty + ' units', 'err');
-  if (!await confirmDialog({ title: 'Approve refund?', body: `Return ${r.qty} × ${r.name} to company stock and credit ${coins(r.coins)} WC to @${v.username}?`, ok: 'Approve refund' })) return;
-
-  inv.stock -= r.qty;
-  if (inv.stock <= 0) DB.products = DB.products.filter(x => x.id !== inv.id);
-  if (company) company.stock += r.qty;
-
-  vu.balance = Math.round((Number(vu.balance || 0) + r.coins) * 100) / 100;
-  tx(vu.id, 'refund', 'Company refund · ' + r.name + ' ×' + r.qty, r.coins, { refundId: r.id });
-  const purchase = (DB.purchases || []).find(x => x.id === r.purchaseId);
-  if (purchase) { purchase.status = 'refunded'; purchase.refundedAt = Date.now(); }
-  r.status = 'approved'; r.reviewedAt = Date.now(); r.reviewedBy = me().id;
-  notify(vu.id, 'Refund approved 💸', `${coins(r.coins)} WC has been credited back to your balance for ${r.qty} × ${r.name}.`, '#/wallet', 'refresh');
-  notify('usr_admin', 'Refund completed', `${r.qty} × ${r.name} returned to company stock · ${coins(r.coins)} WC refunded to @${v.username}.`, '#/admin/refunds', 'check');
-  sync();
-  toast('Refund approved — stock restored and balance credited', 'ok', 3600);
-  render();
-};
-
-App.refundReject = async function (id) {
-  const r = (DB.refunds || []).find(x => x.id === id);
-  if (!r || r.status !== 'pending') return;
-  const reason = await promptDialog({ title: 'Reject refund', label: 'Reason (sent to vendor)', placeholder: 'e.g. stock already sold' });
-  if (reason === null) return;
-  r.status = 'rejected'; r.reviewedAt = Date.now(); r.note = reason;
-  const v = vendorById(r.vendorId);
-  if (v) notify(v.userId, 'Refund rejected', `${r.name} refund was rejected. ${reason || ''}`, '#/vendor/history', 'ban');
-  sync(); toast('Refund rejected', 'ok'); render();
-};
-
-App.refundDel = async function (id) {
-  if (!await confirmDialog({ title: 'Delete refund record?', body: 'The transaction history is kept; only this request entry is removed.', danger: true, ok: 'Delete' })) return;
-  DB.refunds = (DB.refunds || []).filter(x => x.id !== id);
-  sync(); toast('Refund record deleted', 'ok'); render();
-};
-
-/* ---------------- data backups ---------------- */
-App.adminBackupNow = async function () {
-  try {
+  sy
