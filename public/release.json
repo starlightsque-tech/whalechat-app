@@ -1,8 +1,8 @@
 {
-  "version": "3.7.3",
-  "build": "2026-11-10T16:34:39Z",
+  "version": "3.8.0",
+  "build": "2026-11-11T07:08:21Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.7.3 - Brevo email provider support (works on Render free plan).",
-  "releasedAt": "2026-11-10T16:34:39Z",
+  "notes": "WhaleChat 3.8.0 - Tawk.to live chat, admin email composer with rich text, links, images and logo.",
+  "releasedAt": "2026-11-11T07:08:21Z",
   "minimum": "3.0.0"
 }
