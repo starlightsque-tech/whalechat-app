@@ -337,6 +337,10 @@ const LT = {
   .lt-side-btn{flex:1;padding:9px 6px;border-radius:11px;border:1px solid var(--border);background:var(--surface-2);
     color:var(--muted);font-size:11.5px;font-weight:700;cursor:pointer;transition:all .15s ease}
   .lt-side-btn.on{border-color:rgba(46,230,201,.55);color:var(--text);background:linear-gradient(135deg,rgba(46,230,201,.16),rgba(58,160,255,.12))}
+  .lt-day{display:inline-flex;align-items:center;gap:6px;margin-top:10px;padding:6px 11px;border-radius:99px;
+    font-size:12px;background:rgba(255,255,255,.06);border:1px solid var(--border);font-variant-numeric:tabular-nums}
+  .lt-day.up{color:var(--success);background:rgba(47,214,166,.10);border-color:rgba(47,214,166,.25)}
+  .lt-day.down{color:var(--danger);background:rgba(255,95,116,.10);border-color:rgba(255,95,116,.25)}
   .lt-mini{display:inline-block;width:46px;height:22px;margin:0 6px;vertical-align:middle;opacity:.9;flex:0 0 auto}
   .lt-mini svg{width:100%;height:100%;display:block}
   `;
@@ -352,6 +356,231 @@ const LT = {
   };
   INV.__ltPatched = true;
 })();
+
+/* =========================== dashboard (trade aware) ====================== */
+const LT_WINDOW = { '1D': 864e5, '1W': 7 * 864e5, '1M': 30 * 864e5, '3M': 90 * 864e5, '1Y': 365 * 864e5, 'ALL': 730 * 864e5 };
+
+LT.positions = function (userId) {
+  const trades = LT.open(userId).map(t => {
+    const p = LT.calc(t);
+    return {
+      kind: 'trade', trade: t, ticker: t.ticker, side: t.side, lev: t.leverage,
+      capital: t.capitalCoins, entry: t.entryPrice, pnlCoins: p.pnlCoins,
+      valueCoins: Math.max(0, t.capitalCoins + p.pnlCoins), pnlPct: p.pnlPct, price: p.price
+    };
+  });
+  const spots = INV.holdings(userId).map(h => {
+    const q = INV.quote(h.ticker) || { price: h.avgPrice, prevClose: h.avgPrice };
+    const valueUsd = h.shares * q.price;
+    return {
+      kind: 'spot', holding: h, ticker: h.ticker, side: 'long', lev: 1,
+      capital: usdToCoins(h.shares * h.avgPrice), entry: h.avgPrice,
+      pnlCoins: usdToCoins(valueUsd - h.shares * h.avgPrice),
+      valueCoins: usdToCoins(valueUsd),
+      pnlPct: h.avgPrice ? (q.price / h.avgPrice - 1) * 100 : 0, price: q.price
+    };
+  });
+  return trades.concat(spots);
+};
+
+LT.summary = function (userId) {
+  const pos = LT.positions(userId);
+  const valueCoins = pos.reduce((s, p) => s + p.valueCoins, 0);
+  const capital = pos.reduce((s, p) => s + p.capital, 0);
+  const pnl = pos.reduce((s, p) => s + p.pnlCoins, 0);
+  const u = me();
+  return {
+    pos, valueCoins, capital, pnl,
+    valueUsd: coinsToUsd(valueCoins),
+    capitalUsd: coinsToUsd(capital),
+    pnlUsd: coinsToUsd(pnl),
+    pnlPct: capital ? (pnl / capital) * 100 : 0,
+    cash: (u && u.balance) || 0,
+    live: pos.filter(p => p.kind === 'trade').length
+  };
+};
+
+/* series for the performance chart: spot holdings + live trades */
+LT.seriesWithTrades = function (tf, userId) {
+  const pos = LT.positions(userId);
+  if (!pos.length) return [];
+  const win = LT_WINDOW[tf] || LT_WINDOW['1M'];
+  const now = Date.now();
+  const series = pos.map(p => ({ p, data: INV.series(p.ticker, tf) }));
+  const len = Math.max(...series.map(s => s.data.length));
+  const out = [];
+  for (let i = 0; i < len; i++) {
+    let v = 0;
+    series.forEach(({ p, data }) => {
+      if (!data.length) { v += p.capital; return; }
+      const price = data[Math.min(i, data.length - 1)];
+      if (p.kind === 'spot') { v += (p.holding.shares * price) * (1 / COIN_USD); return; }
+      const t = p.trade;
+      const idx = Math.min(data.length - 1, i);
+      const msAgo = (1 - idx / Math.max(1, data.length - 1)) * win;
+      const started = now - (t.createdAt || now);
+      if (msAgo > started) { v += p.capital; return; }           /* before entry: flat capital */
+      const dir = t.side === 'short' ? -1 : 1;
+      const move = t.entryPrice ? (price - t.entryPrice) / t.entryPrice : 0;
+      const pnl = Math.max(-p.capital, p.capital * (t.leverage || 1) * move * dir);
+      v += Math.max(0, p.capital + pnl);
+    });
+    out.push(v);
+  }
+  return out;
+};
+
+LT.allocSlices = function (userId) {
+  const map = {};
+  LT.positions(userId).forEach(p => { map[p.ticker] = (map[p.ticker] || 0) + p.valueCoins; });
+  return Object.keys(map).map(t => ({ ticker: t, value: coinsToUsd(map[t]) })).sort((a, b) => b.value - a.value);
+};
+
+LT.dash = function (params) {
+  const u = me();
+  const s = LT.summary(u.id);
+  const tf = (params && params.tf && LT_WINDOW[params.tf]) ? params.tf : '1M';
+  const slices = LT.allocSlices(u.id);
+  const cols = ['#2ee6c9', '#3aa0ff', '#8b7bff', '#ffc861', '#2fd6a6', '#ff7bb0', '#5ad1ff', '#ff9f5a'];
+  const series = LT.seriesWithTrades(tf, u.id);
+  const dayUp = s.pnl > 0, dayDown = s.pnl < 0;
+
+  const quick = [
+    { ic: 'download', label: 'Deposit', nav: '#/deposit' },
+    { ic: 'send', label: 'Withdraw', nav: '#/withdraw' },
+    { ic: 'trend', label: 'Buy', nav: '#/invest/market' },
+    { ic: 'clock', label: 'Trades', nav: '#/invest/orders' },
+    { ic: 'star', label: 'Watchlist', nav: '#/invest/watchlist' }
+  ];
+
+  return `
+  <div class="page-head"><div class="between">
+    <div class="section-title" style="margin:0">Invest</div>
+    <div class="row" style="gap:8px">
+      <a href="#/invest/orders" class="btn btn-sm btn-ghost">${ic('clock', 14)} Trades</a>
+      <a href="#/invest/market" class="btn btn-sm btn-soft">${ic('search', 14)} Market</a>
+    </div>
+  </div></div>
+
+  <div class="inv-hero">
+    <div class="tiny muted">Total portfolio value</div>
+    <div class="inv-big"><span data-ltd="value">${coins(s.valueCoins)}</span> <span class="inv-unit">WC</span></div>
+    <div class="tiny muted" data-ltd="value-usd">≈ ${usd(s.valueUsd)} USD</div>
+    <div class="lt-day ${dayUp ? 'up' : dayDown ? 'down' : ''}" data-ltd="day">
+      ${ic(dayUp ? 'trend' : 'down', 14)}
+      <b>${s.pnl >= 0 ? '+' : '−'}${usd_LT(Math.abs(s.pnlUsd))}</b>
+      <span>(${s.pnl >= 0 ? '+' : '−'}${Math.abs(s.pnlPct).toFixed(2)}%) today</span>
+    </div>
+    <div class="inv-hero-grid">
+      <div><span class="tiny muted">Invested</span><b data-ltd="invested">${coins(s.capital)} WC</b></div>
+      <div><span class="tiny muted">Earnings${s.live ? ' · live' : ''}</span>
+        <b class="${dayUp ? 'up' : dayDown ? 'down' : ''}" data-ltd="earnings">
+          ${s.pnl >= 0 ? '+' : '−'}${coins(Math.abs(s.pnl))} WC</b></div>
+      <div><span class="tiny muted">Available cash</span><b data-ltd="cash">${coins(s.cash)} WC</b></div>
+    </div>
+  </div>
+
+  <div class="inv-actions">${quick.map(q => `<a href="${q.nav}" class="inv-act"><span class="inv-act-ic">${ic(q.ic, 18)}</span><span>${q.label}</span></a>`).join('')}</div>
+
+  <div class="card inv-chartcard">
+    <div class="between" style="align-items:center">
+      <div><div class="card-title" style="margin:0">Portfolio performance</div>
+        <div class="tiny muted">${s.pos.length ? tf + ' · live' : 'No positions yet'}</div></div>
+      ${INV.seg(tf)}
+    </div>
+    <div class="inv-chart" id="ltDashChart" data-ltd-chart="${tf}">
+      ${s.pos.length ? INV.lineChart(series, { h: 150 }) : `<div class="inv-empty">${ic('trend', 26)}<p class="small muted">Start a trade or buy stock to see performance.</p><a href="#/invest/market" class="btn btn-sm btn-primary">Explore market</a></div>`}
+    </div>
+  </div>
+
+  <div class="inv-two">
+    <div class="card">
+      <div class="card-title">Allocation</div>
+      <div id="ltDashAlloc">${slices.length ? `<div class="inv-alloc">${INV.donut(slices)}
+        <div class="inv-legend">${slices.slice(0, 6).map((x, i) => `<div class="row" style="gap:7px;align-items:center">
+          <i style="width:8px;height:8px;border-radius:3px;background:${cols[i % cols.length]};display:inline-block"></i>
+          <span class="tiny ellipsis grow">${esc(x.ticker)}</span>
+          <span class="tiny muted">${((x.value / (coinsToUsd(s.valueCoins) || 1)) * 100).toFixed(0)}%</span></div>`).join('')}</div></div>`
+        : `<div class="inv-empty"><p class="small muted">Allocation appears once you own stocks or have a live trade.</p></div>`}</div>
+    </div>
+
+    <div class="card">
+      <div class="between"><div class="card-title" style="margin:0">My positions</div>
+        <span class="tiny muted">${s.pos.length} open</span></div>
+      <div id="ltDashPos">${LT.positionsHTML(u.id)}</div>
+    </div>
+  </div>
+
+  <div class="card inv-note">${ic('shield', 14)} <span class="tiny">Prices are simulated and move every 5 seconds. Values here include your live trades and stock holdings, at 1 WC = $0.50.</span></div>`;
+};
+
+function usd_LT(n) { return '$' + (Math.round((Number(n) || 0) * 100) / 100).toFixed(2); }
+
+LT.positionsHTML = function (userId) {
+  const pos = LT.positions(userId);
+  if (!pos.length) return `<div class="inv-empty">${ic('bag', 26)}<p class="small muted">No open positions. Buy a stock or start a trade to begin.</p><a href="#/invest/market" class="btn btn-sm btn-primary">Browse stocks</a></div>`;
+  return `<div class="inv-list">${pos.map(p => {
+    const stock = INV.stock(p.ticker) || { ticker: p.ticker, name: p.ticker, color: '#3aa0ff' };
+    const up = p.pnlCoins > 0, down = p.pnlCoins < 0;
+    const tag = p.kind === 'trade' ? `<span class="lt-side ${p.side}">${p.side === 'short' ? 'Short' : 'Long'} ${p.lev}×</span>` : '';
+    return `<a class="inv-row" href="#/invest/stock/${p.ticker}">
+      ${INV.logoHTML(stock)}
+      <div class="grow" style="min-width:0">
+        <div class="small ellipsis" style="font-weight:650">${esc(stock.name)} ${tag}</div>
+        <div class="tiny muted">${coins(p.capital)} WC in · now ${coins(p.valueCoins)} WC</div>
+      </div>
+      <span class="lt-mini">${INV.spark(p.ticker)}</span>
+      <div style="text-align:right">
+        <div class="small" style="font-weight:650">${usd(p.price)}</div>
+        <div class="tiny ${up ? 'up' : down ? 'down' : 'muted'}">${p.pnlCoins >= 0 ? '+' : '−'}${coins(Math.abs(p.pnlCoins))} WC (${p.pnlPct >= 0 ? '+' : '−'}${Math.abs(p.pnlPct).toFixed(2)}%)</div>
+      </div></a>`;
+  }).join('')}</div>`;
+};
+
+/* repaint the dashboard numbers, chart, allocation and positions in place */
+LT.paintDash = function () {
+  const u = me(); if (!u) return;
+  const has = document.querySelector('[data-ltd="value"]');
+  if (!has) return;
+  const s = LT.summary(u.id);
+  const set = (sel, txt) => { const el = document.querySelector(sel); if (el) el.textContent = txt; };
+  set('[data-ltd="value"]', coins(s.valueCoins));
+  set('[data-ltd="value-usd"]', '≈ ' + usd(s.valueUsd) + ' USD');
+  set('[data-ltd="invested"]', coins(s.capital) + ' WC');
+  set('[data-ltd="earnings"]', (s.pnl >= 0 ? '+' : '−') + coins(Math.abs(s.pnl)) + ' WC');
+  set('[data-ltd="cash"]', coins(s.cash) + ' WC');
+  const day = document.querySelector('[data-ltd="day"]');
+  if (day) {
+    day.className = 'lt-day ' + (s.pnl > 0 ? 'up' : s.pnl < 0 ? 'down' : '');
+    day.innerHTML = `${ic(s.pnl >= 0 ? 'trend' : 'down', 14)}<b>${s.pnl >= 0 ? '+' : '−'}${usd_LT(Math.abs(s.pnlUsd))}</b>
+      <span>(${s.pnl >= 0 ? '+' : '−'}${Math.abs(s.pnlPct).toFixed(2)}%) today</span>`;
+  }
+  const earn = document.querySelector('[data-ltd="earnings"]');
+  if (earn) { earn.classList.toggle('up', s.pnl > 0); earn.classList.toggle('down', s.pnl < 0); }
+  const chart = document.getElementById('ltDashChart');
+  if (chart) {
+    const tf = chart.getAttribute('data-ltd-chart') || '1M';
+    const series = LT.seriesWithTrades(tf, u.id);
+    chart.innerHTML = series.length ? INV.lineChart(series, { h: 150 })
+      : `<div class="inv-empty">${ic('trend', 26)}<p class="small muted">No positions yet.</p></div>`;
+  }
+  const alloc = document.getElementById('ltDashAlloc');
+  if (alloc) {
+    const slices = LT.allocSlices(u.id);
+    const cols = ['#2ee6c9', '#3aa0ff', '#8b7bff', '#ffc861', '#2fd6a6', '#ff7bb0', '#5ad1ff', '#ff9f5a'];
+    alloc.innerHTML = slices.length ? `<div class="inv-alloc">${INV.donut(slices)}
+      <div class="inv-legend">${slices.slice(0, 6).map((x, i) => `<div class="row" style="gap:7px;align-items:center">
+        <i style="width:8px;height:8px;border-radius:3px;background:${cols[i % cols.length]};display:inline-block"></i>
+        <span class="tiny ellipsis grow">${esc(x.ticker)}</span>
+        <span class="tiny muted">${((x.value / (coinsToUsd(s.valueCoins) || 1)) * 100).toFixed(0)}%</span></div>`).join('')}</div></div>`
+      : `<div class="inv-empty"><p class="small muted">Allocation appears once you own stocks or have a live trade.</p></div>`;
+  }
+  const posEl = document.getElementById('ltDashPos');
+  if (posEl) posEl.innerHTML = LT.positionsHTML(u.id);
+};
+
+/* the dashboard itself */
+INV.viewDash = function (params) { return LT.dash(params); };
 
 /* ---------------- actions ---------------- */
 App.ltSide = function (id, ds) {
@@ -504,6 +733,7 @@ setInterval(() => {
     if (!DB || !me() || document.hidden) return;
     LT.auto();
     LT.paint();
+    LT.paintDash();
   } catch (e) { console.error('lt tick', e); }
 }, 2000);
 
