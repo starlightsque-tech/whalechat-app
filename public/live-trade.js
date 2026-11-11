@@ -178,7 +178,7 @@ const LT = {
         <button class="btn btn-sm btn-primary grow" data-act="lt-tp" data-id="${t.id}">
           ${ic('trend', 13)} Take profit ${p.pnlCoins > 0 ? '(+' + coins(p.pnlCoins) + ')' : ''}</button>
         <button class="btn btn-sm btn-ghost grow" data-act="lt-sl" data-id="${t.id}">
-          ${ic('down', 13)} Stop trade ${p.pnlCoins < 0 ? '(−' + coins(Math.abs(p.pnlCoins)) + ')' : ''}</button>
+          ${ic('down', 13)} Take loss ${p.pnlCoins < 0 ? '(−' + coins(Math.abs(p.pnlCoins)) + ')' : ''}</button>
       </div>
       <div class="tiny muted center" style="margin-top:6px">Returns ${coins(p.payoutCoins)} WC if closed now</div>
     </div>`;
@@ -226,6 +226,22 @@ const LT = {
       const ret = document.querySelector('[data-lt="' + t.id + '"] .tiny.muted.center');
       if (ret) ret.textContent = 'Returns ' + coins(p.payoutCoins) + ' WC if closed now';
     });
+    this.paintEarnings();
+  },
+
+  /* the hero "Earnings" figure follows the live trades, not old holdings */
+  paintEarnings() {
+    const el = document.querySelector('[data-lv="pv-earn"]');
+    if (!el) return;
+    const pos = this.open();
+    const pnl = pos.reduce((sum, t) => sum + this.calc(t).pnlCoins, 0);
+    el.textContent = (pnl >= 0 ? '+' : '\u2212') + coins(Math.abs(pnl)) + ' WC';
+    el.classList.remove('up', 'down');
+    if (pnl > 0) el.classList.add('up');
+    else if (pnl < 0) el.classList.add('down');
+    const cell = el.parentElement;
+    const label = cell && cell.querySelector('.tiny.muted');
+    if (label) label.textContent = pos.length ? 'Active trade earnings' : 'Earnings';
   },
 
   /* ---------------- mounts ---------------- */
@@ -247,18 +263,35 @@ const LT = {
       <div class="inv-list">${list.map(t => this.closedRow(t)).join('')}</div></div>`;
   },
 
-  /* opened-position ticket, rendered on the stock page */
+  /* the stock-page panel: buy to open, then take profit / take loss */
   ticketHTML(ticker) {
     const s = INV.stock(ticker); if (!s) return '';
-    const q = INV.quote(ticker);
     const lev = this.leverage();
+    const pos = this.open().filter(t => t.ticker === ticker)[0];
+    const head = `<div class="between"><div class="card-title" style="margin:0">Trade · ${esc(ticker)}</div>
+        <span class="badge">${lev}×</span></div>`;
+
+    if (pos) {
+      return `<div class="card" id="ltTicket">
+        ${head}
+        <div class="tiny muted" style="margin:4px 0 10px">Your position is live and counting now — it is not waiting for the market.</div>
+        ${this.cardHTML(pos)}
+        <div class="row" style="gap:8px;margin-top:10px">
+          <button class="btn btn-primary grow" data-act="lt-tp" data-id="${pos.id}">
+            ${ic('trend', 15)} Take profit</button>
+          <button class="btn btn-ghost grow" data-act="lt-sl" data-id="${pos.id}">
+            ${ic('down', 15)} Take loss</button>
+        </div>
+        <div class="tiny muted center mt6">Profit: capital + gain · Loss: remaining capital · Total loss: nothing returned</div>
+      </div>`;
+    }
+
     return `<div class="card" id="ltTicket">
-      <div class="between"><div class="card-title" style="margin:0">Live trade · ${esc(ticker)}</div>
-        <span class="badge">${lev}× leverage</span></div>
+      ${head}
       <div class="tiny muted" style="margin:4px 0 10px;line-height:1.6">
-        Put Whale Coin behind a position. Profit and loss move with the price in real time — take profit, stop the trade, or let the timer close it for you.</div>
+        Enter your limit and how long the trade runs, then press <b>Buy</b>. The trade starts immediately and earns or loses in real time.</div>
       <div class="lt-side-pick">
-        <button class="lt-side-btn ${'on'}" data-act="lt-side" data-side="long">▲ Long (price rises)</button>
+        <button class="lt-side-btn on" data-act="lt-side" data-side="long">▲ Long (price rises)</button>
         <button class="lt-side-btn" data-act="lt-side" data-side="short">▼ Short (price falls)</button>
       </div>
       <div class="field"><label class="label">Capital (Whale Coin)</label>
@@ -267,15 +300,15 @@ const LT = {
         <div class="tiny muted" id="ltCapitalUsd">≈ $0.00 · balance ${coins(me().balance)} WC</div></div>
       <div class="row" style="gap:8px">
         <div class="field grow"><label class="label">Take profit %</label>
-          <input class="input" id="ltTp" type="number" step="1" min="0" placeholder="off"/></div>
-        <div class="field grow"><label class="label">Stop loss %</label>
-          <input class="input" id="ltSl" type="number" step="1" min="0" placeholder="off"/></div>
+          <input class="input" id="ltTp" type="number" step="1" min="0" placeholder="limit"/></div>
+        <div class="field grow"><label class="label">Take loss %</label>
+          <input class="input" id="ltSl" type="number" step="1" min="0" placeholder="limit"/></div>
       </div>
-      <div class="field"><label class="label">Time limit</label>
+      <div class="field"><label class="label">Trade duration</label>
         <select class="input" id="ltDuration">${this.DURATIONS.map(d => `<option value="${d.m}" ${d.m === 60 ? 'selected' : ''}>${d.label}</option>`).join('')}</select></div>
-      <button class="btn btn-primary btn-block" data-act="lt-start" data-t="${esc(ticker)}" style="width:100%">
-        ${ic('play', 15)} Start trade</button>
-      <div class="tiny muted center mt6">${ic('lock', 11)} Capital is held until the trade closes · ${this.feePct()}% fee</div>
+      <button class="btn btn-primary" data-act="lt-start" data-t="${esc(ticker)}" style="width:100%">
+        ${ic('play', 15)} Buy</button>
+      <div class="tiny muted center mt6">${ic('lock', 11)} Capital is held while the trade runs · ${this.feePct()}% fee · it closes by itself at your limit or when time is up</div>
     </div>`;
   }
 };
@@ -372,6 +405,18 @@ VIEWS.admin = function (parts, params) {
   return html + ltLeverageCard();
 };
 
+/* the base paint rewrites the earnings tile every 5s — re-apply ours after it */
+(function () {
+  if (typeof INV === 'undefined' || INV.__ltPaintPatched) return;
+  const basePaint = INV.paint;
+  INV.paint = function () {
+    const out = basePaint.apply(INV, arguments);
+    try { LT.paintEarnings(); } catch (e) {}
+    return out;
+  };
+  INV.__ltPaintPatched = true;
+})();
+
 /* ---------------- mounts ---------------- */
 function ltMountDashboard() {
   if (!document.querySelector('.inv-hero')) return;
@@ -403,12 +448,25 @@ function ltMountStock() {
   const hash = location.hash || '';
   const m = hash.match(/^#\/invest\/stock\/([A-Z0-9.]+)/i);
   if (!m) return;
-  if (document.getElementById('ltTicket')) return;
+  const ticker = m[1].toUpperCase();
   const content = document.getElementById('content');
-  if (!content) return;
+  if (!content || document.getElementById('ltTicketMount')) return;
+
   const host = document.createElement('div');
-  host.innerHTML = LT.ticketHTML(m[1].toUpperCase()) + LT.activeBlock();
-  content.appendChild(host);
+  host.id = 'ltTicketMount';
+  host.innerHTML = LT.ticketHTML(ticker) + LT.activeBlock();
+
+  /* the old spot panel (Market/Limit + Buy stock/Sell) is replaced entirely:
+     a trade starts immediately and is exited with Take profit / Take loss. */
+  const legacyBtn = content.querySelector('[data-act="inv-trade"]');
+  const legacyCard = legacyBtn ? legacyBtn.closest('.card') : null;
+  if (legacyCard && legacyCard.parentNode) {
+    legacyCard.parentNode.insertBefore(host, legacyCard);
+    legacyCard.remove();
+  } else {
+    content.appendChild(host);
+  }
+
   const cap = document.getElementById('ltCapital');
   if (cap) cap.addEventListener('input', () => {
     const usdEl = document.getElementById('ltCapitalUsd');
