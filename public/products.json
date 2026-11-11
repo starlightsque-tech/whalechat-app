@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "note": "Realistic product photography generated for the WhaleChat wholesale catalogue.",
+  "products": [
+    {
+      "id": "cp_orcaphone",
+      "name": "OrcaPhone 15 Pro",
+      "category": "Phones",
+      "priceUsd": 649,
+      "stock": 40,
+      "image": "./products/orcaphone-15-pro.jpg",
+      "description": "6.7-inch LTPO OLED at 120Hz, triple 48MP camera system, titanium frame, 5G, 256GB storage, IP68."
+    },
+    {
+      "id": "cp_orcabook",
+      "name": "OrcaBook Air 14\"",
+      "category": "Laptops",
+      "priceUsd": 940,
+      "stock": 22,
+      "image": "./products/orcabook-air-14.jpg",
+      "description": "14-inch ultrabook, aluminium chassis, 16GB RAM, 512GB NVMe SSD, 18-hour battery, backlit keyboard."
+    },
+    {
+      "id": "cp_deepbluepad",
+      "name": "DeepBlue Pad 11",
+      "category": "Tablets",
+      "priceUsd": 380,
+      "stock": 30,
+      "image": "./products/deepblue-pad-11.jpg",
+      "description": "11-inch 120Hz display, stylus support, 8GB RAM, 128GB storage, quad speakers, 10-hour battery."
+    },
+    {
+      "id": "cp_echobuds",
+      "name": "EchoBuds Pro ANC",
+      "category": "Headphones",
+      "priceUsd": 128,
+      "stock": 80,
+      "image": "./products/echobuds-pro-anc.jpg",
+      "description": "Hybrid active noise cancelling, 38-hour total battery with case, spatial audio, IPX4, USB-C."
+    },
+    {
+      "id": "cp_tidalcharge",
+      "name": "TidalCharge 65W GaN",
+      "category": "Chargers",
+      "priceUsd": 34,
+      "stock": 180,
+      "image": "./products/tidalcharge-65w.jpg",
+      "description": "65W dual USB-C GaN charger, folding prongs, charges a laptop and phone together, travel ready."
+    },
+    {
+      "id": "cp_waveconsole",
+      "name": "WaveConsole X",
+      "category": "Video Games",
+      "priceUsd": 480,
+      "stock": 26,
+      "image": "./products/waveconsole-x.jpg",
+      "description": "4K gaming console with 1TB SSD, wireless controller included, ray tracing, 120fps support."
+    },
+    {
+      "id": "cp_harborshield",
+      "name": "HarborShield Case",
+      "category": "Phone Pouches",
+      "priceUsd": 19,
+      "stock": 240,
+      "image": "./products/harborshield-case.jpg",
+      "description": "Military-grade drop protection to 3m, slim matte profile, raised camera lip, wireless-charge compatible."
+    },
+    {
+      "id": "cp_nautiluswatch",
+      "name": "Nautilus Watch S2",
+      "category": "Accessories",
+      "priceUsd": 210,
+      "stock": 45,
+      "image": "./products/nautilus-watch-s2.jpg",
+      "description": "Round AMOLED smartwatch, titanium case, GPS, heart-rate and SpO2, 14-day battery, 5ATM water resistant."
+    }
+  ]
+}
