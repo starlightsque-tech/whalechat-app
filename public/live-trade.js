@@ -6,6 +6,8 @@
    ========================================================================= */
 'use strict';
 
+const LT_COIN = (typeof COIN_USD === 'number') ? COIN_USD : 0.5;
+
 const LT = {
   MIN_CAPITAL: 5,
   DURATIONS: [
@@ -854,8 +856,11 @@ LT.vendorStats = function (v) {
   const units = orders.reduce((s, o) => s + (o.items || []).reduce((n, i) => n + (Number(i.qty) || 0), 0), 0);
   const pending = orders.filter(o => ['processing', 'pending'].includes(o.status)).length;
   const paidCoins = orders.reduce((s, o) => s + (Number(o.totalCoins) || 0), 0);
+  const demoOrders = orders.filter(o => o.simulated);
+  const demoUsd = demoOrders.reduce((s, o) => s + (Number(o.totalUsd) || 0), 0);
   const u = findUser(v.userId) || {};
-  return { orders: orders.length, grossUsd, units, pending, paidCoins, balance: u.balance || 0 };
+  return { orders: orders.length, grossUsd, units, pending, paidCoins, balance: u.balance || 0,
+           demoOrders: demoOrders.length, demoUsd };
 };
 
 function ltVendorInvestCard(v) {
@@ -896,6 +901,8 @@ VIEWS.vendor = function (parts, params) {
         <b class="small">${coins(st.paidCoins)} WC</b></div>
       <div class="between mt6"><span class="tiny muted">Wallet balance</span>
         <b class="small">${coins(st.balance)} WC</b></div>
+      ${st.demoOrders ? `<div class="between mt6"><span class="tiny muted">Of which demo shoppers</span>
+        <b class="tiny">${st.demoOrders} order${st.demoOrders === 1 ? '' : 's'} · ${usd(st.demoUsd)} <span class="muted">(simulated, not real revenue)</span></b></div>` : ''}
     </div>` + ltVendorInvestCard(v);
     return html + card;
   } catch (e) { console.error('vendor card', e); return html; }
@@ -938,6 +945,237 @@ LT.stockHistory = function (ticker) {
     </div>
   </div>`;
 };
+
+/* ============================ demo shoppers (bots) ========================
+   Simulated buyers that keep a marketplace looking alive. They are flagged
+   everywhere they can be — isBot on the account, simulated on every order —
+   so nobody can mistake their spend for real revenue. */
+const BOT_ROSTER = [
+  { slug:'lena-hoffmann',  name:'Lena Hoffmann',  username:'lena.hoffmann',  email:'lena.hoffmann@web.de',      phone:'+49 30 4820 1177', country:'Germany',     city:'Berlin',     address:'Torstraße 84',          postal:'10119',   cadence:[1,4] },
+  { slug:'mathieu-leroy',  name:'Mathieu Leroy',  username:'mathieu.leroy',  email:'mathieu.leroy@orange.fr',   phone:'+33 4 78 21 44 90', country:'France',      city:'Lyon',       address:'27 Rue de la République', postal:'69002',   cadence:[2] },
+  { slug:'carla-moreno',   name:'Carla Moreno',   username:'carla.moreno',   email:'carla.moreno@telefonica.net', phone:'+34 963 21 88 40', country:'Spain',   city:'Valencia',   address:'Calle de Colón 12',      postal:'46004',   cadence:[1,3,5] },
+  { slug:'oliver-hughes',  name:'Oliver Hughes',  username:'oliver.hughes',  email:'o.hughes@btinternet.com',   phone:'+44 161 496 0721', country:'United Kingdom', city:'Manchester', address:'41 Deansgate',      postal:'M3 2AY',  cadence:[3,6] },
+  { slug:'aiko-tanaka',    name:'Aiko Tanaka',    username:'aiko.tanaka',    email:'aiko.tanaka@docomo.ne.jp',  phone:'+81 6-6345-2210',  country:'Japan',       city:'Osaka',      address:'2-4-9 Umeda, Kita-ku',   postal:'530-0001', cadence:[2,5] },
+  { slug:'miguel-santos',  name:'Miguel Santos',  username:'miguel.santos',  email:'miguel.santos@gmail.com',   phone:'+63 32 412 7788',  country:'Philippines', city:'Cebu City',  address:'18 Osmeña Boulevard',    postal:'6000',    cadence:[1] },
+  { slug:'arjun-mehta',    name:'Arjun Mehta',    username:'arjun.mehta',    email:'arjun.mehta@outlook.in',    phone:'+91 20 4102 8890', country:'India',       city:'Pune',       address:'7 Koregaon Park Lane 5', postal:'411001',  cadence:[0,3] },
+  { slug:'zofia-nowak',    name:'Zofia Nowak',    username:'zofia.nowak',    email:'zofia.nowak@wp.pl',         phone:'+48 12 421 66 30', country:'Poland',      city:'Kraków',     address:'ul. Długa 24',           postal:'31-147',  cadence:[4,6,0] }
+];
+
+LT.botsCfg = function () {
+  if (!DB.settings) DB.settings = {};
+  if (!DB.settings.bots) DB.settings.bots = { enabled: false, seededAt: null, cycles: 0, orders: 0, gmvUsd: 0 };
+  return DB.settings.bots;
+};
+LT.botId = function (slug) { return 'bot_' + slug; };
+
+LT.seedBots = function () {
+  const cfg = LT.botsCfg();
+  if (!Array.isArray(DB.bots)) DB.bots = [];
+  BOT_ROSTER.forEach(b => {
+    const id = LT.botId(b.slug);
+    let u = findUser(id);
+    if (!u) {
+      u = {
+        id, username: b.username, fullName: b.name, email: b.email, phone: b.phone,
+        pass: null, pin: null, avatar: './bots/' + b.slug + '.jpg',
+        role: 'user', balance: 20000, totalDeposits: 20000, totalWithdrawals: 0, totalEarnings: 0,
+        vendorId: null, cart: [], stars: [], isBot: true,
+        country: b.country, city: b.city, address: b.address, postal: b.postal,
+        settings: { notifications: false, theme: 'dark' },
+        verified: true, banned: false, completedSales: 0, rating: 5,
+        createdAt: Date.now() - 90 * 864e5
+      };
+      DB.users.push(u);
+    } else {
+      u.isBot = true;
+      if (!u.avatar) u.avatar = './bots/' + b.slug + '.jpg';
+    }
+    let rec = DB.bots.find(x => x.botId === id);
+    if (!rec) {
+      rec = { botId: id, slug: b.slug, cadence: b.cadence, nextAt: LT.nextDue(b.cadence), createdAt: Date.now() };
+      DB.bots.push(rec);
+    }
+    rec.cadence = b.cadence;
+  });
+  if (!cfg.seededAt) cfg.seededAt = Date.now();
+  return DB.bots;
+};
+
+/* next scheduled run: the next matching weekday, at a plausible shopping hour */
+LT.nextDue = function (cadence) {
+  const days = (cadence && cadence.length) ? cadence : [1];
+  const now = new Date();
+  for (let i = 1; i <= 8; i++) {
+    const d = new Date(now.getTime() + i * 864e5);
+    if (days.includes(d.getDay())) {
+      if (Math.random() < 0.15) continue;            /* people skip weeks sometimes */
+      d.setHours(9 + Math.floor(Math.random() * 11), Math.floor(Math.random() * 60), 0, 0);
+      return d.getTime();
+    }
+  }
+  return now.getTime() + 7 * 864e5;
+};
+
+LT.placeBotOrder = function (botUser, rec) {
+  const vendorProducts = (DB.products || []).filter(p => p.active && p.stock > 0 && p.vendorId);
+  if (!vendorProducts.length) return false;
+  const p = vendorProducts[Math.floor(Math.random() * vendorProducts.length)];
+  const vendor = vendorById(p.vendorId);
+  if (!vendor) return false;
+  const vendorUser = findUser(vendor.userId);
+  if (!vendorUser) return false;
+  const qty = Math.min(p.stock, Math.random() < 0.75 ? 1 : 2);
+  const totalUsd = Math.round(p.priceUsd * qty * 100) / 100;
+  const totalCoins = Math.round(totalUsd / LT_COIN * 100) / 100;
+
+  if ((botUser.balance || 0) < totalCoins) botUser.balance = 20000;   /* simulated top-up */
+  botUser.balance = Math.round((botUser.balance - totalCoins) * 100) / 100;
+
+  const order = {
+    id: uid('ord'), ref: 'WC-' + Math.random().toString(36).slice(2, 7).toUpperCase(),
+    buyerId: botUser.id, vendorId: vendor.id,
+    items: [{ productId: p.id, name: p.name, qty, priceUsd: p.priceUsd, image: p.image, emoji: p.emoji, category: p.category }],
+    totalUsd, totalCoins,
+    delivery: {
+      fullName: botUser.fullName, phone: botUser.phone, email: botUser.email,
+      country: botUser.country, city: botUser.city, address: botUser.address, postal: botUser.postal
+    },
+    status: 'processing', payment: 'whale_coin', createdAt: Date.now(),
+    simulated: true, isBot: true,
+    timeline: [{ status: 'processing', at: Date.now(), note: 'Order placed' }]
+  };
+  DB.orders.unshift(order);
+  p.stock = Math.max(0, p.stock - qty);
+  if (p.stock === 0) p.active = false;
+
+  vendorUser.balance = Math.round((vendorUser.balance + totalCoins) * 100) / 100;
+  vendor.completedSales = (vendor.completedSales || 0) + 1;
+  try {
+    tx(vendorUser.id, 'sale', 'Demo order · ' + p.name, totalCoins, { orderId: order.id, simulated: true });
+    notify(vendorUser.id, 'New order received',
+      `${botUser.fullName} ordered ${qty} × ${p.name} · ${coins(totalCoins)} WC. (Demo shopper — simulated revenue.)`,
+      '#/vendor/orders', 'bag');
+  } catch (e) {}
+
+  const cfg = LT.botsCfg();
+  cfg.orders = (cfg.orders || 0) + 1;
+  cfg.gmvUsd = Math.round(((cfg.gmvUsd || 0) + totalUsd) * 100) / 100;
+  rec.lastAt = Date.now();
+  rec.nextAt = LT.nextDue(rec.cadence);
+  return true;
+};
+
+LT.botCycle = function (force) {
+  const cfg = LT.botsCfg();
+  if (!cfg.enabled && !force) return 0;
+  LT.seedBots();
+  const now = Date.now();
+  let placed = 0;
+  DB.bots.forEach(rec => {
+    if (!rec.nextAt) rec.nextAt = LT.nextDue(rec.cadence);
+    if (force || rec.nextAt <= now) {
+      const u = findUser(rec.botId);
+      if (u && LT.placeBotOrder(u, rec)) placed++;
+    }
+  });
+  if (placed) {
+    cfg.cycles = (cfg.cycles || 0) + 1;
+    try { sync(); } catch (e) {}
+    persist();
+  }
+  return placed;
+};
+
+App.botToggle = function () {
+  const cfg = LT.botsCfg();
+  cfg.enabled = !cfg.enabled;
+  if (cfg.enabled) LT.seedBots();
+  try { AUDIT.log('Demo shoppers ' + (cfg.enabled ? 'enabled' : 'disabled'), cfg.enabled ? 'bots will order on schedule' : 'no more simulated orders'); } catch (e) {}
+  try { sync(); } catch (e) {}
+  persist();
+  toast(cfg.enabled ? 'Demo shoppers enabled — they order 1–3× a week' : 'Demo shoppers turned off', 'ok');
+  render();
+};
+
+App.botRunNow = function () {
+  const n = LT.botCycle(true);
+  toast(n ? n + ' demo order(s) placed' : 'No vendor products with stock available', n ? 'ok' : 'err');
+};
+
+function ltBotsView() {
+  const cfg = LT.botsCfg();
+  if (cfg.enabled) LT.seedBots();
+  const bots = (DB.bots || []).map(rec => ({ rec, u: findUser(rec.botId), meta: BOT_ROSTER.find(b => b.slug === rec.slug) })).filter(x => x.u);
+  const orders = (DB.orders || []).filter(o => o.simulated);
+  const tabs = `<div class="admin-nav">${ADMIN_NAV.map(n => {
+    const key = n.href.replace('#/admin', '') || '';
+    return `<a href="${n.href}" class="${key === '/bots' ? 'on' : ''}">${n.label}</a>`;
+  }).join('')}</div>`;
+  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  return `${tabs}
+  <div class="page-head"><div class="between">
+    <div><div class="section-title" style="margin:0">Demo shoppers</div>
+      <div class="tiny muted">Simulated customers that buy from your vendors</div></div>
+    <button class="btn ${cfg.enabled ? 'btn-danger' : 'btn-primary'}" data-act="bot-toggle">
+      ${ic(cfg.enabled ? 'pause' : 'play', 15)} ${cfg.enabled ? 'Turn off' : 'Turn on'}</button>
+  </div></div>
+
+  <div class="card">
+    <div class="between" style="align-items:center;flex-wrap:wrap;gap:10px">
+      <div><div class="card-title" style="margin:0 0 4px">Status</div>
+        <div class="small ${cfg.enabled ? 'up' : 'muted'}">${cfg.enabled ? 'Running — shoppers order on their weekly schedule' : 'Off — no simulated orders'}</div></div>
+      <button class="btn btn-ghost" data-act="bot-run-now">${ic('play', 14)} Place orders now</button>
+    </div>
+    <div class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap">
+      <span class="badge">${bots.length} shoppers</span>
+      <span class="badge">${orders.length} demo orders</span>
+      <span class="badge">$${(cfg.gmvUsd || 0).toFixed(2)} simulated spend</span>
+    </div>
+    <div class="inv-note tiny" style="margin-top:12px">${ic('shield', 13)}
+      <span>Demo orders are marked <b>simulated</b> on the order, and each account carries a bot flag, so this revenue is
+      always distinguishable from real sales. It must never be treated as withdrawable money.</span></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Shoppers</div>
+    <div class="inv-list">
+      ${bots.map(({ rec, u, meta }) => `<div class="inv-row">
+        <span class="avatar sm" style="overflow:hidden;flex:0 0 auto">
+          ${u.avatar ? `<img src="${u.avatar}" alt="" style="width:100%;height:100%;object-fit:cover"/>` : ''}</span>
+        <div class="grow" style="min-width:0">
+          <div class="small" style="font-weight:650">${esc(u.fullName)} <span class="badge" style="font-size:9px">Demo</span></div>
+          <div class="tiny muted ellipsis">${esc(meta ? meta.city + ', ' + meta.country : '')} · @${esc(u.username)}</div>
+          <div class="tiny muted">${rec.cadence.map(d => days[d]).join(' · ')} · next ${new Date(rec.nextAt).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</div>
+        </div>
+        <div style="text-align:right"><div class="tiny muted">balance</div>
+          <div class="small" style="font-weight:650">${coins(u.balance)} WC</div></div>
+      </div>`).join('')}
+    </div>
+  </div>`;
+}
+
+const _adminBots = VIEWS.admin;
+VIEWS.admin = function (parts, params) {
+  if ((parts[1] || '') === 'bots') {
+    const u = me();
+    if (!u || u.role !== 'admin') return `<div class="card empty"><div class="ic">${ic('lock', 26)}</div><h3>Admin access only</h3></div>`;
+    return ltBotsView();
+  }
+  return _adminBots.apply(this, arguments);
+};
+if (!ADMIN_NAV.some(n => n.key === 'admin-bots')) {
+  ADMIN_NAV.splice(Math.max(0, ADMIN_NAV.length - 2), 0,
+    { key: 'admin-bots', label: 'Demo shoppers', icon: 'users', href: '#/admin/bots' });
+}
+
+/* run the schedule while the app is open */
+setInterval(() => {
+  try {
+    if (!DB || !me()) return;
+    const cfg = LT.botsCfg();
+    if (cfg.enabled) LT.botCycle(false);
+  } catch (e) {}
+}, 5 * 60 * 1000);
 
 /* ===================== admin → servers & publishing ===================== */
 App.admPublish = async function () {
