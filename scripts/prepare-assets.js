@@ -12,7 +12,14 @@ const PUB = path.join(ROOT, 'public');
 const APP = path.join(PUB, 'whalechat.html');
 const VERSION = '3.9.0';
 const MARKER = 'WhaleChat Invest';
-const SOURCE = process.env.APP_SOURCE_URL || 'https://whalechat-mldp.onrender.com/whalechat.html';
+/* Where to get the current bundle. Own service first (a failed deploy keeps the
+   previous container serving, so this is safe), then the known-good mirror. */
+const SOURCES = [
+  process.env.APP_SOURCE_URL,
+  process.env.APP_URL ? new URL('/whalechat.html', process.env.APP_URL).toString() : null,
+  'https://whalechat-qkgd.onrender.com/whalechat.html',
+  'https://whalechat-mldp.onrender.com/whalechat.html'
+].filter(Boolean);
 
 /* 1. committed base64 image assets ------------------------------------------------ */
 const assetDir = path.join(PUB, 'assets');
@@ -42,13 +49,22 @@ function isCurrent(html) {
     console.log('[app] whalechat.html ' + VERSION + ' already in place');
   } else {
     let fetched = '';
-    try {
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 45000);
-      const res = await fetch(SOURCE, { signal: ctrl.signal, cache: 'no-store' });
-      clearTimeout(t);
-      if (res.ok) fetched = await res.text();
-    } catch (e) { console.error('[app] fetch failed:', e.message); }
+    for (const src of SOURCES) {
+      try {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 30000);
+        const res = await fetch(src, { signal: ctrl.signal, cache: 'no-store' });
+        clearTimeout(t);
+        if (!res.ok) { console.error('[app] ' + src + ' -> HTTP ' + res.status); continue; }
+        const body = await res.text();
+        if (body.length > 600000 && body.includes(MARKER) && body.trimEnd().endsWith('</html>')) {
+          fetched = body;
+          console.log('[app] fetched bundle from ' + src);
+          break;
+        }
+        console.error('[app] ' + src + ' did not look like a bundle');
+      } catch (e) { console.error('[app] ' + src + ' failed: ' + e.message); }
+    }
 
     if (fetched.length > 600000 && fetched.includes(MARKER) && fetched.trimEnd().endsWith('</html>')) {
       fs.writeFileSync(APP, fetched);
