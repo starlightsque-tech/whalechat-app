@@ -10,7 +10,7 @@ const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 const PUB = path.join(ROOT, 'public');
 const APP = path.join(PUB, 'whalechat.html');
-const RELEASE = { version: '3.9.6', build: '2026-11-11T18:15:00Z' };
+const RELEASE = { version: '3.9.7', build: '2026-11-11T19:40:00Z' };
 const MARKER = 'WhaleChat Invest';
 /* 1. committed base64 image assets ------------------------------------------------ */
 const assetDir = path.join(PUB, 'assets');
@@ -158,8 +158,19 @@ function isCurrent(html) {
     }
   } catch (e) { console.error('[server] route patch failed:', e.message); }
 
+  /* 2g. the audit log must travel between devices ------------------------------- */
+  try {
+    let page = fs.readFileSync(APP, 'utf8');
+    const before = page;
+    page = page.replace(/'vendorApplications'\];/, "'vendorApplications', 'audit'];");
+    if (page === before) {
+      page = page.replace(/'vendorApplications',/, "'vendorApplications', 'audit',");
+    }
+    if (page !== before) { fs.writeFileSync(APP, page); console.log('[app] audit collection synced'); }
+  } catch (e) { console.error('[app] audit sync patch failed:', e.message); }
+
   /* 3. sync server must persist the investing collections --------------------------- */
-  const need = ['stocks', 'holdings', 'trades', 'watchlist', 'alerts'];
+  const need = ['stocks', 'holdings', 'trades', 'watchlist', 'alerts', 'audit'];
   const serverFile = path.join(ROOT, 'server.js');
   try {
     let src = fs.readFileSync(serverFile, 'utf8');
@@ -208,7 +219,7 @@ function isCurrent(html) {
     const ver = RELEASE.version || (app.match(/APP_VERSION = '([^']+)'/) || [])[1];
     const build = RELEASE.build || (app.match(/APP_BUILD = '([^']+)'/) || [])[1];
     const meta = { version: ver, build, file: 'whalechat.html',
-      notes: 'WhaleChat ' + ver + ' — 1D charts fixed, 2s live market ticker, vendors can invest, admin can publish releases and connect email + push for every user.',
+      notes: 'WhaleChat ' + ver + ' — admin stock manager, audit log, vendor earnings + investments view, per-stock P/L history.',
       releasedAt: build, minimum: '3.0.0' };
     fs.writeFileSync(path.join(PUB, 'version.json'), JSON.stringify(meta, null, 2));
     fs.writeFileSync(path.join(PUB, 'release.json'), JSON.stringify(meta, null, 2));
