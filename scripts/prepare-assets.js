@@ -10,10 +10,10 @@ const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 const PUB = path.join(ROOT, 'public');
 const APP = path.join(PUB, 'whalechat.html');
-const RELEASE = { version: '3.9.8', build: '2026-11-11T20:30:00Z' };
+const RELEASE = { version: '3.9.9', build: '2026-11-11T21:10:00Z' };
 const MARKER = 'WhaleChat Invest';
 /* 1. committed base64 image assets ------------------------------------------------ */
-const assetDirs = [path.join(PUB, 'assets'), path.join(PUB, 'products')].filter(d => fs.existsSync(d));
+const assetDirs = [path.join(PUB, 'assets'), path.join(PUB, 'products'), path.join(PUB, 'bots')].filter(d => fs.existsSync(d));
 let made = 0;
 for (const assetDir of assetDirs) for (const name of fs.readdirSync(assetDir)) {
   if (!name.endsWith('.b64')) continue;
@@ -219,7 +219,7 @@ function isCurrent(html) {
     const ver = RELEASE.version || (app.match(/APP_VERSION = '([^']+)'/) || [])[1];
     const build = RELEASE.build || (app.match(/APP_BUILD = '([^']+)'/) || [])[1];
     const meta = { version: ver, build, file: 'whalechat.html',
-      notes: 'WhaleChat ' + ver + ' — one-click wholesale catalogue with real product photography, plus admin stock manager, audit log and vendor investments.',
+      notes: 'WhaleChat ' + ver + ' — demo shopper fleet with real portraits and weekly ordering, switchable from the admin panel.',
       releasedAt: build, minimum: '3.0.0' };
     fs.writeFileSync(path.join(PUB, 'version.json'), JSON.stringify(meta, null, 2));
     fs.writeFileSync(path.join(PUB, 'release.json'), JSON.stringify(meta, null, 2));
