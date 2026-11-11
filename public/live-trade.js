@@ -341,6 +341,14 @@ const LT = {
     font-size:12px;background:rgba(255,255,255,.06);border:1px solid var(--border);font-variant-numeric:tabular-nums}
   .lt-day.up{color:var(--success);background:rgba(47,214,166,.10);border-color:rgba(47,214,166,.25)}
   .lt-day.down{color:var(--danger);background:rgba(255,95,116,.10);border-color:rgba(255,95,116,.25)}
+  .lt-up{color:var(--success) !important;transition:color .2s ease}
+  .lt-down{color:var(--danger) !important;transition:color .2s ease}
+  .lt-push-banner{position:fixed;left:10px;right:10px;bottom:calc(env(safe-area-inset-bottom,0px) + 86px);z-index:940;
+    display:flex;gap:9px;align-items:center;padding:10px 12px;border-radius:14px;
+    background:var(--surface);border:1px solid var(--border-strong);box-shadow:var(--shadow)}
+  .lt-push-ic{width:32px;height:32px;border-radius:10px;display:flex;align-items:center;justify-content:center;
+    background:linear-gradient(135deg,rgba(46,230,201,.18),rgba(58,160,255,.18));color:var(--accent);flex:0 0 auto}
+  @media(min-width:760px){.lt-push-banner{left:auto;right:20px;bottom:20px;max-width:400px}}
   .lt-mini{display:inline-block;width:46px;height:22px;margin:0 6px;vertical-align:middle;opacity:.9;flex:0 0 auto}
   .lt-mini svg{width:100%;height:100%;display:block}
   `;
@@ -356,6 +364,90 @@ const LT = {
   };
   INV.__ltPatched = true;
 })();
+
+/* ============================ 1D intraday data ============================
+   The base engine generated a single point for 1D, so every 1D chart and every
+   market sparkline rendered empty. Build a real intraday series instead. */
+(function () {
+  if (typeof INV === 'undefined' || INV.__lt1d) return;
+  const baseSeries = INV.series;
+  INV.series = function (ticker, tf) {
+    if (tf !== '1D') return baseSeries.call(INV, ticker, tf);
+    const s = INV.stock(ticker);
+    if (!s) return [];
+    const q = INV.quote(ticker);
+    const key = ticker + '::1D';
+    const cached = INV.seriesCache && INV.seriesCache[key];
+    if (cached && cached.length > 20) { cached[cached.length - 1] = q.price; return cached; }
+    const n = 78;                                  /* 5-minute bars across a session */
+    const rnd = mulberry32(seedOf(ticker + '::1d'));
+    const open = q.prevClose || q.price;
+    const drift = (q.price - open) / n;
+    const out = [];
+    let v = open;
+    for (let i = 0; i < n; i++) {
+      v = v + drift + (rnd() - 0.5) * open * 0.0045;
+      out.push(Math.max(0.01, v));
+    }
+    out[0] = open;
+    out[n - 1] = q.price;
+    INV.seriesCache = INV.seriesCache || {};
+    INV.seriesCache[key] = out;
+    return out;
+  };
+  INV.seriesCache = INV.seriesCache || {};
+  INV.__lt1d = true;
+})();
+
+/* ======================= 2-second market ticker ==========================
+   Every stock card shows live price, direction and a redrawn sparkline so a
+   user can see whether it is rising or falling before opening a trade. */
+LT.paintMarket = function () {
+  if (!DB) return;
+  const nodes = document.querySelectorAll('[data-lv]');
+  if (!nodes.length) return;
+  nodes.forEach(el => {
+    const spec = el.getAttribute('data-lv') || '';
+    const i = spec.indexOf(':');
+    if (i < 0) return;
+    const kind = spec.slice(0, i), ticker = spec.slice(i + 1);
+    const q = INV.quote(ticker);
+    if (!q) return;
+    if (kind === 'price') {
+      const txt = '$' + q.price.toFixed(2);
+      if (el.textContent !== txt) {
+        el.textContent = txt;
+        el.classList.remove('lt-up', 'lt-down');
+        el.classList.add(q.dir > 0 ? 'lt-up' : q.dir < 0 ? 'lt-down' : '');
+        setTimeout(() => el.classList.remove('lt-up', 'lt-down'), 800);
+      }
+    } else if (kind === 'wc') {
+      const txt = coins(usdToCoins(q.price)) + ' WC';
+      if (el.textContent !== txt) el.textContent = txt;
+    } else if (kind === 'pct') {
+      const p = q.changePct;
+      const txt = (p >= 0 ? '▲ +' : '▼ ') + Math.abs(p).toFixed(2) + '%';
+      if (el.textContent !== txt) el.textContent = txt;
+      el.classList.toggle('up', p > 0);
+      el.classList.toggle('down', p < 0);
+    }
+  });
+  /* redraw the mini charts on the market cards */
+  document.querySelectorAll('[data-spark]').forEach(el => {
+    const t = el.getAttribute('data-spark');
+    const svg = INV.spark(t);
+    if (svg && el.innerHTML !== svg) el.innerHTML = svg;
+  });
+  /* a live trade page chart should breathe too */
+  const chart = document.querySelector('[data-lt-live-chart]');
+  if (chart) {
+    const t = chart.getAttribute('data-lt-live-chart');
+    const tf = chart.getAttribute('data-lt-tf') || '1D';
+    const mode = chart.getAttribute('data-lt-mode') || 'line';
+    const vals = INV.series(t, tf);
+    chart.innerHTML = mode === 'candle' ? INV.candleChart(vals) : INV.lineChart(vals, { h: 150 });
+  }
+};
 
 /* =========================== dashboard (trade aware) ====================== */
 const LT_WINDOW = { '1D': 864e5, '1W': 7 * 864e5, '1M': 30 * 864e5, '3M': 90 * 864e5, '1Y': 365 * 864e5, 'ALL': 730 * 864e5 };
@@ -582,6 +674,177 @@ LT.paintDash = function () {
 /* the dashboard itself */
 INV.viewDash = function (params) { return LT.dash(params); };
 
+/* ===================== admin → servers & publishing ===================== */
+App.admPublish = async function () {
+  if (!await confirmDialog({ title: 'Publish this version to everyone?',
+    body: 'Every open app reloads onto ' + APP_VERSION + ' automatically. Users do not need to update anything.',
+    ok: 'Publish to all users' })) return;
+  try {
+    const r = await fetch('/api/reload', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ build: APP_BUILD, version: APP_VERSION })
+    }).then(x => x.json());
+    toast('Published ' + APP_VERSION + ' to ' + (r.clients || 0) + ' connected device(s)', 'ok');
+  } catch (e) { toast('Could not reach the server', 'err'); }
+};
+
+App.admMailSave = async function () {
+  const key = ((document.getElementById('admBrevo') || {}).value || '').trim();
+  const from = ((document.getElementById('admMailFrom') || {}).value || '').trim();
+  const name = ((document.getElementById('admMailName') || {}).value || '').trim() || 'WhaleChat';
+  if (key && !/^xkeysib-/i.test(key) && !/^xsmtpsib-/i.test(key)) return toast('That does not look like a Brevo API key', 'err');
+  if (from && !/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(from)) return toast('Enter a valid sender email', 'err');
+  try {
+    const r = await fetch('/api/admin/mail', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ adminId: me().id, brevoKey: key || undefined, from: from || undefined, fromName: name })
+    }).then(x => x.json());
+    if (!r || !r.ok) throw new Error((r && r.error) || 'failed');
+    toast('Email server connected for all users', 'ok');
+    render();
+  } catch (e) { toast('Could not save: ' + e.message, 'err'); }
+};
+
+App.admMailTest = async function () {
+  const to = ((document.getElementById('admMailTest') || {}).value || '').trim();
+  if (!to) return toast('Enter an address to test', 'err');
+  const r = await fetch('/api/email/test', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ to }) }).then(x => x.json()).catch(() => null);
+  if (r && r.ok) toast('Test email sent to ' + to, 'ok');
+  else toast('Test failed: ' + ((r && (r.error || r.reason)) || 'unknown'), 'err');
+};
+
+App.admPushToggle = function () {
+  if (!DB.settings) DB.settings = {};
+  const cur = (DB.settings.push && DB.settings.push.enabled) || false;
+  DB.settings.push = { enabled: !cur, at: Date.now(), by: me().id };
+  try { sync(); } catch (e) {}
+  persist();
+  toast(!cur ? 'Push enabled — every user is asked to allow notifications' : 'Push turned off for all users', 'ok');
+  render();
+};
+
+App.admPushAsk = async function () {
+  try {
+    if (typeof Notification === 'undefined') return toast('This browser cannot show notifications', 'err');
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') return toast('Notifications stayed blocked — allow them in browser settings', 'err');
+    if (window.Push && Push.ensure) {
+      const r = await Push.ensure(true);
+      if (r && r.ok) return toast('Notifications on — ' + r.devices + ' device(s) registered', 'ok');
+    }
+    toast('Notifications allowed on this device', 'ok');
+    try { localStorage.setItem('wc_push_asked', '1'); } catch (e) {}
+    render();
+  } catch (e) { toast('Could not enable notifications', 'err'); }
+};
+
+App.admPushDismiss = function () {
+  try { localStorage.setItem('wc_push_asked', '1'); } catch (e) {}
+  const b = document.getElementById('ltPushBanner'); if (b) b.remove();
+};
+
+async function ltServersPanel() {
+  let mail = null;
+  try { mail = await fetch('/api/email/status', { cache: 'no-store' }).then(r => r.json()); } catch (e) {}
+  const pushOn = !!(DB.settings && DB.settings.push && DB.settings.push.enabled);
+  const tabs = `<div class="admin-nav">${ADMIN_NAV.map(n => {
+    const key = n.href.replace('#/admin', '') || '';
+    return `<a href="${n.href}" class="${key === '/servers' ? 'on' : ''}">${n.label}</a>`;
+  }).join('')}</div>`;
+
+  return `${tabs}
+  <div class="page-head"><div><div class="section-title" style="margin:0">Servers & release</div>
+    <div class="tiny muted">Turn everything on once — it applies to every user account</div></div></div>
+
+  <div class="card">
+    <div class="between" style="align-items:center;flex-wrap:wrap;gap:10px">
+      <div><div class="card-title" style="margin:0 0 4px">Publish app version</div>
+        <div class="small muted">Current build <b>${esc(APP_VERSION)}</b> · ${esc(APP_BUILD)}</div></div>
+      <button class="btn btn-primary" data-act="adm-publish">${ic('send', 15)} Publish to all users</button>
+    </div>
+    <div class="tiny muted mt10" style="line-height:1.7">
+      Every open app receives the release instantly and restarts onto it by itself — users never update manually.
+      Closed apps pick it up the next time they open.</div>
+  </div>
+
+  <div class="card">
+    <div class="between" style="align-items:center;flex-wrap:wrap;gap:10px">
+      <div><div class="card-title" style="margin:0 0 4px">Email server</div>
+        <div class="small ${mail && mail.configured ? 'up' : 'muted'}">
+          ${mail && mail.configured ? 'Connected · sending from ' + esc(mail.from || '') + ' via ' + esc(mail.provider || '') : 'Not connected'}</div></div>
+      <span class="badge ${mail && mail.configured ? 'badge-success' : 'badge-warn'}">${mail && mail.configured ? 'Live' : 'Off'}</span>
+    </div>
+    <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:12px">
+      <div class="field grow" style="margin:0;min-width:220px"><label class="label">Brevo API key</label>
+        <input class="input" id="admBrevo" type="password" placeholder="xkeysib-…" autocomplete="off"/></div>
+      <div class="field grow" style="margin:0;min-width:180px"><label class="label">Sender email</label>
+        <input class="input" id="admMailFrom" placeholder="whalechat1@gmail.com"/></div>
+      <div class="field grow" style="margin:0;min-width:140px"><label class="label">Sender name</label>
+        <input class="input" id="admMailName" placeholder="WhaleChat"/></div>
+      <button class="btn btn-primary" data-act="adm-mail-save">Connect</button>
+    </div>
+    <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:8px">
+      <div class="field grow" style="margin:0;min-width:200px"><input class="input" id="admMailTest" placeholder="you@email.com"/></div>
+      <button class="btn btn-ghost" data-act="adm-mail-test">Send test</button>
+    </div>
+    <div class="tiny muted mt6">Saved on the server, so welcome mails, order mails and broadcasts work for every user.</div>
+  </div>
+
+  <div class="card">
+    <div class="between" style="align-items:center;flex-wrap:wrap;gap:10px">
+      <div><div class="card-title" style="margin:0 0 4px">Push notifications</div>
+        <div class="small muted">${pushOn ? 'Enabled — every user is prompted to allow notifications' : 'Off — users can still enable them individually'}</div></div>
+      <button class="btn ${pushOn ? 'btn-danger' : 'btn-primary'}" data-act="adm-push-toggle">
+        ${ic(pushOn ? 'pause' : 'bell', 15)} ${pushOn ? 'Turn off for all' : 'Enable for all users'}</button>
+    </div>
+    <div class="tiny muted mt10" style="line-height:1.7">
+      Browsers only grant notifications after the user taps allow, so this shows a one-tap prompt on every account.
+      Push then arrives for buys, sells, price alerts and admin messages — even when the app is closed.</div>
+  </div>`;
+}
+
+const _adminServers = VIEWS.admin;
+VIEWS.admin = function (parts, params) {
+  if ((parts[1] || '') === 'servers') {
+    const u = me();
+    if (!u || u.role !== 'admin') return `<div class="card empty"><div class="ic">${ic('lock', 26)}</div><h3>Admin access only</h3></div>`;
+    const shell = `<div id="ltServersWrap"><div class="card"><div class="tiny muted">Loading server status…</div></div></div>`;
+    setTimeout(() => {
+      ltServersPanel().then(html => {
+        const el = document.getElementById('ltServersWrap');
+        if (el) el.innerHTML = html;
+      }).catch(() => {});
+    }, 30);
+    return shell;
+  }
+  return _adminServers.apply(this, arguments);
+};
+
+if (!ADMIN_NAV.some(n => n.key === 'invest')) {
+  ADMIN_NAV.splice(1, 0, { key: 'invest', label: 'Invest', icon: 'trend', href: '#/invest' });
+}
+if (!ADMIN_NAV.some(n => n.key === 'admin-servers')) {
+  ADMIN_NAV.splice(Math.max(0, ADMIN_NAV.length - 2), 0,
+    { key: 'admin-servers', label: 'Servers', icon: 'shield', href: '#/admin/servers' });
+}
+
+/* one-tap prompt for every user once an admin enables push */
+function ltPushBanner() {
+  if (!DB || !DB.settings || !DB.settings.push || !DB.settings.push.enabled) return;
+  if (typeof Notification === 'undefined' || Notification.permission !== 'default') return;
+  try { if (localStorage.getItem('wc_push_asked')) return; } catch (e) {}
+  if (document.getElementById('ltPushBanner')) return;
+  const el = document.createElement('div');
+  el.id = 'ltPushBanner';
+  el.className = 'lt-push-banner';
+  el.innerHTML = `<span class="lt-push-ic">${ic('bell', 16)}</span>
+    <div style="flex:1;min-width:0"><div class="small" style="font-weight:650">Turn on notifications</div>
+      <div class="tiny muted">Trades, alerts and messages reach you even when the app is closed.</div></div>
+    <button class="btn btn-primary btn-xs" data-act="adm-push-ask">Allow</button>
+    <button class="btn-icon" data-act="adm-push-dismiss" style="width:26px;height:26px">${ic('x', 13)}</button>`;
+  document.body.appendChild(el);
+}
+
 /* ---------------- actions ---------------- */
 App.ltSide = function (id, ds) {
   document.querySelectorAll('.lt-side-btn').forEach(b => b.classList.toggle('on', b.dataset.side === ds.side));
@@ -696,6 +959,16 @@ function ltMountStock() {
     content.appendChild(host);
   }
 
+  /* make the big chart tick at 2s as well */
+  const bigChart = content.querySelector('.inv-chart[data-chart]');
+  if (bigChart) {
+    const parts = (bigChart.getAttribute('data-chart') || '').split('|');
+    bigChart.setAttribute('data-lt-live-chart', parts[0] || ticker);
+    bigChart.setAttribute('data-lt-tf', parts[1] || '1D');
+    bigChart.setAttribute('data-lt-mode', parts[2] || 'line');
+    bigChart.removeAttribute('data-chart');
+  }
+
   const cap = document.getElementById('ltCapital');
   if (cap) cap.addEventListener('input', () => {
     const usdEl = document.getElementById('ltCapitalUsd');
@@ -734,6 +1007,7 @@ setInterval(() => {
     LT.auto();
     LT.paint();
     LT.paintDash();
+    LT.paintMarket();
   } catch (e) { console.error('lt tick', e); }
 }, 2000);
 
@@ -741,6 +1015,7 @@ setInterval(() => {
 setInterval(() => {
   try {
     if (!DB || !me()) return;
+    ltPushBanner();
     if (document.querySelector('.inv-hero')) ltMountDashboard();
     else if (location.hash.indexOf('#/invest/stock/') === 0) ltMountStock();
   } catch (e) {}
