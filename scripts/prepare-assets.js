@@ -91,10 +91,16 @@ function isCurrent(html) {
     // their server injects this marker per request; keep the file free of it so copies never stack up
     page = page.replace(/<script>window\.__WC_SERVER__[^\n]*<\/script>\s*/g, '');
     const ctrl = path.join(PUB, 'tawk-control.js');
-    if (fs.existsSync(ctrl) && !page.includes('wc-tawk-control')) {
+    if (fs.existsSync(ctrl)) {
       const js = fs.readFileSync(ctrl, 'utf8');
-      page = page.replace('</body>', '<script>\n/* wc-tawk-control */\n' + js + '\n</script>\n</body>');
-      console.log('[chat] live chat loader injected');
+      const block = '<script>\n/* wc-tawk-control */\n' + js + '\n</script>';
+      if (/<script>\s*\/\* wc-tawk-control \*\/[\s\S]*?<\/script>/.test(page)) {
+        page = page.replace(/<script>\s*\/\* wc-tawk-control \*\/[\s\S]*?<\/script>/, function () { return block; });
+        console.log('[chat] live chat loader refreshed');
+      } else {
+        page = page.replace('</body>', block + '\n</body>');
+        console.log('[chat] live chat loader injected');
+      }
     }
     if (page !== before) {
       fs.writeFileSync(APP, page);
