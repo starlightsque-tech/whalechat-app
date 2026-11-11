@@ -1,10 +1,4 @@
-actions).length) delete s.reactions;
-  sync();
-  renderStatusViewer();
-};
-/* =========================================================================
-   Marketplace, cart, checkout, orders, vendor system
-   ========================================================================= */
+====================================== */
 const CATEGORIES = ['All', 'Phones', 'Laptops', 'Tablets', 'Headphones', 'Chargers', 'Video Games', 'Phone Pouches', 'Accessories'];
 let MARKET_FILTER = { cat: 'All', q: '' };
 
@@ -1064,4 +1058,7 @@ VIEWS.vendorOrders = function () {
     <h1>Orders</h1><p>Sales of your listed products.</p></div><span class="badge">${orders.length} total</span></div>
     ${orders.length ? `<div class="col gap10">${orders.map(o => `<div class="card">
       <div class="between wrap gap10"><div><div class="small" style="font-weight:650">${esc(o.ref)}</div><div class="tiny muted mt6">${dateLabel(o.createdAt)}</div></div>
-        <div class="row gap8">${statusBadge(o.status)}<span styl
+        <div class="row gap8">${statusBadge(o.status)}<span style="font-weight:700">${coins(o.totalCoins)} WC</span></div></div>
+      <div class="divider"></div>
+      <div class="tiny muted">${o.items.map(i => esc(i.name) + ' ×' + i.qty).join(', ')}</div>
+      <div class="row gap8 mt10"><button class="b
