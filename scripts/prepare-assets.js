@@ -10,7 +10,7 @@ const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 const PUB = path.join(ROOT, 'public');
 const APP = path.join(PUB, 'whalechat.html');
-const RELEASE = { version: '3.9.4', build: '2026-11-11T17:30:00Z' };
+const RELEASE = { version: '3.9.5', build: '2026-11-11T17:45:00Z' };
 const MARKER = 'WhaleChat Invest';
 /* 1. committed base64 image assets ------------------------------------------------ */
 const assetDir = path.join(PUB, 'assets');
@@ -71,11 +71,16 @@ function isCurrent(html) {
       const block = '<script>\n/* ' + mod.marker + ' */\n' + js + '\n</script>';
       const re = new RegExp('<script>\\s*\\/\\* ' + mod.marker + ' \\*\\/[\\s\\S]*?<\\/script>');
       if (re.test(page)) { page = page.replace(re, function () { return block; }); console.log('[app] ' + mod.file + ' refreshed'); }
-      else { page = page.replace('</body>', block + '\n</body>'); console.log('[app] ' + mod.file + ' injected'); }
+      else { page = page.replace('</body>', function () { return block + '\n</body>'; }); console.log('[app] ' + mod.file + ' injected'); }
     }
     if (page !== before) {
-      fs.writeFileSync(APP, page);
-      console.log('[app] bundle finalised (' + before.length + ' -> ' + page.length + ' bytes)');
+      const closings = (page.match(/<\/html>/g) || []).length;
+      if (closings !== 1 || !page.trimEnd().endsWith('</html>')) {
+        console.error('[app] REFUSING to write bundle: ' + closings + ' </html> markers (temp token leak)');
+      } else {
+        fs.writeFileSync(APP, page);
+        console.log('[app] bundle finalised (' + before.length + ' -> ' + page.length + ' bytes)');
+      }
     }
   } catch (e) { console.error('[app] module injection failed:', e.message); }
 
@@ -83,8 +88,8 @@ function isCurrent(html) {
   try {
     let page = fs.readFileSync(APP, 'utf8');
     const before = page;
-    page = page.replace(/const APP_VERSION = '[^']*';/, "const APP_VERSION = '" + RELEASE.version + "';")
-               .replace(/const APP_BUILD = '[^']*';/, "const APP_BUILD = '" + RELEASE.build + "';");
+    page = page.replace(/const APP_VERSION = '[^']*';/, function () { return "const APP_VERSION = '" + RELEASE.version + "';"; })
+               .replace(/const APP_BUILD = '[^']*';/, function () { return "const APP_BUILD = '" + RELEASE.build + "';"; });
     if (page !== before) { fs.writeFileSync(APP, page); console.log('[app] stamped ' + RELEASE.version + ' @ ' + RELEASE.build); }
   } catch (e) { console.error('[app] stamp failed:', e.message); }
 
