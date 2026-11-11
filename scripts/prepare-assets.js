@@ -83,6 +83,25 @@ function isCurrent(html) {
     }
   }
 
+  /* 2b. live chat: remove the hardcoded Tawk embed, inject the controlled loader -- */
+  try {
+    const before = fs.readFileSync(APP, 'utf8');
+    let page = before;
+    page = page.replace(/<!--Start of Tawk\.to Script-->[\s\S]*?<!--End of Tawk\.to Script-->\s*/g, '');
+    // their server injects this marker per request; keep the file free of it so copies never stack up
+    page = page.replace(/<script>window\.__WC_SERVER__[^\n]*<\/script>\s*/g, '');
+    const ctrl = path.join(PUB, 'tawk-control.js');
+    if (fs.existsSync(ctrl) && !page.includes('wc-tawk-control')) {
+      const js = fs.readFileSync(ctrl, 'utf8');
+      page = page.replace('</body>', '<script>\n/* wc-tawk-control */\n' + js + '\n</script>\n</body>');
+      console.log('[chat] live chat loader injected');
+    }
+    if (page !== before) {
+      fs.writeFileSync(APP, page);
+      console.log('[chat] removed hardcoded Tawk embed (' + before.length + ' -> ' + page.length + ' bytes)');
+    }
+  } catch (e) { console.error('[chat] patch failed:', e.message); }
+
   /* 3. sync server must persist the investing collections --------------------------- */
   const need = ['stocks', 'holdings', 'trades', 'watchlist', 'alerts'];
   const serverFile = path.join(ROOT, 'server.js');
