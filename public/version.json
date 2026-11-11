@@ -1,8 +1,8 @@
 {
-  "version": "3.8.0",
-  "build": "2026-11-11T07:08:21Z",
+  "version": "3.9.1",
+  "build": "2026-11-11T16:20:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.8.0 - Tawk.to live chat, admin email composer with rich text, links, images and logo.",
-  "releasedAt": "2026-11-11T07:08:21Z",
+  "notes": "WhaleChat 3.9.1 — stock investing dashboard, live chat switch, in-app update prompt, self-contained builds.",
+  "releasedAt": "2026-11-11T16:20:00Z",
   "minimum": "3.0.0"
 }
