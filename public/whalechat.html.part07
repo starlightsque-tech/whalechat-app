@@ -1,3 +1,173 @@
+nc(); closeModal(); toast('Bank method saved', 'ok'); render();
+};
+App.bankDel = async function (id) {
+  if (!await confirmDialog({ title: 'Remove bank method?', danger: true, ok: 'Remove' })) return;
+  DB.settings.banks = (DB.settings.banks || []).filter(b => b.id !== id); sync(); render();
+};
+App.networkAdd = async function () {
+  const n = await promptDialog({ title: 'Add USDT network', label: 'Network name', placeholder: 'e.g. TON' });
+  if (!n) return;
+  DB.settings.networks = DB.settings.networks || [];
+  if (!DB.settings.networks.includes(n)) DB.settings.networks.push(n);
+  sync(); toast('Network added', 'ok'); render();
+};
+App.networkDel = async function (n) {
+  if (!await confirmDialog({ title: 'Remove network?', body: n, danger: true, ok: 'Remove' })) return;
+  DB.settings.networks = (DB.settings.networks || []).filter(x => x !== n); sync(); render();
+};
+App.editNetworks = function () {
+  openModal(modalShell('USDT withdrawal networks', `
+    <div class="row wrap gap8 mb16">${(DB.settings.networks || []).map(n => `<span class="badge" style="padding:7px 10px">${esc(n)}
+      <button data-act="network-del" data-id="${esc(n)}" style="color:var(--danger);margin-left:4px">${ic('x', 11)}</button></span>`).join('')}</div>
+    <div class="row gap8"><input class="input" id="nnInput" placeholder="New network name"/><button class="btn btn-primary" data-act="network-add-inline">Add</button></div>
+    <div class="help mt6">Shown in the user withdrawal dropdown.</div>`,
+    `<button class="btn btn-ghost" data-close style="width:100%">Done</button>`), { width: '420px' });
+};
+App.networkAddInline = function () {
+  const v = document.getElementById('nnInput').value.trim();
+  if (!v) return;
+  DB.settings.networks = DB.settings.networks || [];
+  if (!DB.settings.networks.includes(v)) DB.settings.networks.push(v);
+  sync(); closeModal(); toast('Network added', 'ok'); render();
+};
+App.adminChangePassword = function () {
+  openModal(modalShell('Change admin password', `
+    ${field('Current password', 'apOld', { type: 'password', icon: 'lock' })}
+    ${field('New password', 'apNew', { type: 'password', icon: 'lock', help: 'At least 8 characters' })}
+    ${field('Confirm new password', 'apNew2', { type: 'password', icon: 'lock' })}`,
+    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="admin-save-password">Update password</button>`));
+};
+App.adminSavePassword = async function () {
+  const u = me(); clearErrors();
+  const oldp = document.getElementById('apOld').value;
+  const n1 = document.getElementById('apNew').value, n2 = document.getElementById('apNew2').value;
+  if (await hash(oldp) !== u.pass) return formError('apOld', 'Current password is incorrect');
+  if (n1.length < 8) return formError('apNew', 'Use at least 8 characters');
+  if (n1 !== n2) return formError('apNew2', 'Passwords do not match');
+  u.pass = await hash(n1);
+  sync(); closeModal(); toast('Admin password updated', 'ok');
+};
+
+/* ---------------- admin support chat ---------------- */
+function adminChat() {
+  const users = DB.users.filter(u => u.role !== 'admin');
+  const rows = users.map(u => {
+    const msgs = DB.messages.filter(m => m.chatId === chatId(u.id, 'usr_admin'));
+    return { u, last: msgs[msgs.length - 1], count: msgs.filter(m => m.from === u.id && m.status !== 'seen').length };
+  }).sort((a, b) => (b.last ? b.last.createdAt : 0) - (a.last ? a.last.createdAt : 0));
+  return `<div class="card">
+    <div class="between mb16"><div><h3 style="font-size:15px">Support inbox</h3><p class="tiny muted mt6">Chat with users and vendors about orders, tracking and payments.</p></div>
+      <span class="badge">${rows.filter(r => r.count).length} unread chats</span></div>
+    ${rows.length ? `<div class="list">${rows.map(({ u, last, count }) => `<div class="list-item" data-act="admin-msg-user" data-id="${u.id}" style="cursor:pointer">
+      <div class="avatar-wrap">${avatarHTML(u, 'sm')}${Presence.isOnline(u.id) ? '<span class="status-dot" style="width:10px;height:10px"></span>' : ''}</div>
+      <div class="grow" style="min-width:0"><div class="small" style="font-weight:600">${esc(u.fullName)} <span class="tiny muted">@${esc(u.username)}</span></div>
+        <div class="tiny muted ellipsis">${last ? esc(previewOf(last)).slice(0, 60) : 'No messages yet'}</div></div>
+      ${count ? `<span class="unread">${count}</span>` : `<span class="tiny muted">${last ? timeAgo(last.createdAt) : ''}</span>`}
+      ${ic('chevron', 15)}</div>`).join('')}</div>` : `<div class="empty"><p>No users to chat with yet.</p></div>`}
+  </div>`;
+}
+/* =========================================================================
+   Admin access controls, maintenance mode, impersonation
+   ========================================================================= */
+App.toggleAnyPass = function () {
+  DB.settings.allowAnyPassword = !DB.settings.allowAnyPassword;
+  sync();
+  toast(DB.settings.allowAnyPassword ? 'Password-free login enabled' : 'Password-free login disabled', 'ok');
+  render();
+};
+
+App.maintStart = function () {
+  const minsEl = document.getElementById('maintMinutes');
+  const msgEl = document.getElementById('maintMessage');
+  const mins = Math.max(1, Math.min(10080, Number(minsEl && minsEl.value) || 30));
+  const message = (msgEl && msgEl.value.trim()) || 'WhaleChat is being upgraded to serve you better. We will be back very soon.';
+  const now = Date.now();
+  DB.settings.maintenance = {
+    enabled: true, startedAt: now, until: now + mins * 60000,
+    message, startedBy: me().id
+  };
+  sync();
+  toast('Maintenance mode on — back in ' + mins + ' minute' + (mins === 1 ? '' : 's'), 'ok');
+  render();
+};
+
+App.adminLoginAs = async function (id) {
+  const target = findUser(id);
+  if (!target || target.role === 'admin') return toast('Choose a user or vendor account', 'err');
+  if (!await confirmDialog({
+    title: 'Log in as ' + target.fullName + '?',
+    body: 'You will see WhaleChat exactly as this user sees it, without their password. Your admin session is kept so you can return at any time.',
+    ok: 'Continue as user'
+  })) return;
+  const adminId = me().id;
+  SESSION = { userId: target.id, impersonator: adminId, at: Date.now() };
+  localStorage.setItem(LS_SESSION, JSON.stringify(SESSION));
+  closeModal();
+  toast('Signed in as ' + target.fullName, 'ok');
+  go('home');
+};
+
+App.maintQuick = function () {
+  // one-tap 30 minute maintenance from the overview
+  const now = Date.now();
+  DB.settings.maintenance = {
+    enabled: true, startedAt: now, until: now + 30 * 60000,
+    message: (DB.settings.maintenance && DB.settings.maintenance.message) || 'WhaleChat is being upgraded to serve you better. We will be back very soon.',
+    startedBy: me().id
+  };
+  sync();
+  toast('Maintenance mode on for 30 minutes — adjust it in settings', 'ok');
+  render();
+};
+
+/* ---------------- refund approvals ---------------- */
+App.refundApprove = async function (id) {
+  const r = (DB.refunds || []).find(x => x.id === id);
+  if (!r || r.status !== 'pending') return;
+  const v = vendorById(r.vendorId);
+  const vu = v ? findUser(v.userId) : null;
+  const inv = DB.products.find(x => x.id === r.inventoryId);
+  const company = DB.companyProducts.find(c => c.id === r.companyProductId);
+  if (!vu) return toast('Vendor account not found', 'err');
+  if (!inv || inv.stock < r.qty) return toast('Cannot approve — vendor no longer holds all ' + r.qty + ' units', 'err');
+  if (!await confirmDialog({ title: 'Approve refund?', body: `Return ${r.qty} × ${r.name} to company stock and credit ${coins(r.coins)} WC to @${v.username}?`, ok: 'Approve refund' })) return;
+
+  inv.stock -= r.qty;
+  if (inv.stock <= 0) DB.products = DB.products.filter(x => x.id !== inv.id);
+  if (company) company.stock += r.qty;
+
+  vu.balance = Math.round((Number(vu.balance || 0) + r.coins) * 100) / 100;
+  tx(vu.id, 'refund', 'Company refund · ' + r.name + ' ×' + r.qty, r.coins, { refundId: r.id });
+  const purchase = (DB.purchases || []).find(x => x.id === r.purchaseId);
+  if (purchase) { purchase.status = 'refunded'; purchase.refundedAt = Date.now(); }
+  r.status = 'approved'; r.reviewedAt = Date.now(); r.reviewedBy = me().id;
+  notify(vu.id, 'Refund approved 💸', `${coins(r.coins)} WC has been credited back to your balance for ${r.qty} × ${r.name}.`, '#/wallet', 'refresh');
+  notify('usr_admin', 'Refund completed', `${r.qty} × ${r.name} returned to company stock · ${coins(r.coins)} WC refunded to @${v.username}.`, '#/admin/refunds', 'check');
+  sync();
+  toast('Refund approved — stock restored and balance credited', 'ok', 3600);
+  render();
+};
+
+App.refundReject = async function (id) {
+  const r = (DB.refunds || []).find(x => x.id === id);
+  if (!r || r.status !== 'pending') return;
+  const reason = await promptDialog({ title: 'Reject refund', label: 'Reason (sent to vendor)', placeholder: 'e.g. stock already sold' });
+  if (reason === null) return;
+  r.status = 'rejected'; r.reviewedAt = Date.now(); r.note = reason;
+  const v = vendorById(r.vendorId);
+  if (v) notify(v.userId, 'Refund rejected', `${r.name} refund was rejected. ${reason || ''}`, '#/vendor/history', 'ban');
+  sync(); toast('Refund rejected', 'ok'); render();
+};
+
+App.refundDel = async function (id) {
+  if (!await confirmDialog({ title: 'Delete refund record?', body: 'The transaction history is kept; only this request entry is removed.', danger: true, ok: 'Delete' })) return;
+  DB.refunds = (DB.refunds || []).filter(x => x.id !== id);
+  sync(); toast('Refund record deleted', 'ok'); render();
+};
+
+/* ---------------- data backups ---------------- */
+App.adminBackupNow = async function () {
+  try {
     const r = await fetch('/api/backup', { method: 'POST' }).then(x => x.json());
     if (!r.ok) throw new Error(r.error || 'failed');
     toast('Backup created (' + r.count + ' snapshots kept)', 'ok');
@@ -286,14 +456,13 @@ App.dismissLocalNote = function () {
 
 /* ---------------- Smartsupp live chat ---------------- */
 function smartsuppReady() {
-  return typeof window.smartsupp === 'function';
+  return !!(window.Tawk_API && typeof window.Tawk_API.maximize === 'function');
 }
 function smartsuppIdentify() {
   const u = me();
-  if (!u || !smartsuppReady()) return;
+  if (!u || !window.Tawk_API) return;
   try {
-    if (u.fullName) window.smartsupp('name', u.fullName);
-    if (u.email) window.smartsupp('email', u.email);
+    window.Tawk_API.visitor = { name: u.fullName || u.username, email: u.email };
   } catch (e) {}
 }
 App.openLiveChat = function () {
@@ -302,8 +471,8 @@ App.openLiveChat = function () {
   const tryOpen = () => {
     try {
       if (smartsuppReady()) {
-        if (u) { window.smartsupp('name', u.fullName); window.smartsupp('email', u.email); }
-        window.smartsupp('chat:open');
+        smartsuppIdentify();
+        window.Tawk_API.maximize();
         return true;
       }
     } catch (e) {}
@@ -338,7 +507,7 @@ App.liveChatHelp = function (failed) {
 };
 App.liveChatOpen = function () {
   try {
-    if (smartsuppReady()) { window.smartsupp('chat:open'); closeModal(); return; }
+    if (smartsuppReady()) { smartsuppIdentify(); window.Tawk_API.maximize(); closeModal(); return; }
   } catch (e) {}
   toast('Live chat is still loading — try again in a moment', 'err');
 };
