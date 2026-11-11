@@ -104,7 +104,30 @@ function isCurrent(html) {
     console.error('[sync] could not patch server.js:', e.message);
   }
 
-  /* 4. release metadata ------------------------------------------------------------- */
+  /* 4. mail sender must be a sender Brevo has actually verified -------------------- */
+  try {
+    const emailFile = path.join(ROOT, 'email.js');
+    let src = fs.readFileSync(emailFile, 'utf8');
+    const VERIFIED = (process.env.MAIL_FROM_VERIFIED || 'whalechat1@gmail.com').toLowerCase();
+    const line = "  from: process.env.MAIL_FROM || process.env.SMTP_USER || process.env.OUTLOOK_EMAIL || 'onboarding@resend.dev',";
+    const marker = '/* wc-verified-sender */';
+    if (src.includes(line) && !src.includes(marker)) {
+      const replace = "  /* wc-verified-sender */ from: (function () {\n"
+        + "    var want = String(process.env.MAIL_FROM || '').trim().toLowerCase();\n"
+        + "    var verified = '" + VERIFIED + "';\n"
+        + "    if (want && want === verified) return process.env.MAIL_FROM;\n"
+        + "    if (want) console.warn('[mail] MAIL_FROM ' + want + ' is not a verified Brevo sender - using ' + verified);\n"
+        + "    return verified;\n"
+        + "  })(),";
+      src = src.replace(line, replace);
+      fs.writeFileSync(emailFile, src);
+      console.log('[mail] sender pinned to verified address ' + VERIFIED);
+    } else {
+      console.log('[mail] sender guard already applied');
+    }
+  } catch (e) { console.error('[mail] could not patch email.js:', e.message); }
+
+  /* 5. release metadata ------------------------------------------------------------- */
   try {
     const meta = JSON.parse(fs.readFileSync(path.join(PUB, 'version.json'), 'utf8'));
     if (meta.version !== VERSION) {
