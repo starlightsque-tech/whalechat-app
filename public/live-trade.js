@@ -338,6 +338,40 @@ App.ltStart = function (id, ds) {
 App.ltTp = function (id, ds) { const t = DB.trades.find(x => x.id === ds.id); LT.settle(t, 'Take profit — closed manually'); };
 App.ltSl = function (id, ds) { const t = DB.trades.find(x => x.id === ds.id); LT.settle(t, 'Stopped manually'); };
 
+/* admin: leverage is what decides how fast a trade can be wiped out */
+App.ltSaveLeverage = function () {
+  const el = document.getElementById('ltLeverage');
+  const v = Number((el && el.value) || 0);
+  if (!(v >= 1 && v <= 20)) return toast('Leverage must be between 1× and 20×', 'err');
+  LT.cfg().leverage = Math.round(v);
+  try { sync(); } catch (e) {}
+  persist(); toast('Trade leverage set to ' + Math.round(v) + '×', 'ok'); render();
+};
+
+function ltLeverageCard() {
+  const lev = LT.leverage();
+  const wipe = (100 / lev).toFixed(1);
+  return `<div class="card">
+    <div class="card-title">Live trade leverage</div>
+    <div class="tiny muted" style="line-height:1.7;margin-bottom:8px">
+      A <b>${lev}×</b> position is wiped out by a <b>${wipe}%</b> move against it — at that point the trade closes
+      and <b>nothing is returned</b> to the user's balance. Lower leverage means gentler losses.</div>
+    <div class="row" style="gap:8px;align-items:flex-end;flex-wrap:wrap">
+      <div class="field grow" style="margin:0;min-width:120px"><label class="label">Leverage</label>
+        <input class="input" id="ltLeverage" type="number" step="1" min="1" max="20" value="${lev}"/></div>
+      <button class="btn btn-primary" data-act="lt-save-leverage">Save</button>
+    </div>
+    <div class="tiny muted mt6">Applies to new trades. Open trades keep the leverage they were opened with.</div>
+  </div>`;
+}
+
+const _adminForLeverage = VIEWS.admin;
+VIEWS.admin = function (parts, params) {
+  const html = _adminForLeverage.apply(this, arguments);
+  if ((parts[1] || '') !== 'stocks') return html;
+  return html + ltLeverageCard();
+};
+
 /* ---------------- mounts ---------------- */
 function ltMountDashboard() {
   if (!document.querySelector('.inv-hero')) return;
