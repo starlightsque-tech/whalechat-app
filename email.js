@@ -99,7 +99,7 @@ function layout(title, bodyHtml, cta) {
           <span style="font-size:19px;font-weight:800;color:#e9f4f9;letter-spacing:-.02em">Whale<span style="color:#2ee6c9">Chat</span></span>
         </td></tr>
         <tr><td style="padding:26px">
-          <h1 style="margin:0 0 12px;font-size:21px;line-height:1.25;color:#e9f4f9">${title}</h1>
+          ${title ? `<h1 style="margin:0 0 12px;font-size:21px;line-height:1.25;color:#e9f4f9">${title}</h1>` : ''}
           <div style="font-size:14px;line-height:1.7;color:#a9bfcd">${bodyHtml}</div>
           ${cta ? `<div style="margin-top:22px"><a href="${cta.url}" style="display:inline-block;background:#2ee6c9;color:#03221d;text-decoration:none;font-weight:700;padding:12px 20px;border-radius:10px">${cta.label}</a></div>` : ''}
         </td></tr>
@@ -142,6 +142,11 @@ const templates = {
         { label: 'View your order', url: ctx.appUrl + '/whalechat.html#/orders' }),
       text: `Order ${order.ref} has arrived. Items: ${items}.`
     };
+  },
+  custom(data, ctx) {
+    const html = String(data.html || '');
+    const text = String(data.text || html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 1000));
+    return { subject: String(data.subject || 'WhaleChat'), html: layout(null, html, null), text };
   },
   test(ctx) {
     return {
