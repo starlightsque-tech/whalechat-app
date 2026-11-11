@@ -10,12 +10,12 @@ const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 const PUB = path.join(ROOT, 'public');
 const APP = path.join(PUB, 'whalechat.html');
-const RELEASE = { version: '3.9.7', build: '2026-11-11T19:40:00Z' };
+const RELEASE = { version: '3.9.8', build: '2026-11-11T20:30:00Z' };
 const MARKER = 'WhaleChat Invest';
 /* 1. committed base64 image assets ------------------------------------------------ */
-const assetDir = path.join(PUB, 'assets');
+const assetDirs = [path.join(PUB, 'assets'), path.join(PUB, 'products')].filter(d => fs.existsSync(d));
 let made = 0;
-for (const name of fs.readdirSync(assetDir)) {
+for (const assetDir of assetDirs) for (const name of fs.readdirSync(assetDir)) {
   if (!name.endsWith('.b64')) continue;
   const target = path.join(assetDir, name.slice(0, -4));
   try {
@@ -219,7 +219,7 @@ function isCurrent(html) {
     const ver = RELEASE.version || (app.match(/APP_VERSION = '([^']+)'/) || [])[1];
     const build = RELEASE.build || (app.match(/APP_BUILD = '([^']+)'/) || [])[1];
     const meta = { version: ver, build, file: 'whalechat.html',
-      notes: 'WhaleChat ' + ver + ' — admin stock manager, audit log, vendor earnings + investments view, per-stock P/L history.',
+      notes: 'WhaleChat ' + ver + ' — one-click wholesale catalogue with real product photography, plus admin stock manager, audit log and vendor investments.',
       releasedAt: build, minimum: '3.0.0' };
     fs.writeFileSync(path.join(PUB, 'version.json'), JSON.stringify(meta, null, 2));
     fs.writeFileSync(path.join(PUB, 'release.json'), JSON.stringify(meta, null, 2));
