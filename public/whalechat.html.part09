@@ -1,0 +1,1611 @@
+.rev > Remote.rev) Remote.refresh(); } catch (err) {}
+    });
+    es.addEventListener('reload', (e) => {
+      // admin pressed “Force refresh all devices”
+      let d = {};
+      try { d = JSON.parse(e.data || '{}'); } catch (err) {}
+      try {
+        if (typeof showUpdatePrompt === 'function') showUpdatePrompt({ version: d.version || APP_VERSION, build: d.build || APP_BUILD }, { auto: true });
+        else if (typeof applyUpdate === 'function') applyUpdate();
+      } catch (err) { try { location.reload(); } catch (e2) {} }
+    });
+    es.addEventListener('change', (e) => {
+      let d = {};
+      try { d = JSON.parse(e.data); } catch (err) {}
+      if (d.source === Remote.clientId) { if (d.rev) Remote.rev = d.rev; return; }
+      Remote.refresh();
+    });
+    es.onerror = () => {
+      Remote.status = 'offline';
+      // EventSource reconnects automatically; refresh once it is back
+      setTimeout(() => { if (Remote.enabled) Remote.refresh(); }, 4000);
+    };
+  } catch (e) {}
+}
+function stopEventStream() {
+  if (Remote.es) { try { Remote.es.close(); } catch (e) {} }
+  Remote.es = null;
+}
+
+/* ---------------- Web Push ---------------- */
+const Push = {
+  publicKey: null,
+  async ensure(interactive) {
+    if (!Remote.enabled) return { ok: false, reason: 'no-server' };
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return { ok: false, reason: 'unsupported' };
+    const u = me();
+    if (!u) return { ok: false, reason: 'no-user' };
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return { ok: false, reason: 'permission' };
+    try {
+      const reg = await withTimeout(navigator.serviceWorker.ready, 8000, 'service-worker-timeout');
+      const keyRes = await withTimeout(fetch(Remote.url('/api/push/key')).then(r => r.json()), 8000, 'key-timeout').catch(() => null);
+      if (!keyRes || !keyRes.publicKey) return { ok: false, reason: 'no-key' };
+      this.publicKey = keyRes.publicKey;
+      let sub = await withTimeout(reg.pushManager.getSubscription(), 8000, 'subscription-timeout');
+      if (!sub) {
+        sub = await withTimeout(reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlB64ToUint8Array(keyRes.publicKey)
+        }), 12000, 'push-subscribe-timeout');
+      }
+      const res = await fetch(Remote.url('/api/push/subscribe'), {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ userId: u.id, subscription: sub, device: navigator.userAgent })
+      }).then(r => r.json()).catch(() => null);
+      if (res && res.ok) {
+        try { localStorage.setItem(LS_PUSH, JSON.stringify({ at: Date.now(), userId: u.id })); } catch (e) {}
+        return { ok: true, devices: res.devices };
+      }
+      return { ok: false, reason: 'register-failed' };
+    } catch (e) {
+      return { ok: false, reason: e.message || 'subscribe-failed' };
+    }
+  },
+  async test() {
+    const u = me();
+    if (!Remote.enabled) return toast('Connect a sync server first', 'err');
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
+      toast('Allow notifications in your browser first', 'err'); return;
+    }
+    const sub = await this.ensure(true);
+    if (!sub.ok) { toast('Push unavailable: ' + sub.reason, 'err'); return; }
+    const r = await fetch(Remote.url('/api/push/test'), {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ userId: u.id, title: 'WhaleChat', body: 'Push notifications are working on this device 🐋', link: '#/notifications' })
+    }).then(x => x.json()).catch(() => null);
+    if (r && r.ok && r.sent > 0) toast('Test notification sent to ' + r.sent + ' device(s)', 'ok');
+    else toast('No push device registered yet — check browser permission', 'err');
+  }
+};
+
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(label || 'timeout')), ms))
+  ]);
+}
+
+function urlB64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; ++i) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+/* ---------------- settings UI ---------------- */
+function syncBadge() {
+  const map = {
+    local: ['Local device only', 'var(--muted)'],
+    connecting: ['Connecting…', 'var(--warn)'],
+    online: ['Connected · realtime', 'var(--success)'],
+    syncing: ['Syncing…', 'var(--accent)'],
+    offline: ['Reconnecting…', 'var(--warn)'],
+    error: ['Connection error', 'var(--danger)']
+  };
+  const m = map[Remote.status] || map.local;
+  return `<span class="badge" style="color:${m[1]};border-color:${m[1]}33"><span class="dot" style="background:${m[1]}"></span> ${m[0]}</span>`;
+}
+
+App.serverDialog = function () {
+  const base = Remote.base || '';
+  openModal(modalShell('Cross-device sync', `
+    <p class="small muted" style="line-height:1.7">Connect this app to your WhaleChat sync server to share chats, orders and wallet data across phones, tablets and computers — with live updates and closed-app push notifications.</p>
+    <div class="field mt16"><label class="label">Server URL</label>
+      <input class="input" id="srvUrl" placeholder="https://your-whalechat-server.com" value="${esc(base)}"/>
+      <div class="help">Leave empty to use the same origin that served this app. The server must run <code>server.js</code>.</div></div>
+    <div class="panel" style="padding:12px;margin-bottom:14px">
+      <div class="between"><span class="tiny muted">Status</span>${syncBadge()}</div>
+      ${Remote.lastError ? `<div class="tiny mt6" style="color:var(--danger)">${esc(Remote.lastError)}</div>` : ''}
+      ${Remote.enabled ? `<div class="tiny muted mt6">Revision ${Remote.rev} · device <b>${esc(Remote.clientId)}</b></div>` : ''}
+    </div>
+    <div class="panel" style="padding:12px">
+      <div class="tiny" style="font-weight:600;color:var(--accent)">Push notifications</div>
+      <div class="tiny muted mt6" style="line-height:1.6">After connecting, enable browser alerts and send a test. Messages and order updates then arrive even when the app is closed.</div>
+      <div class="row gap8 mt10"><button class="btn btn-ghost btn-sm" data-act="push-test">${ic('bell', 14)} Send test</button>
+      <button class="btn btn-ghost btn-sm" data-act="push-enable">${ic('shield', 14)} Enable alerts</button></div>
+    </div>`,
+    `<button class="btn btn-ghost" data-close>Close</button>
+     ${Remote.enabled ? `<button class="btn btn-danger" data-act="server-disconnect">Disconnect</button>` : ''}
+     <button class="btn btn-primary" data-act="server-connect">${ic('refresh', 15)} Connect</button>`), { width: '500px' });
+  setTimeout(() => { const i = document.getElementById('srvUrl'); if (i) i.focus(); }, 80);
+};
+
+App.serverConnect = async function () {
+  const input = document.getElementById('srvUrl');
+  let url = input ? input.value.trim() : '';
+  if (url && !/^https?:\/\//i.test(url)) url = 'https://' + url;
+  url = url.replace(/\/+$/, '');
+  closeModal();
+  toast('Connecting to sync server…');
+  const ok = await Remote.connect(url || '', { initFromLocal: true });
+  if (ok) {
+    await Push.ensure(false);
+    toast('Cross-device sync enabled', 'ok');
+    render();
+    setTimeout(() => App.serverDialog(), 250);
+  } else { render(); setTimeout(() => App.serverDialog(), 250); }
+};
+App.serverDisconnect = async function () {
+  if (!await confirmDialog({ title: 'Disconnect sync?', body: 'This device keeps a local copy and stops receiving updates. Other devices stay connected.', danger: true, ok: 'Disconnect' })) return;
+  Remote.disconnect();
+  closeModal(); toast('Disconnected from sync server', 'ok'); render();
+};
+App.pushEnable = async function () {
+  await requestNotifyPermission(false);
+  const r = await Push.ensure(true);
+  if (r.ok) toast('Push notifications enabled (' + (r.devices || 1) + ' device)', 'ok');
+  else if (r.reason === 'permission') toast('Notifications blocked in browser settings', 'err');
+  else if (r.reason === 'no-server') toast('Connect a sync server first', 'err');
+  else toast('Push unavailable: ' + r.reason, 'err');
+  render();
+};
+App.pushTest = function () { Push.test(); };
+
+/* Send pending changes before the tab/app is closed (keeps messages + pushes reliable). */
+window.addEventListener('pagehide', () => {
+  try {
+    if (!Remote.enabled || !Remote.dirty) return;
+    const ops = diffDB(Remote.last || blankDB(), DB);
+    if (!ops.length) return;
+    const body = JSON.stringify({ ops, clientId: Remote.clientId });
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon(Remote.url('/api/ops'), new Blob([body], { type: 'application/json' }));
+    } else {
+      fetch(Remote.url('/api/ops'), { method: 'POST', headers: { 'content-type': 'application/json' }, body, keepalive: true }).catch(() => {});
+    }
+  } catch (e) {}
+});
+setInterval(() => {
+  try {
+    if (Remote.enabled && me() && typeof Notification !== 'undefined' && Notification.permission === 'granted') Push.ensure(false);
+  } catch (e) {}
+}, 5 * 60 * 1000);
+/* =========================================================================
+   Boot, global action dispatch, PWA wiring
+   ========================================================================= */
+function camel(act) {
+  return act.replace(/-([a-z])/g, (m, c) => c.toUpperCase());
+}
+const ACTION_ALIASES = {
+  'admin-del-user': 'adminDeleteUser',
+  'admin-notif-edit': 'adminNotifEdit',
+  'admin-notif-del': 'adminNotifDel',
+  'admin-notif-save': 'adminNotifSave',
+  'admin-product-del': 'adminProductDel',
+  'admin-send-notif': 'adminSendNotif',
+  'admin-test-notif': 'adminTestNotif',
+  'admin-user': 'adminUser',
+  'admin-order-del': 'adminOrderDel',
+  'admin-order-save': 'adminOrderSave',
+  'admin-export': 'adminExport',
+  'admin-notify-user': 'adminNotifyUser',
+  'edit-msg': 'editMessage',
+  'copy-msg': 'copyMessage',
+  'delete-msg': 'deleteMessage',
+  'forward-msg': 'forwardMessage',
+  'avatar-camera': 'avatarCamera',
+  'live-chat': 'openLiveChat',
+  'search-people': 'mobileSearch',
+  'toggle-anypass': 'toggleAnyPass'
+};
+
+App.openChat = function (id) {
+  if (!id) return;
+  closeModal();            // a search sheet must not stay on top of the chat
+  go('chat/' + id);
+  const focusComposer = () => {
+    const i = document.getElementById('msgInput');
+    if (!i) return false;
+    i.focus({ preventScroll: true });
+    const b = document.getElementById('chatBody');
+    if (b) b.scrollTop = b.scrollHeight;
+    try { i.setSelectionRange(i.value.length, i.value.length); } catch (e) {}
+    return true;
+  };
+  setTimeout(focusComposer, 60);
+  setTimeout(focusComposer, 260);
+  setTimeout(focusComposer, 600);
+};
+App.openProduct = function (id) { if (id) go('product/' + id); };
+App.back = function () { back(); };
+App.copy = function (v) { if (v) copyText(v); };
+App.copyMessageText = function (id) { App.copyMessage(id); };
+
+document.addEventListener('click', function (ev) {
+  const nav = ev.target.closest('[data-nav]');
+  if (nav) {
+    ev.preventDefault();
+    const h = nav.getAttribute('data-nav');
+    go(h.replace(/^#\/?/, ''));
+    return;
+  }
+  const el = ev.target.closest('[data-act]');
+  if (!el) return;
+  const act = el.getAttribute('data-act');
+  if (!act) return;
+  const ds = Object.assign({}, el.dataset);
+  ev.preventDefault();
+  // special multi-arg handlers
+  if (act === 'cart-qty') return App.cartQty(ds.id, ds.d);
+  if (act === 'remove-media') return App.removeMedia(Number(ds.idx));
+  if (act === 'do-forward') return App.doForward(ds.id, ds.msg);
+  if (act === 'send-status-reply') return;
+  if (act === 'back') return App.back();
+  if (act === 'toggle-theme') return App.toggleTheme();
+  if (act === 'set-pin-now') return App.setPinNow();
+  if (act === 'status-step') return App.statusStep(Number(ds.d));
+  const name = ACTION_ALIASES[act] || camel(act);
+  const fn = App[name];
+  if (typeof fn === 'function') {
+    try { fn(ds.id, ds, ev); }
+    catch (err) { console.error('Action failed', act, err); toast('Something went wrong. Please try again.', 'err'); }
+  } else {
+    console.warn('No handler for action:', act, name);
+  }
+}, false);
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { closeModal(); closeViewer(); }
+  if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+    e.preventDefault();
+    const s = document.getElementById('globalSearch');
+    if (s) s.focus();
+  }
+});
+
+App.avatarCamera = function () { App.avatarUpload(true); };
+
+App.mobileSearch = function () {
+  openModal(modalShell('Search WhaleChat', `
+    <div class="searchbar" style="height:46px">${ic('search', 17)}<input id="msInput" placeholder="People, chats, products…" autocomplete="off"/></div>
+    <div class="mt16" id="msResults"><p class="small muted">Type to search people, contacts and products.</p></div>`,
+    `<button class="btn btn-ghost" data-close style="width:100%">Close</button>`));
+  const i = document.getElementById('msInput');
+  setTimeout(() => i.focus(), 80);
+  i.addEventListener('keydown', (e) => { if (e.key === 'Enter' && i.value.trim()) { closeModal(); App.openSearch(i.value.trim()); } });
+};
+
+App.adminNotifyUser = async function (id) {
+  const u = findUser(id); if (!u) return;
+  const title = await promptDialog({ title: 'Send notification', label: 'Title', placeholder: 'Account update' });
+  if (!title) return;
+  const body = await promptDialog({ title: 'Send notification', label: 'Message', placeholder: 'Write the message…' });
+  if (!body) return;
+  notify(id, title, body, null, 'bell');
+  sync(); toast('Notification sent to ' + u.fullName, 'ok'); render();
+};
+
+App.adminExport = function (type) {
+  if (type !== 'users') return;
+  const rows = [['Full name', 'Username', 'Email', 'Phone', 'Balance (WC)', 'Trust', 'Vendor', 'Banned', 'Joined']];
+  DB.users.filter(u => u.role !== 'admin').forEach(u => rows.push([u.fullName, u.username, u.email, u.phone || '', u.balance, u.trustScore, vendorOf(u.id) ? 'yes' : 'no', u.banned ? 'yes' : 'no', new Date(u.createdAt).toISOString()]));
+  const csv = rows.map(r => r.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'whalechat-users.csv';
+  document.body.appendChild(a); a.click(); a.remove();
+  toast('Export downloaded', 'ok');
+};
+
+/* Vendor sub-route dispatch */
+const __vendorBase = VIEWS.vendor;
+VIEWS.vendor = function (parts, params) {
+  const u = me();
+  const myVendor = u ? vendorOf(u.id) : null;
+  // applicants/renewals only see their application or renewal page, never vendor tools
+  if (u && u.role !== 'admin' && (!myVendor || !vendorIsActive(myVendor))) return __vendorBase(parts, params);
+  const sub = parts[1];
+  if (sub === 'company') return VIEWS.vendor_company(parts, params);
+  if (sub === 'products') return VIEWS.vendorProducts(parts, params);
+  if (sub === 'orders') return VIEWS.vendorOrders(parts, params);
+  if (sub === 'history') return VIEWS.vendorHistory(parts, params);
+  return __vendorBase(parts, params);
+};
+
+/* boot */
+async function boot() {
+  await initDB();
+  try { if (maybeBrandedRedirect()) return; } catch (e) {}
+  try { if (gaLoad()) gaTrack(location.hash || '/'); } catch (e) {}
+  try { await Remote.init(); } catch (e) { console.warn('sync init failed', e); }
+  try { resolvePendingReferrals(); reconcileReferralBonuses(); } catch (e) {}
+  if (SESSION) {
+    const u = me();
+    if (!u) { SESSION = null; localStorage.removeItem(LS_SESSION); }
+    else if (u.pin) Presence.touch();
+  }
+  initTheme();
+  // referral short links: /ref/CODE, ?ref=CODE, #/ref=CODE
+  let refCode = null;
+  try { refCode = referralFromURL(); } catch (e) {}
+  if (refCode) { try { sessionStorage.setItem('wc_ref', refCode); } catch (e) {} }
+
+  if (!me() && refCode) go('signup?ref=' + encodeURIComponent(refCode));
+
+  const hasHash = !!location.hash;
+  if (!hasHash) {
+    renderSplash();
+    setTimeout(() => {
+      const u = me();
+      if (u) go(u.role === 'admin' ? 'admin' : 'home');
+      else go('welcome');
+    }, 1200);
+  } else {
+    render();
+  }
+  // Global safety net: never leave the user on a dead screen
+  let lastErrToast = 0;
+  window.addEventListener('error', (ev) => {
+    if (ev.target && ev.target.tagName === 'SCRIPT') return;
+    if (Date.now() - lastErrToast < 4000) return;
+    lastErrToast = Date.now();
+    try { toast('Something went wrong — please try that again.', 'err'); } catch (e) {}
+  });
+  window.addEventListener('unhandledrejection', (ev) => {
+    console.warn('Unhandled promise rejection:', ev.reason);
+    if (Date.now() - lastErrToast < 4000) return;
+    lastErrToast = Date.now();
+    try { toast('A request failed — check your connection and retry.', 'err'); } catch (e) {}
+  });
+
+  // Service worker (offline shell + push). If the host forbids sw.js, drop any
+  // stale worker so a cached error page can never be served again.
+  if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
+    window.addEventListener('load', async () => {
+      try {
+        const reg = await navigator.serviceWorker.register('sw.js');
+        if (reg && reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+      } catch (e) {
+        try {
+          const regs = await navigator.serviceWorker.getRegistrations();
+          await Promise.all(regs.map(r => r.unregister()));
+        } catch (e2) {}
+        try {
+          const keys = await caches.keys();
+          await Promise.all(keys.map(k => caches.delete(k)));
+        } catch (e3) {}
+      }
+    });
+  }
+  // keep this device in sync when it becomes visible / regains network
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && Remote.enabled) Remote.refresh(); });
+  window.addEventListener('online', () => { if (Remote.enabled) { Remote.refresh(); Remote.flush(); } });
+  window.addEventListener('focus', () => { if (Remote.enabled) Remote.refresh(); });
+  if (Remote.enabled && SESSION) setTimeout(() => { Push.ensure(false); }, 1400);
+
+  // periodic maintenance (status expiry, delivery ack, unread badge)
+  setInterval(() => {
+    if (!me()) return;
+    if (DB.statuses.some(s => s.createdAt + 86400000 < Date.now())) {
+      DB.statuses = DB.statuses.filter(s => s.createdAt + 86400000 > Date.now());
+      persist(); render();
+    }
+    if ('setAppBadge' in navigator) {
+      const n = totalUnread() + unreadNotifs();
+      try { n ? navigator.setAppBadge(n) : navigator.clearAppBadge(); } catch (e) {}
+    }
+  }, 30000);
+}
+
+window.addEventListener('DOMContentLoaded', boot);
+
+/* Manual recovery: open #/reset-cache (or run A.repair() in the console) to drop a
+   stale service worker/cache that a host may have poisoned with an error page. */
+App.repair = async function () {
+  try {
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.unregister()));
+    }
+    if (window.caches) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+    }
+    toast('App cache cleared — reloading…', 'ok');
+    setTimeout(() => location.replace(location.pathname + location.search + '#/home'), 700);
+  } catch (e) { toast('Could not clear the cache automatically', 'err'); }
+};
+</script>
+
+<script>
+/* PWA bootstrap — registered independently of the async app boot so install prompts work reliably. */
+if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
+  var __regSW = function () {
+    navigator.serviceWorker.register('sw.js', { scope: './' }).then(function (reg) {
+      if (reg && reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+    }).catch(function () {});
+  };
+  if (document.readyState === 'complete') __regSW();
+  else window.addEventListener('load', __regSW);
+}
+</script>
+
+<style>
+/* ================= WhaleChat Invest (appended) ================= */
+.inv-hero{position:relative;overflow:hidden;border-radius:22px;padding:18px;background:
+  radial-gradient(120% 120% at 0% 0%,rgba(46,230,201,.16),transparent 55%),
+  radial-gradient(120% 130% at 100% 0%,rgba(58,160,255,.14),transparent 60%),
+  linear-gradient(150deg,var(--surface),var(--bg-soft));
+  border:1px solid var(--border-strong);box-shadow:var(--shadow)}
+.inv-hero:after{content:"";position:absolute;right:-40px;bottom:-60px;width:170px;height:170px;border-radius:50%;
+  background:radial-gradient(circle,rgba(46,230,201,.20),transparent 65%)}
+.inv-big{font-family:var(--display);font-size:34px;font-weight:800;letter-spacing:-.02em;line-height:1.15;margin:2px 0}
+.inv-unit{font-size:14px;font-weight:600;opacity:.65}
+.inv-day{display:inline-flex;align-items:center;gap:6px;margin-top:10px;padding:6px 11px;border-radius:99px;
+  font-size:12px;background:rgba(255,255,255,.06);border:1px solid var(--border)}
+.inv-day.up{color:var(--success);background:rgba(47,214,166,.10);border-color:rgba(47,214,166,.25)}
+.inv-day.down{color:var(--danger);background:rgba(255,95,116,.10);border-color:rgba(255,95,116,.25)}
+.inv-hero-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px;
+  border-top:1px solid var(--border);padding-top:12px}
+.inv-hero-grid>div{display:flex;flex-direction:column;gap:2px;min-width:0}
+.inv-hero-grid b{font-size:13px;font-family:var(--display);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.inv-actions{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:12px 0}
+.inv-act{display:flex;flex-direction:column;align-items:center;gap:6px;padding:11px 4px;border-radius:14px;
+  background:var(--surface);border:1px solid var(--border);font-size:10.5px;font-weight:600;color:var(--text);
+  text-decoration:none;transition:transform .15s ease,border-color .15s ease}
+.inv-act:hover{transform:translateY(-1px);border-color:rgba(46,230,201,.4)}
+.inv-act-ic{display:flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:10px;
+  background:linear-gradient(135deg,rgba(46,230,201,.16),rgba(58,160,255,.16));color:var(--accent)}
+.inv-chart{margin:8px -4px 0;height:150px;position:relative}
+.inv-chart svg{display:block;width:100%;height:100%}
+.inv-svg{overflow:visible}
+.inv-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;
+  min-height:120px;text-align:center;color:var(--muted)}
+.inv-seg{display:inline-flex;gap:2px;padding:3px;border-radius:11px;background:var(--surface-2);border:1px solid var(--border)}
+.inv-segbtn{padding:5px 9px;border-radius:8px;font-size:11px;font-weight:600;color:var(--muted);text-decoration:none;white-space:nowrap}
+.inv-segbtn.on{background:var(--surface-3);color:var(--text);box-shadow:0 1px 0 rgba(255,255,255,.06) inset}
+.inv-two{display:grid;grid-template-columns:1fr;gap:12px;margin-top:12px}
+@media(min-width:900px){.inv-two{grid-template-columns:1fr 1fr}}
+.inv-list{display:flex;flex-direction:column}
+.inv-row{display:flex;gap:10px;align-items:center;padding:10px 2px;border-bottom:1px solid var(--border);
+  text-decoration:none;color:inherit}
+.inv-row:last-child{border-bottom:none}
+.inv-row:hover{background:rgba(255,255,255,.02)}
+.inv-logo{display:inline-flex;align-items:center;justify-content:center;border-radius:11px;flex:0 0 auto;
+  color:#fff;font-family:var(--display);letter-spacing:-.03em;box-shadow:0 6px 16px -8px rgba(0,0,0,.8)}
+.inv-logo b{font-weight:800;opacity:.95}
+.inv-chg{font-size:12px;font-weight:700;font-variant-numeric:tabular-nums}
+.inv-chg.up,.up{color:var(--success)}
+.inv-chg.down,.down{color:var(--danger)}
+.flash-up{animation:invFlashUp .65s ease}
+.flash-down{animation:invFlashDown .65s ease}
+@keyframes invFlashUp{0%{background:rgba(47,214,166,.26)}100%{background:transparent}}
+@keyframes invFlashDown{0%{background:rgba(255,95,116,.26)}100%{background:transparent}}
+.inv-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+@media(min-width:760px){.inv-grid{grid-template-columns:repeat(3,1fr)}}
+@media(min-width:1120px){.inv-grid{grid-template-columns:repeat(4,1fr)}}
+.inv-mcard{display:flex;flex-direction:column;gap:7px;padding:12px;border-radius:16px;background:var(--surface);
+  border:1px solid var(--border);text-decoration:none;color:inherit;transition:transform .15s ease,border-color .15s ease}
+.inv-mcard:hover{transform:translateY(-2px);border-color:rgba(46,230,201,.35)}
+.inv-sparkwrap{height:30px;margin:2px 0}
+.inv-spark{width:100%;height:100%;display:block}
+.inv-price{font-family:var(--display);font-size:30px;font-weight:800;letter-spacing:-.02em}
+.inv-pricecard{padding:16px}
+.inv-paused{margin-top:10px;padding:8px 10px;border-radius:10px;background:rgba(255,176,32,.10);
+  border:1px solid rgba(255,176,32,.25);color:var(--warn);font-size:11.5px;display:flex;gap:6px;align-items:center}
+.inv-statgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px 14px}
+@media(min-width:520px){.inv-statgrid{grid-template-columns:repeat(3,1fr)}}
+.inv-statgrid>div{display:flex;flex-direction:column;gap:1px;padding-bottom:7px;border-bottom:1px dashed var(--border)}
+.inv-statgrid b{font-size:13px;font-family:var(--display);font-weight:700}
+.inv-mode{display:flex;gap:4px;padding:3px;border-radius:11px;background:var(--surface-2);margin-bottom:10px}
+.inv-modebtn{flex:1;padding:7px;border-radius:8px;font-size:12px;font-weight:650;color:var(--muted);background:none;border:none;cursor:pointer}
+.inv-modebtn.on{background:var(--surface-3);color:var(--text)}
+.inv-prefix{position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:11px;font-weight:700;color:var(--muted)}
+.input-wrap{position:relative}
+.input-wrap .input{padding-left:40px}
+.inv-sum{margin-top:10px;padding:11px 12px;border-radius:12px;background:var(--surface-2);border:1px solid var(--border);
+  display:flex;flex-direction:column;gap:6px}
+.inv-news{padding:9px 0;border-bottom:1px solid var(--border)}
+.inv-news:last-of-type{border-bottom:none}
+.inv-alloc{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.inv-donut{width:120px;height:120px;flex:0 0 auto}
+.inv-legend{display:flex;flex-direction:column;gap:6px;min-width:120px;flex:1}
+.inv-cats{flex-wrap:nowrap;overflow-x:auto;padding-bottom:2px;-webkit-overflow-scrolling:touch}
+.inv-cats::-webkit-scrollbar{display:none}
+.inv-table{width:100%;border-collapse:collapse;font-size:12px}
+.inv-table th{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);
+  padding:8px 8px;border-bottom:1px solid var(--border);white-space:nowrap}
+.inv-table td{padding:9px 8px;border-bottom:1px solid var(--border);vertical-align:top}
+.inv-table .num{text-align:right;font-variant-numeric:tabular-nums}
+.inv-table tr:last-child td{border-bottom:none}
+.inv-note{display:flex;gap:8px;align-items:flex-start;margin-top:12px;color:var(--muted)}
+@media(max-width:520px){
+  .inv-big{font-size:29px}
+  .inv-actions{grid-template-columns:repeat(5,1fr);gap:6px}
+  .inv-act{font-size:9.5px;padding:9px 2px}
+  .inv-act-ic{width:29px;height:29px}
+}
+
+/* ---- polish pass ---- */
+.inv-chart svg{animation:invFade .35s ease}
+@keyframes invFade{from{opacity:.35}to{opacity:1}}
+.inv-price,.inv-big,.inv-hero-grid b,.inv-table .num{font-variant-numeric:tabular-nums}
+.inv-mcard,.inv-row,.inv-act{transition:background .18s ease,border-color .18s ease,transform .18s ease}
+.inv-modebtn,.inv-segbtn{cursor:pointer;user-select:none}
+.inv-sum b{font-variant-numeric:tabular-nums}
+@media(max-width:520px){
+  .bottomnav .bnav{padding:0 2px}
+  .bottomnav .bnav span{font-size:9px;letter-spacing:-.02em}
+}
+
+</style>
+<script>
+/* =====================================================================
+   WhaleChat Invest — stocks, portfolio, market, orders, admin
+   Plugs into the existing app: DB, SESSION, me(), u.balance (Whale Coin),
+   askPin/hash (transaction PIN), notify(), tx(), go(), render(), persist().
+   Market data is SIMULATED — clearly labelled in the UI.
+   ===================================================================== */
+'use strict';
+
+const INV = {};
+INV.TICK_MS = 5000;
+
+/* ------------------------------ stock universe ------------------------------ */
+INV.SEED = [
+  { t:'AAPL', name:'Apple Inc.', sector:'Technology', price:231.42, pe:34.2, mcap:3500, div:0.44, vol:52.4, ceo:'Tim Cook', web:'apple.com', color:'#a2aaad',
+    about:'Apple designs and sells iPhone, Mac, iPad and wearables, and runs one of the largest services businesses in the world.' },
+  { t:'MSFT', name:'Microsoft Corp.', sector:'Technology', price:428.93, pe:36.5, mcap:3190, div:0.72, vol:21.8, ceo:'Satya Nadella', web:'microsoft.com', color:'#2f6fd0',
+    about:'Microsoft builds Azure cloud infrastructure, Windows, Office 365 and Copilot AI products for consumers and enterprises.' },
+  { t:'NVDA', name:'NVIDIA Corp.', sector:'Semiconductors', price:141.28, pe:62.1, mcap:3460, div:0.03, vol:310.5, ceo:'Jensen Huang', web:'nvidia.com', color:'#76b900',
+    about:'NVIDIA designs the GPUs and networking systems powering AI training, data centres and gaming.' },
+  { t:'AMZN', name:'Amazon.com Inc.', sector:'Consumer', price:206.74, pe:43.8, mcap:2170, div:0, vol:38.2, ceo:'Andy Jassy', web:'amazon.com', color:'#ff9900',
+    about:'Amazon operates the largest online marketplace and AWS, the leading public cloud platform.' },
+  { t:'TSLA', name:'Tesla Inc.', sector:'Automotive', price:352.41, pe:92.4, mcap:1120, div:0, vol:96.7, ceo:'Elon Musk', web:'tesla.com', color:'#e82127',
+    about:'Tesla builds electric vehicles, energy storage and an autonomy software stack.' },
+  { t:'GOOGL', name:'Alphabet Inc.', sector:'Communication', price:178.32, pe:24.1, mcap:2180, div:0.45, vol:27.6, ceo:'Sundar Pichai', web:'abc.xyz', color:'#4285f4',
+    about:'Alphabet owns Google Search, YouTube, Android, Google Cloud and DeepMind.' },
+  { t:'META', name:'Meta Platforms', sector:'Communication', price:585.19, pe:27.9, mcap:1480, div:0.35, vol:14.3, ceo:'Mark Zuckerberg', web:'meta.com', color:'#0866ff',
+    about:'Meta operates Facebook, Instagram, WhatsApp and Threads, and invests heavily in AI and AR hardware.' },
+  { t:'NFLX', name:'Netflix Inc.', sector:'Media', price:812.55, pe:45.2, mcap:350, div:0, vol:3.9, ceo:'Ted Sarandos', web:'netflix.com', color:'#e50914',
+    about:'Netflix is the largest subscription streaming service, now with ad-supported tiers and live events.' },
+  { t:'AMD', name:'Advanced Micro Devices', sector:'Semiconductors', price:142.83, pe:120.4, mcap:231, div:0, vol:44.1, ceo:'Lisa Su', web:'amd.com', color:'#ed1c24',
+    about:'AMD makes CPUs and GPUs for data centre, client PC and embedded markets.' },
+  { t:'AVGO', name:'Broadcom Inc.', sector:'Semiconductors', price:172.44, pe:38.2, mcap:805, div:1.2, vol:22.5, ceo:'Hock Tan', web:'broadcom.com', color:'#cc0000',
+    about:'Broadcom supplies networking silicon, custom AI accelerators and enterprise software.' },
+  { t:'JPM', name:'JPMorgan Chase', sector:'Financials', price:242.61, pe:12.8, mcap:690, div:2.1, vol:9.8, ceo:'Jamie Dimon', web:'jpmorganchase.com', color:'#1c4b8b',
+    about:'JPMorgan Chase is the largest US bank by assets, spanning consumer, investment and commercial banking.' },
+  { t:'V', name:'Visa Inc.', sector:'Financials', price:309.51, pe:30.1, mcap:610, div:0.75, vol:6.4, ceo:'Ryan McInerney', web:'visa.com', color:'#1a1f71',
+    about:'Visa runs the world\'s largest card payment network, processing billions of transactions each year.' },
+  { t:'DIS', name:'Walt Disney Co.', sector:'Media', price:112.44, pe:38.5, mcap:205, div:0.9, vol:11.2, ceo:'Bob Iger', web:'disney.com', color:'#113ccf',
+    about:'Disney operates theme parks, film studios, and the Disney+ streaming platform.' },
+  { t:'KO', name:'Coca-Cola Co.', sector:'Consumer Defensive', price:63.21, pe:24.6, mcap:272, div:3.05, vol:14.7, ceo:'James Quincey', web:'coca-colacompany.com', color:'#f40009',
+    about:'Coca-Cola sells sparkling soft drinks, water, sports drinks and juice across 200+ countries.' },
+  { t:'PEP', name:'PepsiCo Inc.', sector:'Consumer Defensive', price:158.72, pe:22.4, mcap:218, div:3.4, vol:5.9, ceo:'Ramon Laguarta', web:'pepsico.com', color:'#004b93',
+    about:'PepsiCo owns Pepsi, Lay\'s, Gatorade and Quaker across beverages and convenient foods.' },
+  { t:'WMT', name:'Walmart Inc.', sector:'Retail', price:89.64, pe:38.9, mcap:720, div:1.0, vol:18.3, ceo:'Doug McMillon', web:'walmart.com', color:'#0071ce',
+    about:'Walmart is the largest retailer globally, blending 10,000+ stores with a fast-growing eCommerce and marketplace business.' },
+  { t:'COIN', name:'Coinbase Global', sector:'Crypto', price:298.41, pe:48.2, mcap:74, div:0, vol:12.6, ceo:'Brian Armstrong', web:'coinbase.com', color:'#0052ff', crypto:true,
+    about:'Coinbase is the largest US-listed crypto exchange, earning from trading fees, custody and stablecoin revenue.' },
+  { t:'MSTR', name:'MicroStrategy', sector:'Crypto', price:412.88, pe:0, mcap:92, div:0, vol:18.9, ceo:'Phong Le', web:'microstrategy.com', color:'#d9232e', crypto:true,
+    about:'MicroStrategy is a software company best known for holding a very large corporate Bitcoin treasury.' },
+  { t:'MARA', name:'MARA Holdings', sector:'Crypto', price:21.64, pe:0, mcap:6.8, div:0, vol:22.1, ceo:'Fred Thiel', web:'maraholdings.com', color:'#f7931a', crypto:true,
+    about:'MARA is one of the largest publicly traded Bitcoin mining companies, powered by a growing energy portfolio.' },
+  { t:'PLTR', name:'Palantir Technologies', sector:'Technology', price:68.42, pe:210.5, mcap:156, div:0, vol:58.4, ceo:'Alex Karp', web:'palantir.com', color:'#101113',
+    about:'Palantir sells AI and data-integration platforms (Foundry, Gotham, AIP) to governments and enterprises.' },
+  { t:'ARM', name:'Arm Holdings', sector:'Semiconductors', price:134.92, pe:190.2, mcap:141, div:0, vol:9.7, ceo:'Rene Haas', web:'arm.com', color:'#0091bd',
+    about:'Arm licenses CPU architecture and designs used in most of the world\'s smartphones and a growing share of servers.' },
+  { t:'SHOP', name:'Shopify Inc.', sector:'Technology', price:108.71, pe:78.4, mcap:140, div:0, vol:8.1, ceo:'Tobi Lutke', web:'shopify.com', color:'#96bf48',
+    about:'Shopify provides commerce infrastructure for millions of merchants, from storefronts to payments and fulfilment.' },
+  { t:'UBER', name:'Uber Technologies', sector:'Technology', price:74.21, pe:32.6, mcap:155, div:0, vol:16.4, ceo:'Dara Khosrowshahi', web:'uber.com', color:'#000000',
+    about:'Uber runs rideshare, food delivery (Uber Eats) and freight marketplaces in 70+ countries.' },
+  { t:'HOOD', name:'Robinhood Markets', sector:'Financials', price:38.63, pe:58.3, mcap:34, div:0, vol:13.2, ceo:'Vlad Tenev', web:'robinhood.com', color:'#00c805',
+    about:'Robinhood offers commission-free equities, options and crypto trading to retail investors.' },
+  { t:'LLY', name:'Eli Lilly & Co.', sector:'Healthcare', price:792.44, pe:88.1, mcap:752, div:0.7, vol:3.1, ceo:'David Ricks', web:'lilly.com', color:'#d52b1e',
+    about:'Eli Lilly develops diabetes, obesity and oncology drugs, including the GLP-1 franchise.' },
+  { t:'UNH', name:'UnitedHealth Group', sector:'Healthcare', price:562.31, pe:18.4, mcap:518, div:1.5, vol:4.2, ceo:'Andrew Witty', web:'unitedhealthgroup.com', color:'#002677',
+    about:'UnitedHealth is the largest US health insurer, also owning Optum health services.' },
+  { t:'XOM', name:'Exxon Mobil', sector:'Energy', price:118.94, pe:14.2, mcap:523, div:3.3, vol:15.8, ceo:'Darren Woods', web:'corporate.exxonmobil.com', color:'#e1251b',
+    about:'ExxonMobil explores, produces and refines oil and gas, with growing low-carbon investments.' },
+  { t:'NKE', name:'Nike Inc.', sector:'Consumer', price:78.42, pe:21.9, mcap:118, div:1.9, vol:7.6, ceo:'Elliott Hill', web:'nike.com', color:'#111111',
+    about:'Nike designs and sells athletic footwear and apparel worldwide, both direct and through wholesale.' },
+  { t:'SMCI', name:'Super Micro Computer', sector:'Technology', price:38.94, pe:22.1, mcap:22, div:0, vol:26.2, ceo:'Charles Liang', web:'supermicro.com', color:'#e31837',
+    about:'Super Micro builds high-density AI and cloud server systems and rack-scale solutions.' },
+  { t:'RIVN', name:'Rivian Automotive', sector:'Automotive', price:13.41, pe:0, mcap:13, div:0, vol:19.4, ceo:'RJ Scaringe', web:'rivian.com', color:'#0d3b66', isNew:true,
+    about:'Rivian makes electric adventure vehicles and commercial delivery vans.' }
+];
+
+/* ------------------------------ persistence helpers ------------------------------ */
+INV.db = function () {
+  if (!DB.invest) DB.invest = { feePct: 0.5, paused: {}, seededAt: null };
+  if (!DB.invest.paused) DB.invest.paused = {};
+  if (typeof DB.invest.feePct !== 'number') DB.invest.feePct = 0.5;
+  ['stocks', 'holdings', 'trades', 'watchlist', 'alerts'].forEach(k => { if (!Array.isArray(DB[k])) DB[k] = []; });
+  if (!DB.invest.seededAt) {
+    // seed the catalogue once per database, never overwriting admin edits
+    DB.invest.seededAt = Date.now();
+    INV.SEED.forEach(s => {
+      if (!DB.stocks.some(x => x.ticker === s.t)) {
+        DB.stocks.push({
+          id: 'st_' + s.t.toLowerCase(), ticker: s.t, name: s.name, sector: s.sector,
+          price: s.price, prevClose: Math.round(s.price * (1 - (Math.random() * 0.02 - 0.008)) * 100) / 100,
+          pe: s.pe, mcap: s.mcap, div: s.div, vol: s.vol, ceo: s.ceo, website: s.web,
+          color: s.color, about: s.about, crypto: !!s.crypto, isNew: !!s.isNew,
+          paused: false, custom: false, createdAt: Date.now()
+        });
+      }
+    });
+  }
+  return DB.invest;
+};
+INV.fee = function () { return Math.max(0, Number(INV.db().feePct) || 0); };
+INV.stock = function (t) { return (DB.stocks || []).find(s => s.ticker === String(t).toUpperCase()) || null; };
+INV.stocks = function () { INV.db(); return DB.stocks.slice(); };
+INV.paused = function (t) { const i = INV.db(); return !!(i.paused[t] || (INV.stock(t) || {}).paused); };
+
+INV.holdings = function (userId) {
+  INV.db();
+  return DB.holdings.filter(h => h.userId === (userId || me().id) && h.shares > 0.0000001);
+};
+INV.holding = function (t, userId) {
+  return INV.holdings(userId).find(h => h.ticker === t) || null;
+};
+INV.trades = function (userId) {
+  INV.db();
+  return DB.trades.filter(t => t.userId === (userId || me().id)).sort((a, b) => b.createdAt - a.createdAt);
+};
+INV.watching = function (t) {
+  INV.db();
+  return DB.watchlist.some(w => w.userId === me().id && w.ticker === t);
+};
+INV.alerts = function () { INV.db(); return DB.alerts.filter(a => a.userId === me().id); };
+
+/* ------------------------------ price engine (simulated) ------------------------------ */
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function seedOf(str) {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
+}
+INV.volatility = function (s) {
+  if (s.crypto) return 0.055;
+  if (s.sector === 'Semiconductors') return 0.032;
+  if (s.sector === 'Consumer Defensive' || s.sector === 'Healthcare') return 0.012;
+  if (s.sector === 'Technology') return 0.024;
+  return 0.019;
+};
+INV.live = {};   // ticker -> { price, prevClose, open, dayHigh, dayLow, changePct, vol, dir, updatedAt }
+INV.seriesCache = {};
+
+INV.series = function (t, tf) {
+  const key = t + '::' + tf;
+  if (INV.seriesCache[key]) return INV.seriesCache[key];
+  const s = INV.stock(t); if (!s) return [];
+  const q = INV.quote(t);
+  const anchors = { '1D': 1, '1W': 5, '1M': 22, '3M': 63, '1Y': 252, 'ALL': 504 };
+  const n = anchors[tf] || 63;
+  const rnd = mulberry32(seedOf(t + tf));
+  const vol = INV.volatility(s) * (tf === '1D' ? 0.35 : 1);
+  const out = [];
+  let p = q.price;
+  // walk backwards from today's price, then reverse — keeps the tail exact
+  for (let i = 0; i < n; i++) {
+    out.push(p);
+    const shock = (rnd() - 0.5) * 2 * vol;
+    const drift = 0.0007;
+    p = p / (1 + shock + drift);
+  }
+  out.reverse();
+  out[out.length - 1] = q.price;
+  INV.seriesCache[key] = out;
+  return out;
+};
+INV.quote = function (t) {
+  INV.db();
+  const l = INV.live[t];
+  const s = INV.stock(t);
+  if (!s) return null;
+  if (l) return l;
+  const price = s.price;
+  const prevClose = s.prevClose || price;
+  const q = {
+    price, prevClose, open: prevClose,
+    dayHigh: Math.max(price, prevClose) * 1.006,
+    dayLow: Math.min(price, prevClose) * 0.994,
+    changePct: prevClose ? ((price - prevClose) / prevClose) * 100 : 0,
+    changeUsd: price - prevClose,
+    vol: (s.vol || 10) * 1e6, dir: 0, updatedAt: Date.now()
+  };
+  INV.live[t] = q;
+  return q;
+};
+INV.tick = function () {
+  INV.db();
+  const now = Date.now();
+  INV.stocks().forEach(s => {
+    const q = INV.quote(s.ticker);
+    if (!q) return;
+    const vol = INV.volatility(s) / 14;      // per-5s step
+    const shock = (Math.random() - 0.5) * 2 * vol;
+    const next = Math.max(0.5, q.price * (1 + shock));
+    q.dir = next > q.price ? 1 : next < q.price ? -1 : 0;
+    q.price = Math.round(next * 100) / 100;
+    q.dayHigh = Math.max(q.dayHigh, q.price);
+    q.dayLow = Math.min(q.dayLow, q.price);
+    q.changePct = q.prevClose ? ((q.price - q.prevClose) / q.prevClose) * 100 : 0;
+    q.changeUsd = q.price - q.prevClose;
+    q.vol += Math.round(Math.random() * 24000);
+    q.updatedAt = now;
+    s.price = q.price;                       // keep catalogue in sync for trades
+    // keep the live series tail honest
+    const key = s.ticker + '::1D';
+    if (INV.seriesCache[key]) INV.seriesCache[key][INV.seriesCache[key].length - 1] = q.price;
+  });
+  INV.checkAlerts();
+  INV.runLimitOrders();
+  INV.paint();
+  if (!INV._lastPersist || now - INV._lastPersist > 45000) { INV._lastPersist = now; try { persist(); } catch (e) {} }
+};
+INV.checkAlerts = function () {
+  const u = me(); if (!u) return;
+  INV.alerts().forEach(a => {
+    if (!a.active) return;
+    const q = INV.quote(a.ticker); if (!q) return;
+    const hit = a.dir === 'above' ? q.price >= a.target : q.price <= a.target;
+    if (!hit) return;
+    a.active = false; a.triggeredAt = Date.now(); a.triggerPrice = q.price;
+    notify(u.id, `${a.ticker} alert hit`,
+      `${a.ticker} is now ${usd(q.price)} — your ${a.dir} ${usd(a.target)} target was reached.`,
+      '#/invest/stock/' + a.ticker, 'trend');
+    toast(`${a.ticker} price alert: ${usd(q.price)}`, 'ok');
+  });
+};
+INV.runLimitOrders = function () {
+  const u = me(); if (!u) return;
+  DB.trades.filter(t => t.userId === u.id && t.status === 'Pending').forEach(o => {
+    const q = INV.quote(o.ticker); if (!q) return;
+    const hit = o.side === 'buy' ? q.price <= o.limitUsd : q.price >= o.limitUsd;
+    if (!hit) return;
+    INV.execute(o.side, o.ticker, o.shares, { limit: true, orderId: o.id, fillPrice: q.price });
+  });
+};
+
+/* ------------------------------ chart primitives ------------------------------ */
+INV.smooth = function (vals, w, h, pad) {
+  if (!vals.length) return { line: '', area: '' };
+  const min = Math.min(...vals), max = Math.max(...vals);
+  const span = max - min || 1;
+  const px = i => pad + (i / Math.max(1, vals.length - 1)) * (w - pad * 2);
+  const py = v => h - pad - ((v - min) / span) * (h - pad * 2);
+  let d = '';
+  for (let i = 0; i < vals.length; i++) {
+    const x = px(i), y = py(vals[i]);
+    if (i === 0) { d += `M${x.toFixed(2)},${y.toFixed(2)}`; continue; }
+    const x0 = px(i - 1), y0 = py(vals[i - 1]);
+    const cx = (x0 + x) / 2;
+    d += ` C${cx.toFixed(2)},${y0.toFixed(2)} ${cx.toFixed(2)},${y.toFixed(2)} ${x.toFixed(2)},${y.toFixed(2)}`;
+  }
+  return { line: d, area: `${d} L${px(vals.length - 1).toFixed(2)},${h} L${px(0).toFixed(2)},${h} Z` };
+};
+INV.lineChart = function (vals, opts) {
+  const o = Object.assign({ w: 320, h: 130, pad: 10, id: '' }, opts || {});
+  if (!vals || vals.length < 2) return `<div class="inv-empty tiny muted">No chart data</div>`;
+  const up = vals[vals.length - 1] >= vals[0];
+  const color = up ? 'var(--success)' : 'var(--danger)';
+  const { line, area } = INV.smooth(vals, o.w, o.h, o.pad);
+  const gid = 'g' + Math.random().toString(36).slice(2, 8);
+  return `<svg viewBox="0 0 ${o.w} ${o.h}" preserveAspectRatio="none" class="inv-svg" aria-hidden="true">
+    <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="${color}" stop-opacity=".34"/>
+      <stop offset="100%" stop-color="${color}" stop-opacity="0"/>
+    </linearGradient></defs>
+    <path d="${area}" fill="url(#${gid})"/>
+    <path d="${line}" fill="none" stroke="${color}" stroke-width="2.1" stroke-linecap="round"
+      vector-effect="non-scaling-stroke"/>
+  </svg>`;
+};
+INV.candleChart = function (vals, opts) {
+  const o = Object.assign({ w: 320, h: 130, pad: 10 }, opts || {});
+  if (!vals || vals.length < 2) return `<div class="inv-empty tiny muted">No chart data</div>`;
+  const n = Math.min(vals.length, 70);
+  const slice = vals.slice(-n);
+  const min = Math.min(...slice), max = Math.max(...slice);
+  const span = max - min || 1;
+  const bw = (o.w - o.pad * 2) / n;
+  const py = v => o.h - o.pad - ((v - min) / span) * (o.h - o.pad * 2);
+  let out = '';
+  for (let i = 0; i < n; i++) {
+    const close = slice[i];
+    const open = i === 0 ? close : slice[i - 1];
+    const hi = Math.max(open, close) * (1 + Math.random() * 0.004);
+    const lo = Math.min(open, close) * (1 - Math.random() * 0.004);
+    const up = close >= open;
+    const col = up ? 'var(--success)' : 'var(--danger)';
+    const x = o.pad + i * bw + bw / 2;
+    const bodyTop = py(Math.max(open, close)), bodyBot = py(Math.min(open, close));
+    out += `<line x1="${x.toFixed(1)}" y1="${py(hi).toFixed(1)}" x2="${x.toFixed(1)}" y2="${py(lo).toFixed(1)}" stroke="${col}" stroke-width="1"/>
+      <rect x="${(x - Math.max(1, bw * 0.3)).toFixed(1)}" y="${bodyTop.toFixed(1)}" width="${Math.max(1.4, bw * 0.6).toFixed(1)}"
+        height="${ Math.max(1, bodyBot - bodyTop).toFixed(1)}" fill="${col}" rx=".6"/>`;
+  }
+  return `<svg viewBox="0 0 ${o.w} ${o.h}" preserveAspectRatio="none" class="inv-svg" aria-hidden="true">${out}</svg>`;
+};
+INV.spark = function (t) {
+  const vals = INV.series(t, '1D');
+  if (vals.length < 2) return '';
+  const up = vals[vals.length - 1] >= vals[0];
+  const { line } = INV.smooth(vals, 90, 30, 2);
+  return `<svg viewBox="0 0 90 30" preserveAspectRatio="none" class="inv-spark">
+    <path d="${line}" fill="none" stroke="${up ? 'var(--success)' : 'var(--danger)'}" stroke-width="1.7"
+      vector-effect="non-scaling-stroke" stroke-linecap="round"/></svg>`;
+};
+INV.donut = function (slices) {
+  const total = slices.reduce((s, x) => s + x.value, 0);
+  const R = 54, C = 2 * Math.PI * R;
+  let off = 0, out = '';
+  const cols = ['#2ee6c9', '#3aa0ff', '#8b7bff', '#ffc861', '#2fd6a6', '#ff7bb0', '#5ad1ff', '#ff9f5a'];
+  slices.forEach((s, i) => {
+    const frac = total ? s.value / total : 0;
+    const len = Math.max(0, frac * C - 2);
+    out += `<circle cx="60" cy="60" r="${R}" fill="none" stroke="${cols[i % cols.length]}" stroke-width="14"
+      stroke-dasharray="${len.toFixed(2)} ${(C - len).toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}"
+      transform="rotate(-90 60 60)" stroke-linecap="butt"/>`;
+    off += frac * C;
+  });
+  return `<svg viewBox="0 0 120 120" class="inv-donut">${out}
+    <text x="60" y="57" text-anchor="middle" fill="var(--muted)" font-size="7.5" font-family="Inter,sans-serif">ALLOCATION</text>
+    <text x="60" y="70" text-anchor="middle" fill="var(--text)" font-size="12" font-weight="700" font-family="Sora,Inter,sans-serif">${slices.length}</text>
+    <text x="60" y="79" text-anchor="middle" fill="var(--muted)" font-size="6.5" font-family="Inter,sans-serif">POSITIONS</text></svg>`;
+};
+
+/* ------------------------------ portfolio maths ------------------------------ */
+INV.portfolio = function (userId) {
+  const hs = INV.holdings(userId);
+  let valueUsd = 0, costUsd = 0, dayUsd = 0;
+  hs.forEach(h => {
+    const q = INV.quote(h.ticker); if (!q) return;
+    valueUsd += h.shares * q.price;
+    costUsd += h.shares * h.avgPrice;
+    dayUsd += h.shares * (q.price - q.prevClose);
+  });
+  const u = findUser(userId || me().id) || me();
+  return {
+    holdings: hs, valueUsd, costUsd, dayUsd,
+    earningsUsd: valueUsd - costUsd,
+    dayPct: (valueUsd - dayUsd) ? (dayUsd / (valueUsd - dayUsd)) * 100 : 0,
+    earnPct: costUsd ? ((valueUsd - costUsd) / costUsd) * 100 : 0,
+    valueCoins: usdToCoins(valueUsd),
+    cashCoins: (u && u.balance) || 0
+  };
+};
+INV.portfolioSeries = function (tf, userId) {
+  const hs = INV.holdings(userId);
+  if (!hs.length) return [];
+  const series = hs.map(h => INV.series(h.ticker, tf));
+  const len = Math.min(...series.map(s => s.length));
+  if (!len) return [];
+  const out = [];
+  for (let i = 0; i < len; i++) {
+    let v = 0;
+    hs.forEach((h, k) => { v += h.shares * (series[k][i] || series[k][len - 1] || h.avgPrice); });
+    out.push(v);
+  }
+  return out;
+};
+INV.news = function (s) {
+  const pools = [
+    [`${s.name} beats quarterly estimates as margins hold`, 'Revenue topped consensus with management reiterating full-year guidance.'],
+    [`Analysts raise ${s.ticker} price target after strong demand`, 'Several desks lifted targets citing durable growth and pricing power.'],
+    [`${s.ticker} announces expanded ${s.sector.toLowerCase()} roadmap`, 'The company outlined new product lines and capital allocation priorities.'],
+    [`What the latest ${s.sector} rotation means for ${s.ticker}`, 'Sector flows shifted this week as investors repositioned around rate expectations.'],
+    [`${s.ceo} outlines next phase of ${s.name} strategy`, 'Leadership detailed operational priorities and investment in AI-driven efficiency.']
+  ];
+  const rnd = mulberry32(seedOf(s.ticker + 'news'));
+  return pools.map((p, i) => ({
+    title: p[0], body: p[1],
+    src: ['Market Wire', 'Whale Research', 'Global Business Daily', 'Sector Brief', 'Investor Desk'][i % 5],
+    ago: Math.floor(rnd() * 20) + 1
+  }));
+};
+
+/* ------------------------------ small view atoms ------------------------------ */
+INV.logoHTML = function (s, size) {
+  const sz = size || 38;
+  return `<span class="inv-logo" style="width:${sz}px;height:${sz}px;background:linear-gradient(135deg,${s.color},${s.color}bb)">
+    <b style="font-size:${Math.round(sz * 0.34)}px">${esc(s.ticker.slice(0, 3))}</b></span>`;
+};
+INV.chgClass = function (v) { return v > 0 ? 'up' : v < 0 ? 'down' : ''; };
+INV.chgHTML = function (q, cls) {
+  const c = INV.chgClass(q.changePct);
+  return `<span class="inv-chg ${c} ${cls || ''}" data-lv="pct:${q.ticker || ''}">${q.changePct >= 0 ? '+' : ''}${q.changePct.toFixed(2)}%</span>`;
+};
+INV.feeLine = function () { return INV.fee() ? `Includes ${INV.fee()}% trading fee` : 'No trading fee'; };
+
+/* ------------------------------ INVEST router ------------------------------ */
+VIEWS.invest = function (parts, params) {
+  const u = me();
+  const sub = parts[1] || '';
+  if (sub === 'market') return INV.viewMarket(params);
+  if (sub === 'stock') return INV.viewStock(parts[2], params);
+  if (sub === 'watchlist') return INV.viewWatchlist();
+  if (sub === 'orders') return INV.viewOrders();
+  return INV.viewDash(params);
+};
+
+INV.seg = function (tf) {
+  const list = ['1D', '1W', '1M', '3M', '1Y', 'ALL'];
+  return `<div class="inv-seg">${list.map(x => `<a href="#/invest?tf=${x}" class="inv-segbtn ${x === tf ? 'on' : ''}">${x}</a>`).join('')}</div>`;
+};
+
+INV.viewDash = function (params) {
+  const u = me();
+  const p = INV.portfolio(u.id);
+  const tf = (params && params.tf && ['1D', '1W', '1M', '3M', '1Y', 'ALL'].includes(params.tf)) ? params.tf : '1M';
+  const series = INV.portfolioSeries(tf, u.id);
+  const hasHold = p.holdings.length > 0;
+
+  const sliceMap = {};
+  p.holdings.forEach(h => { const q = INV.quote(h.ticker); if (q) sliceMap[h.ticker] = h.shares * q.price; });
+  const slices = Object.keys(sliceMap).map(t => ({ ticker: t, value: sliceMap[t] })).sort((a, b) => b.value - a.value);
+  const cols = ['#2ee6c9', '#3aa0ff', '#8b7bff', '#ffc861', '#2fd6a6', '#ff7bb0', '#5ad1ff', '#ff9f5a'];
+
+  const quick = [
+    { ic: 'download', label: 'Deposit', nav: '#/deposit' },
+    { ic: 'send', label: 'Withdraw', nav: '#/withdraw' },
+    { ic: 'trend', label: 'Buy', nav: '#/invest/market' },
+    { ic: 'wallet', label: 'Sell', nav: hasHold ? '#/invest/orders' : '#/invest/market' },
+    { ic: 'star', label: 'Watchlist', nav: '#/invest/watchlist' }
+  ];
+
+  return `
+  <div class="page-head">
+    <div class="between">
+      <div><div class="section-title" style="margin:0">Invest</div></div>
+      <div class="row" style="gap:8px">
+        <a href="#/invest/orders" class="btn btn-sm btn-ghost">${ic('clock', 14)} Orders</a>
+        <a href="#/invest/market" class="btn btn-sm btn-soft">${ic('search', 14)} Market</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="inv-hero">
+    <div class="tiny muted">Total portfolio value</div>
+    <div class="inv-big"><span data-lv="pv-coins">${coins(p.valueCoins)}</span> <span class="inv-unit">WC</span></div>
+    <div class="tiny muted" data-lv="pv-usd">≈ ${usd(p.valueUsd)} USD</div>
+    <div class="inv-day ${INV.chgClass(p.dayUsd)}">
+      ${ic(p.dayUsd >= 0 ? 'trend' : 'down', 14)}
+      <b>${p.dayUsd >= 0 ? '+' : '−'}${usd(Math.abs(p.dayUsd))}</b>
+      <span>(${p.dayUsd >= 0 ? '+' : '−'}${Math.abs(p.dayPct).toFixed(2)}%) today</span>
+    </div>
+    <div class="inv-hero-grid">
+      <div><span class="tiny muted">Invested</span><b data-lv="pv-cost">${coins(usdToCoins(p.costUsd))} WC</b></div>
+      <div><span class="tiny muted">Earnings</span><b class="${INV.chgClass(p.earningsUsd)}" data-lv="pv-earn">${p.earningsUsd >= 0 ? '+' : '−'}${coins(usdToCoins(Math.abs(p.earningsUsd)))} WC</b></div>
+      <div><span class="tiny muted">Available cash</span><b data-lv="cash">${coins(u.balance)} WC</b></div>
+    </div>
+  </div>
+
+  <div class="inv-actions">${quick.map(q => `<a href="${q.nav}" class="inv-act"><span class="inv-act-ic">${ic(q.ic, 18)}</span><span>${q.label}</span></a>`).join('')}</div>
+
+  <div class="card inv-chartcard">
+    <div class="between" style="align-items:center">
+      <div><div class="card-title" style="margin:0">Portfolio performance</div>
+        <div class="tiny muted">${hasHold ? tf + ' · live simulation' : 'No positions yet'}</div></div>
+      ${INV.seg(tf)}
+    </div>
+    <div class="inv-chart" data-chart="__portfolio__|${tf}|line">
+      ${hasHold ? INV.lineChart(series, { h: 150 }) : `<div class="inv-empty">${ic('trend', 26)}<p class="small muted">Buy your first stock to start tracking performance.</p><a href="#/invest/market" class="btn btn-sm btn-primary">Explore market</a></div>`}
+    </div>
+  </div>
+
+  <div class="inv-two">
+    <div class="card">
+      <div class="card-title">Allocation</div>
+      ${slices.length ? `<div class="inv-alloc">${INV.donut(slices)}
+        <div class="inv-legend">${slices.slice(0, 6).map((s, i) => `<div class="row" style="gap:7px;align-items:center">
+          <i style="width:8px;height:8px;border-radius:3px;background:${cols[i % cols.length]};display:inline-block"></i>
+          <span class="tiny ellipsis grow">${esc(s.ticker)}</span>
+          <span class="tiny muted">${((s.value / (p.valueUsd || 1)) * 100).toFixed(0)}%</span></div>`).join('')}</div></div>`
+        : `<div class="inv-empty"><p class="small muted">Allocation appears once you own stocks.</p></div>`}
+    </div>
+
+    <div class="card">
+      <div class="between"><div class="card-title" style="margin:0">My holdings</div>
+        <span class="tiny muted">${p.holdings.length} position${p.holdings.length === 1 ? '' : 's'}</span></div>
+      ${hasHold ? `<div class="inv-list">${p.holdings.map(h => {
+        const s = INV.stock(h.ticker) || { ticker: h.ticker, name: h.ticker, color: '#3aa0ff' };
+        const q = INV.quote(h.ticker) || { price: h.avgPrice, prevClose: h.avgPrice, changePct: 0 };
+        const val = h.shares * q.price;
+        const pl = val - h.shares * h.avgPrice;
+        const plPct = (h.avgPrice ? (q.price / h.avgPrice - 1) * 100 : 0);
+        return `<a class="inv-row" href="#/invest/stock/${s.ticker}">
+          ${INV.logoHTML(s)}
+          <div class="grow" style="min-width:0">
+            <div class="small ellipsis" style="font-weight:650">${esc(s.name)}</div>
+            <div class="tiny muted">${h.shares.toFixed(4)} sh · avg ${usd(h.avgPrice)}</div>
+          </div>
+          <div style="text-align:right">
+            <div class="small" style="font-weight:650" data-lv="price:${s.ticker}">${usd(q.price)}</div>
+            <div class="tiny ${INV.chgClass(pl)}">${pl >= 0 ? '+' : '−'}${usd(Math.abs(pl))} (${plPct >= 0 ? '+' : '−'}${Math.abs(plPct).toFixed(2)}%)</div>
+          </div></a>`;
+      }).join('')}</div>` : `<div class="inv-empty">${ic('bag', 26)}<p class="small muted">Your portfolio is empty. Every WhaleChat user starts with zero positions — no demo data.</p><a href="#/invest/market" class="btn btn-sm btn-primary">Browse stocks</a></div>`}
+    </div>
+  </div>
+
+  <div class="card inv-note">${ic('shield', 14)} <span class="tiny">Prices on this build are <b>simulated</b> for demonstration, moving every 5 seconds. Trades settle instantly against your Whale Coin balance at 1 WC = $0.50.</span></div>`;
+};
+
+/* ------------------------------ market ------------------------------ */
+INV.marketCat = 'Top Gainers';
+INV.marketQuery = '';
+INV.CATS = ['Top Gainers', 'Top Losers', 'Most Traded', 'Trending', 'Technology', 'Crypto', 'Dividend', 'New'];
+
+INV.marketFiltered = function () {
+  let list = INV.stocks();
+  const q = INV.marketQuery.trim().toLowerCase();
+  if (q) {
+    list = list.filter(s => s.ticker.toLowerCase().includes(q) || s.name.toLowerCase().includes(q) || (s.sector || '').toLowerCase().includes(q));
+  } else {
+    const cat = INV.marketCat;
+    if (cat === 'Top Gainers') list = list.sort((a, b) => (INV.quote(b.ticker).changePct) - (INV.quote(a.ticker).changePct));
+    else if (cat === 'Top Losers') list = list.sort((a, b) => (INV.quote(a.ticker).changePct) - (INV.quote(b.ticker).changePct));
+    else if (cat === 'Most Traded') list = list.sort((a, b) => (INV.quote(b.ticker).vol) - (INV.quote(a.ticker).vol));
+    else if (cat === 'Trending') list = list.slice().sort((a, b) => Math.abs(INV.quote(b.ticker).changePct) - Math.abs(INV.quote(a.ticker).changePct));
+    else if (cat === 'Crypto') list = list.filter(s => s.crypto);
+    else if (cat === 'Dividend') list = list.filter(s => (s.div || 0) > 0).sort((a, b) => b.div - a.div);
+    else if (cat === 'New') list = list.filter(s => s.isNew || s.custom).slice().reverse();
+    else list = list.filter(s => s.sector === cat);
+  }
+  return list;
+};
+INV.cardHTML = function (s) {
+  const q = INV.quote(s.ticker);
+  const c = INV.chgClass(q.changePct);
+  return `<a class="inv-mcard" href="#/invest/stock/${s.ticker}">
+    <div class="row" style="gap:9px;align-items:center">
+      ${INV.logoHTML(s, 32)}
+      <div class="grow" style="min-width:0">
+        <div class="small ellipsis" style="font-weight:700">${esc(s.ticker)}</div>
+        <div class="tiny muted ellipsis">${esc(s.name)}</div>
+      </div>
+      ${s.paused || INV.paused(s.ticker) ? `<span class="badge badge-warn" style="font-size:9px">Paused</span>` : ''}
+    </div>
+    <div class="inv-sparkwrap" data-spark="${s.ticker}">${INV.spark(s.ticker)}</div>
+    <div class="between" style="align-items:flex-end;margin-top:2px">
+      <div>
+        <div class="small" style="font-weight:700" data-lv="price:${s.ticker}">${usd(q.price)}</div>
+        <div class="tiny muted" data-lv="wc:${s.ticker}">${coins(usdToCoins(q.price))} WC</div>
+      </div>
+      <span class="inv-chg ${c} ${q.dir > 0 ? 'flash-up' : q.dir < 0 ? 'flash-down' : ''}" data-lv="pct:${s.ticker}">${q.changePct >= 0 ? '+' : ''}${q.changePct.toFixed(2)}%</span>
+    </div></a>`;
+};
+INV.viewMarket = function () {
+  const list = INV.marketFiltered();
+  return `
+  <div class="page-head"><div class="between">
+    <div class="row" style="gap:10px;align-items:center"><a href="#/invest" class="btn-icon">${ic('back', 18)}</a>
+      <div class="section-title" style="margin:0">Market</div></div>
+    <a href="#/invest/watchlist" class="btn btn-sm btn-ghost">${ic('star', 14)} Watchlist</a>
+  </div></div>
+  <div class="searchbar" style="margin-bottom:10px">${ic('search', 17)}
+    <input id="ivSearch" placeholder="Search company or ticker — AAPL, TSLA, NVDA…" value="${esc(INV.marketQuery)}" autocomplete="off"/></div>
+  <div class="chip-row inv-cats" id="ivCats">${INV.CATS.map(c => `<button class="chip ${c === INV.marketCat && !INV.marketQuery ? 'on' : ''}" data-act="inv-cat" data-cat="${esc(c)}">${esc(c)}</button>`).join('')}</div>
+  <div class="inv-grid" id="ivList">${list.length ? list.map(INV.cardHTML).join('') : `<div class="inv-empty" style="grid-column:1/-1">${ic('search', 26)}<p class="small muted">No stocks match “${esc(INV.marketQuery)}”.</p></div>`}</div>
+  <div class="card inv-note">${ic('help', 14)} <span class="tiny">Simulated market data, refreshed every 5 seconds. Connect a market data API in Admin → Stocks to switch to live quotes.</span></div>`;
+};
+AFTER.invest = function (parts) {
+  const sub = parts[1] || '';
+  if (sub === 'market') {
+    const inp = document.getElementById('ivSearch');
+    if (inp) {
+      if (INV.marketQuery) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+      inp.addEventListener('input', () => {
+        INV.marketQuery = inp.value;
+        const box = document.getElementById('ivList');
+        const list = INV.marketFiltered();
+        if (box) box.innerHTML = list.length ? list.map(INV.cardHTML).join('')
+          : `<div class="inv-empty" style="grid-column:1/-1">${ic('search', 26)}<p class="small muted">No matches.</p></div>`;
+        $$('#ivCats .chip').forEach(c => c.classList.toggle('on', !INV.marketQuery && c.dataset.cat === INV.marketCat));
+      });
+    }
+  }
+  if (sub === 'stock') INV.bindTrade();
+};
+
+/* ------------------------------ stock details ------------------------------ */
+INV.tradeMode = 'market';
+INV.viewStock = function (rawTicker, params) {
+  const u = me();
+  const s = INV.stock(String(rawTicker || '').toUpperCase());
+  if (!s) return `<div class="empty">${ic('search', 26)}<h3>Stock not found</h3><p>That ticker is not listed on WhaleChat Invest.</p><a href="#/invest/market" class="btn btn-primary">Back to market</a></div>`;
+  const q = INV.quote(s.ticker);
+  const tf = (params && ['1D', '1W', '1M', '3M', '1Y', 'ALL'].includes(params.tf)) ? params.tf : '1D';
+  const mode = (params && params.mode === 'candle') ? 'candle' : 'line';
+  const vals = INV.series(s.ticker, tf);
+  const all = INV.series(s.ticker, 'ALL');
+  const hi52 = Math.max(...all), lo52 = Math.min(...all);
+  const hold = INV.holding(s.ticker, u.id);
+  const watching = INV.watching(s.ticker);
+  const paused = INV.paused(s.ticker);
+  const fee = INV.fee();
+  const news = INV.news(s);
+  const chart = mode === 'candle' ? INV.candleChart(vals) : INV.lineChart(vals, { h: 150 });
+  const chg = q.changePct;
+  const links = tfList => tfList.map(x => `#/invest/stock/${s.ticker}?tf=${x}&mode=${mode}`);
+
+  return `
+  <div class="page-head"><div class="between">
+    <div class="row" style="gap:10px;align-items:center">
+      <a href="#/invest/market" class="btn-icon">${ic('back', 18)}</a>
+      <div class="row" style="gap:9px;align-items:center">${INV.logoHTML(s, 34)}
+        <div><div class="small" style="font-weight:700">${esc(s.name)}</div>
+        <div class="tiny muted">${esc(s.ticker)} · ${esc(s.sector)}</div></div></div>
+    </div>
+    <div class="row" style="gap:6px">
+      <button class="btn btn-sm ${watching ? 'btn-soft' : 'btn-ghost'}" data-act="inv-star" data-t="${s.ticker}">
+        ${ic('star', 15)} ${watching ? 'Watching' : 'Watch'}</button>
+      <button class="btn btn-sm btn-ghost" data-act="inv-alert" data-t="${s.ticker}">${ic('bell', 15)}</button>
+    </div>
+  </div></div>
+
+  <div class="card inv-pricecard">
+    <div class="between" style="align-items:flex-end">
+      <div>
+        <div class="inv-price" data-lv="price:${s.ticker}">${usd(q.price)}</div>
+        <div class="tiny muted" data-lv="wc:${s.ticker}">${coins(usdToCoins(q.price))} WC</div>
+      </div>
+      <div class="inv-chg ${INV.chgClass(chg)}" data-lv="pct:${s.ticker}">
+        ${chg >= 0 ? '▲' : '▼'} ${Math.abs(chg).toFixed(2)}% · ${usd(Math.abs(q.changeUsd))}</div>
+    </div>
+    ${paused ? `<div class="inv-paused">${ic('pause', 13)} Trading is paused for ${esc(s.ticker)} by an administrator.</div>` : ''}
+    <div class="between" style="margin-top:10px;align-items:center">
+      <div class="inv-seg">${['1D', '1W', '1M', '1Y', 'ALL'].map((x, i) => `<a href="${links([x])[0]}" class="inv-segbtn ${x === tf ? 'on' : ''}">${x}</a>`).join('')}</div>
+      <div class="inv-seg">
+        <a href="#/invest/stock/${s.ticker}?tf=${tf}&mode=line" class="inv-segbtn ${mode === 'line' ? 'on' : ''}">Line</a>
+        <a href="#/invest/stock/${s.ticker}?tf=${tf}&mode=candle" class="inv-segbtn ${mode === 'candle' ? 'on' : ''}">Candles</a>
+      </div>
+    </div>
+    <div class="inv-chart" data-chart="${s.ticker}|${tf}|${mode}">${chart}</div>
+    <div class="tiny muted center" style="margin-top:4px">Live simulated feed · updates every 5s</div>
+  </div>
+
+  <div class="inv-two">
+    <div class="card">
+      <div class="card-title">Trade</div>
+      <div class="inv-mode">
+        <button class="inv-modebtn ${INV.tradeMode === 'market' ? 'on' : ''}" data-act="inv-mode" data-mode="market">Market</button>
+        <button class="inv-modebtn ${INV.tradeMode === 'limit' ? 'on' : ''}" data-act="inv-mode" data-mode="limit">Limit</button>
+      </div>
+      ${INV.tradeMode === 'limit' ? `<div class="field"><label class="label">Limit price (USD)</label>
+        <input class="input" id="ivLimit" type="number" step="0.01" min="0" value="${q.price.toFixed(2)}"/></div>` : ''}
+      <div class="field"><label class="label">Amount in USD</label>
+        <div class="input-wrap"><span class="inv-prefix">$</span>
+          <input class="input" id="ivUsd" type="number" step="0.01" min="0" placeholder="0.00"/></div></div>
+      <div class="field"><label class="label">Amount in Whale Coin</label>
+        <div class="input-wrap"><span class="inv-prefix">WC</span>
+          <input class="input" id="ivCoins" type="number" step="0.01" min="0" placeholder="0.00"/></div></div>
+      <div class="field"><label class="label">Shares</label>
+        <input class="input" id="ivQty" type="number" step="0.0001" min="0" placeholder="0.0000"/></div>
+      <div class="inv-sum" id="ivSum">
+        <div class="between"><span class="tiny muted">Estimated cost</span><b class="tiny" id="ivCost">${coins(0)} WC</b></div>
+        <div class="between"><span class="tiny muted">Fee (${fee}%)</span><b class="tiny" id="ivFee">${coins(0)} WC</b></div>
+        <div class="between"><span class="tiny muted">Balance after trade</span><b class="tiny" id="ivAfter">${coins(u.balance)} WC</b></div>
+        <div class="between"><span class="tiny muted">You own</span><b class="tiny" id="ivOwned">${hold ? hold.shares.toFixed(4) : '0.0000'} sh</b></div>
+      </div>
+      <div class="row" style="gap:8px;margin-top:10px">
+        <button class="btn btn-primary grow" data-act="inv-trade" data-side="buy" data-t="${s.ticker}" ${paused ? 'disabled' : ''}>${ic('trend', 16)} Buy stock</button>
+        <button class="btn btn-ghost grow" data-act="inv-trade" data-side="sell" data-t="${s.ticker}" ${paused || !hold ? 'disabled' : ''}>Sell${hold ? ' ' + hold.shares.toFixed(2) : ''}</button>
+      </div>
+      <div class="tiny muted center mt6">${ic('lock', 11)} Requires your transaction PIN · settles instantly from Whale Coin balance</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Key statistics</div>
+      <div class="inv-statgrid">
+        <div><span class="tiny muted">Open</span><b>${usd(q.open)}</b></div>
+        <div><span class="tiny muted">Day high</span><b>${usd(q.dayHigh)}</b></div>
+        <div><span class="tiny muted">Day low</span><b>${usd(q.dayLow)}</b></div>
+        <div><span class="tiny muted">Volume</span><b>${(q.vol / 1e6).toFixed(1)}M</b></div>
+        <div><span class="tiny muted">Market cap</span><b>$${(s.mcap || 0).toFixed(0)}B</b></div>
+        <div><span class="tiny muted">P/E ratio</span><b>${s.pe ? s.pe.toFixed(1) : '—'}</b></div>
+        <div><span class="tiny muted">52W high</span><b>${usd(hi52)}</b></div>
+        <div><span class="tiny muted">52W low</span><b>${usd(lo52)}</b></div>
+        <div><span class="tiny muted">Dividend</span><b>${s.div ? s.div.toFixed(2) + '%' : 'None'}</b></div>
+        <div><span class="tiny muted">Your avg</span><b>${hold ? usd(hold.avgPrice) : '—'}</b></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="inv-two">
+    <div class="card">
+      <div class="card-title">About ${esc(s.name)}</div>
+      <p class="small" style="line-height:1.65;margin:0 0 10px">${esc(s.about || '')}</p>
+      <div class="kv"><span class="k">Sector</span><span class="v">${esc(s.sector)}</span></div>
+      <div class="kv"><span class="k">CEO</span><span class="v">${esc(s.ceo || '—')}</span></div>
+      <div class="kv"><span class="k">Website</span><span class="v"><a class="link" href="https://${esc(s.website || '')}" target="_blank" rel="noopener">${esc(s.website || '—')}</a></span></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Latest news</div>
+      ${news.map(n => `<div class="inv-news"><div class="tiny muted">${esc(n.src)} · ${n.ago}h ago</div>
+        <div class="small" style="font-weight:650;margin:2px 0 3px">${esc(n.title)}</div>
+        <div class="tiny muted" style="line-height:1.55">${esc(n.body)}</div></div>`).join('')}
+      <div class="tiny muted mt6">Simulated editorial content for this build.</div>
+    </div>
+  </div>`;
+};
+
+INV.bindTrade = function () {
+  const usdEl = document.getElementById('ivUsd');
+  const coinEl = document.getElementById('ivCoins');
+  const qtyEl = document.getElementById('ivQty');
+  if (!usdEl || !coinEl || !qtyEl) return;
+  const u = me();
+  const t = (location.hash.split('/')[3] || '').split('?')[0];
+  const s = INV.stock(t); if (!s) return;
+  const q = INV.quote(s.ticker);
+  const price = q.price;
+  const fee = INV.fee() / 100;
+
+  const paint = () => {
+    const qty = Number(qtyEl.value) || 0;
+    const grossUsd = qty * price;
+    const feeUsd = grossUsd * fee;
+    const totalUsd = grossUsd + feeUsd;
+    const costCoins = usdToCoins(totalUsd);
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+    set('ivCost', coins(costCoins) + ' WC');
+    set('ivFee', coins(usdToCoins(feeUsd)) + ' WC');
+    set('ivAfter', coins(u.balance - costCoins) + ' WC');
+    const hold = INV.holding(s.ticker, u.id);
+    set('ivOwned', ((hold ? hold.shares : 0) + qty).toFixed(4) + ' sh');
+  };
+  const fromUsd = () => {
+    const v = Math.max(0, Number(usdEl.value) || 0);
+    coinEl.value = v ? String(Math.round(usdToCoins(v) * 100) / 100) : '';
+    qtyEl.value = v ? String(Math.round((v / price) * 10000) / 10000) : '';
+    paint();
+  };
+  const fromCoins = () => {
+    const c = Math.max(0, Number(coinEl.value) || 0);
+    const v = coinsToUsd(c);
+    usdEl.value = c ? v.toFixed(2) : '';
+    qtyEl.value = c ? String(Math.round((v / price) * 10000) / 10000) : '';
+    paint();
+  };
+  const fromQty = () => {
+    const qty = Math.max(0, Number(qtyEl.value) || 0);
+    const v = qty * price;
+    usdEl.value = qty ? v.toFixed(2) : '';
+    coinEl.value = qty ? String(Math.round(usdToCoins(v) * 100) / 100) : '';
+    paint();
+  };
+  usdEl.addEventListener('input', fromUsd);
+  coinEl.addEventListener('input', fromCoins);
+  qtyEl.addEventListener('input', fromQty);
+  const maxBtn = document.getElementById('ivMax');
+  if (maxBtn) maxBtn.onclick = () => { usdEl.value = (coinsToUsd(u.balance) / (1 + fee)).toFixed(2); fromUsd(); };
+  paint();
+};
+
+/* ------------------------------ trade execution ------------------------------ */
+INV.execute = async function (side, ticker, shares, opts) {
+  const o = opts || {};
+  const u = me();
+  const s = INV.stock(ticker);
+  if (!u || !s) return false;
+  const q = INV.quote(ticker);
+  const price = o.fillPrice || q.price;
+  const feePct = INV.fee() / 100;
+  if (INV.paused(ticker)) { toast(`${ticker} trading is paused`, 'err'); return false; }
+  if (!(shares > 0)) { toast('Enter a quantity of shares', 'err'); return false; }
+
+  const grossUsd = shares * price;
+  const feeUsd = grossUsd * feePct;
+  const netUsd = side === 'buy' ? grossUsd + feeUsd : grossUsd - feeUsd;
+  const coinsDelta = usdToCoins(netUsd);
+
+  if (side === 'buy' && u.balance < coinsDelta) {
+    toast(`Need ${coins(coinsDelta)} WC — top up your wallet`, 'err');
+    return false;
+  }
+  const hold = INV.holding(ticker, u.id);
+  if (side === 'sell' && (!hold || hold.shares + 1e-9 < shares)) {
+    toast(`You only own ${hold ? hold.shares.toFixed(4) : 0} shares`, 'err');
+    return false;
+  }
+
+  if (!o.limit && !o.noPin) {
+    if (!u.pin) { toast('Create your transaction PIN first', 'err'); go('set-pin'); return false; }
+    const pin = await askPin({ title: side === 'buy' ? 'Confirm purchase' : 'Confirm sale', sub: `Enter your PIN to ${side} ${shares.toFixed(4)} ${ticker}` });
+    if (!pin) return false;
+    if (await hash('pin::' + pin) !== u.pin) { toast('Incorrect PIN', 'err'); return false; }
+  }
+
+  // apply balances
+  if (side === 'buy') {
+    u.balance = Math.round((u.balance - coinsDelta) * 100) / 100;
+    if (hold) {
+      const newShares = hold.shares + shares;
+      hold.avgPrice = Math.round(((hold.shares * hold.avgPrice) + grossUsd) / newShares * 10000) / 10000;
+      hold.shares = newShares;
+      hold.updatedAt = Date.now();
+    } else {
+      DB.holdings.push({ id: uid('hd'), userId: u.id, ticker, shares, avgPrice: Math.round(price * 100) / 100, createdAt: Date.now(), updatedAt: Date.now() });
+    }
+  } else {
+    u.balance = Math.round((u.balance + coinsDelta) * 100) / 100;
+    hold.shares = Math.round((hold.shares - shares) * 1e8) / 1e8;
+    if (hold.shares <= 1e-7) DB.holdings = DB.holdings.filter(h => h.id !== hold.id);
+    hold.updatedAt = Date.now();
+  }
+  const plUsd = side === 'sell' && hold ? (price - hold.avgPrice) * shares : 0;
+
+  if (o.orderId) {
+    const rec = DB.trades.find(x => x.id === o.orderId);
+    if (rec) { rec.status = 'Completed'; rec.priceUsd = price; rec.coins = coinsDelta; rec.filledAt = Date.now(); }
+  } else {
+    DB.trades.unshift({
+      id: uid('tr'), userId: u.id, ticker, name: s.name, side,
+      shares, priceUsd: Math.round(price * 100) / 100, coins: coinsDelta,
+      feeCoins: usdToCoins(feeUsd), type: o.limit ? 'limit' : 'market',
+      status: 'Completed', limitUsd: o.limitUsd || null,
+      plUsd: Math.round(plUsd * 100) / 100, createdAt: Date.now()
+    });
+  }
+  tx(u.id, 'stock-' + side, `${side === 'buy' ? 'Bought' : 'Sold'} ${shares.toFixed(4)} ${ticker} @ ${usd(price)}`,
+    side === 'buy' ? -coinsDelta : coinsDelta, { ticker, shares, priceUsd: price });
+  notify(u.id, side === 'buy' ? 'Purchase complete' : 'Sale complete',
+    `${side === 'buy' ? 'Bought' : 'Sold'} ${shares.toFixed(4)} ${ticker} @ ${usd(price)} · ${coins(coinsDelta)} WC`,
+    '#/invest/stock/' + ticker, 'trend');
+  toast(`${side === 'buy' ? 'Bought' : 'Sold'} ${shares.toFixed(4)} ${ticker}`, 'ok');
+  persist(); render();
+  return true;
+};
+
+App.invTrade = async function (id, ds) {
+  const side = ds.side === 'sell' ? 'sell' : 'buy';
+  const ticker = ds.t;
+  const qtyEl = document.getElementById('ivQty');
+  const shares = Number(qtyEl && qtyEl.value) || 0;
+  const limitEl = document.getElementById('ivLimit');
+  if (INV.tradeMode === 'limit' && limitEl) {
+    const limitUsd = Number(limitEl.value) || INV.quote(ticker).price;
+    if (!shares) return toast('Enter a quantity of shares', 'err');
+    const u = me();
+    if (!u.pin) { toast('Create your transaction PIN first', 'err'); return go('set-pin'); }
+    const pin = await askPin({ title: 'Confirm limit order', sub: `Enter your PIN to place this ${side} order` });
+    if (!pin) return;
+    if (await hash('pin::' + pin) !== u.pin) return toast('Incorrect PIN', 'err');
+    DB.trades.unshift({
+      id: uid('tr'), userId: u.id, ticker, name: (INV.stock(ticker) || {}).name, side, shares,
+      priceUsd: limitUsd, limitUsd, coins: usdToCoins(shares * limitUsd),
+      feeCoins: usdToCoins(shares * limitUsd * INV.fee() / 100), type: 'limit', status: 'Pending',
+      plUsd: 0, createdAt: Date.now()
+    });
+    notify(u.id, 'Limit order placed', `${side === 'buy' ? 'Buy' : 'Sell'} ${shares} ${ticker} at ${usd(limitUsd)} — waiting for the market.`,
+      '#/invest/orders', 'clock');
+    persist(); render(); toast('Limit order placed — it fills when the price is reached', 'ok');
+    return;
+  }
+  await INV.execute(side, ticker, shares, {});
+};
+App.invMode = function (id, ds) { INV.tradeMode = ds.mode === 'limit' ? 'limit' : 'market'; render(); };
+App.invCat = function (id, ds) { INV.marketCat = ds.cat; INV.marketQuery = ''; render(); };
+App.invStar = function (id, ds) {
+  const u = me(), t = ds.t;
+  const i = DB.watchlist.findIndex(w => w.userId === u.id && w.ticker === t);
+  if (i >= 0) { DB.watchlist.splice(i, 1); toast('Removed from watchlist'); }
+  else { DB.watchlist.push({ id: uid('wl'), userId: u.id, ticker: t, createdAt: Date.now() }); toast('Added to watchlist', 'ok'); }
+  persist(); render();
+};
+App.invAlert = function (id, ds) {
+  const s = INV.stock(ds.t); if (!s) return;
+  const q = INV.quote(s.ticker);
+  openModal(modalShell(`Price alert · ${s.ticker}`, `
+    <div class="small muted" style="margin-bottom:10px">Current price ${usd(q.price)}. We will notify you in-app, by push and by email when the target is reached.</div>
+    <div class="field"><label class="label">Alert me when price is</label>
+      <select class="input" id="alDir"><option value="above">At or above</option><option value="below">At or below</option></select></div>
+    <div class="field"><label class="label">Target price (USD)</label>
+      <input class="input" id="alTarget" type="number" step="0.01" value="${q.price.toFixed(2)}"/></div>`,
+    `<button class="btn btn-ghost" data-close style="flex:1">Cancel</button>
+     <button class="btn btn-primary" id="alSave" style="flex:1">Set alert</button>`), { locked: false });
+  const btn = document.getElementById('alSave');
+  if (btn) btn.onclick = () => {
+    const dir = document.getElementById('alDir').value;
+    const target = Number(document.getElementById('alTarget').value);
+    if (!(target > 0)) return toast('Enter a target price', 'err');
+    DB.alerts.push({ id: uid('al'), userId: me().id, ticker: s.ticker, dir, target, active: true, createdAt: Date.now() });
+    closeModal(); persist();
+    if (typeof Notification !== 'undefined' && Notification.permission === 'default') { try { Notification.requestPermission(); } catch (e) {} }
+    toast(`Alert set for ${s.ticker} ${dir} ${usd(target)}`, 'ok');
+    render();
+  };
+};
+App.invDelAlert = function (id) {
+  DB.alerts = DB.alerts.filter(a => a.id !== id); persist(); render(); toast('Alert removed');
+};
+
+/* ------------------------------ watchlist ------------------------------ */
+INV.viewWatchlist = function () {
+  const u = me();
+  const rows = DB.watchlist.filter(w => w.userId === u.id);
+  const alerts = INV.alerts();
+  return `
+  <div class="page-head"><div class="between">
+    <div class="row" style="gap:10px;align-items:center"><a href="#/invest" class="btn-icon">${ic('back', 18)}</a>
+      <div class="section-title" style="margin:0">Watchlist</div></div>
+    <a href="#/invest/market" class="btn btn-sm btn-soft">${ic('plus', 14)} Add stocks</a>
+  </div></div>
+  <div class="card">
+    <div class="card-title">Starred stocks</div>
+    ${rows.length ? `<div class="inv-list">${rows.map(w => {
+      const s = INV.stock(w.ticker); if (!s) return '';
+      const q = INV.quote(s.ticker);
+      return `<a class="inv-row" href="#/invest/stock/${s.ticker}">
+        ${INV.logoHTML(s, 34)}
+        <div class="grow" style="min-width:0"><div class="small" style="font-weight:650">${esc(s.ticker)}</div>
+          <div class="tiny muted ellipsis">${esc(s.name)}</div></div>
+        <div style="text-align:right"><div class="small" style="font-weight:650" data-lv="price:${s.ticker}">${usd(q.price)}</div>
+          <div class="tiny ${INV.chgClass(q.changePct)}" data-lv="pct:${s.ticker}">${q.changePct >= 0 ? '+' : ''}${q.changePct.toFixed(2)}%</div></div>
+        <button class="btn-icon" data-act="inv-star" data-t="${s.ticker}" title="Unstar">${ic('x', 15)}</button></a>`;
+    }).join('')}</div>` : `<div class="inv-empty">${ic('star', 26)}<p class="small muted">No starred stocks yet. Tap the star on any stock to follow it.</p></div>`}
+  </div>
+  <div class="card">
+    <div class="card-title">Price alerts</div>
+    ${alerts.length ? `<div class="inv-list">${alerts.map(a => {
+      const q = INV.quote(a.ticker);
+      const hit = !a.active;
+      return `<div class="inv-row">
+        <div class="grow"><div class="small" style="font-weight:650">${esc(a.ticker)} ${a.dir === 'above' ? '≥' : '≤'} ${usd(a.target)}</div>
+          <div class="tiny muted">Now ${usd(q.price)} ${hit ? '· triggered' : '· waiting'}</div></div>
+        <span class="badge ${hit ? 'badge-success' : 'badge-warn'}">${hit ? 'Hit' : 'Active'}</span>
+        <button class="btn-icon" data-act="inv-del-alert" data-id="${a.id}">${ic('trash', 15)}</button></div>`;
+    }).join('')}</div>` : `<div class="inv-empty">${ic('bell', 26)}<p class="small muted">No price alerts yet. Open a stock and tap the bell.</p></div>`}
+  </div>`;
+};
+
+/* ------------------------------ orders ------------------------------ */
+INV.viewOrders = function () {
+  const u = me();
+  const trades = INV.trades(u.id);
+  return `
+  <div class="page-head"><div class="between">
+    <div class="row" style="gap:10px;align-items:center"><a href="#/invest" class="btn-icon">${ic('back', 18)}</a>
+      <div class="section-title" style="margin:0">Orders</div></div>
+    <a href="#/invest/market" class="btn btn-sm btn-primary">${ic('plus', 14)} New trade</a>
+  </div></div>
+  <div class="card">
+    ${trades.length ? `<div class="inv-list">${trades.map(t => {
+      const s = INV.stock(t.ticker) || { ticker: t.ticker, color: '#3aa0ff' };
+      const badge = t.status === 'Completed' ? 'badge-success' : t.status === 'Pending' ? 'badge-warn' : 'badge-danger';
+      return `<div class="inv-row" style="align-items:flex-start">
+        ${INV.logoHTML(s, 34)}
+        <div class="grow" style="min-width:0">
+          <div class="small" style="font-weight:650">${t.side === 'buy' ? 'Buy' : 'Sell'} ${esc(t.ticker)} <span class="tiny muted">· ${t.type}</span></div>
+          <div class="tiny muted">${t.shares.toFixed(4)} sh @ ${usd(t.priceUsd)} · ${dateLabel(t.createdAt)} ${clockTime(t.createdAt)}</div>
+          <div class="tiny">${t.side === 'buy' ? '−' : '+'}${coins(t.coins)} WC <span class="muted">(${usd(coinsToUsd(t.coins))})</span>
+            ${t.plUsd ? `<span class="${INV.chgClass(t.plUsd)}"> · P/L ${t.plUsd >= 0 ? '+' : '−'}${usd(Math.abs(t.plUsd))}</span>` : ''}</div>
+        </div>
+        <span class="badge ${badge}">${t.status}</span></div>`;
+    }).join('')}</div>` : `<div class="inv-empty">${ic('clock', 26)}<p class="small muted">No orders yet. Your completed and pending trades appear here.</p></div>`}
+  </div>`;
+};
+
+/* ------------------------------ admin: stocks ------------------------------ */
+INV.adminTabs = function () {
+  const sub = 'stocks';
+  return `<div class="admin-nav">${ADMIN_NAV.map(n => {
+    const key = n.href.replace('#/admin', '') || '';
+    const on = key === '/' + sub;
+    return `<a href="${n.href}" class="${on ? 'on' : ''}">${n.label}</a>`;
+  }).join('')}</div>`;
+};
+
+INV.viewAdminStocks = function () {
+  const u = me();
+  if (!u || u.role !== 'admin') return `<div class="card empty"><div class="ic">${ic('lock', 26)}</div><h3>Admin access only</h3></div>`;
+  INV.db();
+  const stocks = INV.stocks().sort((a0, b0) => a0.ticker.localeCompare(b0.ticker));
+  const trades = DB.trades.slice().sort((a, b) => b.createdAt - a.createdAt).slice(0, 25);
+  const holders = {};
+  DB.holdings.forEach(h => { (holders[h.userId] = holders[h.userId] || []).push(h); });
+  const fee = INV.fee();
+
+  return `${INV.adminTabs()}
+  <div class="page-head"><div class="between">
+    <div><div class="section-title" style="margin:0">Stocks & trading</div>
+      <div class="tiny muted">Catalogue, pricing, fees, paused symbols and user exposure</div></div>
+    <button class="btn btn-sm btn-primary" data-act="inv-admin-add">${ic('plus', 14)} Add stock</button>
+  </div></div>
+
+  <div class="grid-kpi">
+    <div class="kpi"><span class="tiny muted">Listed stocks</span><b>${stocks.length}</b></div>
+    <div class="kpi"><span class="tiny muted">Open positions</span><b>${DB.holdings.length}</b></div>
+    <div class="kpi"><span class="tiny muted">Trades</span><b>${DB.trades.length}</b></div>
+    <div class="kpi"><span class="tiny muted">Trading fee</span><b>${fee}%</b></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Trading fee</div>
+    <div class="row" style="gap:8px;align-items:flex-end;flex-wrap:wrap">
+      <div class="field grow" style="margin:0;min-width:140px"><label class="label">Fee per trade (%)</label>
+        <input class="input" id="ivFeeInput" type="number" step="0.05" min="0" max="5" value="${fee}"/></div>
+      <button class="btn btn-primary" data-act="inv-admin-fee">Save fee</button>
+    </div>
+    <div class="tiny muted mt6">Applied to both buys and sells. 0% disables fees entirely.</div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Catalogue</div>
+    <div class="table-wrap"><table class="inv-table">
+      <thead><tr><th>Symbol</th><th>Company</th><th>Sector</th><th class="num">Price</th><th class="num">24h</th><th>Status</th><th></th></tr></thead>
+      <tbody>${stocks.map(s => {
+        const q = INV.quote(s.ticker);
+        const paused = INV.paused(s.ticker);
+        return `<tr>
+          <td><b>${esc(s.ticker)}</b></td>
+          <td class="ellipsis" style="max-width:150px">${esc(s.name)}</td>
+          <td class="muted">${esc(s.sector || '—')}</td>
+          <td class="num"><span data-lv="price:${s.ticker}">${usd(q.price)}</span></td>
+          <td class="num ${INV.chgClass(q.changePct)}">${q.changePct >= 0 ? '+' : ''}${q.changePct.toFixed(2)}%</td>
+          <td><span class="badge ${paused ? 'badge-warn' : 'badge-success'}">${paused ? 'Paused' : 'Live'}</span></td>
+          <td class="row" style="gap:4px;justify-content:flex-end">
+            <button class="btn btn-xs btn-ghost" data-act="inv-admin-pause" data-t="${s.ticker}">${paused ? 'Resume' : 'Pause'}</button>
+            <button class="btn btn-xs btn-ghost" data-act="inv-admin-edit" data-t="${s.ticker}">${ic('edit', 13)}</button>
+            <button class="btn btn-xs btn-ghost" data-act="inv-admin-del" data-t="${s.ticker}" style="color:var(--danger)">${ic('trash', 13)}</button>
+          </td></tr>`;
+      }).join('')}</tbody></table></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">User portfolios</div>
+    ${Object.keys(holders).length ? `<div class="table-wrap"><table class="inv-table">
+      <thead><tr><th>User</th><th class="num">Positions</th><th class="num">Value</th><th class="num">P/L</th><th></th></tr></thead>
+      <tbody>${Object.keys(holders).map(uidx => {
+        const usr = findUser(uidx); if (!usr) return '';
+        const p = INV.portfolio(uidx);
+        return `<tr><td>@${esc(usr.username)}<div class="tiny muted">${esc(usr.fullName || '')}</div></td>
+          <td class="num">${p.holdings.length}</td><td class="num">${usd(p.valueUsd)}</td>
+          <td class="num ${INV.chgClass(p.earningsUsd)}">${p.earningsUsd >= 0 ? '+' : '−'}${usd(Math.abs(p.earningsUsd))}</td>
+          <td style="text-align:right"><button class="btn btn-xs btn-ghost" data-act="inv-admin-bal" data-id="${usr.id}">Edit balance</button></td></tr>`;
+      }).join('')}</tbody></table></div>` : `<div class="tiny muted">No user holds stocks yet.</div>`}
+  </div>
+
+  <div class="card">
+    <div class="card-title">Recent trades (all users)</div>
+    ${trades.length ? `<div class="inv-list">${trades.map(t => {
+      const usr = findUser(t.userId);
+      return `<div class="inv-row"><div class="grow" style="min-width:0">
+        <div class="small" style="font-weight:650">${t.side === 'buy' ? 'Buy' : 'Sell'} ${esc(t.ticker)} <span class="tiny muted">@${esc(usr ? usr.username : 'unknown')}</span></div>
+        <div class="tiny muted">${t.shares.toFixed(4)} sh @ ${usd(t.priceUsd)} · ${dateLabel(t.createdAt)}</div></div>
+        <span class="badge ${t.status === 'Completed' ? 'badge-success' : 'badge-warn'}">${t.status}</span></div>`;
+    }).join('')}</div>` : `<div class="tiny muted">No trades yet.</div>`}
+  </div>`;
+};
+
+INV.stockFormHTML = function (s) {
+  const x = s || {};
+  return `
+  <div class="field"><label class="label">Ticker</label><input class="input" id="sfTicker" maxlength="6" value="${esc(x.ticker || '')}" placeholder="AAPL" ${x.ticker ? 'disabled' : ''}/></div>
+  <div class="field"><label class="label">Company name</label><input class="input" id="sfName" value="${esc(x.name || '')}"/></div>
+  <div class="field"><label class="label">Sector</label><input class="input" id="sfSector" value="${esc(x.sector || 'Technology')}" placeholder="Technology / Crypto / Financials"/></div>
+  <div class="row" style="gap:8px">
+    <div class="field g
