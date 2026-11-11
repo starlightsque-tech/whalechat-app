@@ -1,10 +1,4 @@
-ntain = now;
-  const u = me();
-  if (!u) return;
-  let changed = false;
-  // mark my messages delivered after a moment (simulates server delivery ack)
-  DB.messages.forEach(m => {
-    if (m.from === u.id && m.status === 'sent' && now - m.createdAt > 900) { m.status = 'delivered'; changed = true; }
+edAt > 900) { m.status = 'delivered'; changed = true; }
   });
   // expire statuses
   const before = DB.statuses.length;
@@ -1314,4 +1308,10 @@ App.reactStatus = function (id, ds) {
   s.reactions = s.reactions || {};
   if (s.reactions[u.id] === ds.emoji) delete s.reactions[u.id];
   else s.reactions[u.id] = ds.emoji;
-  if (!Object.keys(s.re
+  if (!Object.keys(s.reactions).length) delete s.reactions;
+  sync();
+  renderStatusViewer();
+};
+/* =========================================================================
+   Marketplace, cart, checkout, orders, vendor system
+   ===================================
