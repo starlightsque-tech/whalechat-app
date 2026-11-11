@@ -10,7 +10,7 @@ const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 const PUB = path.join(ROOT, 'public');
 const APP = path.join(PUB, 'whalechat.html');
-const RELEASE = { version: '3.9.3', build: '2026-11-11T17:05:00Z' };
+const RELEASE = { version: '3.9.4', build: '2026-11-11T17:30:00Z' };
 const MARKER = 'WhaleChat Invest';
 /* 1. committed base64 image assets ------------------------------------------------ */
 const assetDir = path.join(PUB, 'assets');
@@ -138,7 +138,7 @@ function isCurrent(html) {
     const ver = RELEASE.version || (app.match(/APP_VERSION = '([^']+)'/) || [])[1];
     const build = RELEASE.build || (app.match(/APP_BUILD = '([^']+)'/) || [])[1];
     const meta = { version: ver, build, file: 'whalechat.html',
-      notes: 'WhaleChat ' + ver + ' — live trades with real-time P/L, take-profit and stop-loss, timed auto-close, charts on every holding.',
+      notes: 'WhaleChat ' + ver + ' — portfolio value, invested and earnings now include live trades and update in real time, with live performance chart and allocation.',
       releasedAt: build, minimum: '3.0.0' };
     fs.writeFileSync(path.join(PUB, 'version.json'), JSON.stringify(meta, null, 2));
     fs.writeFileSync(path.join(PUB, 'release.json'), JSON.stringify(meta, null, 2));
