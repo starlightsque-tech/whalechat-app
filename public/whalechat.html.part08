@@ -1,0 +1,1567 @@
+lass="spinner"></span> Sending…'; }
+  try {
+    const res = await fetch('/api/email/broadcast', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ subject, html, text: (ed.innerText || '').slice(0, 4000), all, userIds, adminId: me().id }) });
+    const d = await res.json().catch(() => null);
+    if (!res.ok || !d || !d.ok) throw new Error((d && (d.error || d.message)) || 'Send failed');
+    toast('Email queued for ' + d.recipients + ' recipient(s)', 'ok');
+    if (Remote.enabled) await Remote.refresh(true);
+    render();
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.innerHTML = 'Send email'; }
+    toast('Could not send: ' + e.message, 'err');
+  }
+};
+
+function adminBonuses() {
+  const list = DB.bonuses || [];
+  const claims = (DB.bonusClaims || []).slice().sort((a, b) => (b.claimedAt || b.createdAt) - (a.claimedAt || a.createdAt));
+  const users = DB.users.filter(u => u.role !== 'admin');
+  const claimed = claims.filter(c => c.status === 'claimed');
+  return `<div class="between wrap gap10 mb16">
+      <div><h2 style="font-size:18px">Bonuses & tasks</h2><p class="tiny muted mt6">Create tasks, issue one-time codes and track redemptions.</p></div>
+      <button class="btn btn-primary btn-sm" data-act="bonus-new">${ic('plus', 14)} New bonus</button>
+    </div>
+    <div class="grid-kpi k4 mb16">
+      <div class="kpi"><div class="v">${list.length}</div><div class="k">Bonuses</div></div>
+      <div class="kpi"><div class="v">${claims.filter(c => c.status !== 'claimed').length}</div><div class="k">Codes issued</div></div>
+      <div class="kpi"><div class="v">${claimed.length}</div><div class="k">Claims</div></div>
+      <div class="kpi"><div class="v">${usd(claimed.reduce((s, c) => s + (Number(c.rewardUsd) || 0), 0))}</div><div class="k">Value paid</div></div>
+    </div>
+    <div class="card">
+      <div class="between mb14"><h3 style="font-size:15px">Task list</h3><span class="badge">${users.length} users</span></div>
+      ${list.length ? `<div class="col gap10">${list.map(b => `<div class="list-item" style="align-items:flex-start">
+        <div style="width:34px;height:34px;border-radius:10px;background:rgba(46,230,201,.12);color:var(--accent);display:flex;align-items:center;justify-content:center;flex:none">${ic('gift', 16)}</div>
+        <div class="grow" style="min-width:0">
+          <div class="row gap8 wrap"><span class="small" style="font-weight:650">${esc(b.title)}</span>
+            <span class="badge ${b.active === false ? '' : 'badge-success'}">${b.active === false ? 'Hidden' : 'Active'}</span></div>
+          <div class="tiny muted mt4">${esc(b.description || '').slice(0, 140)}</div>
+          ${b.taskUrl ? `<div class="tiny mt4" style="color:var(--accent);word-break:break-all">${ic('link', 11)} ${esc(b.taskLabel || b.taskUrl)} → ${esc(b.taskUrl)}</div>` : ''}
+        </div>
+        <div style="text-align:right;flex:none"><div class="small" style="font-weight:700">${usd(b.rewardUsd)}</div>
+          <div class="tiny muted">${coins((Number(b.rewardUsd) || 0) / COIN_USD)} WC</div></div>
+        <div class="row gap4" style="flex:none">
+          <button class="btn btn-xs btn-ghost" data-act="bonus-code" data-id="${b.id}" title="Generate code">${ic('key', 12)}</button>
+          <button class="btn btn-xs btn-ghost" data-act="bonus-edit" data-id="${b.id}">${ic('edit', 12)}</button>
+          <button class="btn btn-xs btn-ghost" data-act="bonus-del" data-id="${b.id}">${ic('trash', 12)}</button>
+        </div>
+      </div>`).join('')}</div>` : `<div class="empty" style="padding:22px"><p>No bonuses yet. Create one to let users earn rewards.</p></div>`}
+    </div>
+    <div class="card mt16">
+      <div class="between mb14"><h3 style="font-size:15px">Redemption ledger</h3><span class="badge">${claims.length} records</span></div>
+      ${claims.length ? `<div class="table-wrap"><table class="tbl"><thead><tr><th>User</th><th>Bonus</th><th>Code</th><th>Status</th><th>Date</th></tr></thead><tbody>
+        ${claims.slice(0, 100).map(c => {
+          const u = findUser(c.userId); const b = (DB.bonuses || []).find(x => x.id === c.bonusId);
+          return `<tr><td>${u ? esc(u.fullName) + ' <span class="tiny muted">@' + esc(u.username) + '</span>' : '—'}</td>
+            <td>${b ? esc(b.title) : '—'}</td><td class="mono">••••${esc(c.codeHint || '')}</td>
+            <td>${c.status === 'claimed' ? '<span class="badge badge-success">Claimed</span>' : '<span class="badge badge-warn">Issued</span>'}</td>
+            <td class="tiny muted">${new Date(c.claimedAt || c.createdAt).toLocaleString()}</td></tr>`;
+        }).join('')}
+      </tbody></table></div>` : `<div class="empty" style="padding:20px"><p>No codes issued yet. Use the key icon on a bonus to create one.</p></div>`}
+    </div>`;
+}
+
+App.bonusNew = function () { bonusForm(null); };
+App.bonusEdit = function (id) { bonusForm((DB.bonuses || []).find(b => b.id === id)); };
+function bonusForm(b) {
+  openModal(modalShell(b ? 'Edit bonus' : 'New bonus', `
+    ${field('Title', 'bnTitle', { value: b ? b.title : '', ph: 'e.g. Join our Telegram channel' })}
+    <div class="field"><label class="label">Description</label><textarea class="input" id="bnDesc" style="min-height:80px" placeholder="Explain exactly what the user must do…">${esc(b ? b.description || '' : '')}</textarea></div>
+    ${field('Reward in USD', 'bnReward', { type: 'number', value: b ? b.rewardUsd : '', ph: '10.00' })}
+    ${field('Task button label', 'bnTaskLabel', { value: b ? b.taskLabel || '' : '', ph: 'Open Telegram' })}
+    ${field('Task / embed link', 'bnTaskUrl', { value: b ? b.taskUrl || '' : '', ph: 'https://t.me/yourchannel' })}
+    <div class="between panel" style="padding:10px 12px"><span class="small">Visible to users</span>
+      <div class="switch ${!b || b.active !== false ? 'on' : ''}" data-act="bonus-toggle-active" data-id="${b ? b.id : ''}"></div></div>`,
+    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="bonus-save" data-id="${b ? b.id : ''}">Save bonus</button>`), { width: '520px' });
+}
+let BONUS_TEMP_ACTIVE = null;
+App.bonusToggleActive = function () {
+  const el = document.querySelector('[data-act="bonus-toggle-active"]');
+  if (!el) return;
+  el.classList.toggle('on');
+};
+App.bonusSave = function (id) {
+  const title = (document.getElementById('bnTitle').value || '').trim();
+  const description = (document.getElementById('bnDesc').value || '').trim();
+  const rewardUsd = Math.max(0, Number(document.getElementById('bnReward').value) || 0);
+  const taskLabel = (document.getElementById('bnTaskLabel').value || '').trim();
+  let taskUrl = (document.getElementById('bnTaskUrl').value || '').trim();
+  if (!title) return toast('Enter a title', 'err');
+  if (!rewardUsd) return toast('Enter a reward amount', 'err');
+  if (taskUrl && !/^https?:\/\//i.test(taskUrl)) taskUrl = 'https://' + taskUrl;
+  if (taskUrl && !/^https?:\/\/[^\s]+$/i.test(taskUrl)) return toast('Enter a valid task link', 'err');
+  const active = !!(document.querySelector('[data-act="bonus-toggle-active"]') || {}).classList?.contains('on');
+  DB.bonuses = DB.bonuses || [];
+  if (id) {
+    const b = DB.bonuses.find(x => x.id === id);
+    if (b) Object.assign(b, { title, description, rewardUsd, taskLabel, taskUrl, active, updatedAt: Date.now() });
+  } else {
+    DB.bonuses.push({ id: uid('bn'), title, description, rewardUsd, taskLabel, taskUrl, active, createdAt: Date.now(), createdBy: me().id });
+  }
+  sync(); closeModal(); toast('Bonus saved', 'ok'); render();
+};
+App.bonusDel = async function (id) {
+  if (!await confirmDialog({ title: 'Delete this bonus?', body: 'Users will no longer see it. Issued codes stay in the ledger.', danger: true, ok: 'Delete' })) return;
+  DB.bonuses = (DB.bonuses || []).filter(b => b.id !== id);
+  sync(); toast('Bonus deleted', 'ok'); render();
+};
+
+App.bonusCode = function (id) {
+  const b = (DB.bonuses || []).find(x => x.id === id);
+  if (!b) return;
+  const users = DB.users.filter(u => u.role !== 'admin');
+  openModal(modalShell('Generate code · ' + b.title, `
+    <p class="small muted" style="line-height:1.65">Issue a one-time code to a specific user after you verify their task. The code is shown once — copy it and send it to them in support chat.</p>
+    <div class="field mt16"><label class="label">User</label>
+      <select class="input" id="bcUser">${users.map(u => `<option value="${u.id}">${esc(u.fullName)} · @${esc(u.username)}</option>`).join('')}</select></div>
+    <div class="panel" style="padding:11px 12px"><div class="between"><span class="tiny muted">Reward</span><span class="small" style="font-weight:700;color:var(--accent)">${usd(b.rewardUsd)}</span></div></div>`,
+    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="bonus-gen" data-id="${b.id}">${ic('key', 14)} Generate code</button>`), { width: '460px' });
+};
+
+async function makeBonusCode() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bytes = new Uint8Array(12);
+  (window.crypto || {}).getRandomValues ? crypto.getRandomValues(bytes) : bytes.forEach((_, i) => bytes[i] = Math.floor(Math.random() * 256));
+  let out = '';
+  for (let i = 0; i < 12; i++) { out += alphabet[bytes[i] % alphabet.length]; if (i === 3 || i === 7) out += '-'; }
+  return out;
+}
+
+App.bonusGen = async function (id) {
+  const b = (DB.bonuses || []).find(x => x.id === id);
+  const userSel = document.getElementById('bcUser');
+  const userId = userSel && userSel.value;
+  if (!b || !userId) return toast('Choose a user first', 'err');
+  const code = await makeBonusCode();
+  const codeHash = await bonusCodeHash(code);
+  DB.bonusClaims = DB.bonusClaims || [];
+  DB.bonusClaims.push({
+    id: uid('bc'), bonusId: b.id, userId, codeHash,
+    codeHint: code.slice(-4), status: 'issued', rewardUsd: b.rewardUsd,
+    createdAt: Date.now(), issuedBy: me().id
+  });
+  sync();
+  const u = findUser(userId);
+  openModal(modalShell('Code ready', `
+    <p class="small muted">Send this one-time code to <b>${esc(u ? u.fullName : 'the user')}</b> in support chat. It will not be shown again.</p>
+    <div class="panel mt16 center" style="padding:18px">
+      <div class="mono" style="font-size:22px;font-weight:800;letter-spacing:.14em;color:var(--accent)">${esc(code)}</div>
+      <div class="tiny muted mt8">${esc(b.title)} · ${usd(b.rewardUsd)}</div>
+    </div>
+    <div class="row gap8 mt14"><button class="btn btn-primary" data-act="copy" data-id="${esc(code)}" style="flex:1">${ic('copy', 14)} Copy code</button>
+    <button class="btn btn-ghost" data-close style="flex:1">Done</button></div>`), { width: '440px' });
+  toast('Code generated for ' + (u ? u.username : 'user'), 'ok');
+};
+
+function adminSettings() {
+  const s = DB.settings;
+  return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px" class="dash2">
+    <div class="card">
+      <div class="between mb16"><h3 style="font-size:15px">Crypto deposit methods</h3>
+        <button class="btn btn-sm btn-primary" data-act="crypto-new">${ic('plus', 14)} Add</button></div>
+      ${(s.crypto || []).length ? (s.crypto || []).map(m => `<div class="list-item" style="align-items:flex-start">
+        <div style="width:30px;height:30px;border-radius:8px;background:rgba(255,176,32,.13);color:var(--warn);display:flex;align-items:center;justify-content:center;flex:none">${ic('wallet', 14)}</div>
+        <div class="grow" style="min-width:0"><div class="small" style="font-weight:650">${esc(m.name)}</div>
+          <div class="tiny muted" style="word-break:break-all">${esc(m.address)}</div>
+          ${m.note ? `<div class="tiny" style="color:var(--warn)">${esc(m.note)}</div>` : ''}</div>
+        <div class="row gap4"><button class="btn btn-xs btn-ghost" data-act="crypto-edit" data-id="${m.id}">${ic('edit', 11)}</button>
+        <button class="btn btn-xs btn-ghost" data-act="crypto-del" data-id="${m.id}">${ic('trash', 11)}</button></div></div>`).join('') : '<p class="tiny muted">No crypto methods.</p>'}
+    </div>
+    <div class="card">
+      <div class="between mb16"><h3 style="font-size:15px">Bank transfer methods</h3>
+        <button class="btn btn-sm btn-primary" data-act="bank-new">${ic('plus', 14)} Add</button></div>
+      ${(s.banks || []).length ? (s.banks || []).map(b => `<div class="list-item" style="align-items:flex-start">
+        <div style="width:30px;height:30px;border-radius:8px;background:rgba(58,160,255,.13);color:var(--accent-2);display:flex;align-items:center;justify-content:center;flex:none">${ic('store', 14)}</div>
+        <div class="grow" style="min-width:0"><div class="small" style="font-weight:650">${esc(b.bankName)}</div>
+          <div class="tiny muted">${esc(b.accountName)} · ${esc(b.accountNumber)}</div>
+          <div class="tiny muted">${esc(b.swift || '')} ${esc(b.country || '')}</div></div>
+        <div class="row gap4"><button class="btn btn-xs btn-ghost" data-act="bank-edit" data-id="${b.id}">${ic('edit', 11)}</button>
+        <button class="btn btn-xs btn-ghost" data-act="bank-del" data-id="${b.id}">${ic('trash', 11)}</button></div></div>`).join('') : '<p class="tiny muted">No bank methods.</p>'}
+    </div>
+  </div>
+  <div class="card mt16">
+    <div class="between mb16"><h3 style="font-size:15px">USDT withdrawal networks</h3>
+      <button class="btn btn-sm btn-primary" data-act="network-add">${ic('plus', 14)} Add network</button></div>
+    <div class="row wrap gap8">${(s.networks || []).map(n => `<span class="badge" style="padding:7px 10px;font-size:12px">${esc(n)}
+      <button data-act="network-del" data-id="${esc(n)}" style="color:var(--danger);margin-left:4px">${ic('x', 11)}</button></span>`).join('')}</div>
+    <div class="divider"></div>
+    <div class="field"><label class="label">Deposit instructions note</label><textarea class="input" id="asDepNote" style="min-height:70px">${esc(s.depositNote || '')}</textarea></div>
+    <div class="row gap8"><button class="btn btn-primary btn-sm" data-act="save-settings">${ic('check', 14)} Save payment settings</button>
+      <button class="btn btn-ghost btn-sm" data-act="edit-networks">Manage networks</button></div>
+  </div>
+  <div class="card mt16">
+    <div class="between wrap gap10">
+      <div><h3 style="font-size:15px">Vendor plans & activation fees</h3>
+        <p class="tiny muted mt6">Applicants pick a duration, pay its fee to the company account and upload a slip. Vendors freeze automatically when their plan ends.</p></div>
+      <button class="btn btn-xs btn-primary" data-act="vendor-plan-new">${ic('plus', 12)} Add plan</button>
+    </div>
+    <div class="table-wrap mt14"><table class="tbl"><thead><tr><th>Duration</th><th>Fee</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+      ${(DB.settings.vendorPlans || []).map(pl => `<tr><td style="font-weight:600">${pl.months} month${pl.months > 1 ? 's' : ''}</td><td>${usd(pl.priceUsd)}</td>
+        <td><div class="row gap6" style="justify-content:flex-end">
+          <button class="btn btn-xs btn-ghost" data-act="vendor-plan-edit" data-id="${pl.id}">${ic('edit', 11)}</button>
+          <button class="btn btn-xs btn-ghost" data-act="vendor-plan-del" data-id="${pl.id}">${ic('trash', 11)}</button></div></td></tr>`).join('') || `<tr><td colspan="3" class="center muted" style="padding:18px">No plans yet</td></tr>`}
+    </tbody></table></div>
+    <div class="between mb10 mt16"><div class="label" style="margin:0">Company payment accounts</div>
+      <button class="btn btn-xs btn-primary" data-act="vendor-method-new">${ic('plus', 12)} Add account</button></div>
+    ${vendorPayMethods().length ? `<div class="col gap8">${vendorPayMethods().map(m => `<div class="list-item" style="align-items:flex-start">
+      <div style="width:30px;height:30px;border-radius:8px;background:rgba(46,230,201,.12);color:var(--accent);display:flex;align-items:center;justify-content:center;flex:none">${ic('wallet', 14)}</div>
+      <div class="grow" style="min-width:0"><div class="small" style="font-weight:650">${esc(m.label)} ${m.network ? `<span class="badge" style="font-size:9px">${esc(m.network)}</span>` : ''}</div>
+        <div class="tiny muted" style="word-break:break-all">${esc(m.address)}</div></div>
+      <div class="row gap4"><button class="btn btn-xs btn-ghost" data-act="copy" data-id="${esc(m.address)}">${ic('copy', 11)}</button>
+        <button class="btn btn-xs btn-ghost" data-act="vendor-method-edit" data-id="${esc(m.id)}">${ic('edit', 11)}</button>
+        <button class="btn btn-xs btn-ghost" data-act="vendor-method-del" data-id="${esc(m.id)}">${ic('trash', 11)}</button></div></div>`).join('')}</div>` : '<p class="tiny muted">No vendor payment accounts yet — applicants cannot pay.</p>'}
+    <div class="field mt14"><label class="label">Payment instructions</label><input class="input" id="vendorPayNote" value="${esc((DB.settings.vendorPayments && DB.settings.vendorPayments.note) || '')}"/></div>
+    <button class="btn btn-primary btn-sm" data-act="save-vendor-fee">${ic('check', 14)} Save payment instructions</button>
+  </div>
+  <div class="card mt16">
+    <div class="between wrap gap10">
+      <div><h3 style="font-size:15px">App link &amp; invite links</h3>
+        <p class="tiny muted mt6">This is the public link users see when they tap <b>Invite friends</b> and the link copied from their referral page. Leave it empty to use the address that served the app.</p></div>
+      <span class="badge ${appLinkBase() ? 'badge-success' : ''}">${appLinkBase() ? 'Custom link' : 'Automatic'}</span>
+    </div>
+    <div class="field mt14"><label class="label">Custom app link (branded)</label>
+      <input class="input" id="asAppLink" placeholder="https://whalechat.com" value="${esc(s.appLink || '')}"/>
+      <div class="help">The short, branded link users share — e.g. <b>https://whalechat.com/ref/CODE</b>. Must start with http:// or https://</div></div>
+    <div class="field"><label class="label">Main app link (destination)</label>
+      <input class="input" id="asAppDest" placeholder="${esc(location.origin + '/whalechat.html')}" value="${esc(s.appLinkDestination || '')}"/>
+      <div class="help">Where the branded link sends visitors — paste the real app URL (e.g. your hosted <b>/whalechat.html</b>). If empty, the app URL that served this page is used.</div></div>
+    <div class="field"><label class="label">Invite message</label>
+      <textarea class="input" id="asInviteMsg" style="min-height:88px" placeholder="Join me on WhaleChat…">${esc(s.inviteMessage || '')}</textarea>
+      <div class="help">Placeholders: <b>{link}</b> (full invite link), <b>{code}</b> (referral code), <b>{name}</b> (your name)</div></div>
+    <div class="panel" style="padding:11px 12px">
+      <div class="tiny muted">Shared invite link (branded)</div>
+      <div class="small mt6" id="asInvitePreview" style="word-break:break-all;color:var(--accent)">${esc(referralLink(me().referralCode))}</div>
+      <div class="tiny muted mt10">Redirects to</div>
+      <div class="small mt6" id="asDestPreview" style="word-break:break-all">${esc(destinationLink(me().referralCode) || location.origin + '/whalechat.html')}</div>
+    </div>
+    <div class="row gap8 mt12 wrap">
+      <button class="btn btn-primary btn-sm" data-act="save-app-link">${ic('check', 14)} Save app link</button>
+      <button class="btn btn-ghost btn-sm" data-act="copy" data-id="${esc(referralLink(me().referralCode))}">${ic('copy', 14)} Copy preview</button>
+    </div>
+  </div>
+  <div class="card mt16">
+    <div class="between wrap gap10">
+      <div><h3 style="font-size:15px">Google Analytics</h3>
+        <p class="tiny muted mt6">Track page views across the web app and installed apps with a GA4 measurement ID. Analytics loads only for the ID saved here.</p></div>
+      <span class="badge ${(gaMeasurementId() || gtmInstalled()) ? 'badge-success' : ''}">${gtmInstalled() ? 'Tag Manager · GTM-5WNCBL8N' : (gaMeasurementId() ? 'Connected · ' + esc(gaMeasurementId()) : 'Not set')}</span>
+    </div>
+    <div class="field mt14"><label class="label">GA4 measurement ID</label>
+      <input class="input" id="asGaId" placeholder="G-XXXXXXXXXX" value="${esc(s.gaMeasurementId || '')}" autocomplete="off"/>
+      <div class="help">Find it in Google Analytics → Admin → Data streams → your web stream. Leave empty to disable analytics.</div></div>
+    <div class="row gap8 mt6 wrap">
+      <button class="btn btn-primary btn-sm" data-act="save-ga">${ic('check', 14)} Save analytics</button>
+      ${gaMeasurementId() ? `<button class="btn btn-ghost btn-sm" data-act="copy" data-id="${esc(gaMeasurementId())}">${ic('copy', 14)} Copy ID</button>` : ''}
+    </div>
+    <div class="tiny muted mt10" style="line-height:1.6">${gtmInstalled()
+      ? 'Google Tag Manager (<b>GTM-5WNCBL8N</b>) is installed in the page &lt;head&gt; and receives <b>page_view</b> events on every route change. Configure the GA4 tag inside Tag Manager — no second Google tag is added here.'
+      : 'Events sent: <b>page_view</b> on every route change, plus the app version and platform. No message contents are sent.'}</div>
+  </div>
+  <div class="card mt16">
+    <div class="between wrap gap10">
+      <div><h3 style="font-size:15px">Email notifications</h3>
+        <p class="tiny muted mt6">Account-creation and package-delivery emails are sent through the app's mail provider (Brevo, Resend or Outlook SMTP, whichever is configured). Delivery is queued and retried, so a temporary mail outage never loses a notification.</p></div>
+      <span class="badge" id="emailBadge">Checking…</span>
+    </div>
+    <div class="mt14" id="emailStatus"><div class="tiny muted">Reading mail settings…</div></div>
+    <div class="field mt14"><label class="label">Send a test email</label>
+      <div class="row gap8"><input class="input" id="emailTestTo" placeholder="you@email.com" value="${esc(me().email || '')}"/>
+      <button class="btn btn-primary btn-sm" data-act="email-test">${ic('send', 14)} Send</button></div>
+      <div class="help">Uses the SMTP mailbox configured on the server.</div></div>
+    <div class="tiny muted mt10" style="line-height:1.6">Triggers: <b>account created</b> and <b>order marked delivered</b>.</div>
+  </div>
+  <div class="card mt16">
+    <div class="between wrap gap10">
+      <div><h3 style="font-size:15px">Login without password</h3>
+        <p class="tiny muted mt6">When enabled, users sign in with their registered email or username and <b>any password</b>.</p></div>
+      <div class="switch ${DB.settings.allowAnyPassword ? 'on' : ''}" data-act="toggle-anypass"></div>
+    </div>
+    <div class="tiny mt10" style="color:${DB.settings.allowAnyPassword ? 'var(--warn)' : 'var(--muted)'}">
+      ${DB.settings.allowAnyPassword ? 'Currently ON — anyone who knows a username or email can enter that account.' : 'Currently OFF — normal password checks apply.'}
+    </div>
+  </div>
+  <div class="card mt16">
+    <div class="between wrap gap10">
+      <div><h3 style="font-size:15px">Maintenance mode</h3>
+        <p class="tiny muted mt6">Show a full-page maintenance notice with a live countdown. Access returns automatically when it ends — or end it now.</p></div>
+      ${maintenanceInfo().active ? '<span class="badge badge-warn">Active</span>' : '<span class="badge badge-success">Offline off</span>'}
+    </div>
+    ${maintenanceInfo().active ? `<div class="panel mt14" style="padding:12px">
+      <div class="between"><span class="tiny muted">Ends</span><span class="small" style="font-weight:600">${new Date(maintenanceInfo().until).toLocaleString()}</span></div>
+      <div class="between mt6"><span class="tiny muted">Remaining</span><span class="small mono" style="font-weight:700;color:var(--accent)" id="adminMaintRemaining">—</span></div>
+      <div class="row gap8 mt12"><button class="btn btn-danger btn-sm" data-act="maint-end">${ic('ban', 14)} End maintenance now</button></div>
+    </div>` : ''}
+    <div class="grid2 mt14" style="display:grid;grid-template-columns:130px 1fr;gap:12px">
+      <div class="field"><label class="label">Duration (min)</label><input class="input" id="maintMinutes" type="number" min="1" step="1" value="${DB.settings.maintenance && DB.settings.maintenance.enabled ? Math.max(1, Math.round((DB.settings.maintenance.until - Date.now()) / 60000)) : 30}"/></div>
+      <div class="field"><label class="label">Maintenance notice</label><input class="input" id="maintMessage" value="${esc((DB.settings.maintenance && DB.settings.maintenance.message) || 'WhaleChat is being upgraded to serve you better. We will be back very soon.')}"/></div>
+    </div>
+    <div class="row gap8 mt6 wrap">
+      <button class="btn btn-primary btn-sm" data-act="maint-start">${ic('clock', 14)} ${maintenanceInfo().active ? 'Update countdown' : 'Start maintenance'}</button>
+      ${maintenanceInfo().active ? `<button class="btn btn-ghost btn-sm" data-act="maint-end">End now</button>` : ''}
+    </div>
+  </div>
+  <div class="card mt16">
+    <h3 style="font-size:15px">Admin security</h3>
+    <p class="tiny muted mt6">Change the administrator password. Default credentials should be replaced on first login.</p>
+    <div class="row gap8 mt16"><button class="btn btn-ghost btn-sm" data-act="admin-change-password">${ic('lock', 14)} Change admin password</button>
+      <a href="#/admin" class="btn btn-ghost btn-sm">${ic('grid', 14)} Back to overview</a></div>
+  </div>
+  <style>@media(max-width:860px){.dash2{grid-template-columns:1fr!important}}</style>`;
+}
+function bindSettings() {
+  const n = document.getElementById('asDepNote');
+  if (n) n.oninput = () => { DB.settings.depositNote = n.value; persist(); };
+  const link = document.getElementById('asAppLink');
+  const prev = document.getElementById('asInvitePreview');
+  const dest = document.getElementById('asAppDest');
+  const dprev = document.getElementById('asDestPreview');
+  const code = (me() && me().referralCode) || 'CODE';
+  const syncPreview = () => {
+    const v = (link && link.value || '').trim().replace(/\/+$/, '');
+    const base = /^https?:\/\/[^\s]+$/i.test(v) ? v : (window.__WC_SERVER__ ? location.origin : location.origin + location.pathname.replace(/\/[^/]*$/, ''));
+    if (prev) prev.textContent = base + '/ref/' + encodeURIComponent(code);
+    if (dprev) {
+      const raw = (dest && dest.value || '').trim();
+      dprev.textContent = /^https?:\/\//i.test(raw) ? raw : (location.origin + '/whalechat.html');
+    }
+  };
+  if (link) link.oninput = syncPreview;
+  if (dest) dest.oninput = syncPreview;
+  loadEmailPanel();
+}
+App.saveSettings = function () {
+  const n = document.getElementById('asDepNote');
+  if (n) DB.settings.depositNote = n.value;
+  sync(); toast('Payment settings saved', 'ok');
+};
+App.cryptoNew = function () { cryptoForm(null); };
+App.cryptoEdit = function (id) { cryptoForm((DB.settings.crypto || []).find(m => m.id === id)); };
+function qrField(inputId, prevId, current) {
+  return `<div class="field"><label class="label">Payment QR code (optional)</label>
+    <div class="row gap10" style="align-items:center">
+      <div id="${prevId}" class="qr-preview">${current ? `<img src="${current}" alt="QR"/>` : ic('grid', 22)}</div>
+      <div class="grow"><input class="input" type="file" id="${inputId}" accept="image/*" onchange="previewQrInput(this,'${prevId}')"/>
+        <div class="help">Upload the QR users should scan with their exchange wallet.</div></div>
+    </div></div>`;
+}
+window.previewQrInput = async function (input, prevId) {
+  const f = input.files && input.files[0];
+  if (!f) return;
+  try {
+    const c = await compressImage(f, 640, 0.9);
+    const d = await fileToDataURL(c);
+    input.dataset.qr = d;
+    const box = document.getElementById(prevId);
+    if (box) box.innerHTML = `<img src="${d}" alt="QR"/>`;
+  } catch (e) { toast('Could not read that image', 'err'); }
+};
+function qrFromInput(inputId) {
+  const el = document.getElementById(inputId);
+  return el && el.dataset ? el.dataset.qr || null : null;
+}
+
+App.viewQr = function (id, ds) {
+  const kind = (ds && ds.kind) || 'crypto';
+  const list = kind === 'bank' ? (DB.settings.banks || []) : (DB.settings.crypto || []);
+  const m = list.find(x => x.id === id);
+  if (!m || !m.qr) return;
+  openModal(modalShell('Scan to pay', `
+    <img class="qr-big" src="${m.qr}" alt="Payment QR"/>
+    <div class="center small mt14" style="font-weight:650">${esc(m.name || m.bankName || '')}</div>
+    <div class="center tiny muted mt6" style="word-break:break-all">${esc(m.address || m.accountNumber || '')}</div>
+    <div class="center tiny muted mt10">Open your exchange wallet → Scan → send the exact amount.</div>`,
+    `<button class="btn btn-ghost" data-close style="flex:1">Close</button>
+     <button class="btn btn-primary" data-act="copy" data-id="${esc(m.address || m.accountNumber || '')}" style="flex:1">${ic('copy', 14)} Copy details</button>`), { width: '480px' });
+};
+
+function cryptoForm(m) {
+  openModal(modalShell(m ? 'Edit crypto method' : 'Add crypto method', `
+    ${field('Name', 'cfName', { value: m ? m.name : '', ph: 'e.g. USDT (TRC20)' })}
+    ${field('Network badge', 'cfNet', { value: m ? m.network : '', ph: 'TRC20' })}
+    ${field('Wallet address', 'cfAddr', { value: m ? m.address : '', ph: 'Paste deposit address' })}
+    <div class="field"><label class="label">Note</label><textarea class="input" id="cfNote" style="min-height:70px">${esc(m ? m.note || '' : '')}</textarea></div>
+    ${qrField('cfQr', 'cfQrPrev', m ? m.qr : null)}`,
+    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="crypto-save" data-id="${m ? m.id : ''}">Save</button>`));
+}
+App.cryptoSave = function (id) {
+  const name = document.getElementById('cfName').value.trim();
+  const addr = document.getElementById('cfAddr').value.trim();
+  if (!name || !addr) return toast('Name and address are required', 'err');
+  const qr = qrFromInput('cfQr');
+  DB.settings.crypto = DB.settings.crypto || [];
+  if (id) {
+    const m = DB.settings.crypto.find(x => x.id === id); if (m) { Object.assign(m, { name, address: addr, network: document.getElementById('cfNet').value.trim(), note: document.getElementById('cfNote').value.trim() }); if (qr) m.qr = qr; }
+  } else {
+    DB.settings.crypto.push({ id: uid('cr'), name, address: addr, network: document.getElementById('cfNet').value.trim(), note: document.getElementById('cfNote').value.trim(), qr: qr || null });
+  }
+  sync(); closeModal(); toast('Deposit method saved', 'ok'); render();
+};
+App.cryptoDel = async function (id) {
+  if (!await confirmDialog({ title: 'Remove crypto method?', danger: true, ok: 'Remove' })) return;
+  DB.settings.crypto = (DB.settings.crypto || []).filter(m => m.id !== id); sync(); render();
+};
+App.bankNew = function () { bankForm(null); };
+App.bankEdit = function (id) { bankForm((DB.settings.banks || []).find(b => b.id === id)); };
+function bankForm(b) {
+  openModal(modalShell(b ? 'Edit bank method' : 'Add bank method', `
+    ${field('Bank name', 'bfBank', { value: b ? b.bankName : '' })}
+    ${field('Account name', 'bfName', { value: b ? b.accountName : '' })}
+    ${field('Account number', 'bfNum', { value: b ? b.accountNumber : '' })}
+    <div class="grid2" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      ${field('SWIFT / BIC', 'bfSwift', { value: b ? b.swift || '' : '' })}
+      ${field('Routing number', 'bfRoute', { value: b ? b.routing || '' : '' })}
+    </div>
+    ${field('Country', 'bfCountry', { value: b ? b.country || '' : '' })}
+    <div class="field"><label class="label">Note</label><textarea class="input" id="bfNote" style="min-height:70px">${esc(b ? b.note || '' : '')}</textarea></div>
+    ${qrField('bfQr', 'bfQrPrev', b ? b.qr : null)}`,
+    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="bank-save" data-id="${b ? b.id : ''}">Save</button>`), { width: '520px' });
+}
+App.bankSave = function (id) {
+  const bankName = document.getElementById('bfBank').value.trim();
+  if (!bankName) return toast('Bank name is required', 'err');
+  const data = {
+    bankName, accountName: document.getElementById('bfName').value.trim(),
+    accountNumber: document.getElementById('bfNum').value.trim(),
+    swift: document.getElementById('bfSwift').value.trim(), routing: document.getElementById('bfRoute').value.trim(),
+    country: document.getElementById('bfCountry').value.trim(), note: document.getElementById('bfNote').value.trim()
+  };
+  const qr = qrFromInput('bfQr'); if (qr) data.qr = qr;
+  DB.settings.banks = DB.settings.banks || [];
+  if (id) { const b = DB.settings.banks.find(x => x.id === id); if (b) Object.assign(b, data); }
+  else DB.settings.banks.push(Object.assign({ id: uid('bk') }, data));
+  sync(); closeModal(); toast('Bank method saved', 'ok'); render();
+};
+App.bankDel = async function (id) {
+  if (!await confirmDialog({ title: 'Remove bank method?', danger: true, ok: 'Remove' })) return;
+  DB.settings.banks = (DB.settings.banks || []).filter(b => b.id !== id); sync(); render();
+};
+App.networkAdd = async function () {
+  const n = await promptDialog({ title: 'Add USDT network', label: 'Network name', placeholder: 'e.g. TON' });
+  if (!n) return;
+  DB.settings.networks = DB.settings.networks || [];
+  if (!DB.settings.networks.includes(n)) DB.settings.networks.push(n);
+  sync(); toast('Network added', 'ok'); render();
+};
+App.networkDel = async function (n) {
+  if (!await confirmDialog({ title: 'Remove network?', body: n, danger: true, ok: 'Remove' })) return;
+  DB.settings.networks = (DB.settings.networks || []).filter(x => x !== n); sync(); render();
+};
+App.editNetworks = function () {
+  openModal(modalShell('USDT withdrawal networks', `
+    <div class="row wrap gap8 mb16">${(DB.settings.networks || []).map(n => `<span class="badge" style="padding:7px 10px">${esc(n)}
+      <button data-act="network-del" data-id="${esc(n)}" style="color:var(--danger);margin-left:4px">${ic('x', 11)}</button></span>`).join('')}</div>
+    <div class="row gap8"><input class="input" id="nnInput" placeholder="New network name"/><button class="btn btn-primary" data-act="network-add-inline">Add</button></div>
+    <div class="help mt6">Shown in the user withdrawal dropdown.</div>`,
+    `<button class="btn btn-ghost" data-close style="width:100%">Done</button>`), { width: '420px' });
+};
+App.networkAddInline = function () {
+  const v = document.getElementById('nnInput').value.trim();
+  if (!v) return;
+  DB.settings.networks = DB.settings.networks || [];
+  if (!DB.settings.networks.includes(v)) DB.settings.networks.push(v);
+  sync(); closeModal(); toast('Network added', 'ok'); render();
+};
+App.adminChangePassword = function () {
+  openModal(modalShell('Change admin password', `
+    ${field('Current password', 'apOld', { type: 'password', icon: 'lock' })}
+    ${field('New password', 'apNew', { type: 'password', icon: 'lock', help: 'At least 8 characters' })}
+    ${field('Confirm new password', 'apNew2', { type: 'password', icon: 'lock' })}`,
+    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="admin-save-password">Update password</button>`));
+};
+App.adminSavePassword = async function () {
+  const u = me(); clearErrors();
+  const oldp = document.getElementById('apOld').value;
+  const n1 = document.getElementById('apNew').value, n2 = document.getElementById('apNew2').value;
+  if (await hash(oldp) !== u.pass) return formError('apOld', 'Current password is incorrect');
+  if (n1.length < 8) return formError('apNew', 'Use at least 8 characters');
+  if (n1 !== n2) return formError('apNew2', 'Passwords do not match');
+  u.pass = await hash(n1);
+  sync(); closeModal(); toast('Admin password updated', 'ok');
+};
+
+/* ---------------- admin support chat ---------------- */
+function adminChat() {
+  const users = DB.users.filter(u => u.role !== 'admin');
+  const rows = users.map(u => {
+    const msgs = DB.messages.filter(m => m.chatId === chatId(u.id, 'usr_admin'));
+    return { u, last: msgs[msgs.length - 1], count: msgs.filter(m => m.from === u.id && m.status !== 'seen').length };
+  }).sort((a, b) => (b.last ? b.last.createdAt : 0) - (a.last ? a.last.createdAt : 0));
+  return `<div class="card">
+    <div class="between mb16"><div><h3 style="font-size:15px">Support inbox</h3><p class="tiny muted mt6">Chat with users and vendors about orders, tracking and payments.</p></div>
+      <span class="badge">${rows.filter(r => r.count).length} unread chats</span></div>
+    ${rows.length ? `<div class="list">${rows.map(({ u, last, count }) => `<div class="list-item" data-act="admin-msg-user" data-id="${u.id}" style="cursor:pointer">
+      <div class="avatar-wrap">${avatarHTML(u, 'sm')}${Presence.isOnline(u.id) ? '<span class="status-dot" style="width:10px;height:10px"></span>' : ''}</div>
+      <div class="grow" style="min-width:0"><div class="small" style="font-weight:600">${esc(u.fullName)} <span class="tiny muted">@${esc(u.username)}</span></div>
+        <div class="tiny muted ellipsis">${last ? esc(previewOf(last)).slice(0, 60) : 'No messages yet'}</div></div>
+      ${count ? `<span class="unread">${count}</span>` : `<span class="tiny muted">${last ? timeAgo(last.createdAt) : ''}</span>`}
+      ${ic('chevron', 15)}</div>`).join('')}</div>` : `<div class="empty"><p>No users to chat with yet.</p></div>`}
+  </div>`;
+}
+/* =========================================================================
+   Admin access controls, maintenance mode, impersonation
+   ========================================================================= */
+App.toggleAnyPass = function () {
+  DB.settings.allowAnyPassword = !DB.settings.allowAnyPassword;
+  sync();
+  toast(DB.settings.allowAnyPassword ? 'Password-free login enabled' : 'Password-free login disabled', 'ok');
+  render();
+};
+
+App.maintStart = function () {
+  const minsEl = document.getElementById('maintMinutes');
+  const msgEl = document.getElementById('maintMessage');
+  const mins = Math.max(1, Math.min(10080, Number(minsEl && minsEl.value) || 30));
+  const message = (msgEl && msgEl.value.trim()) || 'WhaleChat is being upgraded to serve you better. We will be back very soon.';
+  const now = Date.now();
+  DB.settings.maintenance = {
+    enabled: true, startedAt: now, until: now + mins * 60000,
+    message, startedBy: me().id
+  };
+  sync();
+  toast('Maintenance mode on — back in ' + mins + ' minute' + (mins === 1 ? '' : 's'), 'ok');
+  render();
+};
+
+App.adminLoginAs = async function (id) {
+  const target = findUser(id);
+  if (!target || target.role === 'admin') return toast('Choose a user or vendor account', 'err');
+  if (!await confirmDialog({
+    title: 'Log in as ' + target.fullName + '?',
+    body: 'You will see WhaleChat exactly as this user sees it, without their password. Your admin session is kept so you can return at any time.',
+    ok: 'Continue as user'
+  })) return;
+  const adminId = me().id;
+  SESSION = { userId: target.id, impersonator: adminId, at: Date.now() };
+  localStorage.setItem(LS_SESSION, JSON.stringify(SESSION));
+  closeModal();
+  toast('Signed in as ' + target.fullName, 'ok');
+  go('home');
+};
+
+App.maintQuick = function () {
+  // one-tap 30 minute maintenance from the overview
+  const now = Date.now();
+  DB.settings.maintenance = {
+    enabled: true, startedAt: now, until: now + 30 * 60000,
+    message: (DB.settings.maintenance && DB.settings.maintenance.message) || 'WhaleChat is being upgraded to serve you better. We will be back very soon.',
+    startedBy: me().id
+  };
+  sync();
+  toast('Maintenance mode on for 30 minutes — adjust it in settings', 'ok');
+  render();
+};
+
+/* ---------------- refund approvals ---------------- */
+App.refundApprove = async function (id) {
+  const r = (DB.refunds || []).find(x => x.id === id);
+  if (!r || r.status !== 'pending') return;
+  const v = vendorById(r.vendorId);
+  const vu = v ? findUser(v.userId) : null;
+  const inv = DB.products.find(x => x.id === r.inventoryId);
+  const company = DB.companyProducts.find(c => c.id === r.companyProductId);
+  if (!vu) return toast('Vendor account not found', 'err');
+  if (!inv || inv.stock < r.qty) return toast('Cannot approve — vendor no longer holds all ' + r.qty + ' units', 'err');
+  if (!await confirmDialog({ title: 'Approve refund?', body: `Return ${r.qty} × ${r.name} to company stock and credit ${coins(r.coins)} WC to @${v.username}?`, ok: 'Approve refund' })) return;
+
+  inv.stock -= r.qty;
+  if (inv.stock <= 0) DB.products = DB.products.filter(x => x.id !== inv.id);
+  if (company) company.stock += r.qty;
+
+  vu.balance = Math.round((Number(vu.balance || 0) + r.coins) * 100) / 100;
+  tx(vu.id, 'refund', 'Company refund · ' + r.name + ' ×' + r.qty, r.coins, { refundId: r.id });
+  const purchase = (DB.purchases || []).find(x => x.id === r.purchaseId);
+  if (purchase) { purchase.status = 'refunded'; purchase.refundedAt = Date.now(); }
+  r.status = 'approved'; r.reviewedAt = Date.now(); r.reviewedBy = me().id;
+  notify(vu.id, 'Refund approved 💸', `${coins(r.coins)} WC has been credited back to your balance for ${r.qty} × ${r.name}.`, '#/wallet', 'refresh');
+  notify('usr_admin', 'Refund completed', `${r.qty} × ${r.name} returned to company stock · ${coins(r.coins)} WC refunded to @${v.username}.`, '#/admin/refunds', 'check');
+  sync();
+  toast('Refund approved — stock restored and balance credited', 'ok', 3600);
+  render();
+};
+
+App.refundReject = async function (id) {
+  const r = (DB.refunds || []).find(x => x.id === id);
+  if (!r || r.status !== 'pending') return;
+  const reason = await promptDialog({ title: 'Reject refund', label: 'Reason (sent to vendor)', placeholder: 'e.g. stock already sold' });
+  if (reason === null) return;
+  r.status = 'rejected'; r.reviewedAt = Date.now(); r.note = reason;
+  const v = vendorById(r.vendorId);
+  if (v) notify(v.userId, 'Refund rejected', `${r.name} refund was rejected. ${reason || ''}`, '#/vendor/history', 'ban');
+  sync(); toast('Refund rejected', 'ok'); render();
+};
+
+App.refundDel = async function (id) {
+  if (!await confirmDialog({ title: 'Delete refund record?', body: 'The transaction history is kept; only this request entry is removed.', danger: true, ok: 'Delete' })) return;
+  DB.refunds = (DB.refunds || []).filter(x => x.id !== id);
+  sync(); toast('Refund record deleted', 'ok'); render();
+};
+
+/* ---------------- data backups ---------------- */
+App.adminBackupNow = async function () {
+  try {
+    const r = await fetch('/api/backup', { method: 'POST' }).then(x => x.json());
+    if (!r.ok) throw new Error(r.error || 'failed');
+    toast('Backup created (' + r.count + ' snapshots kept)', 'ok');
+    loadReleasePanel();
+  } catch (e) { toast('Backup failed: ' + e.message, 'err'); }
+};
+
+App.adminBackupDownload = async function () {
+  try {
+    const res = await fetch('/api/backup/latest', { cache: 'no-store' });
+    if (!res.ok) throw new Error('no backup yet');
+    const blob = await res.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'whalechat-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    toast('Backup downloaded', 'ok');
+  } catch (e) { toast('No backup available yet — create one first', 'err'); }
+};
+
+App.adminBackupRestore = function () {
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = 'application/json,.json';
+  input.onchange = async () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    let data = null;
+    try { data = JSON.parse(await file.text()); } catch (e) { return toast('That file is not valid JSON', 'err'); }
+    const db = data && data.db ? data.db : data;
+    if (!db || !Array.isArray(db.users) || !db.users.length) return toast('Backup contains no accounts — restore cancelled', 'err');
+    if (!await confirmDialog({
+      title: 'Restore this backup?',
+      body: 'This replaces the live database with ' + db.users.length + ' accounts from the file. The current database is backed up first. Publishing builds never does this automatically.',
+      danger: true, ok: 'Restore backup'
+    })) return;
+    try {
+      const r = await fetch('/api/state/restore', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ db })
+      }).then(x => x.json());
+      if (!r.ok) throw new Error(r.error || 'restore failed');
+      try { const keys = await caches.keys(); await Promise.all(keys.map(k => caches.delete(k))); } catch (e) {}
+      toast('Database restored · reloading…', 'ok');
+      setTimeout(() => location.reload(), 900);
+    } catch (e) { toast('Restore failed: ' + e.message, 'err'); }
+  };
+  input.click();
+};
+
+/* ---------------- vendor activation fee ---------------- */
+App.saveVendorFee = function () {
+  const noteEl = document.getElementById('vendorPayNote');
+  DB.settings.vendorPayments = DB.settings.vendorPayments || { methods: [] };
+  DB.settings.vendorPayments.note = (noteEl && noteEl.value.trim()) || 'Pay the exact vendor activation fee, then upload your payment receipt for review.';
+  sync(); toast('Vendor payment instructions saved', 'ok'); render();
+};
+
+/* ---- vendor duration plans ---- */
+App.vendorPlanNew = function () {
+  openModal(modalShell('Add vendor plan', `
+    ${field('Duration (months)', 'vpMonths', { type: 'number', min: '1', step: '1', value: '1' })}
+    ${field('Fee (USD)', 'vpPrice', { type: 'number', min: '0', step: '1', value: '50' })}
+    <input type="hidden" id="vpId" value=""/>`,
+    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="vendor-plan-save">Add plan</button>`), { width: '420px' });
+};
+App.vendorPlanEdit = function (id) {
+  const pl = vendorPlanById(id); if (!pl) return;
+  openModal(modalShell('Edit vendor plan', `
+    ${field('Duration (months)', 'vpMonths', { type: 'number', min: '1', step: '1', value: pl.months })}
+    ${field('Fee (USD)', 'vpPrice', { type: 'number', min: '0', step: '1', value: pl.priceUsd })}
+    <input type="hidden" id="vpId" value="${esc(pl.id)}"/>`,
+    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="vendor-plan-save">Save plan</button>`), { width: '420px' });
+};
+App.vendorPlanSave = function () {
+  const months = Math.max(1, Math.round(Number((document.getElementById('vpMonths') || {}).value) || 0));
+  const price = Math.max(0, Number((document.getElementById('vpPrice') || {}).value) || 0);
+  const id = (document.getElementById('vpId') || {}).value || '';
+  if (!months) return toast('Enter a duration in months', 'err');
+  DB.settings.vendorPlans = DB.settings.vendorPlans || [];
+  if (id) {
+    const pl = DB.settings.vendorPlans.find(x => x.id === id);
+    if (pl) { pl.months = months; pl.priceUsd = price; }
+  } else {
+    DB.settings.vendorPlans.push({ id: uid('vpl'), months, priceUsd: price });
+  }
+  DB.settings.vendorPlans.sort((a, b) => a.months - b.months);
+  if (DB.settings.vendorPlans[0]) DB.settings.vendorFeeUsd = DB.settings.vendorPlans[0].priceUsd;
+  sync(); closeModal(); toast(id ? 'Plan updated' : 'Plan added', 'ok'); render();
+};
+App.vendorPlanDel = async function (id) {
+  if ((DB.settings.vendorPlans || []).length <= 1) return toast('Keep at least one vendor plan', 'err');
+  if (!await confirmDialog({ title: 'Remove plan?', body: 'Applicants will no longer see this duration.', danger: true, ok: 'Remove' })) return;
+  DB.settings.vendorPlans = DB.settings.vendorPlans.filter(p => p.id !== id);
+  sync(); toast('Plan removed', 'ok'); render();
+};
+
+App.vendorExtend = async function (id) {
+  const v = vendorById(id); if (!v) return;
+  if (!await confirmDialog({ title: 'Extend vendor by 30 days?', body: 'Adds one month to @' + v.username + (v.expiresAt ? ' from the current expiry.' : ' from today.'), ok: 'Extend 30 days' })) return;
+  const base = Math.max(Date.now(), Number(v.expiresAt) || 0);
+  v.expiresAt = base + 30 * 86400000;
+  notify(v.userId, 'Vendor account extended', 'Admin added 30 days to your vendor subscription. New expiry: ' + new Date(v.expiresAt).toLocaleDateString() + '.', '#/vendor', 'check');
+  sync(); toast('Vendor extended by 30 days', 'ok'); render();
+};
+
+App.vendorMethodNew = function () {
+  openModal(modalShell('Add vendor payment account', `
+    ${field('Label', 'vmLabel', { ph: 'e.g. USDT (TRC20)' })}
+    ${field('Network / bank', 'vmNetwork', { ph: 'TRC20 / Bank name', help: 'Shown as a badge next to the label.' })}
+    ${field('Wallet address / account number', 'vmAddress', { ph: 'Paste the company payment address' })}
+    <input type="hidden" id="vmId" value=""/>`,
+    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="vendor-method-save">Add account</button>`), { width: '460px' });
+};
+App.vendorMethodEdit = function (id) {
+  const m = ((DB.settings.vendorPayments || {}).methods || []).find(x => x.id === id);
+  if (!m) return;
+  openModal(modalShell('Edit vendor payment account', `
+    ${field('Label', 'vmLabel', { value: m.label })}
+    ${field('Network / bank', 'vmNetwork', { value: m.network || '' })}
+    ${field('Wallet address / account number', 'vmAddress', { value: m.address })}
+    <input type="hidden" id="vmId" value="${esc(m.id)}"/>`,
+    `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="vendor-method-save">Save changes</button>`), { width: '460px' });
+};
+App.vendorMethodSave = function () {
+  const label = document.getElementById('vmLabel').value.trim();
+  const network = document.getElementById('vmNetwork').value.trim();
+  const address = document.getElementById('vmAddress').value.trim();
+  const id = (document.getElementById('vmId') || {}).value || '';
+  if (!label || !address) return toast('Label and address are required', 'err');
+  DB.settings.vendorPayments = DB.settings.vendorPayments || { methods: [] };
+  DB.settings.vendorPayments.methods = DB.settings.vendorPayments.methods || [];
+  if (id) {
+    const m = DB.settings.vendorPayments.methods.find(x => x.id === id);
+    if (m) Object.assign(m, { label, network, address });
+  } else {
+    DB.settings.vendorPayments.methods.push({ id: uid('vpm'), label, network, address });
+  }
+  sync(); closeModal(); toast(id ? 'Payment account updated' : 'Payment account added', 'ok'); render();
+};
+App.vendorMethodDel = async function (id) {
+  if (!await confirmDialog({ title: 'Remove payment account?', body: 'Applicants will no longer see this address.', danger: true, ok: 'Remove' })) return;
+  DB.settings.vendorPayments.methods = (DB.settings.vendorPayments.methods || []).filter(m => m.id !== id);
+  sync(); toast('Payment account removed', 'ok'); render();
+};
+
+App.vendorAppApprove = async function (id) {
+  const a = (DB.vendorApplications || []).find(x => x.id === id);
+  if (!a || a.status !== 'pending') return;
+  const applicant = findUser(a.userId);
+  if (!applicant) return toast('Applicant account not found', 'err');
+  const isRenewal = a.kind === 'renewal' || !!a.vendorId;
+  if (!isRenewal && DB.vendors.some(v => v.username.toLowerCase() === a.vendorUsername.toLowerCase())) {
+    return toast('Vendor username @' + a.vendorUsername + ' is already taken — reject with a note', 'err');
+  }
+  if (!await confirmDialog({ title: 'Approve vendor account?', body: `Confirm you received ${usd(a.feeUsd)} from @${applicant.username} and activate @${a.vendorUsername}.`, ok: 'Approve & activate' })) return;
+  const months = Math.max(1, Number(a.months) || 1);
+  const plan = vendorPlanById(a.planId);
+  if (a.kind === 'renewal' || a.vendorId) {
+    const v = vendorById(a.vendorId);
+    if (!v) return toast('Vendor account not found', 'err');
+    const base = Math.max(Date.now(), Number(v.expiresAt) || 0);
+    v.expiresAt = base + months * 30 * 86400000;
+    v.planId = a.planId || v.planId;
+    v.planMonths = months;
+    a.status = 'approved'; a.reviewedAt = Date.now(); a.reviewedBy = me().id;
+    notify(applicant.id, 'Vendor renewal approved 🎉', `Payment confirmed. Your store is active until ${new Date(v.expiresAt).toLocaleDateString()} (+${months} month${months > 1 ? 's' : ''}).`, '#/vendor', 'store');
+    notify('usr_admin', 'Vendor renewed', `@${v.username} extended by ${months} month${months > 1 ? 's' : ''} · ${usd(a.feeUsd)} confirmed.`, '#/admin/vendors', 'check');
+    sync(); toast('Renewal approved — vendor account active', 'ok', 3600); render();
+    return;
+  }
+  const v = {
+    id: uid('vnd'), userId: applicant.id, username: a.vendorUsername, name: a.vendorUsername,
+    avatar: applicant.avatar, rating: 5, trustScore: 80, sales: 0, revenue: 0,
+    createdAt: Date.now(), status: 'active', completedSales: 0, activationFee: a.feeUsd,
+    planId: a.planId || (plan && plan.id) || null, planMonths: months,
+    expiresAt: Date.now() + months * 30 * 86400000
+  };
+  DB.vendors.push(v);
+  applicant.vendorId = v.id;
+  a.status = 'approved'; a.reviewedAt = Date.now(); a.reviewedBy = me().id;
+  notify(applicant.id, 'Vendor account approved 🎉', `Your payment was confirmed. @${a.vendorUsername} is live until ${new Date(v.expiresAt).toLocaleDateString()}.`, '#/vendor', 'store');
+  notify('usr_admin', 'Vendor activated', `@${a.vendorUsername} approved · ${usd(a.feeUsd)} for ${months} month${months > 1 ? 's' : ''}.`, '#/admin/vendors', 'check');
+  sync(); toast('Vendor approved and activated', 'ok', 3600); render();
+};
+
+App.vendorAppReject = async function (id) {
+  const a = (DB.vendorApplications || []).find(x => x.id === id);
+  if (!a || a.status !== 'pending') return;
+  const reason = await promptDialog({ title: 'Reject vendor application', label: 'Reason (sent to applicant)', placeholder: 'e.g. payment slip not legible' });
+  if (reason === null) return;
+  a.status = 'rejected'; a.reviewedAt = Date.now(); a.note = reason || '';
+  notify(a.userId, 'Vendor application rejected', reason || 'Your application was rejected. You can apply again with a new payment slip.', '#/vendor', 'ban');
+  sync(); toast('Application rejected', 'ok'); render();
+};
+
+App.vendorAppDel = async function (id) {
+  if (!await confirmDialog({ title: 'Delete application record?', danger: true, ok: 'Delete' })) return;
+  DB.vendorApplications = (DB.vendorApplications || []).filter(x => x.id !== id);
+  sync(); toast('Application deleted', 'ok'); render();
+};
+
+App.saveAppLink = function () {
+  const el = document.getElementById('asAppLink');
+  const destEl = document.getElementById('asAppDest');
+  const msg = document.getElementById('asInviteMsg');
+  let url = ((el && el.value) || '').trim();
+  let dest = ((destEl && destEl.value) || '').trim();
+
+  if (url && !/^https?:\/\//i.test(url)) url = 'https://' + url;
+  if (url && !/^https?:\/\/[^\s]+$/i.test(url)) return toast('Enter a valid custom link starting with https://', 'err');
+  url = url.replace(/\/+$/, '');
+
+  if (dest && !/^https?:\/\//i.test(dest)) dest = 'https://' + dest;
+  if (dest && !/^https?:\/\/[^\s]+$/i.test(dest)) return toast('Enter a valid main app link starting with https://', 'err');
+  dest = dest.replace(/\/+$/, '');
+
+  // a branded link without a destination would send visitors nowhere
+  if (url && !dest) {
+    dest = location.origin + (window.__WC_SERVER__ ? '/whalechat.html' : location.pathname);
+    if (destEl) destEl.value = dest;
+  }
+  if (url && dest && urlHost(url) === urlHost(dest) && url.replace(/\/+$/, '') === dest.replace(/\/+$/, '').replace(/\.html?$/i, '')) {
+    return toast('The custom link and the main app link are the same — use a different branded link.', 'err');
+  }
+
+  DB.settings.appLink = url;
+  DB.settings.appLinkDestination = url ? dest : '';
+  DB.settings.inviteMessage = ((msg && msg.value) || '').trim();
+  if (url) DB.settings.publicUrl = dest || url;
+  sync();
+  toast(url ? 'Saved — ' + url + ' now redirects to ' + DB.settings.appLinkDestination : 'Custom link cleared — invite links use this server', 'ok');
+  render();
+};
+
+async function loadEmailPanel() {
+  const box = document.getElementById('emailStatus');
+  const badge = document.getElementById('emailBadge');
+  if (!box || !badge) return;
+  try {
+    const d = await fetch('/api/email/status', { cache: 'no-store' }).then(r => r.json());
+    if (!d || d.ok === false) throw new Error('unavailable');
+    badge.className = 'badge ' + (d.configured ? 'badge-success' : 'badge-warn');
+    badge.textContent = d.configured ? 'Connected' : 'Not configured';
+    box.innerHTML = `<div class="kv"><span class="k">Mailbox</span><span class="v">${esc(d.from || '—')}</span></div>
+      <div class="kv"><span class="k">SMTP host</span><span class="v">${esc((d.host || '') + ':' + (d.port || ''))}</span></div>
+      <div class="kv"><span class="k">Queued</span><span class="v">${d.queued || 0}</span></div>
+      <div class="kv"><span class="k">Sent this session</span><span class="v">${d.sent || 0}</span></div>
+      ${d.lastError ? `<div class="tiny mt8" style="color:var(--danger)">${esc(d.lastError)}</div>` : ''}`;
+  } catch (e) {
+    badge.className = 'badge badge-warn'; badge.textContent = 'No sync server';
+    box.innerHTML = '<div class="tiny muted">Email runs on the sync server. Connect this device to a server to see its status.</div>';
+  }
+}
+App.emailTest = async function () {
+  const input = document.getElementById('emailTestTo');
+  const to = ((input && input.value) || '').trim();
+  if (!to) return toast('Enter an email address', 'err');
+  toast('Sending test email…');
+  let r = null;
+  try {
+    r = await fetch('/api/email/test', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ to }) }).then(x => x.json());
+  } catch (e) { return toast('Could not reach the server', 'err'); }
+  if (r && r.ok) toast('Test email sent to ' + to, 'ok');
+  else if (r && r.error === 'smtp_not_configured') toast('Mailbox not connected on the server yet', 'err');
+  else toast('Email failed: ' + ((r && r.error) || 'unknown'), 'err');
+  loadEmailPanel();
+};
+
+App.savePublicUrl = function () {
+  const el = document.getElementById('publicAppUrl');
+  let url = ((el && el.value) || '').trim();
+  if (url && !/^https?:\/\//i.test(url)) url = 'https://' + url;
+  url = url.replace(/\/+$/, '');
+  DB.settings.publicUrl = url;
+  sync();
+  toast(url ? 'Public URL saved: ' + url : 'Public URL cleared', 'ok');
+  render();
+};
+/* =========================================================================
+   Live chat, install helper, seasonal wishes
+   ========================================================================= */
+App.dismissLocalNote = function () {
+  try { localStorage.setItem('wc_local_note', '1'); } catch (e) {}
+  render();
+};
+
+/* ---------------- Smartsupp live chat ---------------- */
+function smartsuppReady() {
+  return !!(window.Tawk_API && typeof window.Tawk_API.maximize === 'function');
+}
+function smartsuppIdentify() {
+  const u = me();
+  if (!u || !window.Tawk_API) return;
+  try {
+    window.Tawk_API.visitor = { name: u.fullName || u.username, email: u.email };
+  } catch (e) {}
+}
+App.openLiveChat = function () {
+  const u = me();
+  closeModal();
+  const tryOpen = () => {
+    try {
+      if (smartsuppReady()) {
+        smartsuppIdentify();
+        window.Tawk_API.maximize();
+        return true;
+      }
+    } catch (e) {}
+    return false;
+  };
+  if (tryOpen()) { toast('Opening live chat…', 'ok'); return; }
+  // the widget may still be loading — retry briefly, then show a fallback
+  let tries = 0;
+  const timer = setInterval(() => {
+    tries += 1;
+    if (tryOpen()) { clearInterval(timer); toast('Opening live chat…', 'ok'); }
+    else if (tries > 16) { clearInterval(timer); App.liveChatHelp(true); }
+  }, 350);
+};
+App.liveChatHelp = function (failed) {
+  const u = me();
+  openModal(modalShell('Customer support live chat', `
+    <div class="center" style="padding:4px 0 8px">
+      <div style="width:64px;height:64px;border-radius:20px;background:linear-gradient(135deg,rgba(46,230,201,.2),rgba(58,160,255,.16));
+        display:flex;align-items:center;justify-content:center;margin:0 auto;color:var(--accent)">${ic('chat', 30)}</div>
+      <h3 class="mt16" style="font-size:18px">Talk to our team in real time</h3>
+      <p class="small muted mt10" style="line-height:1.7">Live chat connects you straight to the WhaleChat support team — no waiting for a reply here. Share your username and order reference for faster help.</p>
+    </div>
+    ${failed ? `<div class="panel" style="padding:10px 12px;border-color:rgba(255,176,32,.35)"><div class="tiny" style="color:var(--warn)">The chat widget could not load. Check your connection or email us at ${esc((DB.settings && DB.settings.supportEmail) || 'support@whalechat.app')}.</div></div>` : ''}
+    <div class="kv mt14"><span class="k">Your username</span><span class="v">@${esc(u ? u.username : '—')}</span></div>
+    <div class="kv"><span class="k">Email</span><span class="v">${esc(u ? u.email : '—')}</span></div>
+    <div class="row gap8 mt16">
+      <button class="btn btn-primary grow" data-act="live-chat-open">${ic('chat', 15)} Open live chat</button>
+      <button class="btn btn-ghost" data-act="copy" data-id="${esc(u ? u.email : '')}">${ic('copy', 15)}</button>
+    </div>`,
+    `<button class="btn btn-ghost" data-close style="width:100%">Close</button>`), { width: '440px' });
+};
+App.liveChatOpen = function () {
+  try {
+    if (smartsuppReady()) { smartsuppIdentify(); window.Tawk_API.maximize(); closeModal(); return; }
+  } catch (e) {}
+  toast('Live chat is still loading — try again in a moment', 'err');
+};
+
+/* ---------------- install helpers ---------------- */
+App.installApp = async function () {
+  if (isStandalone()) return toast('WhaleChat is already installed on this device', 'ok');
+  if (deferredPrompt) {
+    try {
+      deferredPrompt.prompt();
+      const choice = await deferredPrompt.userChoice;
+      deferredPrompt = null;
+      if (choice && choice.outcome === 'accepted') toast('Installing WhaleChat…', 'ok');
+      return;
+    } catch (e) {}
+  }
+  const ua = navigator.userAgent || '';
+  const isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  openModal(modalShell('Install WhaleChat', `
+    ${isIOS ? `<div class="col gap14">
+      <p class="small muted" style="line-height:1.7">On iPhone and iPad, Safari installs apps through the Share menu:</p>
+      <div class="row gap12"><div class="avatar" style="background:var(--surface-2)">1</div><div><b class="small">Tap Share</b><div class="tiny muted mt6">The square icon with an arrow, in Safari's toolbar.</div></div></div>
+      <div class="row gap12"><div class="avatar" style="background:var(--surface-2)">2</div><div><b class="small">Add to Home Screen</b><div class="tiny muted mt6">Scroll the share sheet to find it.</div></div></div>
+      <div class="row gap12"><div class="avatar" style="background:var(--surface-2)">3</div><div><b class="small">Tap Add</b><div class="tiny muted mt6">WhaleChat appears like a native app.</div></div></div>
+    </div>` : `<div class="col gap12">
+      <p class="small muted" style="line-height:1.7">Your browser will install WhaleChat to your home screen or desktop:</p>
+      <div class="panel" style="padding:12px"><b class="small">Chrome / Edge (Android, Windows, Mac)</b><div class="tiny muted mt6">Open the browser menu → “Install app”, or click the install icon in the address bar.</div></div>
+      <div class="panel" style="padding:12px"><b class="small">Safari on Mac</b><div class="tiny muted mt6">File → “Add to Dock”, or Share → “Add to Home Screen”.</div></div>
+      <div class="panel" style="padding:12px"><b class="small">Firefox</b><div class="tiny muted mt6">Firefox does not install web apps; open WhaleChat in Chrome or Safari to install.</div></div>
+    </div>`}
+    <div class="panel mt14" style="padding:11px 12px"><div class="tiny muted" style="line-height:1.6">Installed apps open full-screen, keep you signed in and receive push notifications when closed.</div></div>`,
+    `<button class="btn btn-primary" data-close style="width:100%">Got it</button>`), { width: '460px' });
+};
+
+/* ---------------- happy new month ---------------- */
+let WISH_SHOWN = false;
+function maybeNewMonthWish() {
+  const u = me();
+  if (!u || WISH_SHOWN) return;
+  const now = new Date();
+  if (now.getDate() > 7) return;
+  const key = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+  if (u.lastMonthWish === key) return;
+  if (document.getElementById('overlay') && document.getElementById('overlay').innerHTML.trim()) return;
+  if (document.getElementById('storyRoot')) return;
+
+  WISH_SHOWN = true;
+  u.lastMonthWish = key;
+  const month = now.toLocaleString('en-US', { month: 'long' });
+  const year = now.getFullYear();
+  notify(u.id, 'Happy new month 🎉', `Welcome to ${month}! Wishing you a month full of great chats, sales and Whale Coin rewards.`, '#/home', 'gift');
+  persist();
+  const colors = ['#2ee6c9', '#3aa0ff', '#ffc861', '#ff5f74', '#b388ff'];
+  let confetti = '';
+  for (let i = 0; i < 26; i++) {
+    confetti += `<i style="left:${(i * 3.7) % 100}%;top:${-10 - (i % 5) * 16}px;background:${colors[i % colors.length]};animation-delay:${(i % 10) * .22}s"></i>`;
+  }
+  openModal(`<div class="month-wish">
+    <div class="confetti">${confetti}</div>
+    <div class="mw-emoji">🎉</div>
+    <h2>Happy New Month!</h2>
+    <div class="mw-month">${month} ${year}</div>
+    <p>Wishing you a wonderful month ahead, ${esc(u.fullName.split(' ')[0] || u.username)}. Thank you for being part of WhaleChat — enjoy new chats, new sales and new rewards.</p>
+    <div class="row" style="justify-content:center;margin-top:20px">
+      <button class="btn btn-primary" data-close>Let's go 🐋</button>
+    </div>
+  </div>`, { width: '440px' });
+  const box = document.querySelector('.modal-back');
+  if (box) box.style.background = 'rgba(2,8,14,.82)';
+}
+
+/* keep Smartsupp in sync with the signed-in user */
+let LAST_SMARTSUPP_USER = null;
+function maybeIdentifySmartsupp() {
+  const u = me();
+  if (!u) return;
+  if (LAST_SMARTSUPP_USER === u.id) return;
+  if (smartsuppReady()) { LAST_SMARTSUPP_USER = u.id; smartsuppIdentify(); }
+}
+setInterval(maybeIdentifySmartsupp, 2500);
+/* =========================================================================
+   Clean links, referral capture, automatic update check
+   ========================================================================= */
+function appLinkBase() {
+  // Admins can publish a custom public link (Admin -> Settings -> App link).
+  // It is only honoured when a destination exists, so a half-filled setting can
+  // never produce a shareable link that goes nowhere.
+  try {
+    const raw = (DB && DB.settings && DB.settings.appLink) || '';
+    const dest = (DB && DB.settings && DB.settings.appLinkDestination) || '';
+    if (!/^https?:\/\/[^\s]+$/i.test(String(dest).trim())) return '';
+    const v = String(raw).trim().replace(/\/+$/, '');
+    if (/^https?:\/\/[^\s]+$/i.test(v)) return v;
+  } catch (e) {}
+  return '';
+}
+function appLink() {
+  const custom = appLinkBase();
+  if (custom) return custom + '/';
+  if (window.__WC_SERVER__) return location.origin + '/';
+  return location.origin + location.pathname;
+}
+function urlHost(u) {
+  try { return new URL(u, location.origin).hostname.toLowerCase(); } catch (e) { return ''; }
+}
+/* The main app URL that every custom/branded link redirects to. */
+function appDestinationBase() {
+  try {
+    const raw = String((DB && DB.settings && DB.settings.appLinkDestination) || '').trim();
+    if (/^https?:\/\/[^\s]+$/i.test(raw)) return raw.replace(/\/+$/, '');
+  } catch (e) {}
+  return '';
+}
+function destinationLink(code) {
+  const raw = appDestinationBase();
+  if (!raw) return '';
+  try {
+    const u = new URL(raw, location.origin);
+    if (code) {
+      const c = String(code).toUpperCase();
+      if (/\.html?$/i.test(u.pathname)) u.searchParams.set('ref', c);
+      else u.pathname = u.pathname.replace(/\/+$/, '') + '/ref/' + encodeURIComponent(c);
+    }
+    return u.href;
+  } catch (e) { return ''; }
+}
+function referralLink(code) {
+  const c = encodeURIComponent(String(code || '').toUpperCase());
+  const custom = appLinkBase();
+  if (custom) return custom + '/ref/' + c;   // branded link → redirects to the main app
+  if (window.__WC_SERVER__) return location.origin + '/ref/' + c;
+  return location.origin + location.pathname + '#/ref=' + c;
+}
+/* If this page is opened on the branded domain, hand the visitor to the main app. */
+function maybeBrandedRedirect() {
+  const custom = appLinkBase();
+  if (!custom) return false;
+  const dest = destinationLink(referralFromURL());
+  if (!dest) return false;
+  const here = location.hostname.toLowerCase();
+  if (urlHost(custom) !== here) return false;      // not on the branded link
+  if (urlHost(dest) === here) return false;        // already on the main app
+  location.replace(dest);
+  return true;
+}
+/* ---------------- Google Analytics (GA4 / Tag Manager) ---------------- */
+const GA = { loaded: false, id: '', last: '', mode: '' };
+function gaMeasurementId() {
+  try {
+    const v = String((DB && DB.settings && DB.settings.gaMeasurementId) || '').trim().toUpperCase();
+    return /^G-[A-Z0-9]{4,20}$/.test(v) ? v : '';
+  } catch (e) { return ''; }
+}
+/* The GTM container is installed in <head> on every page. When it is present we push
+   events into its dataLayer instead of adding a second Google tag. */
+function gtmInstalled() {
+  try {
+    return !!(document.querySelector('script[src*="googletagmanager.com/gtm.js"]') || window.google_tag_manager);
+  } catch (e) { return false; }
+}
+function gaLoad(force) {
+  if (gtmInstalled()) {
+    GA.loaded = true; GA.mode = 'gtm'; GA.id = 'GTM';
+    return true;
+  }
+  const id = gaMeasurementId();
+  if (!id) { GA.loaded = false; GA.id = ''; GA.mode = ''; return false; }
+  if (GA.loaded && GA.id === id && GA.mode === 'gtag' && !force) return true;
+  GA.id = id; GA.mode = 'gtag';
+  window.dataLayer = window.dataLayer || [];
+  window.gtag = window.gtag || function () { window.dataLayer.push(arguments); };
+  window.gtag('js', new Date());
+  window.gtag('config', id, { send_page_view: false, anonymize_ip: true });
+  if (!document.getElementById('ga4Script')) {
+    const t = document.createElement('script');
+    t.id = 'ga4Script';
+    t.async = true;
+    t.src = 'https://www.googletagmanager.com/gtag/js?id=' + encodeURIComponent(id);
+    document.head.appendChild(t);
+  }
+  GA.loaded = true;
+  GA.last = '';
+  return true;
+}
+function gaTrack(path) {
+  if (!GA.loaded) gaLoad();
+  if (!GA.loaded) return;
+  const p = path || (location.hash || '/');
+  if (GA.last === p) return;
+  GA.last = p;
+  const payload = {
+    page_location: location.origin + location.pathname + location.hash,
+    page_path: p,
+    page_title: document.title
+  };
+  try {
+    if (GA.mode === 'gtm') {
+      window.dataLayer = window.dataLayer || [];
+      window.dataLayer.push(Object.assign({ event: 'page_view' }, payload));
+    } else if (typeof window.gtag === 'function') {
+      window.gtag('event', 'page_view', payload);
+    }
+  } catch (e) {}
+}
+function inviteMessageFor(u, link) {
+  const raw = ((DB && DB.settings && DB.settings.inviteMessage) || '').trim();
+  const base = raw || 'Join me on WhaleChat 🐋 — chat, shop and get paid in one calm place. Use my code {code}.';
+  return base
+    .replace(/\{link\}/g, link)
+    .replace(/\{code\}/g, (u && u.referralCode) || '')
+    .replace(/\{name\}/g, (u && (u.fullName || u.username)) || '');
+}
+function referralFromURL() {
+  let code = null;
+  const m = location.pathname.match(/\/(?:ref|r)[=\/]([A-Za-z0-9_-]{3,24})\/?$/i);
+  if (m) code = m[1];
+  if (!code) {
+    try { const q = new URLSearchParams(location.search); if (q.get('ref')) code = q.get('ref'); } catch (e) {}
+  }
+  if (!code) {
+    const h = location.hash || '';
+    const hm = h.match(/(?:ref|r)[=\/]([A-Za-z0-9_-]{3,24})/i);
+    if (hm) code = hm[1];
+  }
+  return code ? String(code).toUpperCase() : null;
+}
+
+let UPDATE_READY = false;
+let UPDATE_TIMER = null;
+
+async function checkForUpdates(manual) {
+  if (!APP_BUILD || !/^\d{4}-\d{2}-\d{2}T/.test(APP_BUILD)) {
+    if (manual) toast('You are running the latest version', 'ok');
+    return false;
+  }
+  let v = null;
+  for (const name of ['release.json', 'version.json']) {
+    try {
+      const res = await fetch(name + '?t=' + Date.now(), { cache: 'no-store' });
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (data && data.build) { v = data; break; }
+    } catch (e) { /* try next manifest */ }
+  }
+  if (!v) { if (manual) toast('Update check is unavailable right now', 'err'); return false; }
+  if (v.build > APP_BUILD) {
+    showUpdateBar(v);
+    if (manual) toast('A new version is ready — update to get it', 'ok');
+    return true;
+  }
+  if (manual) toast('You are running the latest version', 'ok');
+  return false;
+}
+
+function showUpdateBar(v, opts) { return showUpdatePrompt(v, opts); }
+
+function showUpdatePrompt(v, opts) {
+  const auto = !!(opts && opts.auto);
+  if (document.getElementById('updateBar')) return;
+  UPDATE_READY = true;
+  const ver = (v && v.version) ? String(v.version) : 'latest';
+  const notes = (v && (v.notes || v.note)) ? String(v.notes) : '';
+  const wrap = document.createElement('div');
+  wrap.className = 'update-sheet' + (auto ? ' auto' : '');
+  wrap.id = 'updateBar';
+  wrap.innerHTML = `<div class="update-sheet-card" role="dialog" aria-modal="true" aria-label="App update available">
+    <div class="update-sheet-head">
+      <span class="update-sheet-ic">${ic('refresh', 18)}</span>
+      <div style="min-width:0">
+        <div class="small" style="font-weight:700">Update available</div>
+        <div class="tiny muted">WhaleChat ${esc(ver)} is ready to install</div>
+      </div>
+      <button class="btn-icon" id="updateLater" style="width:30px;height:30px;margin-left:auto" title="Later">${ic('x', 15)}</button>
+    </div>
+    ${notes ? `<div class="update-sheet-notes">${esc(notes)}</div>` : ''}
+    <div class="update-sheet-foot">
+      <button class="btn btn-primary grow" id="updateNow">${ic('download', 15)} Update now</button>
+      <button class="btn btn-ghost" id="updateSkip">Later</button>
+    </div>
+    <div class="tiny muted center mt6" id="updateHint">${auto ? 'Updating automatically in <b>3</b>s' : 'Your session, chats and balances stay exactly as they are.'}</div>
+  </div>`;
+  document.body.appendChild(wrap);
+
+  const close = () => {
+    clearInterval(UPDATE_TIMER);
+    const el = document.getElementById('updateBar');
+    if (el) el.remove();
+    UPDATE_READY = false;
+  };
+  document.getElementById('updateNow').onclick = () => { clearInterval(UPDATE_TIMER); applyUpdate(); };
+  document.getElementById('updateLater').onclick = close;
+  document.getElementById('updateSkip').onclick = close;
+
+  /* an admin pressing "update everyone" applies it automatically; a user who
+     just noticed the new version gets to choose. Neither interrupts a form. */
+  if (auto) {
+    let left = 3;
+    UPDATE_TIMER = setInterval(() => {
+      left -= 1;
+      const hint = document.getElementById('updateHint');
+      if (left <= 0) { clearInterval(UPDATE_TIMER); applyUpdate(); return; }
+      if (hint) hint.innerHTML = 'Updating automatically in <b>' + left + '</b>s';
+    }, 1000);
+  }
+}
+
+async function applyUpdate() {
+  clearTimeout(UPDATE_TIMER);
+  try {
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.update().catch(() => {})));
+      regs.forEach(r => { if (r.waiting) r.waiting.postMessage({ type: 'SKIP_WAITING' }); });
+    }
+  } catch (e) {}
+  try {
+    if (window.caches) { const keys = await caches.keys(); await Promise.all(keys.map(k => caches.delete(k))); }
+  } catch (e) {}
+  location.reload();
+}
+
+App.checkUpdate = function () { checkForUpdates(true); };
+setInterval(() => { checkForUpdates(false); }, 10 * 60 * 1000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkForUpdates(false); });
+setTimeout(() => checkForUpdates(false), 5000);
+
+App.dismissNotifNudge = function () {
+  try { localStorage.setItem('wc_notif_nudge_' + new Date().toDateString(), '1'); } catch (e) {}
+  render();
+};
+
+AFTER.settings = function () {
+  const el = document.getElementById('pushDeviceCount');
+  if (!el || !Remote.enabled) return;
+  fetch('/api/push/status?userId=' + encodeURIComponent(me() ? me().id : ''), { cache: 'no-store' })
+    .then(r => r.json()).then(d => {
+      if (!d || !d.ok) return;
+      el.textContent = (d.push ? 'Push service ready' : 'Push service unavailable on this server') +
+        ' · ' + (d.devices || 0) + ' device' + ((d.devices || 0) === 1 ? '' : 's') + ' registered for @' + (me() ? me().username : '');
+    }).catch(() => { el.textContent = 'Could not read push status'; });
+};
+
+App.toggleReadReceipts = function () {
+  const u = me();
+  u.settings = u.settings || {};
+  const off = u.settings.readReceipts === false;
+  u.settings.readReceipts = off; // turning back on
+  sync();
+  toast(off ? 'Read receipts on — green ✓✓ when you read' : 'Read receipts off — senders will not see read ticks', 'ok');
+  render();
+};
+
+/* ---------------- server connection details ---------------- */
+App.serverDetails = async function () {
+  openModal(modalShell('Sync server details', `
+    <div id="srvDetails"><div class="row gap10"><span class="spinner"></span><span class="small muted">Reading server status…</span></div></div>`,
+    `<button class="btn btn-ghost" data-close style="flex:1">Close</button><button class="btn btn-primary" data-act="server-dialog" style="flex:1">Manage connection</button>`), { width: '540px' });
+  const box = document.getElementById('srvDetails');
+  const row = (k, v, mono) => `<div class="kv"><span class="k">${k}</span><span class="v" style="${mono ? 'font-family:ui-monospace,monospace;font-size:11.5px;word-break:break-all' : ''}">${esc(String(v))}</span></div>`;
+  try {
+    const [health, release, backup, push] = await Promise.all([
+      fetch('/api/health', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch('/api/release', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch('/api/backup', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch('/api/push/status?userId=' + encodeURIComponent(me() ? me().id : ''), { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null)
+    ]);
+    if (!health) throw new Error('unreachable');
+    const up = release ? Math.floor(release.uptimeSec / 3600) + 'h ' + Math.floor((release.uptimeSec % 3600) / 60) + 'm' : '—';
+    box.innerHTML = `
+      <div class="panel" style="padding:12px;margin-bottom:12px">
+        <div class="row gap8"><span class="dot" style="background:var(--success)"></span><span class="small" style="font-weight:650">Connected</span>
+          <span class="badge badge-success" style="margin-left:auto">${Remote.enabled ? 'Cross-device' : 'Local mode'}</span></div>
+        <div class="tiny muted mt6" style="word-break:break-all">${esc(Remote.base || location.origin)}</div>
+      </div>
+      ${row('Sync server URL', Remote.base || location.origin, true)}
+      ${row('App origin', location.origin, true)}
+      ${row('Server app', health.app || 'whalechat')}
+      ${row('Public URL', (release && release.publicUrl) || (DB.settings && DB.settings.publicUrl) || 'not set', true)}
+      ${row('Server build', (release && release.build) || '—', true)}
+      ${row('App build (this device)', APP_BUILD, true)}
+      ${row('Database revision', health.rev)}
+      ${row('Registered users', release ? release.users : '—')}
+      ${row('Connected tabs', release ? release.clients : '—')}
+      ${row('Push devices', push ? push.devices : '—')}
+      ${row('Push service', health.push ? 'VAPID ready' : 'unavailable')}
+      ${health.vapid ? row('VAPID public key', String(health.vapid).slice(0, 28) + '…', true) : ''}
+      ${row('Node runtime', release ? release.node : '—')}
+      ${row('Server uptime', up)}
+      ${backup ? row('Data storage', backup.persistent ? 'Persistent disk' : (backup.recoverable ? 'Ephemeral + persistent backups' : 'Ephemeral')) : ''}
+      ${backup ? row('Backups', backup.count + ' snapshots · last ' + (backup.last ? new Date(backup.last).toLocaleString() : 'none')) : ''}
+      <div class="row gap8 mt14">
+        <button class="btn btn-ghost btn-sm" data-act="copy" data-id="${esc(Remote.base || location.origin)}">${ic('copy', 14)} Copy server URL</button>
+        <button class="btn btn-ghost btn-sm" data-act="push-test">${ic('bell', 14)} Test push</button>
+      </div>`;
+  } catch (e) {
+    box.innerHTML = `<div class="empty" style="padding:18px"><p>This device is not connected to a sync server. Open “Manage connection” and enter your server URL, or visit the app with <code>?server=https://your-server</code>.</p></div>`;
+  }
+};
+/* =========================================================================
+   Cross-device sync (WhaleChat server) + Web Push
+   ========================================================================= */
+const LS_SERVER = 'whalechat.server';
+const LS_PUSH = 'whalechat.push';
+
+const Remote = {
+  base: '',
+  enabled: false,
+  rev: 0,
+  last: null,
+  clientId: 'c_' + Math.random().toString(36).slice(2, 10),
+  es: null,
+  applying: false,
+  flushing: false,
+  dirty: false,
+  timer: null,
+  retry: 0,
+  status: 'local',          // local | connecting | online | syncing | offline | error
+  lastError: '',
+
+  storedBase() {
+    try { return localStorage.getItem(LS_SERVER) || ''; } catch (e) { return ''; }
+  },
+  setStoredBase(v) {
+    try { v ? localStorage.setItem(LS_SERVER, v) : localStorage.removeItem(LS_SERVER); } catch (e) {}
+  },
+  url(p) { return (this.base || '') + p; },
+
+  async fetchJSON(pathname, opts = {}, timeout = 7000) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeout);
+    try {
+      const res = await fetch(this.url(pathname), Object.assign({ signal: ctrl.signal, headers: { 'content-type': 'application/json' } }, opts));
+      const data = await res.json().catch(() => null);
+      return { res, data };
+    } finally { clearTimeout(t); }
+  },
+
+  async init() {
+    try {
+      // ?server=https://sync.domain.com overrides everything (and is remembered)
+      let param = null;
+      try { param = new URLSearchParams(location.search).get('server'); } catch (e) {}
+      if (param) {
+        if (param === 'off') { this.setStoredBase(''); this.status = 'local'; return false; }
+        const url = /^https?:\/\//i.test(param) ? param : 'https://' + param;
+        return await this.connect(url.replace(/\/+$/, ''), { silent: true, initFromLocal: true });
+      }
+      const stored = this.storedBase();
+      if (stored) return await this.connect(stored, { silent: true, initFromLocal: true });
+      // Only a server that served this page injects the marker — avoids failed probes on static hosts
+      if (window.__WC_SERVER__) {
+        return await this.connect('', { silent: true, initFromLocal: true });
+      }
+      if (DEFAULT_SYNC_SERVER) {
+        return await this.connect(DEFAULT_SYNC_SERVER, { silent: true, initFromLocal: true });
+      }
+    } catch (e) {}
+    this.status = 'local';
+    return false;
+  },
+
+  async connect(base, opts = {}) {
+    base = String(base || '').replace(/\/+$/, '');
+    this.status = 'connecting';
+    try {
+      const health = await this.fetchJSON(base + '/api/health', {}, 5000);
+      if (!health.res.ok || !health.data || health.data.app !== 'whalechat') throw new Error('Not a WhaleChat server');
+      this.base = base;
+      this.setStoredBase(base);
+      this.enabled = true;
+      this.status = 'online';
+      this.retry = 0;
+
+      const st = await this.fetchJSON('/api/state');
+      if (!st.res.ok || !st.data) throw new Error('Could not read server state');
+
+      if (!st.data.db) {
+        // brand new server — seed it with this device's database
+        if (!DB) DB = await seedDB();
+        const r = await this.fetchJSON('/api/state/init', { method: 'POST', body: JSON.stringify({ db: DB, rev: 1 }) });
+        if (!r.res.ok && r.res.status !== 409) throw new Error((r.data && r.data.error) || 'Initialise failed');
+        if (r.res.status === 409) return this.connect(base, opts); // another device won the race
+        this.rev = r.data.rev || 1;
+        this.last = cloneDB(DB);
+      } else {
+        DB = migrateDB(st.data.db);
+        this.rev = st.data.rev || 0;
+        this.last = cloneDB(DB);
+        saveLocalNow();
+      }
+      try { resolvePendingReferrals(); reconcileReferralBonuses(); } catch (e) {}
+      // session may point at a user this server doesn't know
+      if (SESSION && !DB.users.some(u => u.id === SESSION.userId)) {
+        SESSION = null; localStorage.removeItem(LS_SESSION);
+      }
+      startEventStream();
+      if (!opts.silent) toast('Connected — syncing across devices', 'ok');
+      return true;
+    } catch (e) {
+      this.lastError = e.message || 'Connection failed';
+      this.status = 'error';
+      if (!opts.silent) toast('Could not connect: ' + this.lastError, 'err');
+      return false;
+    }
+  },
+
+  disconnect() {
+    stopEventStream();
+    this.enabled = false;
+    this.base = '';
+    this.status = 'local';
+    this.setStoredBase('');
+  },
+
+  onLocalChange() {
+    if (!this.enabled || this.applying) return;
+    this.dirty = true;
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.flush(), 140);
+  },
+
+  async flush() {
+    if (!this.enabled || this.applying || this.flushing) return;
+    if (!this.dirty) return;
+    const ops = diffDB(this.last || blankDB(), DB);
+    if (!ops.length) { this.dirty = false; return; }
+    this.flushing = true;
+    this.status = 'syncing';
+    try {
+      const r = await this.fetchJSON('/api/ops', {
+        method: 'POST',
+        body: JSON.stringify({ ops, clientId: this.clientId })
+      }, 10000);
+      if (!r.res.ok) throw new Error((r.data && r.data.error) || ('Sync failed (' + r.res.status + ')'));
+      this.rev = r.data.rev || this.rev;
+      this.last = cloneDB(DB);
+      this.dirty = false;
+      this.status = 'online';
+      this.lastError = '';
+      this.retry = 0;
+    } catch (e) {
+      this.lastError = e.message || 'Sync failed';
+      this.status = 'offline';
+      this.retry = Math.min(this.retry + 1, 12);
+      clearTimeout(this.retryTimer);
+      this.retryTimer = setTimeout(() => { this.flush(); }, 800 * this.retry);
+    } finally {
+      this.flushing = false;
+      if (this.dirty && this.status === 'online') setTimeout(() => this.flush(), 80);
+    }
+  },
+
+  async refresh(force) {
+    if (!this.enabled) return;
+    if (this.flushing) { this.pendingRefresh = true; return; }
+    try {
+      const r = await this.fetchJSON('/api/state', {}, 10000);
+      if (!r.res.ok || !r.data) throw new Error('State fetch failed');
+      if (!force && (r.data.rev === this.rev || r.data.rev === undefined)) return;
+      if (!r.data.db) return;
+      this.applying = true;
+      DB = migrateDB(r.data.db);
+      this.rev = r.data.rev;
+      this.last = cloneDB(DB);
+      saveLocalNow();
+      if (SESSION && !DB.users.some(u => u.id === SESSION.userId)) {
+        SESSION = null; localStorage.removeItem(LS_SESSION);
+      }
+      this.status = 'online';
+      try { resolvePendingReferrals(); reconcileReferralBonuses(); } catch (e) {}
+      render();
+      Media.hydrate(document);
+      if (ACTIVE_CHAT) { const b = document.getElementById('chatBody'); if (b) b.scrollTop = b.scrollHeight; }
+    } catch (e) {
+      this.status = 'offline';
+      this.lastError = e.message || 'Reconnect failed';
+    } finally {
+      this.applying = false;
+      if (this.pendingRefresh) { this.pendingRefresh = false; setTimeout(() => this.refresh(true), 150); }
+    }
+  }
+};
+
+const SYNC_COLLECTIONS = ['users', 'vendors', 'companyProducts', 'products', 'orders', 'deposits', 'withdrawals', 'messages', 'statuses', 'notifications', 'contacts', 'blocks', 'txs', 'referrals', 'purchases', 'refunds', 'vendorApplications', 'stocks', 'holdings', 'trades', 'watchlist', 'alerts'];
+
+function cloneDB(db) { try { return JSON.parse(JSON.stringify(db)); } catch (e) { return db; } }
+function migrateDB(db) {
+  if (!db) return DB;
+  const out = Object.assign(blankDB(), db);
+  out.settings = withSettingsDefaults(Object.assign({}, blankDB().settings, db.settings || {}));
+  migrateVendorExpiry(out);
+  return out;
+}
+function saveLocalNow() {
+  try { localStorage.setItem(LS_DB, JSON.stringify(DB)); } catch (e) {}
+}
+
+function diffDB(prev, next) {
+  prev = prev || blankDB(); next = next || blankDB();
+  const ops = [];
+  for (const col of SYNC_COLLECTIONS) {
+    const a = prev[col] || [], b = next[col] || [];
+    if (a === b) continue;
+    if (a.length === b.length && JSON.stringify(a) === JSON.stringify(b)) continue;
+    const am = new Map(a.map(x => [x && x.id, x]));
+    const bm = new Map(b.map(x => [x && x.id, x]));
+    for (const id of am.keys()) if (id && !bm.has(id)) ops.push({ op: 'remove', col, id });
+    for (const [id, item] of bm) {
+      if (!id) continue;
+      if (!am.has(id)) ops.push({ op: 'push', col, item });
+      else if (JSON.stringify(am.get(id)) !== JSON.stringify(item)) ops.push({ op: 'update', col, id, patch: item });
+    }
+  }
+  for (const key of ['settings', 'chatsMeta', 'meta', 'invest']) {
+    if (JSON.stringify(prev[key]) !== JSON.stringify(next[key])) ops.push({ op: 'set', key, value: next[key] });
+  }
+  return ops;
+}
+
+function startEventStream() {
+  stopEventStream();
+  if (!Remote.enabled || typeof EventSource === 'undefined') return;
+  try {
+    const es = new EventSource(Remote.url('/api/events?client=' + encodeURIComponent(Remote.clientId)));
+    Remote.es = es;
+    es.addEventListener('hello', (e) => {
+      Remote.status = 'online';
+      try { const d = JSON.parse(e.data); if (d
