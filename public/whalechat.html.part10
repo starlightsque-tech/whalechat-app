@@ -1,0 +1,321 @@
+row"><label class="label">Price (USD)</label><input class="input" id="sfPrice" type="number" step="0.01" value="${x.price != null ? x.price : ''}"/></div>
+    <div class="field grow"><label class="label">P/E</label><input class="input" id="sfPe" type="number" step="0.1" value="${x.pe != null ? x.pe : 0}"/></div>
+  </div>
+  <div class="row" style="gap:8px">
+    <div class="field grow"><label class="label">Market cap ($B)</label><input class="input" id="sfMcap" type="number" step="1" value="${x.mcap != null ? x.mcap : 0}"/></div>
+    <div class="field grow"><label class="label">Dividend (%)</label><input class="input" id="sfDiv" type="number" step="0.01" value="${x.div != null ? x.div : 0}"/></div>
+  </div>
+  <div class="row" style="gap:8px">
+    <div class="field grow"><label class="label">CEO</label><input class="input" id="sfCeo" value="${esc(x.ceo || '')}"/></div>
+    <div class="field grow"><label class="label">Website</label><input class="input" id="sfWeb" value="${esc(x.website || '')}" placeholder="example.com"/></div>
+  </div>
+  <div class="field"><label class="label">About</label><textarea class="input" id="sfAbout" rows="3">${esc(x.about || '')}</textarea></div>
+  <div class="row" style="gap:14px;flex-wrap:wrap">
+    <label class="checkline"><input type="checkbox" id="sfCrypto" ${x.crypto ? 'checked' : ''}/> <span class="small">Crypto stock</span></label>
+    <label class="checkline"><input type="checkbox" id="sfNew" ${x.isNew ? 'checked' : ''}/> <span class="small">New listing</span></label>
+  </div>`;
+};
+App.invAdminAdd = function () {
+  openModal(modalShell('Add stock', INV.stockFormHTML(null),
+    `<button class="btn btn-ghost" data-close style="flex:1">Cancel</button>
+     <button class="btn btn-primary" id="sfSave" style="flex:1">Add stock</button>`), { locked: false });
+  document.getElementById('sfSave').onclick = () => {
+    const ticker = (document.getElementById('sfTicker').value || '').trim().toUpperCase().replace(/[^A-Z.]/g, '');
+    const name = document.getElementById('sfName').value.trim();
+    const price = Number(document.getElementById('sfPrice').value);
+    if (!ticker || !name || !(price > 0)) return toast('Ticker, name and a price are required', 'err');
+    if (INV.stock(ticker)) return toast('That ticker already exists', 'err');
+    DB.stocks.push({
+      id: 'st_' + ticker.toLowerCase(), ticker, name, sector: document.getElementById('sfSector').value.trim() || 'Other',
+      price, prevClose: price, pe: Number(document.getElementById('sfPe').value) || 0,
+      mcap: Number(document.getElementById('sfMcap').value) || 0, div: Number(document.getElementById('sfDiv').value) || 0,
+      ceo: document.getElementById('sfCeo').value.trim(), website: document.getElementById('sfWeb').value.trim(),
+      about: document.getElementById('sfAbout').value.trim(), color: '#3aa0ff',
+      crypto: document.getElementById('sfCrypto').checked, isNew: document.getElementById('sfNew').checked,
+      paused: false, custom: true, createdAt: Date.now()
+    });
+    INV.live[ticker] = null; INV.seriesCache = {};
+    closeModal(); persist(); toast(`${ticker} listed`, 'ok'); render();
+  };
+};
+App.invAdminEdit = function (id, ds) {
+  const s = INV.stock(ds.t); if (!s) return;
+  openModal(modalShell(`Edit ${s.ticker}`, INV.stockFormHTML(s),
+    `<button class="btn btn-ghost" data-close style="flex:1">Cancel</button>
+     <button class="btn btn-primary" id="sfSave" style="flex:1">Save changes</button>`), { locked: false });
+  document.getElementById('sfSave').onclick = () => {
+    const price = Number(document.getElementById('sfPrice').value);
+    s.name = document.getElementById('sfName').value.trim() || s.name;
+    s.sector = document.getElementById('sfSector').value.trim() || s.sector;
+    if (price > 0) { const old = s.price; s.price = price; s.prevClose = old || price; INV.live[s.ticker] = null; }
+    s.pe = Number(document.getElementById('sfPe').value) || 0;
+    s.mcap = Number(document.getElementById('sfMcap').value) || 0;
+    s.div = Number(document.getElementById('sfDiv').value) || 0;
+    s.ceo = document.getElementById('sfCeo').value.trim();
+    s.website = document.getElementById('sfWeb').value.trim();
+    s.about = document.getElementById('sfAbout').value.trim();
+    s.crypto = document.getElementById('sfCrypto').checked;
+    s.isNew = document.getElementById('sfNew').checked;
+    INV.seriesCache = {};
+    closeModal(); persist(); toast('Stock updated', 'ok'); render();
+  };
+};
+App.invAdminDel = function (id, ds) {
+  const s = INV.stock(ds.t); if (!s) return;
+  const held = DB.holdings.filter(h => h.ticker === s.ticker).length;
+  openModal(modalShell('Delete stock', `<p class="small">Remove <b>${esc(s.ticker)}</b> from the catalogue?${held ? ` <span style="color:var(--danger)">${held} user position(s) still hold this symbol.</span>` : ''}</p>`,
+    `<button class="btn btn-ghost" data-close style="flex:1">Cancel</button>
+     <button class="btn btn-danger" id="delYes" style="flex:1">Delete</button>`), { locked: false });
+  document.getElementById('delYes').onclick = () => {
+    DB.stocks = DB.stocks.filter(x => x.ticker !== s.ticker);
+    delete INV.live[s.ticker];
+    closeModal(); persist(); toast(`${s.ticker} removed`, 'ok'); render();
+  };
+};
+App.invAdminPause = function (id, ds) {
+  const s = INV.stock(ds.t); if (!s) return;
+  const inv = INV.db();
+  inv.paused[s.ticker] = !INV.paused(s.ticker);
+  persist(); render();
+  toast(`${s.ticker} trading ${INV.paused(s.ticker) ? 'paused' : 'resumed'}`, 'ok');
+};
+App.invAdminFee = function () {
+  const v = Number((document.getElementById('ivFeeInput') || {}).value);
+  if (!(v >= 0 && v <= 5)) return toast('Enter a fee between 0 and 5%', 'err');
+  INV.db().feePct = v; persist(); toast(`Trading fee set to ${v}%`, 'ok'); render();
+};
+App.invAdminBal = function (id, ds) {
+  const usr = findUser(ds.id); if (!usr) return;
+  openModal(modalShell(`Edit balance · @${usr.username}`, `
+    <div class="field"><label class="label">Whale Coin balance</label>
+      <input class="input" id="balIn" type="number" step="0.01" value="${usr.balance}"/></div>
+    <div class="tiny muted">≈ ${usd(coinsToUsd(usr.balance))} USD at 1 WC = $0.50</div>`,
+    `<button class="btn btn-ghost" data-close style="flex:1">Cancel</button>
+     <button class="btn btn-primary" id="balSave" style="flex:1">Save</button>`), { locked: false });
+  document.getElementById('balSave').onclick = () => {
+    const v = Number(document.getElementById('balIn').value);
+    if (!isFinite(v) || v < 0) return toast('Invalid amount', 'err');
+    usr.balance = Math.round(v * 100) / 100;
+    tx(usr.id, 'admin-adjust', 'Balance adjusted by admin', v - (usr.balance || 0), { by: me().id });
+    notify(usr.id, 'Balance updated', `An administrator updated your Whale Coin balance to ${coins(v)} WC.`, '#/wallet', 'wallet');
+    closeModal(); persist(); toast('Balance updated', 'ok'); render();
+  };
+};
+
+/* ------------------------------ live paint ------------------------------ */
+INV.setText = function (el, txt) { if (el && el.textContent !== txt) el.textContent = txt; };
+
+INV.paint = function () {
+  const u = me(); if (!u) return;
+  const dashNode = document.querySelector('[data-lv="pv-coins"]');
+  let port = null;
+  if (dashNode) port = INV.portfolio(u.id);
+
+  $$('[data-lv]').forEach(el => {
+    const spec = el.getAttribute('data-lv') || '';
+    const idx = spec.indexOf(':');
+    const kind = idx < 0 ? spec : spec.slice(0, idx);
+    const t = idx < 0 ? '' : spec.slice(idx + 1);
+    if (kind === 'pv-coins' && port) return INV.setText(el, coins(port.valueCoins));
+    if (kind === 'pv-usd' && port) return INV.setText(el, '≈ ' + usd(port.valueUsd) + ' USD');
+    if (kind === 'pv-cost' && port) return INV.setText(el, coins(usdToCoins(port.costUsd)) + ' WC');
+    if (kind === 'pv-earn' && port) return INV.setText(el, (port.earningsUsd >= 0 ? '+' : '−') + coins(usdToCoins(Math.abs(port.earningsUsd))) + ' WC');
+    if (kind === 'cash') return INV.setText(el, coins(u.balance) + ' WC');
+    if (!t) return;
+    const q = INV.quote(t); if (!q) return;
+    if (kind === 'price') INV.setText(el, usd(q.price));
+    if (kind === 'wc') INV.setText(el, coins(usdToCoins(q.price)) + ' WC');
+    if (kind === 'pct') {
+      INV.setText(el, (q.changePct >= 0 ? '+' : '') + q.changePct.toFixed(2) + '%');
+      el.classList.remove('up', 'down', 'flash-up', 'flash-down');
+      el.classList.add(INV.chgClass(q.changePct));
+      if (q.dir) { el.classList.add(q.dir > 0 ? 'flash-up' : 'flash-down'); setTimeout(() => el.classList.remove('flash-up', 'flash-down'), 700); }
+    }
+  });
+
+  const dayNode = document.querySelector('.inv-day');
+  if (dayNode && port) {
+    dayNode.classList.remove('up', 'down');
+    dayNode.classList.add(INV.chgClass(port.dayUsd));
+    dayNode.innerHTML = `${ic(port.dayUsd >= 0 ? 'trend' : 'down', 14)}<b>${port.dayUsd >= 0 ? '+' : '−'}${usd(Math.abs(port.dayUsd))}</b>
+      <span>(${port.dayUsd >= 0 ? '+' : '−'}${Math.abs(port.dayPct).toFixed(2)}%) today</span>`;
+  }
+
+  $$('[data-spark]').forEach(el => {
+    const t = el.getAttribute('data-spark');
+    el.innerHTML = INV.spark(t);
+  });
+  $$('[data-chart]').forEach(el => {
+    const spec = (el.getAttribute('data-chart') || '').split('|');
+    const t = spec[0], tf = spec[1] || '1D', mode = spec[2] || 'line';
+    if (!t) return;
+    if (t === '__portfolio__') {
+      const ser = INV.portfolioSeries(tf, u.id);
+      el.innerHTML = ser.length ? INV.lineChart(ser, { h: 150 })
+        : `<div class="inv-empty">${ic('trend', 26)}<p class="small muted">No positions yet.</p></div>`;
+    } else {
+      const ser = INV.series(t, tf);
+      el.innerHTML = mode === 'candle' ? INV.candleChart(ser) : INV.lineChart(ser, { h: 150 });
+    }
+  });
+
+  const priceEl = document.querySelector('.inv-price');
+  if (priceEl) { priceEl.classList.remove('flash-up', 'flash-down'); }
+};
+
+/* ------------------------------ nav + boot ------------------------------ */
+(function injectInvestNav() {
+  const tab = { key: 'invest', label: 'Invest', icon: 'trend', href: '#/invest' };
+  const add = (arr, at) => { if (arr && !arr.some(n => n.key === 'invest')) arr.splice(at, 0, tab); };
+  add(BOTTOM_NAV, 3);
+  add(USER_NAV, 3);
+  add(VENDOR_NAV, 4);
+  if (!ADMIN_NAV.some(n => n.key === 'admin-stocks')) {
+    ADMIN_NAV.splice(Math.max(0, ADMIN_NAV.length - 2), 0,
+      { key: 'admin-stocks', label: 'Stocks', icon: 'trend', href: '#/admin/stocks' });
+  }
+})();
+
+const _adminViewOriginal = VIEWS.admin;
+VIEWS.admin = function (parts, params) {
+  if ((parts[1] || '') === 'stocks') return INV.viewAdminStocks();
+  return _adminViewOriginal.apply(this, arguments);
+};
+
+window.addEventListener('hashchange', () => {
+  const h = location.hash || '';
+  if (!h.startsWith('#/invest')) { INV.marketQuery = ''; }
+});
+
+setInterval(() => {
+  try {
+    if (typeof DB === 'undefined' || !DB || !me() || document.hidden) return;
+    INV.tick();
+  } catch (e) { console.error('invest tick failed', e); }
+}, INV.TICK_MS);
+
+</script>
+
+<script>
+
+/* =========================================================================
+   WhaleChat extras — cart fix, save-contact-to-phone (.vcf), email CTA
+   ========================================================================= */
+'use strict';
+
+/* 1. The marketplace button emits data-act="add-cart", but the handler was
+      only ever defined as App.addToCart — so every "Add to cart" click was a
+      no-op. Alias it, and give instant feedback. */
+App.addCart = function (id, qty) {
+  const u = me();
+  const p = DB.products.find(x => x.id === id);
+  if (!p) return;
+  if (!p.active || p.stock < 1) return toast('This product is sold out', 'err');
+  u.cart = u.cart || [];
+  const want = Math.max(1, Number(qty) || 1);
+  const line = u.cart.find(c => c.productId === id);
+  if (line) {
+    if (line.qty + want > p.stock) return toast('Only ' + p.stock + ' available', 'err');
+    line.qty += want;
+  } else {
+    if (want > p.stock) return toast('Only ' + p.stock + ' available', 'err');
+    u.cart.push({ productId: id, qty: want });
+  }
+  try { sync(); } catch (e) {}
+  const n = (u.cart.find(c => c.productId === id) || {}).qty || want;
+  toast(`${p.name} added to cart 🛒  (${n} in cart)`, 'ok');
+  try { render(); } catch (e) {}
+};
+
+/* 2. Save a WhaleChat contact to the device as a vCard (.vcf) with any
+      preferred display name — the way WhatsApp does it. */
+App.contactSave = function (id) {
+  const u = me();
+  const c = findUser(id);
+  if (!c) return;
+  const suggest = (c.fullName || c.username || '').trim();
+  openModal(modalShell('Save to phone', `
+    <p class="small muted" style="line-height:1.65;margin-bottom:12px">Choose the name this contact is saved as in your phone's address book. We build a standard <b>.vcf</b> card — Android, iPhone, Google Contacts and Outlook all import it.</p>
+    <div class="field"><label class="label">Save as</label>
+      <input class="input" id="vcName" value="${esc(suggest)}" placeholder="Any name you prefer"/></div>
+    <div class="field"><label class="label">Phone</label>
+      <input class="input" id="vcPhone" value="${esc(c.phone || '')}" placeholder="+1 555 010 2030"/></div>
+    <div class="field"><label class="label">Email</label>
+      <input class="input" id="vcEmail" value="${esc(c.email || '')}" placeholder="name@email.com"/></div>
+    <div class="inv-note tiny">${ic('shield', 13)} Only what you see here is written into the card. WhaleChat never uploads your address book.</div>`,
+    `<button class="btn btn-ghost" data-close style="flex:1">Cancel</button>
+     <button class="btn btn-soft" id="vcCopy" style="flex:1">Copy</button>
+     <button class="btn btn-primary" id="vcGo" style="flex:1">Save .vcf</button>`), { locked: false });
+
+  const build = () => {
+    const name = ($('#vcName') || {}).value || suggest || 'WhaleChat contact';
+    const phone = ($('#vcPhone') || {}).value || '';
+    const email = ($('#vcEmail') || {}).value || '';
+    const parts = String(name).trim().split(/\s+/);
+    const first = parts.shift() || '';
+    const last = parts.join(' ');
+    const origin = location.origin;
+    const lines = [
+      'BEGIN:VCARD', 'VERSION:3.0',
+      `N:${last};${first};;;`,
+      `FN:${name}`,
+      `ORG:WhaleChat`,
+      phone ? `TEL;TYPE=CELL:${phone}` : '',
+      email ? `EMAIL;TYPE=INTERNET:${email}` : '',
+      `URL:${origin}/whalechat.html#/chat/${c.id}`,
+      `NOTE:WhaleChat contact @${c.username}${phone ? '' : ''} — chat at ${origin}/whalechat.html`,
+      `X-WHALECHAT-ID:${c.id}`,
+      'END:VCARD'
+    ].filter(Boolean);
+    return { text: lines.join('\r\n'), name: String(name).replace(/[^\w \-.]/g, '').trim() || 'contact' };
+  };
+
+  const done = () => { try { closeModal(); } catch (e) {} };
+
+  const share = async () => {
+    const { text, name } = build();
+    const file = new File([text], name + '.vcf', { type: 'text/vcard' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: name, text: 'WhaleChat contact' });
+        toast('Contact shared — choose Contacts to save it', 'ok');
+        return done();
+      } catch (e) { /* user cancelled or share blocked — fall back */ }
+    }
+    const blob = new Blob([text], { type: 'text/vcard;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name + '.vcf';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast('Contact card downloaded — open it to add to your address book', 'ok');
+    done();
+  };
+
+  const go = document.getElementById('vcGo');
+  if (go) go.onclick = share;
+  const copy = document.getElementById('vcCopy');
+  if (copy) copy.onclick = () => {
+    const { text } = build();
+    copyText(text); done();
+  };
+};
+
+/* keep the original menu, add the save option in front of it */
+const _contactMenu = App.contactMenu;
+App.contactMenu = function (id) {
+  const c = findUser(id);
+  const u = me();
+  if (!c) return;
+  openModal(modalShell(c.fullName, `
+    <div class="list">
+      <button class="list-item" data-act="open-chat" data-id="${id}" style="width:100%;text-align:left">${ic('chat', 17)} <span class="grow">Open chat</span></button>
+      <button class="list-item" data-act="contact-save" data-id="${id}" style="width:100%;text-align:left">${ic('download', 17)} <span class="grow">Save to phone<span class="tiny muted" style="display:block">Download a .vcf contact card with any name</span></span></button>
+      <button class="list-item" data-act="copy" data-id="${c.phone || '@' + c.username}" style="width:100%;text-align:left">${ic('copy', 17)} <span class="grow">Copy ${c.phone ? 'phone number' : 'username'}</span></button>
+      <button class="list-item" data-act="delete-contact" data-id="${id}" style="width:100%;text-align:left;color:var(--danger)">${ic('trash', 17)} <span class="grow">Remove contact</span></button>
+    </div>`, `<button class="btn btn-ghost" data-close style="width:100%">Close</button>`, '@' + c.username));
+};
+
+</script>
+</body>
+</html>
