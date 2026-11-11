@@ -1,9 +1,4 @@
-` : ''}</div>
-    <button class="btn-icon" data-close style="width:34px;height:34px">${ic('x', 17)}</button></div>
-    <div class="modal-body">${body}</div>${foot ? `<div class="modal-foot">${foot}</div>` : ''}`;
-}
-document.addEventListener('click', (e) => {
-  if (e.target.closest('[data-close]')) { closeModal(); return; }
+ }
   const ov = document.getElementById('overlay');
   if (ov && ov.innerHTML && e.target.matches('[data-modal-back]') && !e.target.closest('.modal')) { closeModal(); }
 });
@@ -530,6 +525,7 @@ const ADMIN_NAV = [
   { key: 'admin-withdrawals', label: 'Withdrawals', icon: 'download', href: '#/admin/withdrawals' },
   { key: 'admin-notifications', label: 'Notifications', icon: 'bell', href: '#/admin/notifications' },
   { key: 'admin-bonuses', label: 'Bonuses', icon: 'gift', href: '#/admin/bonuses' },
+  { key: 'admin-email', label: 'Email', icon: 'send', href: '#/admin/email' },
   { key: 'admin-release', label: 'Release', icon: 'refresh', href: '#/admin/release' },
   { key: 'admin-settings', label: 'Settings', icon: 'settings', href: '#/admin/settings' },
   { key: 'admin-chat', label: 'Support Chat', icon: 'chat', href: '#/admin/chat' }
@@ -844,4 +840,10 @@ let lastMaintain = 0;
 function doMaintenance() {
   const now = Date.now();
   if (now - lastMaintain < 1500) return;
-  lastMai
+  lastMaintain = now;
+  const u = me();
+  if (!u) return;
+  let changed = false;
+  // mark my messages delivered after a moment (simulates server delivery ack)
+  DB.messages.forEach(m => {
+    if (m.from === u.id && m.status === 'sent' && now - m.creat
