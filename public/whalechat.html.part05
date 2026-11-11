@@ -1,7 +1,4 @@
-e="font-weight:700">${coins(o.totalCoins)} WC</span></div></div>
-      <div class="divider"></div>
-      <div class="tiny muted">${o.items.map(i => esc(i.name) + ' ×' + i.qty).join(', ')}</div>
-      <div class="row gap8 mt10"><button class="btn btn-sm btn-ghost" data-act="vendor-order-detail" data-id="${o.id}">${ic('eye', 14)} Buyer & delivery</button></div>
+tn btn-sm btn-ghost" data-act="vendor-order-detail" data-id="${o.id}">${ic('eye', 14)} Buyer & delivery</button></div>
     </div>`).join('')}</div>` : `<div class="card empty"><div class="ic">${ic('truck', 26)}</div><h3>No orders yet</h3><p>Your sales will appear here with buyer delivery details.</p></div>`}`;
 };
 App.vendorOrderDetail = function (id) {
@@ -952,6 +949,7 @@ VIEWS.admin = function (parts, params) {
   else if (sub === 'notifications') body = adminNotifications();
   else if (sub === 'release') body = adminRelease();
   else if (sub === 'bonuses') body = adminBonuses();
+  else if (sub === 'email') body = adminEmail();
   else if (sub === 'settings') body = adminSettings();
   else if (sub === 'chat') body = adminChat();
   else body = adminOverview();
@@ -1068,4 +1066,8 @@ function adminRelease() {
         </div>
       </div>
     </div>
-    <style>@m
+    <style>@media(max-width:860px){.dash2{grid-template-columns:1fr!important}}</style>`;
+}
+
+async function loadReleasePanel() {
+  const set = (id, txt) => { const el = document.getElementById(id); if (el) e
