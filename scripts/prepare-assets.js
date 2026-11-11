@@ -10,7 +10,7 @@ const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 const PUB = path.join(ROOT, 'public');
 const APP = path.join(PUB, 'whalechat.html');
-const RELEASE = { version: '3.9.5', build: '2026-11-11T17:45:00Z' };
+const RELEASE = { version: '3.9.6', build: '2026-11-11T18:15:00Z' };
 const MARKER = 'WhaleChat Invest';
 /* 1. committed base64 image assets ------------------------------------------------ */
 const assetDir = path.join(PUB, 'assets');
@@ -93,6 +93,71 @@ function isCurrent(html) {
     if (page !== before) { fs.writeFileSync(APP, page); console.log('[app] stamped ' + RELEASE.version + ' @ ' + RELEASE.build); }
   } catch (e) { console.error('[app] stamp failed:', e.message); }
 
+  /* 2e. vendor + admin users get the Invest tab -------------------------------- */
+  try {
+    let page = fs.readFileSync(APP, 'utf8');
+    const before = page;
+    page = page.replace("['home', 'vendor', 'company', 'market', 'wallet', 'profile']",
+                        "['home', 'vendor', 'company', 'market', 'invest', 'wallet', 'profile']");
+    page = page.replace("['admin', 'admin-users', 'admin-orders', 'admin-withdrawals', 'admin-chat']",
+                        "['admin', 'admin-users', 'admin-orders', 'admin-withdrawals', 'invest', 'admin-chat']");
+    if (page !== before) { fs.writeFileSync(APP, page); console.log('[app] Invest tab enabled for vendor and admin accounts'); }
+  } catch (e) { console.error('[app] nav patch failed:', e.message); }
+
+  /* 2f. admin can configure the mail server from the panel --------------------- */
+  try {
+    const emailFile = path.join(ROOT, 'email.js');
+    let src = fs.readFileSync(emailFile, 'utf8');
+    if (!src.includes('applyRuntimeMail')) {
+      src = src.replace("const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');",
+        "const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');\nconst MAIL_CFG_FILE = path.join(DATA_DIR, 'mail.json');\n"
+        + "function applyRuntimeMail() {\n  try {\n    const c = JSON.parse(fs.readFileSync(MAIL_CFG_FILE, 'utf8'));\n"
+        + "    if (c.brevoKey) cfg.brevoKey = c.brevoKey;\n    if (c.resendKey) cfg.resendKey = c.resendKey;\n"
+        + "    if (c.from) cfg.from = c.from;\n    if (c.fromName) cfg.fromName = c.fromName;\n"
+        + "    if (c.host) cfg.host = c.host;\n    if (c.port) cfg.port = Number(c.port);\n  } catch (e) {}\n}\n", 1);
+      src = src.replace("function provider() {", "function provider() {\n  applyRuntimeMail();", 1);
+      src = src.replace("function configured() {", "function configured() {\n  applyRuntimeMail();", 1);
+      fs.writeFileSync(emailFile, src);
+      console.log('[mail] runtime config hook installed (admin panel)');
+    }
+  } catch (e) { console.error('[mail] runtime hook failed:', e.message); }
+
+  try {
+    const serverFile = path.join(ROOT, 'server.js');
+    let src = fs.readFileSync(serverFile, 'utf8');
+    if (!src.includes('/api/admin/mail')) {
+      const route = `  if (pathname === '/api/admin/mail' && req.method === 'POST') {
+    const body = await readBody(req);
+    const db = (store && store.db) || {};
+    const admin = (db.users || []).find(u => u.id === body.adminId && u.role === 'admin');
+    if (!admin) return json(res, 403, { ok: false, error: 'admin only' });
+    try {
+      const file = path.join(DATA_DIR, 'mail.json');
+      let cur = {};
+      try { cur = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) {}
+      if (body.brevoKey) cur.brevoKey = String(body.brevoKey).trim();
+      if (body.from) cur.from = String(body.from).trim();
+      if (body.fromName) cur.fromName = String(body.fromName).trim();
+      if (body.resendKey) cur.resendKey = String(body.resendKey).trim();
+      cur.updatedAt = new Date().toISOString();
+      writeJSONAtomic(file, cur);
+      if (cur.brevoKey) process.env.BREVO_API_KEY = cur.brevoKey;
+      if (cur.from) process.env.MAIL_FROM = cur.from;
+      return json(res, 200, { ok: true, configured: email.configured(), from: cur.from || null });
+    } catch (e) { return json(res, 500, { ok: false, error: e.message }); }
+  }
+`;
+      const anchorRoute = "  if (pathname === '/api/reload' && req.method === 'POST') {";
+      if (src.includes(anchorRoute)) {
+        src = src.replace(anchorRoute, route + anchorRoute);
+        fs.writeFileSync(serverFile, src);
+        console.log('[server] /api/admin/mail route added');
+      } else {
+        console.error('[server] route anchor missing — skipped');
+      }
+    }
+  } catch (e) { console.error('[server] route patch failed:', e.message); }
+
   /* 3. sync server must persist the investing collections --------------------------- */
   const need = ['stocks', 'holdings', 'trades', 'watchlist', 'alerts'];
   const serverFile = path.join(ROOT, 'server.js');
@@ -143,7 +208,7 @@ function isCurrent(html) {
     const ver = RELEASE.version || (app.match(/APP_VERSION = '([^']+)'/) || [])[1];
     const build = RELEASE.build || (app.match(/APP_BUILD = '([^']+)'/) || [])[1];
     const meta = { version: ver, build, file: 'whalechat.html',
-      notes: 'WhaleChat ' + ver + ' — portfolio value, invested and earnings now include live trades and update in real time, with live performance chart and allocation.',
+      notes: 'WhaleChat ' + ver + ' — 1D charts fixed, 2s live market ticker, vendors can invest, admin can publish releases and connect email + push for every user.',
       releasedAt: build, minimum: '3.0.0' };
     fs.writeFileSync(path.join(PUB, 'version.json'), JSON.stringify(meta, null, 2));
     fs.writeFileSync(path.join(PUB, 'release.json'), JSON.stringify(meta, null, 2));
