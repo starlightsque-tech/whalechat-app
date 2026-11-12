@@ -1,8 +1,8 @@
 {
-  "version": "3.29.0",
-  "build": "2026-11-13T02:05:00Z",
+  "version": "3.30.0",
+  "build": "2026-11-13T03:00:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.29.0 - TradingView real-time stock chart wired to the traded symbol, with the live Trade value / Earnings overlay and Sell + Take Profit/Loss controls underneath; Finnhub candles remain the automatic fallback.",
-  "releasedAt": "2026-11-13T02:05:00Z",
+  "notes": "WhaleChat 3.30.0 - active trade analysis: TradingView technical-analysis gauge + mini chart for the traded symbol, live earnings/losses counting, red Buy and profit-blue Sell controls under the charts. Alpaca and Finnhub chart views removed.",
+  "releasedAt": "2026-11-13T03:00:00Z",
   "minimum": "3.0.0"
 }
