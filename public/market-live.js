@@ -3,9 +3,8 @@
    - loads lightweight-charts from the public CDN
    - stock detail chart is a themed BaselineSeries: baseline = trade entry
      price, green above / red below (inverted for Short trades)
-   - quotes and historical bars come from the WhaleChat backend, which owns
-     the Alpaca API keys (REST snapshots/bars + IEX WebSocket)
-   - admin -> stocks gets Alpaca keys, sync schedule and price overrides
+   - quotes come only from the WhaleChat backend, which own the Finnhub key
+   - admin -> stocks gets Finnhub key / data mode / refresh controls
    ========================================================================= */
 'use strict';
 
@@ -51,8 +50,6 @@
       const prev = INV.live[ticker];
       INV.live[ticker] = {
         price: Number(q.price),
-        rawPrice: Number(q.rawPrice) || Number(q.price),
-        overridePct: Number(q.overridePct) || 0,
         prevClose: Number(q.prevClose) || Number(q.price),
         open: Number(q.open) || Number(q.price),
         dayHigh: Number(q.dayHigh) || Number(q.price),
@@ -90,7 +87,7 @@
         MK.lastPollAt = Date.now();
         applyQuotes(r.data);
       }
-    } catch (e) { /* local mode / offline: cached Alpaca prices remain */ }
+    } catch (e) { /* local mode / offline: cached Finnhub prices remain */ }
   }
 
   function feedFresh() {
@@ -100,7 +97,7 @@
   }
   MK.feedFresh = feedFresh;
 
-  /* No browser-side price generator: the backend Alpaca feed is the only source. */
+  /* No browser-side price generator: the backend Finnhub feed is the only source. */
   function patchTick() {
     if (typeof INV === 'undefined' || INV.__mkTickPatched) return;
     INV.tick = function () {
@@ -118,13 +115,7 @@
     if (!INV.__mkSeriesPatched) {
       INV.series = function (ticker, tf) {
         const key = String(ticker || '').toUpperCase();
-        const cache = MK.historyCache || {};
-        const frame = String(tf || '1D').toUpperCase();
-        let cached = cache[key + '|' + frame + '|ov0'] || cache[key + '|' + frame];
-        if (!cached) {
-          const hit = Object.keys(cache).find((k) => k.indexOf(key + '|' + frame + '|') === 0);
-          if (hit) cached = cache[hit];
-        }
+        const cached = MK.historyCache && MK.historyCache[key];
         if (cached && cached.points && cached.points.length > 1) {
           const pts = cleanPoints(cached.points, key, 900);
           if (pts.length > 1) return pts.map((p) => p.value);
@@ -156,15 +147,8 @@
 
   /* ------------------------------ market notice ----------------------------- */
   function noticeText() {
-    const onStock = /^#\/invest\/stock\//.test(location.hash || '');
-    const meta = MK.chartMeta;
-    if (onStock && meta && meta.ticker) {
-      if (meta.source === 'analysis') return 'Live technical analysis · real-time market data';
-      if (meta.source === 'tradingview') return 'TradingView · real-time market chart · live trades';
-      if (meta.source === 'live') return 'Live market chart · real-time ticks';
-    }
     if (MK.feed && MK.feed.notice) return MK.feed.notice;
-    return 'Add Alpaca API keys in Admin → Stocks';
+    return 'Connect Finnhub in Admin → Markets';
   }
 
   function noticeLive() {
@@ -180,7 +164,7 @@
       el.classList.toggle('sim', !live);
     });
     document.querySelectorAll('.inv-note').forEach((el) => {
-      if (!/market data|market mode|Alpaca|Simulated market|simulated feed/i.test(el.textContent || '')) return;
+      if (!/market data|market mode|Finnhub|Simulated market|simulated feed/i.test(el.textContent || '')) return;
       el.setAttribute('data-market-notice', '1');
       el.innerHTML = `<span class="wc-feed-dot ${live ? 'live' : 'sim'}"></span><span>${escMarket(txt)}</span>`;
     });
@@ -266,21 +250,15 @@
     return vals.map((v, i) => ({ time: now - (vals.length - 1 - i) * step, value: Math.max(0.0001, Number(v) || 0) }));
   }
 
-  async function fetchHistory(ticker, tf) {
-    const frame = tf || '1D';
-    let ovKey = 0;
-    try { const lq = INV.quote(ticker); ovKey = Number(lq && lq.overridePct) || 0; } catch (e) {}
-    const cacheKey = ticker + '|' + frame + '|ov' + ovKey;
-    const cached = MK.historyCache && MK.historyCache[cacheKey];
-    if (cached && Date.now() - cached.at < 45000) return cached.points;
+  async function fetchHistory(ticker) {
+    const cached = MK.historyCache && MK.historyCache[ticker];
+    if (cached && Date.now() - cached.at < 30000) return cached.points;
     try {
-      const fb = await getJSON('/api/market/history?tickers=' + encodeURIComponent(ticker) + '&limit=900', {}, 7000);
-      const h = (fb.data && fb.data.history) || {};
-      const points = Array.isArray(h[ticker]) ? h[ticker] : [];
-      const meta = { ticker, tf: frame, source: 'live', at: Date.now() };
-      MK.chartMeta = meta;
+      const r = await getJSON('/api/market/history?tickers=' + encodeURIComponent(ticker) + '&limit=900', {}, 7000);
+      const d = r.data || {};
+      const points = (d.ok && d.history && Array.isArray(d.history[ticker])) ? d.history[ticker] : [];
       MK.historyCache = MK.historyCache || {};
-      MK.historyCache[cacheKey] = { at: Date.now(), points, meta };
+      MK.historyCache[ticker] = { at: Date.now(), points };
       return points;
     } catch (e) { return []; }
   }
@@ -299,10 +277,9 @@
     return out;
   }
 
-  async function stockData(ticker, tf) {
-    const frame = tf || '1D';
-    const pts = cleanPoints(await fetchHistory(ticker, frame), ticker, 900);
-    let data = pts.length >= 2 ? pts : fallbackData(ticker, frame);
+  async function stockData(ticker) {
+    const pts = cleanPoints(await fetchHistory(ticker), ticker, 900);
+    let data = pts.length >= 2 ? pts : fallbackData(ticker, '1D');
     let q = null;
     try { q = INV.quote(ticker); } catch (e) {}
     if (q && q.price > 0) {
@@ -321,8 +298,7 @@
 
   function destroyChart() {
     if (!MK.chart) return;
-    if (MK.chart.tvTimer) { try { clearTimeout(MK.chart.tvTimer); } catch (e) {} }
-    try { if (MK.chart.chart && MK.chart.chart.remove) MK.chart.chart.remove(); } catch (e) {}
+    try { MK.chart.chart.remove(); } catch (e) {}
     MK.chart = null;
   }
 
@@ -352,11 +328,9 @@
       const data = cfg.data && cfg.data.length >= 2 ? cfg.data : [{ time: Math.floor(Date.now() / 1000) - 60, value: 100 }, { time: Math.floor(Date.now() / 1000), value: 100 }];
       const defaultBase = Number(cfg.baseline) > 0 ? Number(cfg.baseline) : Number(data[0].value) || 100;
       const side = cfg.side === 'short' ? 'short' : 'long';
-      const chartHeight = Math.max(160, Math.round(Number(cfg.height) || 240));
-      wrap.style.height = chartHeight + 'px';
       const chart = LWC.createChart(wrap, {
         width: wrap.clientWidth || host.clientWidth || 320,
-        height: chartHeight,
+        height: 240,
         layout: {
           background: { type: LWC.ColorType.Solid, color: 'transparent' },
           textColor: '#8ba4b6',
@@ -426,7 +400,7 @@
       wrap.appendChild(banner);
 
       MK.chart = {
-        mode: cfg.mode || 'stock', ticker: cfg.ticker || '', tf: cfg.tf || '', chart, series, host, wrap, LWC,
+        mode: cfg.mode || 'stock', ticker: cfg.ticker || '', chart, series, host, wrap, LWC,
         basePrice: defaultBase, defaultBase, side, banner,
         lastTime: data[data.length - 1].time,
         points: data.length, lines: [], lineKey: ''
@@ -455,26 +429,19 @@
     if (!h || !(Number(h.shares) > 0) || !(Number(price) > 0)) { c.banner.style.display = 'none'; return; }
     const shares = Number(h.shares) || 0;
     const px = Number(price) || 0;
-    const entryUsd = Number(h.avgPrice) || px;
-    const investedUsd = Number(h.investedUsd) > 0 ? Number(h.investedUsd) : shares * entryUsd;
-    /* Trade value = what was paid for the position, repriced live with every
-       tick: +earnings as the price rises, -losses as it falls, until the trade
-       is closed. The second row counts the earnings / losses in real time. */
-    const tradeValueUsd = investedUsd + (shares * px - investedUsd);
-    const pnlUsd = tradeValueUsd - investedUsd;
+    const investedUsd = Number(h.investedUsd) > 0 ? Number(h.investedUsd) : shares * (Number(h.avgPrice) || px);
+    const valueUsd = shares * px;
+    const pnlUsd = valueUsd - investedUsd;
     const pnlCoins = pnlUsd / 0.5;
     const up = pnlUsd >= 0;
-    const pnlPct = investedUsd > 0 ? (pnlUsd / investedUsd) * 100 : 0;
-    c.banner.innerHTML =
-      '<div class="wc-pos-line"><span>Trade value</span><b>' + usd(tradeValueUsd) + ' <i>(' + (Math.round((tradeValueUsd / 0.5) * 100) / 100).toFixed(2) + ' WC)</i></b></div>' +
-      '<div class="wc-pos-line"><span>Earnings / Losses</span><b class="' + (up ? 'up' : 'down') + '">' + (up ? '+' : '−') + usd(Math.abs(pnlUsd)) + ' <i>(' + (up ? '+' : '−') + Math.abs(pnlCoins).toFixed(2) + ' WC · ' + (up ? '+' : '−') + Math.abs(pnlPct).toFixed(2) + '%)</i></b></div>' +
-      '<div class="wc-pos-line"><span>Entry price</span><b>' + usd(entryUsd) + ' <i>(' + (Math.round((entryUsd / 0.5) * 100) / 100).toFixed(2) + ' WC)</i></b></div>';
+    c.banner.innerHTML = '<div class="wc-pos-line"><span>Position value</span><b>' + usd(valueUsd) + ' <i>(' + (Math.round((valueUsd / 0.5) * 100) / 100).toFixed(2) + ' WC)</i></b></div>' +
+      '<div class="wc-pos-line"><span>Unrealized P&amp;L</span><b class="' + (up ? 'up' : 'down') + '">' + (up ? '+' : '−') + usd(Math.abs(pnlUsd)) + ' <i>(' + (up ? '+' : '−') + Math.abs(pnlCoins).toFixed(2) + ' WC)</i></b></div>';
     c.banner.style.display = 'block';
   }
 
   function syncPriceLines() {
     const c = MK.chart;
-    if (!c || c.tv || c.mode !== 'stock') return;
+    if (!c || c.mode !== 'stock') return;
     const pos = positionFor(c.ticker);
     const key = pos ? [pos.id, pos.entryPrice, pos.takeProfitPrice, pos.stopLossPrice, pos.trailingActive, pos.trailingStopPct].join('|') : 'none';
     if (c.lineKey === key) return;
@@ -499,17 +466,27 @@
   async function mountChart() {
     const host = document.querySelector('.inv-chart[data-lt-live-chart], .inv-chart[data-chart]');
     if (!host) { destroyChart(); return; }
-    const spec = (host.getAttribute('data-chart') || '').split('|');
-    const ticker = (host.getAttribute('data-lt-live-chart') || spec[0] || currentTicker()).toUpperCase();
-    const tf = (spec[1] || '1D').toUpperCase();
+    const ticker = (host.getAttribute('data-lt-live-chart') || (host.getAttribute('data-chart') || '').split('|')[0] || currentTicker()).toUpperCase();
     if (!ticker) return;
-    /* The stock page chart is the TradingView technical-analysis + mini-chart
-       module (public/trade-analysis.js). No Alpaca chart renders here. */
-    if (window.WC_TA && typeof window.WC_TA.mount === 'function') {
-      window.WC_TA.mount(host, ticker, tf);
+    if (MK.chart && MK.chart.mode === 'stock' && MK.chart.ticker === ticker && document.body.contains(MK.chart.host)) {
+      host.__wcLwc = true;
+      updateChart();
       return;
     }
     destroyChart();
+    host.innerHTML = '<div class="wc-lwc-loading">Loading live chart…</div>';
+    const data = await stockData(ticker);
+    const pos = positionFor(ticker);
+    try {
+      await makeChart(host, {
+        mode: 'stock', ticker, data,
+        baseline: pos ? Number(pos.entryPrice) : Number(data[0].value),
+        side: pos ? pos.side : 'long'
+      });
+    } catch (e) {
+      MK.chartLoading = null;
+      try { host.classList.remove('wc-chart-host'); host.innerHTML = INV.lineChart(INV.series(ticker, '1D'), { h: 150 }); } catch (err) {}
+    }
   }
 
   function portfolioTimeline(vals, tf) {
@@ -590,7 +567,6 @@
     let q;
     try { q = INV.quote(ticker); } catch (e) { return; }
     if (!q || !(q.price > 0)) return;
-    if (c.tv) { updatePositionBanner(c, q.price); return; }
     const pos = positionFor(ticker);
     const targetBase = pos ? Number(pos.entryPrice) : c.defaultBase;
     const targetSide = pos ? (pos.side === 'short' ? 'short' : 'long') : 'long';
@@ -606,7 +582,7 @@
     const time = now > c.lastTime ? now : c.lastTime + 1;
     appendPoint(c, time, q.price);
     if (c.points > 900) {
-      stockData(ticker, c.tf).then((fresh) => {
+      stockData(ticker).then((fresh) => {
         if (!MK.chart || MK.chart !== c) return;
         c.series.setData(fresh);
         c.lastTime = fresh[fresh.length - 1].time;
@@ -627,8 +603,8 @@
     return `<div class="card" id="divSettingsCard">
       <div class="between" style="align-items:flex-start;gap:10px">
         <div><div class="card-title" style="margin:0">Dividends &amp; duration bonus</div>
-          <div class="tiny muted" style="margin-top:3px">Synced from Alpaca Corporate Actions · paid only when a timer trade completes.</div></div>
-        <span class="badge ${inv.dividendSource === 'alpaca' ? 'badge-success' : 'badge-warn'}">${inv.dividendSource === 'alpaca' ? 'Alpaca' : (inv.dividendSource || 'Not synced')}</span>
+          <div class="tiny muted" style="margin-top:3px">Auto-synced from Finnhub every 24h · paid only when the trade timer completes.</div></div>
+        <span class="badge ${inv.dividendSource === 'finnhub' ? 'badge-success' : 'badge-warn'}">${inv.dividendSource === 'finnhub' ? 'Finnhub' : 'Fallback'}</span>
       </div>
       <div class="div-settings-grid">
         <div class="field"><label class="label">Dividend bonus multiplier</label>
@@ -644,7 +620,7 @@
       <div class="div-yield-head"><span>Symbol</span><span>Synced yield</span><span>Override %</span></div>
       <div class="div-yield-list">
         ${stocks.map(s => {
-          const auto = ys[s.ticker] != null ? Number(ys[s.ticker]) : 0;
+          const auto = ys[s.ticker] != null ? Number(ys[s.ticker]) : (LT.DIV_FALLBACK[s.ticker] || 0);
           const o = ov[s.ticker];
           return `<div class="div-yield-row">
             <b>${escMarket(s.ticker)}</b>
@@ -653,13 +629,13 @@
           </div>`;
         }).join('')}
       </div>
-      <div class="tiny muted" style="margin-top:8px">Last sync: ${escMarket(synced)} · source: ${escMarket(inv.dividendSource || 'not synced')} · floor 0.01 WC on dividend-paying symbols.</div>
+      <div class="tiny muted" style="margin-top:8px">Last sync: ${escMarket(synced)} · source: ${escMarket(inv.dividendSource || 'fallback')} · floor 0.01 WC on dividend-paying symbols.</div>
       <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
         <button class="btn btn-primary" data-act="div-save">Save dividend settings</button>
-        <button class="btn btn-soft" data-act="div-sync">Sync dividends now</button>
+        <button class="btn btn-soft" data-act="div-sync">Sync from Finnhub now</button>
         <button class="btn btn-ghost" data-act="div-reset">Reset overrides</button>
       </div>
-      <div class="tiny muted mt6" id="divSyncNote">Leave an override blank to use the Alpaca-synced annual yield. Overrides are locked at trade entry.</div>
+      <div class="tiny muted mt6" id="divSyncNote">Leave an override blank to use the synced annual yield. Overrides are locked at trade entry.</div>
     </div>`;
   }
 
@@ -667,107 +643,141 @@
     return `<div class="card admin-guide" id="tradingGuideCard">
       <div class="between" style="align-items:flex-start;gap:10px">
         <div><div class="card-title" style="margin:0">Trading guide for admins</div>
-          <div class="tiny muted" style="margin-top:3px">Alpaca live data · USD spot trading · WC settlement</div></div>
+          <div class="tiny muted" style="margin-top:3px">Virtual trading · read before changing leverage, fees or payouts.</div></div>
         <span class="badge badge-accent">Admin only</span>
       </div>
+
       <div class="guide-facts">
         <div><b>1 WC</b><span>$0.50</span></div>
-        <div><b>Feed</b><span>Alpaca IEX</span></div>
-        <div><b>Loss cap</b><span>Invested USD</span></div>
+        <div><b>Min stake</b><span>5 WC</span></div>
+        <div><b>Loss cap</b><span>Stake only</span></div>
         <div><b>Settlement</b><span>Every second</span></div>
       </div>
+
       <details class="guide-sec" open>
-        <summary>1 · Spot Buy / Sell</summary>
-        <ol class="guide-steps">
-          <li><b>Quote.</b> The effective price is <code>Raw Alpaca price × (1 + Override % / 100)</code>. The ticket shows USD and WC.</li>
-          <li><b>Buy.</b> USD amount ÷ effective price = shares. WC cost = USD ÷ 0.50. TP, SL and due time are optional.</li>
-          <li><b>Close.</b> Manual sell, TP, SL or due time closes the position at the live effective price. Payout = shares × exit price ÷ 0.50.</li>
-        </ol>
-        <div class="guide-note">The backend settles every second even when no browser is open. One atomic guard prevents a manual sell and an automatic trigger from double-paying.</div>
-      </details>
-      <details class="guide-sec">
-        <summary>2 · Price Override %</summary>
-        <p>Each stock can carry its own override. <b>+5%</b> makes a $200 raw quote show and trade at $210 (420 WC). Overrides apply to live ticks, chart bars, TP/SL and payouts. Use <b>0</b> for the raw Alpaca price.</p>
-      </details>
-      <details class="guide-sec">
-        <summary>3 · Alpaca connection &amp; sync</summary>
+        <summary>Spot Buy / Sell — primary order flow</summary>
         <ul class="guide-list">
-          <li>Keys are stored only on the server (file mode 0600 and Postgres), never in the synced database or browsers.</li>
-          <li><b>Paper / Sandbox</b> uses the paper trading host for assets and corporate actions; <b>Live Data</b> uses the live host.</li>
-          <li>Sync pulls tradable US equities, snapshots, 1-minute bars and trailing dividends. Scheduled sync defaults to every 60 minutes and can be turned off.</li>
+          <li><b>Buy:</b> enter WC or shares. Cost is deducted immediately at the live Finnhub price.</li>
+          <li><b>Position:</b> symbol, entry price, quantity, invested capital, optional TP and SL are recorded.</li>
+          <li><b>Sell:</b> users can sell any open position at the live price. Payout = quantity × price, credited in WC.</li>
+          <li><b>Auto TP/SL:</b> the backend checks every second and sells the whole position atomically when either target is crossed.</li>
+          <li><b>Fees:</b> spot orders have no fee; 1 WC = $0.50.</li>
         </ul>
+      </details>
+
+      <details class="guide-sec">
+        <summary>Leveraged Rise / Fall — existing positions</summary>
+        <p>The older leveraged Rise/Fall ticket is retained for existing open positions and settlement. New spot orders above are the primary stock-trading flow.</p>
+      </details>
+
+      <details class="guide-sec" open>
+        <summary>1 · Trade flow</summary>
+        <ol class="guide-steps">
+          <li><b>Open.</b> User picks a stock, Rise or Fall, a stake and optional TP/SL. The stake plus entry fee is deducted; the entry price becomes the baseline.</li>
+          <li><b>Track.</b> P&amp;L moves with the shared price feed. The chart, active-trade card and portfolio performance update live.</li>
+          <li><b>Settle.</b> A TP, SL, trailing stop, total loss or the duration ends the trade. Payout is credited server-side and logged.</li>
+        </ol>
+        <div class="guide-note">Fee is charged once at entry. Closing does not charge again.</div>
+      </details>
+
+      <details class="guide-sec">
+        <summary>2 · Profit, loss and worked examples</summary>
+        <div class="guide-formula"><code>pnl WC = stake × leverage × price move × direction</code></div>
+        <p><code>direction</code> is <b>+1 for Rise</b>, <b>−1 for Fall</b>. Payout is <code>max(0, stake + pnl)</code>.</p>
+        <div class="guide-scenarios">
+          <div class="guide-scenario rise">
+            <div class="guide-sc-head"><b>Rise example</b><span>100 WC · 5×</span></div>
+            <div class="guide-kv"><span>Entry</span><b>$100.00</b></div>
+            <div class="guide-kv"><span>Take Profit</span><b>$110.00</b></div>
+            <div class="guide-kv"><span>Stop Loss</span><b>$95.00</b></div>
+            <div class="guide-kv"><span>Trailing</span><b>3%</b></div>
+            <div class="guide-kv"><span>Exit (TSL)</span><b>$104.76</b></div>
+            <div class="guide-outcome win">Win: +23.80 WC · payout 123.80 WC</div>
+            <div class="guide-outcome loss">Loss cap: 20% gap = −100 WC · payout 0</div>
+            <div class="guide-sc-note">Price peaked at $108, then the 3% trail exited before TP.</div>
+          </div>
+          <div class="guide-scenario fall">
+            <div class="guide-sc-head"><b>Fall example</b><span>100 WC · 5×</span></div>
+            <div class="guide-kv"><span>Entry</span><b>$100.00</b></div>
+            <div class="guide-kv"><span>Take Profit</span><b>$90.00</b></div>
+            <div class="guide-kv"><span>Stop Loss</span><b>$105.00</b></div>
+            <div class="guide-kv"><span>Trailing</span><b>3%</b></div>
+            <div class="guide-kv"><span>Exit (TSL)</span><b>$94.76</b></div>
+            <div class="guide-outcome win">Win: +26.20 WC · payout 126.20 WC</div>
+            <div class="guide-outcome loss">Loss cap: 20% gap = −100 WC · payout 0</div>
+            <div class="guide-sc-note">Price fell to $92, then the 3% trail exited before TP.</div>
+          </div>
+        </div>
+        <p class="guide-tip"><b>Rule of thumb:</b> a leveraged trade is wiped out by a <code>100 ÷ leverage</code>% adverse move. Losses can never exceed the stake.</p>
+      </details>
+
+      <details class="guide-sec">
+        <summary>3 · TP, SL and trailing stop</summary>
+        <div class="guide-table">
+          <div class="guide-tr guide-th"><span>Level</span><span>Rise</span><span>Fall</span></div>
+          <div class="guide-tr"><span>Take Profit</span><span>above entry</span><span>below entry</span></div>
+          <div class="guide-tr"><span>Stop Loss</span><span>below entry</span><span>above entry</span></div>
+        </div>
+        <ul class="guide-list">
+          <li><b>WC mode</b> — user enters the target profit/loss in WC; the app converts it to a price using stake × leverage.</li>
+          <li><b>Trailing stop</b> — follows the best price by the chosen % and only tightens. It never moves backwards.</li>
+          <li><b>Editing</b> — users can change or clear TP/SL from Active Trades. Changes apply on the next price tick.</li>
+        </ul>
+      </details>
+
+      <details class="guide-sec">
+        <summary>4 · Settlement and real market data</summary>
+        <ul class="guide-list">
+          <li>The server checks open trades at least once per second and settles on the tick that hits a level.</li>
+          <li>Close reasons: <code>Take Profit Hit</code>, <code>Stop Loss Hit</code>, <code>Trailing Stop Hit</code>, <code>Time limit reached</code>.</li>
+          <li>Payout, transaction, notification and toast are produced even if the user's browser is closed.</li>
+          <li><b>Hybrid:</b> Finnhub REST seeds every listed stock, forex pair and crypto pair; one backend WebSocket streams live ticks.</li>
+          <li><b>No fake ticks:</b> closed stock exchanges hold the last real print. Crypto streams 24/7 and Forex 24/5 through Finnhub.</li>
+        </ul>
+      </details>
+
+      <details class="guide-sec">
+        <summary>5 · Admin controls</summary>
+        <div class="guide-controls">
+          <div><b>Fee</b><span>0–5%, charged at entry</span></div>
+          <div><b>Leverage</b><span>1×–20×, magnifies P&amp;L</span></div>
+          <div><b>Pause</b><span>blocks new trades only</span></div>
+          <div><b>Balance</b><span>manual support adjustment</span></div>
+        </div>
+        <p class="guide-warn"><b>Important:</b> payouts are deterministic and audited. Do not use leverage or manual balance edits to hide losses — every settlement records its reason and amount.</p>
       </details>
     </div>`;
   }
 
   function adminCardHTML() {
-    const syncOptions = [5, 15, 30, 60, 240, 720, 1440];
     return `<div class="card" id="mktFeedCard">
       <div class="between" style="align-items:flex-start;gap:10px">
-        <div><div class="card-title" style="margin:0">Market data · Alpaca</div>
-          <div class="tiny muted" style="margin-top:3px">Server-side REST + IEX WebSocket. Keys never reach a browser.</div></div>
+        <div><div class="card-title" style="margin:0">Market data · Finnhub</div>
+          <div class="tiny muted" style="margin-top:3px">Server-side feed shared by every user. The API key never reaches a browser.</div></div>
         <span class="badge badge-warn" id="mktModeBadge">Loading…</span>
       </div>
-      <div class="field" style="margin-top:12px"><label class="label">Alpaca API Key ID</label>
-        <input class="input" id="alpKeyId" autocomplete="off" placeholder="AK…"/>
-        <div class="tiny muted mt6" id="alpKeyHint">Stored only on the server (file mode 0600 + Postgres), never in the synced app database.</div></div>
-      <div class="field"><label class="label">Alpaca Secret Key</label>
-        <input class="input" id="alpSecret" type="password" autocomplete="new-password" placeholder="Paste the secret key"/>
-        <div class="tiny muted mt6">Leave blank to keep the saved secret. Get both keys at
-          <a href="https://app.alpaca.markets/paper/dashboard/overview" target="_blank" rel="noopener" style="color:var(--accent)">app.alpaca.markets → API Keys</a>.</div></div>
-      <div class="mkt-endpoint">
-        <div><span class="tiny muted">API endpoint</span>
-          <code id="alpEndpoint">https://paper-api.alpaca.markets/v2</code></div>
-        <div class="tiny muted">Set automatically from the environment — paper keys use the paper host, live keys use <code>api.alpaca.markets</code>. Data is always read from <code>data.alpaca.markets</code>.</div>
-      </div>
+      <div class="field" style="margin-top:12px"><label class="label">Finnhub API Key</label>
+        <input class="input" id="mktKey" type="password" autocomplete="new-password" placeholder="Paste a key from finnhub.io/register"/>
+        <div class="tiny muted mt6" id="mktKeyHint">Stored only on the server data volume (file mode 0600), never in the synced app database.</div></div>
       <div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end">
-        <div class="field grow" style="margin:0;min-width:180px"><label class="label">Environment</label>
-          <select class="input" id="alpMode">
-            <option value="paper">Paper / Sandbox</option>
-            <option value="live">Live Data</option>
+        <div class="field grow" style="margin:0;min-width:200px"><label class="label">Data mode</label>
+          <select class="input" id="mktMode">
+            <option value="hybrid">Live Finnhub (real prices only)</option>
           </select></div>
-        <div class="field" style="margin:0;min-width:150px"><label class="label">Feed</label>
-          <select class="input" id="alpFeed">
-            <option value="iex">IEX (free)</option>
-            <option value="sip">SIP (subscription)</option>
-          </select></div>
-        <div class="field" style="margin:0;width:150px"><label class="label">Refresh (seconds)</label>
-          <input class="input" id="alpRefresh" type="number" min="5" max="300" step="1" value="15"/></div>
-      </div>
-      <div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:8px">
-        <div class="field grow" style="margin:0;min-width:180px"><label class="label">Sync schedule</label>
-          <div class="row" style="gap:8px;align-items:center">
-            <label class="checkline tiny muted" style="margin:0"><input type="checkbox" id="alpSyncEnabled"/> Auto-sync</label>
-            <select class="input" id="alpSyncInterval" style="width:auto">
-              ${syncOptions.map((m) => `<option value="${m}">${m < 60 ? 'Every ' + m + ' min' : 'Every ' + (m / 60) + ' hour' + (m === 60 ? '' : 's')}</option>`).join('')}
-            </select>
-          </div>
-          <div class="tiny muted mt6">Assets, prices and dividends refresh in the background.</div></div>
+        <div class="field" style="margin:0;width:170px"><label class="label">Refresh interval (seconds)</label>
+          <input class="input" id="mktRefresh" type="number" min="5" max="300" step="1" value="15"/></div>
       </div>
       <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
-        <button class="btn btn-primary" data-act="mkt-save">Test Connection &amp; Save</button>
-        <button class="btn btn-soft" data-act="mkt-sync-all">Sync Now from Alpaca</button>
-        <label class="checkline tiny muted" style="margin-left:auto"><input type="checkbox" id="alpClearKeys"/> Clear saved keys</label>
+        <button class="btn btn-primary" data-act="mkt-save">Save settings</button>
+        <button class="btn btn-soft" data-act="mkt-sync-all">Sync prices + dividends</button>
+        <button class="btn btn-ghost" data-act="mkt-test">Test Finnhub</button>
+        <label class="checkline tiny muted" style="margin-left:auto"><input type="checkbox" id="mktClear"/> Clear saved key</label>
       </div>
-      <div class="mkt-status" id="mktStatus">Reading Alpaca status…</div>
+      <div class="mkt-status" id="mktStatus">Reading feed status…</div>
       <div class="tiny muted" style="margin-top:6px;line-height:1.6">
-        Live trades arrive on <b>wss://stream.data.alpaca.markets/v2/iex</b>; history uses Alpaca 1-minute bars.
-        Override %, TP/SL and WC payouts are applied by this server, so every browser and every closed app sees the same effective price.
-      </div>
-    </div>`;
-  }
-
-  function stockOverridesHTML() {
-    return `<div class="card" id="stockOverridesCard">
-      <div class="between" style="align-items:flex-start;gap:10px">
-        <div><div class="card-title" style="margin:0">Stocks · raw price, override &amp; effective price</div>
-          <div class="tiny muted" style="margin-top:3px">Effective = Raw Alpaca price × (1 + Override % / 100). Applies to ticks, charts, TP/SL and payouts.</div></div>
-        <span class="badge badge-accent">Admin</span>
-      </div>
-      <div id="stockOverridesBody"><div class="tiny muted" style="margin-top:10px">Loading stocks…</div></div>
-      <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
-        <button class="btn btn-primary" data-act="stock-overrides-save">Save overrides</button>
-        <button class="btn btn-ghost" data-act="stock-overrides-reload">Reload table</button>
+        Hybrid mode seeds every listed asset from Finnhub REST, then keeps one shared WebSocket open for
+        second-by-second ticks. Crypto streams 24/7 and Forex 24/5; closed stock venues hold the last real
+        print instead of generating fake movement. All browser prices come from this backend cache.
       </div>
     </div>`;
   }
@@ -780,37 +790,30 @@
     const box = document.getElementById('mktStatus');
     const st = (MK.feed && MK.feed.status) || (MK.config && MK.config.status) || {};
     if (badge) {
-      const live = st.source === 'live' && st.hasKeys;
+      const live = st.source === 'live';
       badge.className = 'badge ' + (live ? 'badge-success' : 'badge-warn');
-      badge.textContent = live
-        ? (st.wsConnected ? 'Live · Alpaca WS' : 'Connected · REST')
-        : (st.hasKeys ? 'Alpaca · connecting' : 'Alpaca keys missing');
+      badge.textContent = live ? 'Live · Finnhub' : (st.mode === 'hybrid' ? 'Offline / limited' : 'No Finnhub key');
     }
     if (!box) return;
     const when = (ms) => ms ? new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
     box.innerHTML = `
       <div class="mkt-stat"><span>Notice</span><b>${escMarket(st.notice || noticeText())}</b></div>
-      <div class="mkt-stat"><span>Environment</span><b>${escMarket(st.environment || (st.mode === 'live' ? 'Live Data' : 'Paper / Sandbox'))}</b></div>
-      <div class="mkt-stat"><span>Alpaca WebSocket</span><b class="${st.wsConnected ? 'up' : 'down'}">${st.wsConnected ? (st.wsAuthed ? 'authenticated' : 'connecting') : 'offline'}</b></div>
       <div class="mkt-stat"><span>Market</span><b>${st.marketOpen ? 'US session open' : 'US market closed'}</b></div>
+      <div class="mkt-stat"><span>WebSocket</span><b class="${st.wsConnected ? 'up' : 'down'}">${st.wsConnected ? 'connected' : 'offline'}</b></div>
       <div class="mkt-stat"><span>Last real tick</span><b>${when(st.lastRealAt)}</b></div>
-      <div class="mkt-stat"><span>Last stream tick</span><b>${when(st.lastWsTickAt)}</b></div>
-      <div class="mkt-stat"><span>Rate limit</span><b class="${st.rateLimitedUntil ? 'down' : 'up'}">${st.rateLimitedUntil ? 'cooling down' : 'clear'}</b></div>
+      <div class="mkt-stat"><span>Server price tick</span><b>${when(st.lastTickAt)}</b></div>
+      <div class="mkt-stat"><span>Rate limit</span><b class="${st.rateLimitedUntil ? 'down' : 'up'}">${st.rateLimitedUntil ? '429 · cooling down' : 'clear'}</b></div>
       <div class="mkt-stat"><span>Unpriced assets</span><b class="${(st.unpriced || 0) ? 'down' : 'up'}">${st.unpriced || 0}</b></div>
-      <div class="mkt-stat"><span>Live stock prices</span><b class="${(st.seed && !st.seed.failed) ? 'up' : 'down'}">${(st.seed ? st.seed.live : 0)} / ${st.tickers || 0}</b></div>
-      <div class="mkt-stat"><span>Dividend sync</span><b class="${(st.dividends && !st.dividends.failed) ? 'up' : 'down'}">${(st.dividends ? st.dividends.live : 0)} / ${(st.dividends ? st.dividends.tickers : 0)}</b></div>
-      <div class="mkt-stat"><span>API calls / min</span><b class="${st.apiCallsLastMin > (st.apiBudgetPerMin || 180) ? 'down' : 'up'}">${st.apiCallsLastMin || 0} / ${st.apiBudgetPerMin || 180}</b></div>
-      <div class="mkt-stat"><span>Auto sync</span><b class="${st.sync && st.sync.enabled ? 'up' : 'down'}">${st.sync && st.sync.enabled ? 'every ' + st.sync.intervalMin + ' min' : 'off'}</b></div>
-      <div class="mkt-stat"><span>Last full sync</span><b>${st.sync && st.sync.lastSyncAt ? when(st.sync.lastSyncAt) : 'never'}</b></div>
-      ${st.dividends && st.dividends.failed ? `<div class="mkt-stat"><span>Dividend retry queue</span><b class="down">${escMarket((st.dividends.failedTickers || []).join(', '))}</b></div>` : ''}
+      <div class="mkt-stat"><span>Live stock prices</span><b class="${(st.seed && !st.seed.failed) ? 'up' : 'down'}">${(st.seed ? st.seed.live : 0) + ' / ' + (st.tickers || 0)}</b></div>
+      <div class="mkt-stat"><span>Dividend sync</span><b class="${(st.dividends && !st.dividends.failed) ? 'up' : 'down'}">${(st.dividends ? st.dividends.live : 0) + ' / ' + (st.dividends ? st.dividends.tickers : 0)}</b></div>
+      <div class="mkt-stat"><span>API calls / min</span><b class="${st.apiCallsLastMin > (st.apiBudgetPerMin || 55) ? 'down' : 'up'}">${st.apiCallsLastMin || 0} / ${st.apiBudgetPerMin || 55}</b></div>
+      ${st.dividends && st.dividends.failed ? `<div class="mkt-stat"><span>Yield retry queue</span><b class="down">${escMarket((st.dividends.failedTickers || []).join(', '))}</b></div>` : ''}
       ${st.lastError ? `<div class="mkt-stat"><span>Last error</span><b class="down">${escMarket(st.lastError)}</b></div>` : ''}`;
-    const body = document.getElementById('stockOverridesBody');
-    if (body && !body.dataset.loaded && !MK.stockLoading) loadStockOverrides();
   }
 
-  async function loadAdminConfig(force) {
+  async function loadAdminConfig() {
     const card = document.getElementById('mktFeedCard');
-    if (!card || (MK.adminLoaded && !force) || MK.adminLoading) return;
+    if (!card || MK.adminLoaded || MK.adminLoading) return;
     if (typeof Remote === 'undefined' || !Remote.enabled) return;
     MK.adminLoading = true;
     try {
@@ -819,116 +822,53 @@
       if (!r.res || !r.res.ok || !r.data || !r.data.ok) return;
       MK.config = r.data;
       MK.adminLoaded = true;
-      const keyId = document.getElementById('alpKeyId');
-      const secret = document.getElementById('alpSecret');
-      const mode = document.getElementById('alpMode');
-      const feed = document.getElementById('alpFeed');
-      const refresh = document.getElementById('alpRefresh');
-      const syncOn = document.getElementById('alpSyncEnabled');
-      const syncMin = document.getElementById('alpSyncInterval');
-      const hint = document.getElementById('alpKeyHint');
-      if (keyId) keyId.placeholder = r.data.hasKeys ? 'Saved key ' + r.data.keyIdMasked + ' — leave blank to keep' : 'AK…';
-      if (secret) secret.placeholder = r.data.hasKeys ? 'Saved secret — leave blank to keep' : 'Paste the secret key';
+      const key = document.getElementById('mktKey');
+      const mode = document.getElementById('mktMode');
+      const refresh = document.getElementById('mktRefresh');
+      const hint = document.getElementById('mktKeyHint');
+      if (key) key.placeholder = r.data.hasKey ? 'Saved key ' + r.data.keyMasked + ' — leave blank to keep' : 'Paste a key from finnhub.io/register';
       if (mode) mode.value = r.data.mode;
-      paintEndpoint(r.data.mode);
-      if (feed) feed.value = r.data.feed;
       if (refresh) refresh.value = r.data.refreshSec;
-      if (syncOn) syncOn.checked = r.data.syncEnabled !== false;
-      if (syncMin) syncMin.value = String(r.data.syncIntervalMin || 60);
-      if (hint) hint.textContent = r.data.hasKeys
-        ? 'Keys are saved on the server (' + r.data.keyIdMasked + '). Leave both blank to keep them.'
-        : 'No Alpaca keys saved yet. Add the Key ID and Secret Key, then Test Connection & Save.';
+      if (hint) hint.textContent = r.data.hasKey
+        ? 'A key is saved on the server (' + r.data.keyMasked + '). Leave blank to keep it, or paste a new one to replace it.'
+        : 'No key saved yet. Hybrid mode needs a Finnhub key; without it quotes stay offline.';
       paintAdminStatus();
     } catch (e) { /* keep static card */ }
     finally { MK.adminLoading = false; }
   }
 
-  function paintEndpoint(mode) {
-    const el = document.getElementById('alpEndpoint');
-    if (!el) return;
-    el.textContent = String(mode || (document.getElementById('alpMode') || {}).value || 'paper') === 'live'
-      ? 'https://api.alpaca.markets/v2'
-      : 'https://paper-api.alpaca.markets/v2';
-  }
-
-  function adminToast(msg, type) { if (typeof toast === 'function') toast(msg, type || 'ok'); }
-
-  async function loadStockOverrides(force) {
-    const body = document.getElementById('stockOverridesBody');
-    if (!body || MK.stockLoading) return;
-    if (!force && body.dataset.loaded) return;
-    if (typeof Remote === 'undefined' || !Remote.enabled) return;
-    MK.stockLoading = true;
-    try {
-      const meId = (typeof me === 'function' && me()) ? me().id : '';
-      const r = await getJSON('/api/market/admin/stocks?adminId=' + encodeURIComponent(meId), {}, 15000);
-      if (!r.res || !r.res.ok || !r.data || !r.data.ok) throw new Error((r.data && r.data.error) || 'Could not load stocks');
-      MK.stocks = r.data.stocks || [];
-      body.innerHTML = stockTableHTML(MK.stocks);
-      body.dataset.loaded = '1';
-    } catch (e) {
-      body.innerHTML = '<div class="tiny muted" style="margin-top:10px">' + escMarket(e.message) + '</div>';
-    } finally { MK.stockLoading = false; }
-  }
-
-  function stockTableHTML(stocks) {
-    if (!stocks.length) return '<div class="tiny muted" style="margin-top:10px">No stocks yet. Use Sync Now from Alpaca.</div>';
-    return `<div class="table-wrap"><table class="tbl ov-table"><thead><tr>
-      <th>Symbol</th><th>Company</th><th>Raw Alpaca</th><th>Override %</th><th>Effective price</th><th>Dividend</th><th>Active</th>
-    </tr></thead><tbody>
-      ${stocks.map((s) => `<tr data-ov-row="${escMarket(s.ticker)}">
-        <td style="font-weight:700">${escMarket(s.symbol)}</td>
-        <td class="ellipsis" style="max-width:150px">${escMarket(s.name)}</td>
-        <td class="num">$${Number(s.rawPrice || 0).toFixed(2)}</td>
-        <td><input class="input ov-input" data-ov="override" type="number" step="0.01" value="${Number(s.overridePct) || 0}" style="width:78px"/></td>
-        <td class="num"><b data-ov-effective>$${Number(s.price || 0).toFixed(2)}</b><div class="tiny muted">${(Number(s.price || 0) / 0.5).toFixed(2)} WC</div></td>
-        <td class="num">${Number(s.dividendYield || 0).toFixed(2)}%</td>
-        <td><label class="checkline" style="margin:0"><input type="checkbox" data-ov="active" ${s.active !== false ? 'checked' : ''}/></label></td>
-      </tr>`).join('')}
-    </tbody></table></div>
-    <div class="tiny muted" style="margin-top:6px">Raw ${stocks.length} symbol${stocks.length === 1 ? '' : 's'} · every effective price is shown in USD and WC.</div>`;
+  function adminToast(msg, type) {
+    if (typeof toast === 'function') toast(msg, type || 'ok');
   }
 
   if (typeof App !== 'undefined') {
     App.mktSave = async function () {
       if (typeof Remote === 'undefined' || !Remote.enabled) return adminToast('Connect the sync server first — market data runs on the backend', 'err');
       const btn = document.querySelector('[data-act="mkt-save"]');
-      if (btn) { btn.disabled = true; btn.textContent = 'Testing…'; }
+      if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
       try {
         const meId = (typeof me === 'function' && me()) ? me().id : '';
         const body = {
           adminId: meId,
-          mode: (document.getElementById('alpMode') || {}).value || 'paper',
-          feed: (document.getElementById('alpFeed') || {}).value || 'iex',
-          refreshSec: Number((document.getElementById('alpRefresh') || {}).value) || 15,
-          syncEnabled: !!((document.getElementById('alpSyncEnabled') || {}).checked),
-          syncIntervalMin: Number((document.getElementById('alpSyncInterval') || {}).value) || 60,
-          clearKeys: !!((document.getElementById('alpClearKeys') || {}).checked)
+          mode: (document.getElementById('mktMode') || {}).value || 'simulated',
+          refreshSec: Number((document.getElementById('mktRefresh') || {}).value) || 15,
+          clearKey: !!((document.getElementById('mktClear') || {}).checked)
         };
-        const keyId = ((document.getElementById('alpKeyId') || {}).value || '').trim();
-        const secret = ((document.getElementById('alpSecret') || {}).value || '').trim();
-        if (keyId) body.keyId = keyId;
-        if (secret) body.secret = secret;
-        const r = await getJSON('/api/market/config', { method: 'POST', body: JSON.stringify(body) }, 20000);
+        const key = ((document.getElementById('mktKey') || {}).value || '').trim();
+        if (key) body.apiKey = key;
+        const r = await getJSON('/api/market/config', { method: 'POST', body: JSON.stringify(body) }, 12000);
         if (!r.res || !r.res.ok || !r.data || !r.data.ok) {
-          return adminToast((r.data && (r.data.message || r.data.error)) || 'Could not save Alpaca settings', 'err');
+          return adminToast((r.data && (r.data.message || r.data.error)) || 'Could not save market settings', 'err');
         }
         MK.config = r.data;
         MK.adminLoaded = false;
-        try {
-          const t = await getJSON('/api/market/test', { method: 'POST', body: JSON.stringify({ adminId: meId }) }, 20000);
-          const td = (t.data || {});
-          adminToast(td.ok ? 'Alpaca connection OK · AAPL $' + Number(td.price).toFixed(2) : ('Saved, but: ' + (td.message || 'connection test failed')), td.ok ? 'ok' : 'err');
-        } catch (e) { adminToast('Settings saved — connection test unavailable', 'err'); }
         try { await poll(); } catch (e) {}
-        loadStockOverrides(true);
-        loadAudit(true);
-        loadHealth();
+        adminToast('Market data settings saved · Live Finnhub mode', 'ok');
         if (typeof render === 'function') render();
       } catch (e) {
         adminToast('Save failed: ' + e.message, 'err');
       } finally {
-        if (btn) { btn.disabled = false; btn.innerHTML = 'Test Connection &amp; Save'; }
+        if (btn) { btn.disabled = false; btn.textContent = 'Save settings'; }
       }
     };
 
@@ -938,54 +878,31 @@
       if (btn) { btn.disabled = true; btn.textContent = 'Syncing…'; }
       try {
         const meId = (typeof me === 'function' && me()) ? me().id : '';
-        const r = await getJSON('/api/market/sync-all', { method: 'POST', body: JSON.stringify({ adminId: meId }) }, 20000);
+        const r = await getJSON('/api/market/sync-all', { method: 'POST', body: JSON.stringify({ adminId: meId }) }, 15000);
         if (!r.res || !r.res.ok || !r.data || !r.data.ok) return adminToast((r.data && r.data.error) || 'Sync could not start', 'err');
-        adminToast('Alpaca sync started — assets, prices and dividends', 'ok');
-        setTimeout(() => { try { poll(); paintAdminStatus(); loadStockOverrides(true); loadAudit(true); loadHealth(); } catch (e) {} }, 5000);
-        setTimeout(() => { try { poll(); paintAdminStatus(); loadStockOverrides(true); loadAudit(true); loadHealth(); } catch (e) {} }, 15000);
+        adminToast('Sync started — prices and yields continue in the background', 'ok');
+        setTimeout(() => { try { poll(); paintAdminStatus(); } catch (e) {} }, 4000);
       } catch (e) {
         adminToast('Sync failed: ' + e.message, 'err');
       } finally {
-        if (btn) { btn.disabled = false; btn.textContent = 'Sync Now from Alpaca'; }
+        if (btn) { btn.disabled = false; btn.textContent = 'Sync prices + dividends'; }
       }
-    };
-
-    App.stockOverridesReload = function () { loadStockOverrides(true); };
-
-    App.stockOverridesSave = async function () {
-      if (typeof Remote === 'undefined' || !Remote.enabled) return adminToast('Connect the sync server first', 'err');
-      const meId = (typeof me === 'function' && me()) ? me().id : '';
-      const updates = [];
-      document.querySelectorAll('[data-ov-row]').forEach((row) => {
-        const ticker = row.getAttribute('data-ov-row');
-        const ov = row.querySelector('[data-ov="override"]');
-        const active = row.querySelector('[data-ov="active"]');
-        updates.push({ ticker, overridePct: Number(ov && ov.value) || 0, paused: !(active && active.checked) });
-      });
-      try {
-        const r = await getJSON('/api/market/admin/stocks', { method: 'POST', body: JSON.stringify({ adminId: meId, updates }) }, 20000);
-        if (!r.res || !r.res.ok || !r.data || !r.data.ok) return adminToast((r.data && r.data.error) || 'Save failed', 'err');
-        MK.stocks = r.data.stocks || [];
-        const body = document.getElementById('stockOverridesBody');
-        if (body) body.innerHTML = stockTableHTML(MK.stocks);
-        try { await Remote.refresh(true); } catch (e) {}
-        try { await poll(); } catch (e) {}
-        adminToast('Price overrides saved and applied to live ticks', 'ok');
-        loadAudit(true);
-        loadHealth();
-      } catch (e) { adminToast('Save failed: ' + e.message, 'err'); }
     };
 
     App.mktTest = async function () {
       if (typeof Remote === 'undefined' || !Remote.enabled) return adminToast('Connect the sync server first', 'err');
-      const meId = (typeof me === 'function' && me()) ? me().id : '';
+      const btn = document.querySelector('[data-act="mkt-test"]');
+      if (btn) { btn.disabled = true; btn.textContent = 'Testing…'; }
       try {
-        const r = await getJSON('/api/market/test', { method: 'POST', body: JSON.stringify({ adminId: meId }) }, 20000);
+        const meId = (typeof me === 'function' && me()) ? me().id : '';
+        const r = await getJSON('/api/market/test', { method: 'POST', body: JSON.stringify({ adminId: meId }) }, 15000);
         const d = r.data || {};
-        adminToast(d.ok ? `Alpaca OK · AAPL $${Number(d.price).toFixed(2)}` : (d.message || 'Alpaca test failed'), d.ok ? 'ok' : 'err');
-        loadHealth();
-        loadAudit(true);
-      } catch (e) { adminToast('Test failed: ' + e.message, 'err'); }
+        adminToast(d.ok ? `Finnhub OK · AAPL $${Number(d.price).toFixed(2)}` : (d.message || 'Finnhub test failed'), d.ok ? 'ok' : 'err');
+      } catch (e) {
+        adminToast('Test failed: ' + e.message, 'err');
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Test Finnhub'; }
+      }
     };
   }
 
@@ -1020,275 +937,38 @@
       DB.invest.dividendOverrides = {};
       try { sync(); } catch (e) {}
       persist();
-      adminToast('Dividend overrides cleared — using Alpaca-synced yields', 'ok');
+      adminToast('Dividend overrides cleared — using synced yields', 'ok');
       render();
     };
 
     App.divSync = async function () {
       if (typeof Remote === 'undefined' || !Remote.enabled) return adminToast('Connect the sync server first', 'err');
       const btn = document.querySelector('[data-act="div-sync"]');
-      if (btn) { btn.disabled = true; btn.textContent = 'Syncing…'; }
+      if (btn) { btn.disabled = true; btn.textContent = 'Syncing all assets…'; }
       try {
         const meId = (typeof me === 'function' && me()) ? me().id : '';
-        const r = await getJSON('/api/market/dividends/sync', { method: 'POST', body: JSON.stringify({ adminId: meId }) }, 60000);
+        const r = await getJSON('/api/market/dividends/sync', { method: 'POST', body: JSON.stringify({ adminId: meId }) }, 45000);
         if (!r.res || !r.res.ok || !r.data || !r.data.ok) return adminToast((r.data && r.data.error) || 'Dividend sync failed', 'err');
         try { await Remote.refresh(true); } catch (e) {}
-        try { await poll(); } catch (e) {}
-        adminToast('Dividends synced from Alpaca', 'ok');
-        loadAudit(true);
-        loadHealth();
+        adminToast('Dividends synced from Finnhub', 'ok');
         render();
       } catch (e) {
         adminToast('Dividend sync failed: ' + e.message, 'err');
       } finally {
-        if (btn) { btn.disabled = false; btn.textContent = 'Sync dividends now'; }
+        if (btn) { btn.disabled = false; btn.textContent = 'Sync from Finnhub now'; }
       }
     };
   }
 
-  /* ---------------------- Alpaca health + audit log ----------------------- */
-  MK.health = null;
-  MK.healthLoading = false;
-  MK.audit = [];
-  MK.auditTotal = 0;
-  MK.auditLoaded = false;
-  MK.auditLoading = false;
-  MK.auditCategory = 'all';
-  MK.auditLimit = 100;
-
-  const AUDIT_LABELS = {
-    'connection.saved': 'Connection saved',
-    'connection.test': 'Connection test',
-    'sync.completed': 'Full data sync',
-    'sync.failed': 'Sync failed',
-    'sync.dividends': 'Dividend sync',
-    'overrides.saved': 'Overrides saved'
-  };
-
-  function healthHTML() {
-    return `<div class="card" id="mktHealthCard">
-      <div class="between" style="align-items:flex-start;gap:10px">
-        <div><div class="card-title" style="margin:0">Alpaca health</div>
-          <div class="tiny muted" style="margin-top:3px">Credentials, REST, IEX stream, rate budget, scheduled sync and price coverage.</div></div>
-        <span class="mkt-health-pill" id="mktHealthPill"><i></i><b>Checking…</b></span>
-      </div>
-      <div class="mkt-health-top">
-        <div class="mkt-health-ring" id="mktHealthRing"><span><b id="mktHealthScore">—</b><i>score</i></span></div>
-        <div class="mkt-health-meta" id="mktHealthMeta"><div class="mkt-stat"><span>Status</span><b>Reading Alpaca health…</b></div></div>
-      </div>
-      <div class="mkt-health-list" id="mktHealthList"><div class="tiny muted">Loading checks…</div></div>
-      <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
-        <button class="btn btn-xs btn-soft" data-act="mkt-health-refresh">Refresh health</button>
-        <button class="btn btn-xs btn-ghost" data-act="mkt-test">Test Alpaca</button>
-        <span class="tiny muted" style="margin-left:auto" id="mktHealthStamp"></span>
-      </div>
-    </div>`;
-  }
-
-  function auditHTML() {
-    const cats = [['all', 'All'], ['override', 'Overrides'], ['sync', 'Data sync'], ['connection', 'Connection']];
-    return `<div class="card" id="mktAuditCard">
-      <div class="between" style="align-items:flex-start;gap:10px">
-        <div><div class="card-title" style="margin:0">Override &amp; data sync audit log</div>
-          <div class="tiny muted" style="margin-top:3px">Durable server-side trail of every override change, sync run and connection update.</div></div>
-        <span class="badge badge-accent" id="mktAuditCount">0 entries</span>
-      </div>
-      <div class="row mkt-audit-tabs" style="gap:6px;margin-top:10px;flex-wrap:wrap">
-        ${cats.map((c) => `<button class="btn btn-xs ${MK.auditCategory === c[0] ? 'btn-primary' : 'btn-ghost'}" data-act="mkt-audit-filter" data-cat="${c[0]}">${c[1]}</button>`).join('')}
-        <button class="btn btn-xs btn-ghost" data-act="mkt-audit-refresh" style="margin-left:auto">Refresh</button>
-        <button class="btn btn-xs btn-ghost" data-act="mkt-audit-csv">CSV</button>
-      </div>
-      <div id="mktAuditList" class="mkt-audit-list"><div class="tiny muted" style="margin-top:10px">Loading audit trail…</div></div>
-      <div class="row" style="margin-top:10px">
-        <button class="btn btn-xs btn-soft" data-act="mkt-audit-more" id="mktAuditMore" style="display:none">Load more</button>
-      </div>
-    </div>`;
-  }
-
-  function adminStackHTML() {
-    return healthHTML() + adminCardHTML() + stockOverridesHTML() + auditHTML() + tradingGuideHTML();
-  }
-
-  function healthStateClass(state) {
-    return state === 'ok' ? 'ok' : state === 'warn' ? 'warn' : state === 'error' ? 'err' : 'info';
-  }
-
-  function paintHealth(data) {
-    const card = document.getElementById('mktHealthCard');
-    if (!card || !data) return;
-    MK.health = data;
-    const score = Math.max(0, Math.min(100, Number(data.score) || 0));
-    const grade = String(data.grade || 'unknown');
-    const pill = document.getElementById('mktHealthPill');
-    if (pill) {
-      pill.className = 'mkt-health-pill ' + healthStateClass(score >= 90 ? 'ok' : score >= 70 ? 'warn' : 'error');
-      pill.innerHTML = '<i></i><b>' + escMarket(grade) + '</b>';
-    }
-    const ring = document.getElementById('mktHealthRing');
-    if (ring) {
-      const color = score >= 90 ? '#22c55e' : score >= 70 ? '#ffb020' : '#ef4444';
-      ring.style.background = 'conic-gradient(' + color + ' ' + (score * 3.6) + 'deg, rgba(255,255,255,.07) 0deg)';
-    }
-    const scoreEl = document.getElementById('mktHealthScore');
-    if (scoreEl) scoreEl.textContent = String(score);
-
-    const st = data.status || {};
-    const meta = document.getElementById('mktHealthMeta');
-    if (meta) {
-      const when = (ms) => ms ? new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
-      const latency = data.latencyMs != null ? data.latencyMs + ' ms' : '—';
-      meta.innerHTML = `
-        <div class="mkt-stat"><span>Environment</span><b>${escMarket(st.environment || '—')} · ${escMarket(String(st.feed || '').toUpperCase())}</b></div>
-        <div class="mkt-stat"><span>REST latency</span><b class="${data.latencyMs != null && data.latencyMs < 1200 ? 'up' : 'down'}">${escMarket(latency)}</b></div>
-        <div class="mkt-stat"><span>Last real tick</span><b>${when(st.lastRealAt)}</b></div>
-        <div class="mkt-stat"><span>Stream ticks</span><b>${Number(st.wsTicks) || 0}</b></div>
-        <div class="mkt-stat"><span>Last connection test</span><b class="${data.lastTestOk === true ? 'up' : data.lastTestOk === false ? 'down' : ''}">${data.lastTestAt ? when(data.lastTestAt) + (data.lastTestOk === true ? ' · OK' : data.lastTestOk === false ? ' · failed' : '') : 'never'}</b></div>
-        <div class="mkt-stat"><span>Server uptime</span><b>${Math.floor((Number(data.uptimeSec) || 0) / 60)} min</b></div>`;
-    }
-
-    const list = document.getElementById('mktHealthList');
-    if (list) {
-      list.innerHTML = (data.checks || []).map((c) => `<div class="mkt-health-row">
-        <i class="mkt-dot ${healthStateClass(c.state)}"></i>
-        <span class="mkt-health-name">${escMarket(c.label)}</span>
-        <span class="mkt-health-detail">${escMarket(c.detail)}</span>
-      </div>`).join('') || '<div class="tiny muted">No checks returned.</div>';
-    }
-    const stamp = document.getElementById('mktHealthStamp');
-    if (stamp) stamp.textContent = 'Updated ' + new Date(data.at || Date.now()).toLocaleTimeString();
-  }
-
-  async function loadHealth() {
-    const card = document.getElementById('mktHealthCard');
-    if (!card || MK.healthLoading) return;
-    MK.healthLoading = true;
-    try {
-      const r = await getJSON('/api/market/health', {}, 9000);
-      if (r.data && r.data.ok) paintHealth(r.data);
-      else throw new Error((r.data && r.data.error) || 'Health endpoint unavailable');
-    } catch (e) {
-      paintHealth({ at: Date.now(), score: 0, grade: 'offline', checks: [{ key: 'api', label: 'Health check', state: 'error', detail: e.message }], status: {} });
-    } finally { MK.healthLoading = false; }
-  }
-
-  function fmtChange(c) {
-    const field = String(c.field || '');
-    const f = c.from, t = c.to;
-    if (field === 'overridePct') return escMarket(c.ticker || '') + ' ' + (Number(f) || 0).toFixed(2) + '% → ' + (Number(t) || 0).toFixed(2) + '%';
-    if (field === 'active') return escMarket(c.ticker || '') + ' ' + (f ? 'active' : 'paused') + ' → ' + (t ? 'active' : 'paused');
-    if (field === 'apiKeys') return 'API keys ' + escMarket(f) + ' → ' + escMarket(t);
-    if (f == null && t != null) return field + ' ' + escMarket(t);
-    return field + ' ' + escMarket(f) + ' → ' + escMarket(t);
-  }
-
-  function paintAudit() {
-    const box = document.getElementById('mktAuditList');
-    if (!box) return;
-    const count = document.getElementById('mktAuditCount');
-    if (count) count.textContent = (MK.auditTotal || MK.audit.length) + ' entr' + ((MK.auditTotal || MK.audit.length) === 1 ? 'y' : 'ies');
-    if (!MK.audit.length) {
-      box.innerHTML = '<div class="mkt-audit-empty">No entries yet. Save an override, run a sync or update the connection.</div>';
-    } else {
-      box.innerHTML = MK.audit.map((e) => {
-        const label = AUDIT_LABELS[e.action] || e.action || 'Event';
-        const ok = e.result !== 'error';
-        const cats = e.category || 'system';
-        const changes = (e.changes || []).slice(0, 6).map((c) => `<span class="mkt-audit-chip">${fmtChange(c)}</span>`).join('');
-        const more = (e.changes || []).length > 6 ? `<span class="tiny muted">+${e.changes.length - 6} more</span>` : '';
-        const dur = e.durationMs != null ? ` · ${(e.durationMs / 1000).toFixed(2)}s` : '';
-        return `<div class="mkt-audit-row">
-          <div class="mkt-audit-main">
-            <div class="mkt-audit-head">
-              <b>${escMarket(label)}</b>
-              <span class="badge ${ok ? 'badge-success' : 'badge-warn'}">${ok ? 'ok' : 'error'}</span>
-              <span class="badge" style="text-transform:uppercase;font-size:9px">${escMarket(cats)}</span>
-            </div>
-            <div class="tiny muted">${escMarket(e.actor || 'system')} · ${new Date(e.at).toLocaleString()}${dur}</div>
-            ${e.summary ? `<div class="small" style="margin-top:3px">${escMarket(e.summary)}</div>` : ''}
-            ${changes ? `<div class="mkt-audit-changes">${changes}${more}</div>` : ''}
-          </div>
-          <div class="mkt-audit-target tiny muted">${escMarket(e.target || '')}</div>
-        </div>`;
-      }).join('');
-    }
-    const more = document.getElementById('mktAuditMore');
-    if (more) more.style.display = MK.audit.length < (MK.auditTotal || 0) && MK.audit.length >= MK.auditLimit ? '' : 'none';
-  }
-
-  async function loadAudit(force) {
-    const box = document.getElementById('mktAuditList');
-    if (!box || MK.auditLoading) return;
-    if (MK.auditLoaded && !force) { paintAudit(); return; }
-    if (typeof Remote === 'undefined' || !Remote.enabled) {
-      box.innerHTML = '<div class="tiny muted">Connect the sync server to read the server-side audit trail.</div>';
-      return;
-    }
-    MK.auditLoading = true;
-    try {
-      const meId = (typeof me === 'function' && me()) ? me().id : '';
-      const r = await getJSON('/api/market/audit?adminId=' + encodeURIComponent(meId) + '&limit=' + MK.auditLimit + '&category=' + encodeURIComponent(MK.auditCategory), {}, 15000);
-      if (!r.res || !r.res.ok || !r.data || !r.data.ok) throw new Error((r.data && (r.data.message || r.data.error)) || 'Could not load audit log');
-      MK.audit = Array.isArray(r.data.entries) ? r.data.entries : [];
-      MK.auditTotal = Number(r.data.total) || MK.audit.length;
-      MK.auditLoaded = true;
-      paintAudit();
-    } catch (e) {
-      box.innerHTML = '<div class="tiny muted">' + escMarket(e.message) + '</div>';
-    } finally { MK.auditLoading = false; }
-  }
-
-  if (typeof App !== 'undefined') {
-    App.mktHealthRefresh = function () { loadHealth(); };
-    App.mktAuditRefresh = function () { loadAudit(true); };
-    App.mktAuditFilter = function (id, ds) {
-      MK.auditCategory = (ds && ds.cat) || 'all';
-      MK.auditLimit = 100;
-      MK.auditLoaded = false;
-      document.querySelectorAll('.mkt-audit-tabs [data-act="mkt-audit-filter"]').forEach((b) => {
-        b.className = 'btn btn-xs ' + (b.getAttribute('data-cat') === MK.auditCategory ? 'btn-primary' : 'btn-ghost');
-      });
-      loadAudit(true);
+  /* append the feed card to Admin → Stocks */
+  if (typeof INV !== 'undefined' && INV.viewAdminStocks && !INV.__mkAdminPatched) {
+    const baseAdmin = INV.viewAdminStocks;
+    INV.viewAdminStocks = function () {
+      const html = baseAdmin.apply(this, arguments);
+      if (/Admin access only/.test(html)) return html;
+      return html + adminCardHTML() + dividendSettingsHTML() + tradingGuideHTML();
     };
-    App.mktAuditMore = function () {
-      MK.auditLimit = Math.min(500, MK.auditLimit + 100);
-      loadAudit(true);
-    };
-    App.mktAuditCsv = function () {
-      if (!MK.audit.length) return adminToast('Nothing to export yet', 'err');
-      const rows = [['time', 'action', 'category', 'actor', 'target', 'summary', 'result', 'duration_ms', 'changes']];
-      MK.audit.forEach((e) => rows.push([
-        new Date(e.at).toISOString(), e.action || '', e.category || '', e.actor || '', e.target || '', e.summary || '', e.result || '',
-        e.durationMs != null ? e.durationMs : '',
-        (e.changes || []).map((c) => c.field + ':' + c.from + '->' + c.to).join(' | ')
-      ]));
-      const csv = rows.map((r) => r.map((v) => '"' + String(v).replace(/"/g, '""') + '"').join(',')).join('\r\n');
-      try {
-        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = 'whalechat-market-audit-' + new Date().toISOString().slice(0, 10) + '.csv';
-        document.body.appendChild(a); a.click(); a.remove();
-        setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-        adminToast('Audit log exported', 'ok');
-      } catch (err) { adminToast('Export failed', 'err'); }
-    };
-  }
-
-  function mountAdminStack() {
-    if (!/^#\/admin\/stocks/.test(location.hash || '')) return;
-    if (document.getElementById('mktHealthCard')) return;
-    const nav = document.querySelector('.admin-nav');
-    if (!nav || !nav.parentNode) return;
-    const wrap = document.createElement('div');
-    wrap.id = 'mktAdminStack';
-    wrap.innerHTML = adminStackHTML();
-    const firstCard = nav.parentNode.querySelector('.card');
-    if (firstCard && firstCard !== wrap) nav.parentNode.insertBefore(wrap, firstCard);
-    else nav.parentNode.appendChild(wrap);
-    const modeSel = document.getElementById('alpMode');
-    if (modeSel) modeSel.addEventListener('change', () => paintEndpoint(modeSel.value));
-    paintEndpoint();
-    loadHealth();
+    INV.__mkAdminPatched = true;
   }
 
   /* ------------------------------- mounting -------------------------------- */
@@ -1317,12 +997,8 @@
       try { if (baseAfterAdmin) baseAfterAdmin(parts, params); } catch (e) {}
       if ((parts[1] || '') === 'stocks') {
         MK.adminLoaded = false;
-        setTimeout(() => { mountAdminStack(); paintAdminStatus(); loadAdminConfig(); loadHealth(); loadAudit(); }, 60);
+        setTimeout(() => { paintAdminStatus(); loadAdminConfig(); }, 60);
       }
-    };
-  } else if (typeof AFTER === 'object') {
-    AFTER.admin = function (parts) {
-      if ((parts[1] || '') === 'stocks') setTimeout(() => { mountAdminStack(); paintAdminStatus(); loadAdminConfig(); loadHealth(); loadAudit(); }, 60);
     };
   }
 
@@ -1340,17 +1016,9 @@
     const st = document.createElement('style');
     st.id = 'wc-market-style';
     st.textContent = `
-    .inv-chart.wc-chart-host{height:auto;min-height:320px}
-    .wc-lwc{width:100%;height:100%;min-height:320px;position:relative}
+    .inv-chart.wc-chart-host{height:240px !important}
+    .wc-lwc{width:100%;height:240px;position:relative}
     .inv-chart.wc-chart-host{position:relative}
-    .wc-chart-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center}
-    .wc-chart-actions .btn{min-height:42px;font-weight:700}
-    .wc-chart-actions-note{flex:0 0 100%;font-size:10.5px;line-height:1.5;color:var(--muted)}
-    .wc-chart-live{flex:0 0 100%;display:flex;gap:10px;flex-wrap:wrap;font-size:11px;font-variant-numeric:tabular-nums;
-      padding:7px 9px;border:1px solid var(--border);border-radius:9px;background:var(--surface-2)}
-    .wc-chart-live span{color:var(--muted)}
-    .wc-chart-live b{color:var(--text)}
-    .wc-chart-live b.up{color:var(--success)} .wc-chart-live b.down{color:var(--danger)}
     .wc-chart-tip{position:absolute;z-index:9;pointer-events:none;padding:6px 8px;border-radius:8px;
       background:rgba(4,16,26,.94);border:1px solid rgba(46,230,201,.35);box-shadow:0 8px 22px rgba(0,0,0,.45);
       font-size:10.5px;line-height:1.45;max-width:180px}
@@ -1375,9 +1043,6 @@
     .mkt-stat span{font-size:9.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted-2);font-weight:700}
     .mkt-stat b{font-size:11.5px;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .mkt-stat b.up{color:var(--success)} .mkt-stat b.down{color:var(--danger)}
-    .ov-table td{padding:5px 7px;font-size:11px;vertical-align:middle}
-    .ov-input{height:28px;padding:2px 5px;font-size:10.5px;text-align:right}
-    .ov-table .num{font-variant-numeric:tabular-nums}
     .admin-guide .guide-facts{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin:11px 0 4px}
     .admin-guide .guide-facts div{display:flex;flex-direction:column;gap:1px;padding:8px;border-radius:9px;
       border:1px solid var(--border);background:var(--surface-2)}
@@ -1451,52 +1116,6 @@
       color:var(--success);border:1px solid rgba(34,197,94,.30);background:rgba(34,197,94,.10);border-radius:99px;padding:2px 7px}
     .lt-live-badge i{width:6px;height:6px;border-radius:50%;background:#22c55e;animation:ltPulse 1.2s ease-in-out infinite}
     @keyframes ltPulse{0%,100%{opacity:.35;transform:scale(.8)}50%{opacity:1;transform:scale(1.15)}}
-    .mkt-health-pill{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:99px;
-      border:1px solid var(--border);background:var(--surface-2);font-size:10px;font-weight:800;
-      text-transform:uppercase;letter-spacing:.06em;white-space:nowrap}
-    .mkt-health-pill i{width:7px;height:7px;border-radius:50%;background:#8ba4b6}
-    .mkt-health-pill.ok{color:var(--success);border-color:rgba(34,197,94,.28)}
-    .mkt-health-pill.ok i{background:#22c55e;box-shadow:0 0 0 3px rgba(34,197,94,.15)}
-    .mkt-health-pill.warn{color:#ffb020;border-color:rgba(255,176,32,.3)}
-    .mkt-health-pill.warn i{background:#ffb020;box-shadow:0 0 0 3px rgba(255,176,32,.14)}
-    .mkt-health-pill.err{color:var(--danger);border-color:rgba(239,68,68,.3)}
-    .mkt-health-pill.err i{background:#ef4444;box-shadow:0 0 0 3px rgba(239,68,68,.14)}
-    .mkt-health-top{display:flex;gap:14px;align-items:center;margin-top:12px;flex-wrap:wrap}
-    .mkt-health-ring{width:86px;height:86px;border-radius:50%;flex:0 0 auto;display:grid;place-items:center;
-      background:conic-gradient(#22c55e 360deg,rgba(255,255,255,.07) 0);position:relative;transition:background .4s}
-    .mkt-health-ring:after{content:'';position:absolute;inset:7px;border-radius:50%;background:var(--surface-2)}
-    .mkt-health-ring span{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;line-height:1}
-    .mkt-health-ring b{font-size:21px;font-variant-numeric:tabular-nums}
-    .mkt-health-ring i{font-style:normal;font-size:8.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-top:3px}
-    .mkt-health-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:8px;flex:1;min-width:200px}
-    .mkt-health-list{margin-top:12px;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--surface-2)}
-    .mkt-health-row{display:flex;align-items:center;gap:8px;padding:8px 10px;border-top:1px solid var(--border);min-width:0}
-    .mkt-health-row:first-child{border-top:none}
-    .mkt-dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto}
-    .mkt-dot.ok{background:#22c55e} .mkt-dot.warn{background:#ffb020} .mkt-dot.err{background:#ef4444} .mkt-dot.info{background:#3aa0ff}
-    .mkt-health-name{font-size:11.5px;font-weight:650;flex:0 0 136px}
-    .mkt-health-detail{font-size:10.5px;color:var(--muted);line-height:1.45;flex:1;min-width:0;overflow-wrap:anywhere}
-    .mkt-audit-tabs .btn{min-height:26px}
-    .mkt-audit-list{border:1px solid var(--border);border-radius:12px;background:var(--surface-2);margin-top:10px;max-height:460px;overflow:auto}
-    .mkt-audit-row{display:flex;gap:10px;justify-content:space-between;padding:9px 11px;border-top:1px solid var(--border)}
-    .mkt-audit-row:first-child{border-top:none}
-    .mkt-audit-main{min-width:0;flex:1}
-    .mkt-audit-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-    .mkt-audit-head b{font-size:12px}
-    .mkt-audit-changes{display:flex;gap:5px;flex-wrap:wrap;margin-top:4px}
-    .mkt-audit-chip{font-size:10px;padding:2px 6px;border-radius:6px;background:rgba(46,230,201,.08);
-      border:1px solid rgba(46,230,201,.18);color:var(--text);font-variant-numeric:tabular-nums}
-    .mkt-audit-target{text-align:right;max-width:130px;flex:0 0 auto}
-    .mkt-audit-empty{padding:16px;font-size:11.5px;color:var(--muted);text-align:center;line-height:1.6}
-    .mkt-endpoint{margin:2px 0 10px;padding:9px 10px;border:1px solid var(--border);border-radius:10px;
-      background:var(--surface-2);display:flex;flex-direction:column;gap:4px}
-    .mkt-endpoint code{font-size:11px;color:var(--text);background:rgba(255,255,255,.05);border-radius:5px;padding:1px 5px;overflow-wrap:anywhere}
-    .mkt-endpoint>div:first-child{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-    @media(max-width:560px){
-      .mkt-health-name{flex-basis:106px;font-size:11px}
-      .mkt-audit-target{display:none}
-      .mkt-health-top{gap:10px}
-    }
     `;
     document.head.appendChild(st);
   })();
@@ -1506,9 +1125,8 @@
     if (typeof DB === 'undefined') return setTimeout(boot, 400);
     patchTick();
     poll();
-    setInterval(poll, 1200);
+    setInterval(poll, 2500);
     setInterval(() => { try { paintNotice(); paintAdminStatus(); } catch (e) {} }, 3000);
-    setInterval(() => { try { if (document.getElementById('mktHealthCard')) loadHealth(); } catch (e) {} }, 10000);
     setInterval(() => { try { if (MK.chart && MK.chart.mode === 'portfolio') updateChart(); } catch (e) {} }, 1000);
     setInterval(() => { try { if (MK.chart) updateChart(); checkSettledToasts(); } catch (e) {} }, 2000);
   }
