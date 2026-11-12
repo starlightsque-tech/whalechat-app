@@ -940,7 +940,7 @@ const Remote = {
   }
 };
 
-const SYNC_COLLECTIONS = ['users', 'vendors', 'companyProducts', 'products', 'orders', 'deposits', 'withdrawals', 'messages', 'statuses', 'notifications', 'contacts', 'blocks', 'txs', 'referrals', 'purchases', 'refunds', 'vendorApplications', 'audit', 'stocks', 'holdings', 'trades', 'watchlist', 'alerts'];
+const SYNC_COLLECTIONS = ['users', 'vendors', 'companyProducts', 'products', 'orders', 'deposits', 'withdrawals', 'messages', 'statuses', 'notifications', 'contacts', 'blocks', 'txs', 'referrals', 'purchases', 'refunds', 'vendorApplications', 'audit', 'stocks', 'holdings', 'trades', 'watchlist', 'alerts', 'traffic'];
 
 function cloneDB(db) { try { return JSON.parse(JSON.stringify(db)); } catch (e) { return db; } }
 function migrateDB(db) {
