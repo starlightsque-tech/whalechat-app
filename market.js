@@ -29,10 +29,47 @@ const FALLBACK_DIVIDEND_YIELDS = {
   AAPL: 0.45, TSLA: 0, NVDA: 0.03, COIN: 0, MSTR: 0, MARA: 0, KO: 3.00, JPM: 2.20,
   NKE: 1.80, UNH: 1.50, AVGO: 1.20, WMT: 1.00, DIS: 0.80, V: 0.75, UBER: 0, AMZN: 0,
   MSFT: 0.70, GOOGL: 0.45, META: 0.35, NFLX: 0, AMD: 0, PEP: 3.40, PLTR: 0, ARM: 0,
-  SHOP: 0, HOOD: 0, LLY: 0.70, XOM: 3.30, SMCI: 0, RIVN: 0
+  SHOP: 0, HOOD: 0, LLY: 0.70, XOM: 3.30, SMCI: 0, RIVN: 0,
+  VOD_L: 7.0, SAP_DE: 1.3, '7203_T': 2.5, SHOP_TO: 0
 };
 
 const DURATION_LABELS = { 5: '5 min', 15: '15 min', 60: '1 hour', 240: '4 hours', 1440: '1 day' };
+const DEFAULT_ASSETS = [
+  { ticker: 'VOD_L', displayTicker: 'VOD.L', finnhubSymbol: 'VOD.L', assetClass: 'global', name: 'Vodafone Group', exchange: 'London', currency: 'GBP', color: '#e60000', sector: 'Communication' },
+  { ticker: 'SAP_DE', displayTicker: 'SAP.DE', finnhubSymbol: 'SAP.DE', assetClass: 'global', name: 'SAP SE', exchange: 'Frankfurt', currency: 'EUR', color: '#0faaff', sector: 'Technology' },
+  { ticker: '7203_T', displayTicker: '7203.T', finnhubSymbol: '7203.T', assetClass: 'global', name: 'Toyota Motor', exchange: 'Tokyo', currency: 'JPY', color: '#eb0a1e', sector: 'Automotive' },
+  { ticker: 'SHOP_TO', displayTicker: 'SHOP.TO', finnhubSymbol: 'SHOP.TO', assetClass: 'global', name: 'Shopify Inc.', exchange: 'Toronto', currency: 'CAD', color: '#96bf48', sector: 'Technology' },
+  { ticker: 'EURUSD', displayTicker: 'EUR/USD', finnhubSymbol: 'OANDA:EUR_USD', assetClass: 'forex', name: 'Euro / US Dollar', exchange: 'OANDA', currency: 'USD', color: '#2f6fd0', sector: 'Forex' },
+  { ticker: 'GBPUSD', displayTicker: 'GBP/USD', finnhubSymbol: 'OANDA:GBP_USD', assetClass: 'forex', name: 'British Pound / US Dollar', exchange: 'OANDA', currency: 'USD', color: '#7a5cff', sector: 'Forex' },
+  { ticker: 'USDJPY', displayTicker: 'USD/JPY', finnhubSymbol: 'OANDA:USD_JPY', assetClass: 'forex', name: 'US Dollar / Japanese Yen', exchange: 'OANDA', currency: 'JPY', color: '#e60012', sector: 'Forex' },
+  { ticker: 'XAUUSD', displayTicker: 'XAU/USD', finnhubSymbol: 'OANDA:XAU_USD', assetClass: 'forex', name: 'Gold / US Dollar', exchange: 'OANDA', currency: 'USD', color: '#ffc861', sector: 'Forex' },
+  { ticker: 'BTCUSDT', displayTicker: 'BTC/USDT', finnhubSymbol: 'BINANCE:BTCUSDT', assetClass: 'crypto', name: 'Bitcoin', exchange: 'Binance', currency: 'USDT', color: '#f7931a', sector: 'Crypto' },
+  { ticker: 'ETHUSDT', displayTicker: 'ETH/USDT', finnhubSymbol: 'BINANCE:ETHUSDT', assetClass: 'crypto', name: 'Ethereum', exchange: 'Binance', currency: 'USDT', color: '#627eea', sector: 'Crypto' },
+  { ticker: 'SOLUSDT', displayTicker: 'SOL/USDT', finnhubSymbol: 'BINANCE:SOLUSDT', assetClass: 'crypto', name: 'Solana', exchange: 'Binance', currency: 'USDT', color: '#14f195', sector: 'Crypto' },
+  { ticker: 'BNBUSDT', displayTicker: 'BNB/USDT', finnhubSymbol: 'BINANCE:BNBUSDT', assetClass: 'crypto', name: 'BNB', exchange: 'Binance', currency: 'USDT', color: '#f3ba2f', sector: 'Crypto' },
+  { ticker: 'XRPUSDT', displayTicker: 'XRP/USDT', finnhubSymbol: 'BINANCE:XRPUSDT', assetClass: 'crypto', name: 'XRP', exchange: 'Binance', currency: 'USDT', color: '#23292f', sector: 'Crypto' }
+];
+
+function assetKey(finnhubSymbol, assetClass) {
+  const sym = String(finnhubSymbol || '').toUpperCase();
+  if (assetClass === 'forex') return sym.split(':').pop().replace(/_/g, '');
+  if (assetClass === 'crypto') return sym.split(':').pop().replace(/[^A-Z0-9]/g, '');
+  return sym.replace(/[^A-Z0-9]/g, '_');
+}
+function displayTickerFor(finnhubSymbol, assetClass) {
+  const sym = String(finnhubSymbol || '').toUpperCase();
+  if (assetClass === 'forex') {
+    const pair = sym.split(':').pop();
+    return pair.includes('_') ? pair.replace('_', '/') : pair;
+  }
+  if (assetClass === 'crypto') {
+    const pair = sym.split(':').pop();
+    const m = pair.match(/^(.*?)(USDT|USDC|BUSD|USD)$/);
+    return m ? m[1] + '/' + m[2] : pair;
+  }
+  return sym;
+}
+
 function durationLabel(minutes, stored) {
   return stored || DURATION_LABELS[Number(minutes)] || (Number(minutes) ? Number(minutes) + ' min' : 'duration');
 }
@@ -95,6 +132,8 @@ class MarketService {
     this.configFile = path.join(this.dataDir, 'market-config.json');
     this.config = { mode: 'simulated', apiKey: '', refreshSec: 15 };
     this.quotes = {};
+    this.assets = [];
+    this.byFinnhub = new Map();
     this.history = {};
     this._lastSettleAt = 0;
     this.lastReal = {};
@@ -182,19 +221,59 @@ class MarketService {
   }
 
   /* ------------------------------- quotes ------------------------------- */
+  refreshAssets() {
+    const db = this.getDb && this.getDb();
+    const list = (db && Array.isArray(db.stocks)) ? db.stocks.filter((s) => s && s.ticker) : [];
+    this.assets = list.map((s) => ({
+      ticker: String(s.ticker).toUpperCase(),
+      displayTicker: s.displayTicker || s.ticker,
+      finnhubSymbol: s.finnhubSymbol || s.ticker,
+      assetClass: s.assetClass || 'us',
+      name: s.name || s.ticker,
+      exchange: s.exchange || (s.assetClass === 'forex' ? 'OANDA' : s.assetClass === 'crypto' ? 'Binance' : 'US'),
+      currency: s.currency || 'USD',
+      price: Number(s.price) || 0
+    }));
+    this.byFinnhub = new Map(this.assets.map((a) => [String(a.finnhubSymbol).toUpperCase(), a.ticker]));
+    return this.assets;
+  }
+
+  assetList() { return this.assets.length ? this.assets : this.refreshAssets(); }
+
+  assetClasses() {
+    const out = { us: 0, global: 0, forex: 0, crypto: 0 };
+    this.assetList().forEach((a) => { out[a.assetClass] = (out[a.assetClass] || 0) + 1; });
+    return out;
+  }
+
   seedBaseQuotes() {
     const now = Date.now();
-    TICKERS.forEach((t) => {
-      if (this.quotes[t]) return;
-      const price = BASE_PRICES[t] || 100;
-      this.quotes[t] = {
-        ticker: t, price, prevClose: price, open: price,
+    this.refreshAssets();
+    this.assetList().forEach((a) => {
+      if (this.quotes[a.ticker]) return;
+      const price = Number(a.price) || 0;
+      this.quotes[a.ticker] = {
+        ticker: a.ticker, price, prevClose: price, open: price,
         dayHigh: price, dayLow: price,
-        changePct: 0, changeUsd: 0, vol: 1000000,
-        dir: 0, updatedAt: now, source: 'simulated', real: false
+        changePct: 0, changeUsd: 0, vol: 0,
+        dir: 0, updatedAt: now, source: 'cached', real: false
       };
-      this.recordHistory(t, price, now, 'simulated', false);
+      if (price > 0) this.recordHistory(a.ticker, price, now, 'cached', false);
     });
+  }
+
+  async seedAsset(ticker) {
+    const a = this.assetList().find((x) => x.ticker === ticker);
+    if (!a) return null;
+    const q = await this.fetchQuote(a.finnhubSymbol);
+    if (!q) return null;
+    this.writeQuote(a.ticker, q.price, { prevClose: q.prevClose, open: q.open, dayHigh: q.dayHigh, dayLow: q.dayLow, vol: 0, source: 'live', real: true });
+    return q;
+  }
+
+  subscribeSymbol(symbol) {
+    if (!this.ws || !this.wsConnected) return false;
+    try { this.ws.send(JSON.stringify({ type: 'subscribe', symbol })); return true; } catch (e) { return false; }
   }
 
   writeQuote(ticker, price, meta) {
@@ -252,25 +331,6 @@ class MarketService {
     if (now - this._lastSettleAt < 500) return;
     this._lastSettleAt = now;
     try { this.settleTrades(); } catch (e) { this.lastError = e.message; }
-  }
-
-  /* smooth micro ticks anchored on the last real Finnhub price */
-  simTick() {
-    const now = Date.now();
-    TICKERS.forEach((t) => {
-      const q = this.quotes[t];
-      if (!q) return;
-      if (q.real && now - q.updatedAt < 5000) return;          // a fresh real tick wins
-      const anchor = this.lastReal[t] || q.price;
-      const drift = (anchor - q.price) * 0.015;                 // gently pull back to the real close
-      const vol = Math.max(0.0004, Math.min(0.0022, 0.00055 + Math.abs(anchor) / 500000));
-      const shock = (Math.random() - 0.5) * 2 * vol;
-      /* drift is already an absolute price amount — never multiply it by price again */
-      let next = q.price * (1 + shock) + drift;
-      if (!Number.isFinite(next) || next <= 0) next = q.price;
-      this.writeQuote(t, next, { prevClose: q.prevClose, open: q.open, vol: q.vol + Math.floor(Math.random() * 9000), source: 'simulated', real: false });
-    });
-    this.settleTrades();
   }
 
   /* --------------------------- Finnhub REST ----------------------------- */
@@ -335,36 +395,38 @@ class MarketService {
     if (this.seeding || !this.config.apiKey) return;
     this.seeding = true;
     try {
-      for (const t of TICKERS) {
+      const assets = this.assetList();
+      for (const a of assets) {
         if (this.stopped) break;
         if (Date.now() < this.rateLimitedUntil) break;
-        const q = await this.fetchQuote(t);
+        const q = await this.fetchQuote(a.finnhubSymbol);
         if (q) {
-          this.writeQuote(t, q.price, { prevClose: q.prevClose, open: q.open, dayHigh: q.dayHigh, dayLow: q.dayLow, vol: this.quotes[t] ? this.quotes[t].vol : 1000000, source: 'live', real: true });
+          this.writeQuote(a.ticker, q.price, { prevClose: q.prevClose, open: q.open, dayHigh: q.dayHigh, dayLow: q.dayLow, vol: 0, source: 'live', real: true });
         }
         await sleep(SEED_DELAY_MS);                            // default 1.2s < 60 requests / minute
       }
       this.lastError = '';
-      console.log('[market] Finnhub seed complete ·', TICKERS.length, 'tickers ·', usMarketOpen() ? 'market open' : 'market closed (using last close)');
+      console.log('[market] Finnhub seed complete ·', assets.length, 'assets ·', usMarketOpen() ? 'market open' : 'market closed');
     } finally {
       this.seeding = false;
     }
   }
 
   async pollCycle() {
-    if (this.polling || !this.config.apiKey || !usMarketOpen()) return;
+    if (this.polling || !this.config.apiKey) return;
     if (Date.now() < this.rateLimitedUntil) return;
     this.polling = true;
     try {
-      for (const t of TICKERS) {
+      for (const a of this.assetList()) {
         const wsFresh = this.wsConnected && this.lastWsTickAt && Date.now() - this.lastWsTickAt < 45000;
-        if (this.stopped || !usMarketOpen() || wsFresh) break;
+        if (this.stopped || wsFresh) break;
+        const t = a.ticker;
         const q = this.quotes[t];
         const realAt = this.lastRealTime[t] || 0;
         const stale = !q || !realAt || Date.now() - realAt > Math.max(30000, this.config.refreshSec * 2000);
         if (stale) {
-          const fresh = await this.fetchQuote(t);
-          if (fresh) this.writeQuote(t, fresh.price, { prevClose: fresh.prevClose, open: fresh.open, dayHigh: fresh.dayHigh, dayLow: fresh.dayLow, vol: q ? q.vol : 1000000, source: 'live', real: true });
+          const fresh = await this.fetchQuote(a.finnhubSymbol);
+          if (fresh) this.writeQuote(t, fresh.price, { prevClose: fresh.prevClose, open: fresh.open, dayHigh: fresh.dayHigh, dayLow: fresh.dayLow, vol: q ? q.vol : 0, source: 'live', real: true });
         }
         await sleep(1200);
       }
@@ -377,6 +439,94 @@ class MarketService {
   wsClass() {
     if (typeof global.WebSocket === 'function') return global.WebSocket;
     try { return require('ws'); } catch (e) { return null; }
+  }
+
+  async finnhubGet(path) {
+    const key = this.config.apiKey;
+    if (!key) throw new Error('Finnhub API key is not configured');
+    if (Date.now() < this.rateLimitedUntil) throw new Error('Finnhub rate limit cooldown is active');
+    const url = FINNHUB_REST_BASE + path + (path.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(key);
+    const r = await this.getJSON(url, 12000);
+    if (r.status === 429) { this.rateLimitedUntil = Date.now() + 60 * 1000; throw new Error('Finnhub rate limit'); }
+    if (r.status !== 200 || !r.data) throw new Error('Finnhub HTTP ' + r.status);
+    return r.data;
+  }
+
+  async searchAssets(query, cls) {
+    const q = String(query || '').trim();
+    if (!q) return [];
+    if (cls === 'forex' || cls === 'crypto') {
+      const path = cls === 'forex' ? '/api/v1/forex/symbol?exchange=oanda' : '/api/v1/crypto/symbol?exchange=binance';
+      const data = await this.finnhubGet(path);
+      const list = Array.isArray(data) ? data : (data && data.data) || [];
+      const needle = q.toUpperCase();
+      return list.filter((x) => String(x.symbol || '').toUpperCase().includes(needle) || String(x.description || '').toUpperCase().includes(needle))
+        .slice(0, 25)
+        .map((x) => ({ symbol: x.symbol, display: displayTickerFor(x.symbol, cls), description: x.description || displayTickerFor(x.symbol, cls), type: cls }));
+    }
+    const data = await this.finnhubGet('/api/v1/search?q=' + encodeURIComponent(q));
+    const list = (data && data.result) || [];
+    return list.filter((x) => {
+      const sym = String(x.symbol || '');
+      if (cls === 'us') return sym && !sym.includes('.') && !sym.includes(':');
+      if (cls === 'global') return sym.includes('.');
+      return true;
+    }).slice(0, 25).map((x) => ({ symbol: x.symbol, display: x.displaySymbol || x.symbol, description: x.description || x.symbol, type: x.type || 'Stock' }));
+  }
+
+  async profileFor(symbol) {
+    try { return await this.finnhubGet('/api/v1/stock/profile2?symbol=' + encodeURIComponent(symbol)); }
+    catch (e) { return {}; }
+  }
+
+  async addAsset(cls, symbol) {
+    const klass = ['us', 'global', 'forex', 'crypto'].includes(cls) ? cls : 'us';
+    const sym = String(symbol || '').trim().toUpperCase();
+    if (!sym) throw new Error('Symbol is required');
+    const db = this.getDb && this.getDb();
+    if (!db) throw new Error('Database is not ready');
+    const ticker = assetKey(sym, klass);
+    if ((db.stocks || []).some((s) => String(s.ticker).toUpperCase() === ticker || String(s.finnhubSymbol || '').toUpperCase() === sym)) {
+      return { existing: true, asset: (db.stocks || []).find((s) => String(s.ticker).toUpperCase() === ticker) };
+    }
+    const quote = await this.fetchQuote(sym).catch(() => null);
+    const profile = (klass === 'us' || klass === 'global') ? await this.profileFor(sym) : {};
+    let dividendYield = 0;
+    if (klass === 'us' || klass === 'global') {
+      const y = await this.fetchDividendYield(sym).catch(() => null);
+      if (y != null) dividendYield = y;
+    }
+    const display = displayTickerFor(sym, klass);
+    const name = profile.name || (klass === 'forex' ? display : klass === 'crypto' ? display : display);
+    const asset = {
+      id: 'st_' + ticker.toLowerCase().replace(/[^a-z0-9]/g, ''),
+      ticker, displayTicker: display, finnhubSymbol: sym, assetClass: klass,
+      name, sector: profile.finnhubIndustry || (klass === 'forex' ? 'Forex' : klass === 'crypto' ? 'Crypto' : 'Stock'),
+      exchange: profile.exchange || (klass === 'forex' ? 'OANDA' : klass === 'crypto' ? 'Binance' : 'US'),
+      currency: profile.currency || (klass === 'crypto' ? 'USDT' : 'USD'),
+      logo: profile.logo || '', website: profile.weburl || '', ceo: '', about: profile.name || name,
+      price: quote ? quote.price : 0, prevClose: quote ? quote.prevClose : 0,
+      div: dividendYield, dividendYield,
+      color: ['#2ee6c9', '#3aa0ff', '#8b7bff', '#ffc861', '#2fd6a6', '#ff7bb0'][ticker.length % 6],
+      paused: false, custom: true, createdAt: Date.now()
+    };
+    db.stocks = db.stocks || [];
+    db.stocks.push(asset);
+    if (db.invest) {
+      if (!db.invest.dividendYields) db.invest.dividendYields = {};
+      if (dividendYield > 0) db.invest.dividendYields[ticker] = dividendYield;
+    }
+    this.refreshAssets();
+    if (quote) this.writeQuote(ticker, quote.price, { prevClose: quote.prevClose, open: quote.open, dayHigh: quote.dayHigh, dayLow: quote.dayLow, source: 'live', real: true });
+    this.persist();
+    try { this.broadcast('change', { rev: null, source: 'market-asset-add', at: Date.now() }); } catch (e) {}
+    this.subscribeSymbol(sym);
+    return { existing: false, asset };
+  }
+
+  async onAssetsChanged() {
+    this.refreshAssets();
+    if (this.wsConnected) this.connectWS();
   }
 
   connectWS() {
@@ -400,10 +550,10 @@ class MarketService {
       this.wsConnected = true;
       this.lastWsTickAt = Date.now();
       this.lastError = '';
-      TICKERS.forEach((t) => {
-        try { ws.send(JSON.stringify({ type: 'subscribe', symbol: t })); } catch (e) {}
+      this.assetList().forEach((a) => {
+        try { ws.send(JSON.stringify({ type: 'subscribe', symbol: a.finnhubSymbol })); } catch (e) {}
       });
-      console.log('[market] Finnhub WebSocket connected ·', TICKERS.length, 'subscriptions');
+      console.log('[market] Finnhub WebSocket connected ·', this.assetList().length, 'subscriptions');
     };
     ws.onmessage = (ev) => {
       let msg;
@@ -411,8 +561,10 @@ class MarketService {
       if (!msg || msg.type !== 'trade' || !Array.isArray(msg.data)) return;
       const touched = new Set();
       msg.data.forEach((tr) => {
-        const t = String(tr.s || '').toUpperCase();
-        if (!this.quotes[t] || !(Number(tr.p) > 0)) return;
+        const sym = String(tr.s || '').toUpperCase();
+        let t = this.byFinnhub.get(sym);
+        if (!t) { this.refreshAssets(); t = this.byFinnhub.get(sym); }
+        if (!t || !this.quotes[t] || !(Number(tr.p) > 0)) return;
         const old = this.quotes[t];
         this.writeQuote(t, Number(tr.p), {
           prevClose: old.prevClose, open: old.open,
@@ -439,27 +591,20 @@ class MarketService {
     try { ws.onclose = null; ws.onerror = null; ws.close(); } catch (e) {}
   }
 
-  /* ------------------------- fallback decisions ------------------------- */
+  /* ------------------------- real-data status --------------------------- */
   fallbackReason() {
-    if (this.config.mode !== 'hybrid' || !this.config.apiKey) return 'simulated';
-    if (!usMarketOpen()) return 'closed';
+    if (this.config.mode !== 'hybrid' || !this.config.apiKey) return 'no-finnhub';
     if (Date.now() < this.rateLimitedUntil) return 'rate-limit';
-    const staleWs = !this.wsConnected || (this.lastWsTickAt && Date.now() - this.lastWsTickAt > Math.max(45000, this.config.refreshSec * 3000));
-    const anyReal = TICKERS.some((t) => !!this.lastReal[t]);
-    if (!anyReal && !this.seeding) return 'no-live-data';
-    if (staleWs) return 'no-ws-ticks';
     return '';
   }
 
   notice() {
-    const why = this.fallbackReason();
-    if (!why) return 'Live market data via Finnhub';
-    if (this.config.mode !== 'hybrid' || !this.config.apiKey) return 'Simulated market data · 24/7 OTC mode';
-    return '24/7 OTC market mode active (based on last real close)';
+    if (this.config.mode === 'hybrid' && this.config.apiKey) return 'Live market data via Finnhub';
+    return 'Connect Finnhub in Admin → Markets';
   }
 
   source() {
-    return this.fallbackReason() ? 'simulated' : 'live';
+    return (this.config.mode === 'hybrid' && this.config.apiKey) ? 'live' : 'offline';
   }
 
   status() {
@@ -479,7 +624,8 @@ class MarketService {
       lastWsTickAt: this.lastWsTickAt || null,
       rateLimitedUntil: this.rateLimitedUntil > Date.now() ? this.rateLimitedUntil : null,
       lastError: this.lastError || '',
-      tickers: TICKERS.length,
+      tickers: this.assetList().length,
+      assetCounts: this.assetClasses(),
       dividends: this.dividendStatus(),
       startedAt: this.startedAt
     };
@@ -521,7 +667,8 @@ class MarketService {
     if (!db.invest.dividendOverrides || typeof db.invest.dividendOverrides !== 'object') db.invest.dividendOverrides = {};
     this.dividendSyncedAt = db.invest.dividendSyncedAt;
     this.dividendSource = db.invest.dividendSource;
-    this.dividendFetched = liveCount != null ? Number(liveCount) : (source === 'finnhub' ? TICKERS.length : 0);
+    const stockCount = this.assetList().filter((a) => a.assetClass === 'us' || a.assetClass === 'global').length;
+    this.dividendFetched = liveCount != null ? Number(liveCount) : (source === 'finnhub' ? stockCount : 0);
     this.persist();
     try { this.broadcast('change', { rev: null, source: 'dividend-sync', at: Date.now() }); } catch (e) {}
     return db.invest.dividendYields;
@@ -557,17 +704,19 @@ class MarketService {
     let source = 'fallback';
     let fetched = 0;
     try {
+      const stockAssets = this.assetList().filter((a) => a.assetClass === 'us' || a.assetClass === 'global');
       if (this.config.mode === 'hybrid' && this.config.apiKey) {
-        for (const t of TICKERS) {
+        for (const a of stockAssets) {
           if (this.stopped || Date.now() < this.rateLimitedUntil) break;
-          const v = await this.fetchDividendYield(t);
-          if (v != null) { map[t] = v; fetched++; } else { map[t] = fallback[t] || 0; }
+          const v = await this.fetchDividendYield(a.finnhubSymbol);
+          if (v != null) { map[a.ticker] = v; fetched++; } else { map[a.ticker] = fallback[a.ticker] || 0; }
           await sleep(SEED_DELAY_MS);                       // default 1.2s spacing
         }
         source = fetched ? 'finnhub' : 'fallback';
       }
+      this.assetList().filter((a) => a.assetClass === 'forex' || a.assetClass === 'crypto').forEach((a) => { map[a.ticker] = 0; });
       this.applyDividendMap(map, source, fetched);
-      console.log('[market] dividends synced ·', source, '·', fetched, 'live /', TICKERS.length, 'tickers');
+      console.log('[market] dividends synced ·', source, '·', fetched, 'live /', stockAssets.length, 'stock assets');
     } finally {
       this.syncingDividends = false;
     }
@@ -579,7 +728,7 @@ class MarketService {
       syncedAt: this.dividendSyncedAt || null,
       source: this.dividendSource || 'fallback',
       live: this.dividendFetched || 0,
-      tickers: TICKERS.length,
+      tickers: this.assetList().filter((a) => a.assetClass === 'us' || a.assetClass === 'global').length,
       syncing: this.syncingDividends
     };
   }
@@ -759,22 +908,21 @@ class MarketService {
     this.stopTimers();
     this.closeWS();
     this.loadConfig();
+    this.refreshAssets();
     this.seedBaseQuotes();
-    const simMs = Math.max(2000, Math.min(5000, Math.round(this.config.refreshSec * 1000 / 3)));
-    this.timers.push(setInterval(() => { try { this.simTick(); } catch (e) { this.lastError = e.message; } }, simMs));
     /* TP/SL checks run every second so a level hit is settled immediately */
     this.timers.push(setInterval(() => { try { this.settleTrades(); } catch (e) { this.lastError = e.message; } }, 1000));
     this.timers.push(setInterval(() => {
       try {
-        if (this.config.mode === 'hybrid' && this.config.apiKey && usMarketOpen()) this.pollCycle();
+        if (this.config.mode === 'hybrid' && this.config.apiKey) this.pollCycle();
       } catch (e) { this.lastError = e.message; }
     }, Math.max(5000, this.config.refreshSec * 1000)));
     /* make fallback yields available immediately, then refresh from Finnhub */
     this.applyDividendMap(this.fallbackDividendMap(), 'fallback', 0);
     this.timers.push(setInterval(() => { this.syncDividends().catch((e) => { this.lastError = e.message; }); }, 24 * 3600 * 1000));
     if (this.config.mode === 'hybrid' && this.config.apiKey) {
-      await this.seedFromFinnhub();
       this.connectWS();
+      await this.seedFromFinnhub();
       await this.syncDividends();
     } else {
       this.dividendSource = 'fallback';
@@ -800,4 +948,4 @@ class MarketService {
   }
 }
 
-module.exports = { MarketService, TICKERS, usMarketOpen };
+module.exports = { MarketService, TICKERS, DEFAULT_ASSETS, assetKey, displayTickerFor, usMarketOpen };
