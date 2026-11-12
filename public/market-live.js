@@ -75,6 +75,7 @@
     paintNotice();
     paintAdminStatus();
     updateChart();
+    try { checkSettledToasts(); } catch (e) {}
   }
 
   async function poll() {
@@ -151,26 +152,30 @@
       el.classList.toggle('sim', !live);
     });
     document.querySelectorAll('.inv-note').forEach((el) => {
-      if (!/market data|market mode|Finnhub|Simulated market/i.test(el.textContent || '')) return;
+      if (!/market data|market mode|Finnhub|Simulated market|simulated feed/i.test(el.textContent || '')) return;
       el.setAttribute('data-market-notice', '1');
       el.innerHTML = `<span class="wc-feed-dot ${live ? 'live' : 'sim'}"></span><span>${escMarket(txt)}</span>`;
     });
-    let stock = document.getElementById('wcFeedNotice');
-    if (!stock) {
-      const chart = document.querySelector('.inv-chart');
-      if (chart && chart.parentNode) {
-        stock = document.createElement('div');
-        stock.id = 'wcFeedNotice';
-        stock.className = 'tiny muted center wc-feed-notice';
-        stock.setAttribute('data-market-notice', '1');
-        chart.parentNode.insertBefore(stock, chart.nextSibling);
+  }
+
+  /* server-settled trades -> immediate toast on the user's screen */
+  function checkSettledToasts() {
+    if (typeof LT === 'undefined' || !LT.open || typeof DB === 'undefined' || !DB) return;
+    const open = new Set(LT.open().map((t) => t.id));
+    if (!MK.knownOpen) { MK.knownOpen = open; return; }
+    for (const tid of Array.from(MK.knownOpen)) {
+      if (open.has(tid)) continue;
+      const t = (DB.trades || []).find((x) => x.id === tid);
+      if (!t || t.status === 'Open') continue;
+      if (Date.now() - (Number(t.closedAt) || 0) > 120000) continue;
+      const reason = t.closeReason || 'Trade closed';
+      const win = /Take Profit/i.test(reason) || Number(t.pnlCoins) > 0;
+      const pnl = Number(t.pnlCoins) || 0;
+      if (typeof toast === 'function') {
+        toast(`${t.ticker} · ${reason} · ${pnl >= 0 ? '+' : '−'}${Math.abs(pnl)} WC`, win ? 'ok' : 'err', 4200);
       }
     }
-    if (stock) {
-      stock.innerHTML = `<span class="wc-feed-dot ${live ? 'live' : 'sim'}"></span>${escMarket(txt)} · updates every ${(MK.feed && MK.feed.status && MK.feed.status.refreshSec) || 15}s`;
-      stock.classList.toggle('live', live);
-      stock.classList.toggle('sim', !live);
-    }
+    MK.knownOpen = open;
   }
 
   function escMarket(s) {
@@ -205,28 +210,66 @@
     } catch (e) { return null; }
   }
 
-  function baselineFor(ticker) {
-    const pos = openPosition(ticker);
-    if (pos && Number(pos.entryPrice) > 0) return { price: Number(pos.entryPrice), side: pos.side === 'short' ? 'short' : 'long', pos };
-    let q = null;
-    try { q = INV.quote(ticker); } catch (e) {}
-    const price = (q && (Number(q.prevClose) || Number(q.open) || Number(q.price))) || 100;
-    return { price, side: 'long', pos: null };
+  function positionFor(ticker) {
+    return openPosition(ticker);
   }
 
-  function chartData(ticker) {
+  function fallbackData(ticker, tf) {
     let vals = [];
-    try { vals = INV.series(ticker, '1D') || []; } catch (e) {}
+    try { vals = INV.series(ticker, tf || '1D') || []; } catch (e) {}
     if (!vals.length) {
       try { vals = INV.series(ticker, '1W') || []; } catch (e) {}
     }
     if (!vals.length) vals = [100, 100];
     const now = Math.floor(Date.now() / 1000);
     const step = 60;
-    return vals.map((v, i) => ({
-      time: now - (vals.length - 1 - i) * step,
-      value: Math.max(0.0001, Number(v) || 0)
-    }));
+    return vals.map((v, i) => ({ time: now - (vals.length - 1 - i) * step, value: Math.max(0.0001, Number(v) || 0) }));
+  }
+
+  async function fetchHistory(ticker) {
+    const cached = MK.historyCache && MK.historyCache[ticker];
+    if (cached && Date.now() - cached.at < 30000) return cached.points;
+    try {
+      const r = await getJSON('/api/market/history?tickers=' + encodeURIComponent(ticker) + '&limit=900', {}, 7000);
+      const d = r.data || {};
+      const points = (d.ok && d.history && Array.isArray(d.history[ticker])) ? d.history[ticker] : [];
+      MK.historyCache = MK.historyCache || {};
+      MK.historyCache[ticker] = { at: Date.now(), points };
+      return points;
+    } catch (e) { return []; }
+  }
+
+  function cleanPoints(points, ticker, limit) {
+    const out = [];
+    (points || []).forEach((pt) => {
+      const time = Math.floor((Number(pt.t) || 0) / 1000);
+      const value = Number(pt.p);
+      if (!(time > 0) || !(value > 0)) return;
+      const prev = out[out.length - 1];
+      if (prev && time <= prev.time) return;
+      out.push({ time, value: Math.max(0.0001, value) });
+    });
+    if (out.length > (limit || 900)) out.splice(0, out.length - (limit || 900));
+    return out;
+  }
+
+  async function stockData(ticker) {
+    const pts = cleanPoints(await fetchHistory(ticker), ticker, 900);
+    let data = pts.length >= 2 ? pts : fallbackData(ticker, '1D');
+    let q = null;
+    try { q = INV.quote(ticker); } catch (e) {}
+    if (q && q.price > 0) {
+      const now = Math.floor(Date.now() / 1000);
+      const last = data[data.length - 1];
+      if (!last || now > last.time + 1 || Math.abs(last.value - q.price) > 0.0001) {
+        if (last && now <= last.time) {
+          last.value = Number(q.price);
+        } else {
+          data = data.concat([{ time: Math.max(now, (last ? last.time + 1 : now)), value: Number(q.price) }]);
+        }
+      }
+    }
+    return data.length >= 2 ? data : [{ time: Math.floor(Date.now() / 1000) - 60, value: 100 }, { time: Math.floor(Date.now() / 1000), value: 100 }];
   }
 
   function destroyChart() {
@@ -247,159 +290,204 @@
     });
   }
 
+  function makeChart(host, cfg) {
+    return loadLWC().then((LWC) => {
+      if (!document.body.contains(host)) return null;
+      host.classList.add('wc-chart-host');
+      host.__wcLwc = true;
+      host.removeAttribute('data-chart');
+      host.innerHTML = '';
+      const wrap = document.createElement('div');
+      wrap.className = 'wc-lwc';
+      wrap.id = 'wcLwcHost';
+      host.appendChild(wrap);
+      const data = cfg.data && cfg.data.length >= 2 ? cfg.data : [{ time: Math.floor(Date.now() / 1000) - 60, value: 100 }, { time: Math.floor(Date.now() / 1000), value: 100 }];
+      const defaultBase = Number(cfg.baseline) > 0 ? Number(cfg.baseline) : Number(data[0].value) || 100;
+      const side = cfg.side === 'short' ? 'short' : 'long';
+      const chart = LWC.createChart(wrap, {
+        width: wrap.clientWidth || host.clientWidth || 320,
+        height: 240,
+        layout: {
+          background: { type: LWC.ColorType.Solid, color: 'transparent' },
+          textColor: '#8ba4b6',
+          fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif',
+          fontSize: 11
+        },
+        grid: {
+          vertLines: { color: 'rgba(255,255,255,.035)', style: LWC.LineStyle.Dotted },
+          horzLines: { color: 'rgba(255,255,255,.055)', style: LWC.LineStyle.Dotted }
+        },
+        rightPriceScale: { borderColor: 'rgba(255,255,255,.10)', scaleMargins: { top: 0.12, bottom: 0.12 } },
+        timeScale: {
+          borderColor: 'rgba(255,255,255,.10)',
+          timeVisible: true,
+          secondsVisible: true,
+          rightOffset: 4,
+          barSpacing: 5,
+          fixLeftEdge: false
+        },
+        crosshair: {
+          mode: LWC.CrosshairMode.Normal,
+          vertLine: { color: 'rgba(46,230,201,.45)', width: 1, style: LWC.LineStyle.Dashed, labelBackgroundColor: '#0f2333' },
+          horzLine: { color: 'rgba(46,230,201,.45)', width: 1, style: LWC.LineStyle.Dashed, labelBackgroundColor: '#0f2333' }
+        },
+        localization: { priceFormatter: (p) => (cfg.mode === 'portfolio' ? Number(p).toFixed(2) + ' WC' : '$' + Number(p).toFixed(2)) },
+        handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
+        handleScale: { axisPressedMouseMove: true, mouseWheel: true, pinch: true }
+      });
+      const series = chart.addBaselineSeries({
+        baseValue: { type: 'price', price: defaultBase },
+        topLineColor: '#22c55e', topFillColor1: 'rgba(34,197,94,.28)', topFillColor2: 'rgba(34,197,94,.02)',
+        bottomLineColor: '#ef4444', bottomFillColor1: 'rgba(239,68,68,.02)', bottomFillColor2: 'rgba(239,68,68,.28)',
+        lineWidth: 2, priceLineVisible: false, lastValueVisible: true,
+        crosshairMarkerVisible: true, crosshairMarkerRadius: 4,
+        crosshairMarkerBorderColor: '#04101a', crosshairMarkerBackgroundColor: side === 'short' ? '#ef4444' : '#22c55e'
+      });
+      applyBaselineColors(series, side);
+      series.setData(data);
+      chart.timeScale().fitContent();
+      MK.chart = {
+        mode: cfg.mode || 'stock', ticker: cfg.ticker || '', chart, series, host, wrap, LWC,
+        basePrice: defaultBase, defaultBase, side,
+        lastTime: data[data.length - 1].time,
+        points: data.length, lines: [], lineKey: ''
+      };
+      syncPriceLines();
+      if (typeof ResizeObserver !== 'undefined') {
+        MK.chart.ro = new ResizeObserver(() => {
+          if (!MK.chart || MK.chart.chart !== chart) return;
+          const width = wrap.clientWidth;
+          if (width > 0) chart.applyOptions({ width });
+        });
+        MK.chart.ro.observe(wrap);
+      }
+      return MK.chart;
+    });
+  }
+
+  function syncPriceLines() {
+    const c = MK.chart;
+    if (!c || c.mode !== 'stock') return;
+    const pos = positionFor(c.ticker);
+    const key = pos ? [pos.id, pos.entryPrice, pos.takeProfitPrice, pos.stopLossPrice].join('|') : 'none';
+    if (c.lineKey === key) return;
+    (c.lines || []).forEach((line) => { try { c.series.removePriceLine(line); } catch (e) {} });
+    c.lines = [];
+    c.lineKey = key;
+    if (!pos) return;
+    const add = (price, color, title, style) => {
+      if (!(Number(price) > 0)) return;
+      try {
+        c.lines.push(c.series.createPriceLine({
+          price: Number(price), color, lineWidth: 1, lineStyle: style,
+          axisLabelVisible: true, title
+        }));
+      } catch (e) {}
+    };
+    add(pos.entryPrice, '#60a5fa', 'Entry', 2);
+    add(pos.takeProfitPrice, '#22c55e', 'TP', 0);
+    add(pos.stopLossPrice, '#ef4444', 'SL', 0);
+  }
+
   async function mountChart() {
     const host = document.querySelector('.inv-chart[data-lt-live-chart], .inv-chart[data-chart]');
     if (!host) { destroyChart(); return; }
     const ticker = (host.getAttribute('data-lt-live-chart') || (host.getAttribute('data-chart') || '').split('|')[0] || currentTicker()).toUpperCase();
     if (!ticker) return;
-    if (MK.chart && MK.chart.ticker === ticker && document.body.contains(MK.chart.host)) {
+    if (MK.chart && MK.chart.mode === 'stock' && MK.chart.ticker === ticker && document.body.contains(MK.chart.host)) {
       host.__wcLwc = true;
       updateChart();
       return;
     }
     destroyChart();
     host.innerHTML = '<div class="wc-lwc-loading">Loading live chart…</div>';
-    let LWC;
-    try { LWC = await loadLWC(); }
-    catch (e) {
-      MK.chartLoading = null;
-      try { host.innerHTML = INV.lineChart(INV.series(ticker, '1D'), { h: 150 }); } catch (err) {}
-      return;
-    }
-    if (!document.body.contains(host)) return;
-    host.innerHTML = '';
-    const wrap = document.createElement('div');
-    wrap.className = 'wc-lwc';
-    wrap.id = 'wcLwcHost';
-    host.appendChild(wrap);
-    host.__wcLwc = true;
-    host.removeAttribute('data-chart');
-
-    const base = baselineFor(ticker);
-    const chart = LWC.createChart(wrap, {
-      width: wrap.clientWidth || host.clientWidth || 320,
-      height: 230,
-      layout: {
-        background: { type: LWC.ColorType.Solid, color: 'transparent' },
-        textColor: '#8ba4b6',
-        fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif',
-        fontSize: 11
-      },
-      grid: {
-        vertLines: { color: 'rgba(255,255,255,.035)', style: LWC.LineStyle.Dotted },
-        horzLines: { color: 'rgba(255,255,255,.055)', style: LWC.LineStyle.Dotted }
-      },
-      rightPriceScale: { borderColor: 'rgba(255,255,255,.10)', scaleMargins: { top: 0.12, bottom: 0.12 } },
-      timeScale: {
-        borderColor: 'rgba(255,255,255,.10)',
-        timeVisible: true,
-        secondsVisible: true,
-        rightOffset: 4,
-        barSpacing: 5,
-        fixLeftEdge: false
-      },
-      crosshair: {
-        mode: LWC.CrosshairMode.Normal,
-        vertLine: { color: 'rgba(46,230,201,.45)', width: 1, style: LWC.LineStyle.Dashed, labelBackgroundColor: '#0f2333' },
-        horzLine: { color: 'rgba(46,230,201,.45)', width: 1, style: LWC.LineStyle.Dashed, labelBackgroundColor: '#0f2333' }
-      },
-      localization: { priceFormatter: (p) => '$' + Number(p).toFixed(2) },
-      handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
-      handleScale: { axisPressedMouseMove: true, mouseWheel: true, pinch: true }
-    });
-
-    const series = chart.addBaselineSeries({
-      baseValue: { type: 'price', price: base.price },
-      topLineColor: '#22c55e',
-      topFillColor1: 'rgba(34,197,94,.28)',
-      topFillColor2: 'rgba(34,197,94,.02)',
-      bottomLineColor: '#ef4444',
-      bottomFillColor1: 'rgba(239,68,68,.02)',
-      bottomFillColor2: 'rgba(239,68,68,.28)',
-      lineWidth: 2,
-      priceLineVisible: false,
-      lastValueVisible: true,
-      crosshairMarkerVisible: true,
-      crosshairMarkerRadius: 4,
-      crosshairMarkerBorderColor: '#04101a',
-      crosshairMarkerBackgroundColor: base.side === 'short' ? '#ef4444' : '#22c55e'
-    });
-    applyBaselineColors(series, base.side);
-
-    const data = chartData(ticker);
-    series.setData(data);
-    chart.timeScale().fitContent();
-
-    /* entry price marker line makes the baseline explicit */
-    const entryLine = series.createPriceLine({
-      price: base.price,
-      color: 'rgba(255,255,255,.42)',
-      lineWidth: 1,
-      lineStyle: LWC.LineStyle.Dashed,
-      axisLabelVisible: true,
-      title: base.pos ? 'entry' : 'base'
-    });
-
-    MK.chart = {
-      ticker, chart, series, host, wrap,
-      basePrice: base.price, side: base.side,
-      entryLine, lastTime: data.length ? data[data.length - 1].time : Math.floor(Date.now() / 1000),
-      points: data.length
-    };
-
-    if (typeof ResizeObserver !== 'undefined') {
-      MK.chart.ro = new ResizeObserver(() => {
-        if (!MK.chart || MK.chart.chart !== chart) return;
-        const width = wrap.clientWidth;
-        if (width > 0) chart.applyOptions({ width });
+    const data = await stockData(ticker);
+    const pos = positionFor(ticker);
+    try {
+      await makeChart(host, {
+        mode: 'stock', ticker, data,
+        baseline: pos ? Number(pos.entryPrice) : Number(data[0].value),
+        side: pos ? pos.side : 'long'
       });
-      MK.chart.ro.observe(wrap);
+    } catch (e) {
+      MK.chartLoading = null;
+      try { host.classList.remove('wc-chart-host'); host.innerHTML = INV.lineChart(INV.series(ticker, '1D'), { h: 150 }); } catch (err) {}
     }
   }
 
+  function portfolioTimeline(vals, tf) {
+    const windows = { '1D': 864e5, '1W': 7 * 864e5, '1M': 30 * 864e5, '3M': 90 * 864e5, '1Y': 365 * 864e5, 'ALL': 730 * 864e5 };
+    const win = (windows[tf] || windows['1M']) / 1000;
+    const now = Math.floor(Date.now() / 1000);
+    const n = vals.length;
+    const step = n > 1 ? win / (n - 1) : 3600;
+    return vals.map((v, i) => ({ time: Math.floor(now - (n - 1 - i) * step), value: Math.max(0, Number(v) || 0) }));
+  }
+
+  async function mountPortfolioChart() {
+    const host = document.getElementById('ltDashChart');
+    if (!host || typeof LT === 'undefined' || !LT.seriesWithTrades) return;
+    if (MK.chart && MK.chart.mode === 'portfolio' && MK.chart.host === host) { updateChart(); return; }
+    let vals = [];
+    const tf = host.getAttribute('data-ltd-chart') || '1M';
+    try { vals = LT.seriesWithTrades(tf, me().id) || []; } catch (e) {}
+    if (vals.length < 2) return;
+    destroyChart();
+    try {
+      await makeChart(host, {
+        mode: 'portfolio', ticker: '__portfolio__',
+        data: portfolioTimeline(vals, tf),
+        baseline: Number(vals[0]) || 0, side: 'long'
+      });
+    } catch (e) { /* legacy chart remains if the CDN is unavailable */ }
+  }
+
+  function appendPoint(c, time, value) {
+    try {
+      c.series.update({ time, value: Number(value) });
+      c.lastTime = time;
+      c.points += 1;
+    } catch (e) { /* out-of-order tick */ }
+  }
+
   function updateChart() {
-    if (!MK.chart) return;
     const c = MK.chart;
+    if (!c) return;
+    if (c.mode === 'portfolio') {
+      if (!document.body.contains(c.host)) { destroyChart(); return; }
+      let s = null;
+      try { s = LT.summary(me().id); } catch (e) { return; }
+      if (!s) return;
+      const now = Math.floor(Date.now() / 1000);
+      const time = now > c.lastTime ? now : c.lastTime + 1;
+      appendPoint(c, time, s.valueCoins);
+      return;
+    }
     const ticker = c.ticker;
     let q;
     try { q = INV.quote(ticker); } catch (e) { return; }
     if (!q || !(q.price > 0)) return;
-
-    /* follow an open Rise/Fall trade: baseline becomes the exact entry price */
-    const base = baselineFor(ticker);
-    if (Math.abs(base.price - c.basePrice) > 0.000001 || base.side !== c.side) {
-      c.basePrice = base.price;
-      c.side = base.side;
-      c.series.applyOptions({ baseValue: { type: 'price', price: base.price } });
-      applyBaselineColors(c.series, base.side);
-      if (c.entryLine) {
-        try {
-          c.series.removePriceLine(c.entryLine);
-        } catch (e) {}
-        c.entryLine = c.series.createPriceLine({
-          price: base.price,
-          color: 'rgba(255,255,255,.42)',
-          lineWidth: 1,
-          lineStyle: 2,
-          axisLabelVisible: true,
-          title: base.pos ? 'entry' : 'base'
-        });
-      }
+    const pos = positionFor(ticker);
+    const targetBase = pos ? Number(pos.entryPrice) : c.defaultBase;
+    const targetSide = pos ? (pos.side === 'short' ? 'short' : 'long') : 'long';
+    if (Math.abs(targetBase - c.basePrice) > 0.000001 || targetSide !== c.side) {
+      c.basePrice = targetBase;
+      c.side = targetSide;
+      c.series.applyOptions({ baseValue: { type: 'price', price: targetBase } });
+      applyBaselineColors(c.series, targetSide);
     }
-
+    syncPriceLines();
     const now = Math.floor(Date.now() / 1000);
     const time = now > c.lastTime ? now : c.lastTime + 1;
-    try {
-      c.series.update({ time, value: Number(q.price) });
-      c.lastTime = time;
-      c.points += 1;
-      if (c.points > 900) {
-        const fresh = chartData(ticker);
+    appendPoint(c, time, q.price);
+    if (c.points > 900) {
+      stockData(ticker).then((fresh) => {
+        if (!MK.chart || MK.chart !== c) return;
         c.series.setData(fresh);
-        c.lastTime = fresh.length ? fresh[fresh.length - 1].time : time;
+        c.lastTime = fresh[fresh.length - 1].time;
         c.points = fresh.length;
-      }
-    } catch (e) { /* out-of-order tick */ }
+      });
+    }
   }
 
   /* ------------------------------ admin panel ------------------------------- */
@@ -553,10 +641,12 @@
   function enhance() {
     paintNotice();
     paintAdminStatus();
+    if (document.getElementById('ltDashChart')) setTimeout(mountPortfolioChart, 60);
     if (currentTicker()) {
       const host = document.querySelector('.inv-chart[data-lt-live-chart], .inv-chart[data-chart]');
       if (host) setTimeout(mountChart, 40);
     }
+    try { checkSettledToasts(); } catch (e) {}
   }
 
   if (typeof AFTER === 'object' && AFTER.admin) {
@@ -584,8 +674,9 @@
     const st = document.createElement('style');
     st.id = 'wc-market-style';
     st.textContent = `
-    .wc-lwc{width:100%;height:230px;position:relative}
-    .wc-lwc-loading{height:230px;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--muted)}
+    .inv-chart.wc-chart-host{height:240px !important}
+    .wc-lwc{width:100%;height:240px;position:relative}
+    .wc-lwc-loading{height:240px;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--muted)}
     .wc-feed-notice{margin-top:5px;display:flex;align-items:center;justify-content:center;gap:6px}
     .wc-feed-dot{width:7px;height:7px;border-radius:50%;display:inline-block;flex:0 0 auto}
     .wc-feed-dot.live{background:#22c55e;box-shadow:0 0 0 3px rgba(34,197,94,.15)}
@@ -608,7 +699,7 @@
     poll();
     setInterval(poll, 2500);
     setInterval(() => { try { paintNotice(); paintAdminStatus(); } catch (e) {} }, 3000);
-    setInterval(() => { if (currentTicker() && MK.chart) updateChart(); }, 2000);
+    setInterval(() => { try { if (MK.chart) updateChart(); checkSettledToasts(); } catch (e) {} }, 2000);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
