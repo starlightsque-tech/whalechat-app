@@ -732,6 +732,55 @@ App.reactStatus = function (id, ds) {
 /* =========================================================================
    Marketplace, cart, checkout, orders, vendor system
    ========================================================================= */
+/* ---- storefront + product view tracking (feeds the sales reports) ---- */
+function trafficDay(ts) { return new Date(ts || Date.now()).toISOString().slice(0, 10); }
+function bumpTraffic(vendorId) {
+  if (!vendorId) return;
+  const day = trafficDay();
+  if (!Array.isArray(DB.traffic)) DB.traffic = [];
+  let row = DB.traffic.find(r => r.id === 'tv_' + day + '_' + vendorId);
+  if (!row) {
+    row = { id: 'tv_' + day + '_' + vendorId, day, vendorId, views: 0 };
+    DB.traffic.push(row);
+  }
+  row.views = (row.views || 0) + 1;
+  if (DB.traffic.length > 900) {
+    const cutoff = trafficDay(Date.now() - 62 * 864e5);
+    DB.traffic = DB.traffic.filter(r => r.day >= cutoff);
+  }
+}
+function trackStoreView(vendorId) {
+  const u = me();
+  if (!u || u.role === 'admin' || u.isBot || !vendorId) return;
+  const v = vendorById(vendorId);
+  if (!v) return;
+  const key = 'wcv_store_' + vendorId + '_' + trafficDay();
+  try { if (sessionStorage.getItem(key)) return; sessionStorage.setItem(key, '1'); } catch (e) {}
+  v.storeViews = (v.storeViews || 0) + 1;
+  v.views = (v.views || 0) + 1;
+  v.lastViewAt = Date.now();
+  bumpTraffic(vendorId);
+  try { sync(); } catch (e) {}
+}
+function trackProductView(productId) {
+  const u = me();
+  if (!u || u.role === 'admin' || u.isBot || !productId) return;
+  const p = DB.products.find(x => x.id === productId);
+  if (!p) return;
+  const key = 'wcv_prod_' + productId + '_' + trafficDay();
+  try { if (sessionStorage.getItem(key)) return; sessionStorage.setItem(key, '1'); } catch (e) {}
+  p.views = (p.views || 0) + 1;
+  p.lastViewAt = Date.now();
+  const v = vendorById(p.vendorId);
+  if (v) {
+    v.productViews = (v.productViews || 0) + 1;
+    v.views = (v.views || 0) + 1;
+    v.lastViewAt = Date.now();
+    bumpTraffic(v.id);
+  }
+  try { sync(); } catch (e) {}
+}
+
 const CATEGORIES = ['All', 'Phones', 'Laptops', 'Tablets', 'Headphones', 'Chargers', 'Video Games', 'Phone Pouches', 'Accessories', 'Fridges', 'Solar Lamps', 'Watches', 'Sound Systems', 'JBL Players', 'Speakers', 'Power Banks', 'Bags', 'Solar Systems'];
 let MARKET_FILTER = { cat: 'All', q: '' };
 
@@ -815,6 +864,7 @@ VIEWS.product = function (parts) {
   const u = me();
   const p = DB.products.find(x => x.id === parts[1]);
   if (!p) return `<div class="empty"><h3>Product not found</h3><a href="#/market" class="btn btn-primary">Back to marketplace</a></div>`;
+  trackProductView(p.id);
   const v = vendorById(p.vendorId);
   const vUser = v ? findUser(v.userId) : null;
   const vendorActive = vendorIsActive(v);
