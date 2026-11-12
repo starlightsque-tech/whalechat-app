@@ -1,8 +1,8 @@
 {
-  "version": "3.25.0",
-  "build": "2026-11-12T21:30:00Z",
+  "version": "3.26.0",
+  "build": "2026-11-12T23:40:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.25.0 - USD spot buying with live WC conversion, dual-currency charts and position banner, bot performance chart, resilient Finnhub price/dividend sync, and WhaleChat share investment plans with live earnings.",
-  "releasedAt": "2026-11-12T21:30:00Z",
+  "notes": "WhaleChat 3.26.0 - Alpaca live market data (REST bars + IEX WebSocket), per-stock price overrides, TP/SL + due-time spot settlement, and Alpaca assets/dividend sync.",
+  "releasedAt": "2026-11-12T23:40:00Z",
   "minimum": "3.0.0"
 }
