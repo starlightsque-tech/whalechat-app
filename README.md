@@ -1,4 +1,4 @@
-# WhaleChat 3.18.0 — web app + mobile apps
+# WhaleChat 3.19.0 — web app + mobile apps
 
 WhaleChat is a social + marketplace + wallet product built as a single-page app with a
 Node sync server and native Android/iOS shells.
@@ -66,7 +66,19 @@ The stock detail chart uses TradingView **lightweight-charts** `BaselineSeries` 
 trade entry price for an open Rise/Fall position (green above / red below, inverted for Short), with `timeVisible: true`
 and `secondsVisible: true` and per-tick `series.update()` — no reloads.
 
+TP/SL can be entered as a **percentage**, an exact **USD price**, or a **WC amount** target. Trailing stops
+ratchet behind favourable price movement and only tighten. Open-trade cards and closed-trade history show the
+levels that were set, and the chart's `Entry` / `TP` / `TSL` lines follow a trailing stop as it moves.
+
 Environment variables (optional, useful for first boot): `FINNHUB_API_KEY`, `FINNHUB_MODE=hybrid`.
+For provider testing only: `FINNHUB_REST_BASE`, `FINNHUB_WS_URL`, `FINNHUB_SEED_DELAY_MS`, `US_MARKET_FORCE_OPEN=1`.
+
+**Verify a live key end-to-end** (on the server host, after `npm install`):
+
+```bash
+FINNHUB_API_KEY=your_key node scripts/verify-finnhub.js
+npm run verify:finnhub          # same, uses FINNHUB_API_KEY from the environment
+```
 
 ## Run locally
 
