@@ -149,8 +149,10 @@ const LT = {
       capitalCoins: capital, stakeAmount: capital, entryPrice: q.price, leverage: this.leverage(),
       takeProfitPrice: tpPrice > 0 ? Math.round(tpPrice * 10000) / 10000 : null,
       takeProfitMode: o.tpMode || 'PRICE',
+      takeProfitWc: Number(o.tpWc) > 0 ? Math.round(Number(o.tpWc) * 100) / 100 : null,
       stopLossPrice: trailPct > 0 ? trailStop : (slPrice > 0 ? Math.round(slPrice * 10000) / 10000 : null),
       stopLossMode: trailPct > 0 ? 'TRAILING' : (o.slMode || 'PRICE'),
+      stopLossWc: Number(o.slWc) > 0 ? Math.round(Number(o.slWc) * 100) / 100 : null,
       trailingActive: trailPct > 0,
       trailingStopPct: trailPct || 0,
       trailingStopPrice: trailPct > 0 ? trailStop : null,
@@ -276,8 +278,8 @@ const LT = {
         <span class="tiny muted" data-lt-left="${t.id}">⏱ ${this.clock(p.left)}</span>
       </div>
       <div class="lt-levels">
-        <span class="lt-lvl tp"><i></i>TP <b>${Number(t.takeProfitPrice) > 0 ? usd(t.takeProfitPrice) : '—'}</b></span>
-        <span class="lt-lvl sl" data-lt-sl="${t.id}"><i></i>${t.trailingActive ? 'TSL' : 'SL'} <b>${Number(t.stopLossPrice) > 0 ? usd(t.stopLossPrice) : '—'}</b></span>
+        <span class="lt-lvl tp"><i></i>TP <b>${Number(t.takeProfitPrice) > 0 ? usd(t.takeProfitPrice) : '—'}</b>${Number(t.takeProfitWc) > 0 ? `<small>${Number(t.takeProfitWc)} WC</small>` : ''}</span>
+        <span class="lt-lvl sl" data-lt-sl="${t.id}"><i></i>${t.trailingActive ? 'TSL' : 'SL'} <b>${Number(t.stopLossPrice) > 0 ? usd(t.stopLossPrice) : '—'}</b>${Number(t.stopLossWc) > 0 ? `<small>${Number(t.stopLossWc)} WC</small>` : ''}</span>
         ${t.trailingActive ? `<span class="lt-lvl trail">trail ${Number(t.trailingStopPct).toFixed(1)}%</span>` : ''}
         <button class="lt-edit" data-act="lt-edit-tpsl" data-id="${t.id}">${ic('edit', 12)} Edit TP/SL</button>
       </div>
@@ -532,6 +534,7 @@ const LT = {
   .lt-lvl i{width:7px;height:7px;border-radius:50%;display:inline-block}
   .lt-lvl.tp i{background:#22c55e} .lt-lvl.sl i{background:#ef4444}
   .lt-lvl b{color:var(--text);font-variant-numeric:tabular-nums}
+  .lt-lvl small{font-size:9px;color:var(--muted-2);font-weight:600}
   .lt-edit{margin-left:auto;border:1px solid var(--border);background:var(--surface);
     color:var(--accent);border-radius:8px;font-size:10px;font-weight:700;padding:3px 6px;cursor:pointer}
   .lt-lvl-head{display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:13px}
@@ -1139,8 +1142,8 @@ LT.stockHistory = function (ticker) {
           <div class="small" style="font-weight:650">${t.side === 'short' ? 'Fall' : 'Rise'} ${t.leverage}×
             <span class="tiny muted">· ${esc(t.closeReason || 'closed')}</span></div>
           <div class="tiny muted">${coins(t.capitalCoins)} WC · ${usd(t.entryPrice)} → ${usd(t.exitPrice || 0)} · ${dateLabel(t.closedAt)}</div>
-          <div class="lt-hist-levels">${Number(t.takeProfitPrice) > 0 ? `<span class="tp">TP ${usd(t.takeProfitPrice)}</span>` : '<span>TP —</span>'}
-            ${Number(t.stopLossPrice) > 0 ? `<span class="sl">${t.trailingActive ? 'TSL' : 'SL'} ${usd(t.stopLossPrice)}</span>` : '<span>SL —</span>'}
+          <div class="lt-hist-levels">${Number(t.takeProfitPrice) > 0 ? `<span class="tp">TP ${usd(t.takeProfitPrice)}${Number(t.takeProfitWc) > 0 ? ' · ' + Number(t.takeProfitWc) + ' WC' : ''}</span>` : '<span>TP —</span>'}
+            ${Number(t.stopLossPrice) > 0 ? `<span class="sl">${t.trailingActive ? 'TSL' : 'SL'} ${usd(t.stopLossPrice)}${Number(t.stopLossWc) > 0 ? ' · ' + Number(t.stopLossWc) + ' WC' : ''}</span>` : '<span>SL —</span>'}
             ${t.trailingActive ? `<span class="trail">trail ${Number(t.trailingStopPct).toFixed(1)}%</span>` : ''}</div>
         </div>
         <span class="tiny ${(t.pnlCoins || 0) >= 0 ? 'up' : 'down'}">${(t.pnlCoins || 0) >= 0 ? '+' : '−'}${coins(Math.abs(t.pnlCoins || 0))} WC</span>
@@ -1672,6 +1675,8 @@ App.ltStart = function (id, ds) {
     tpPrice, slPrice, minutes,
     tpMode: modeName(LT.levels.tp),
     slMode: trailOn ? 'TRAILING' : modeName(LT.levels.sl),
+    tpWc: LT.levels.tp === 'wc' ? tpRaw : 0,
+    slWc: LT.levels.sl === 'wc' ? slRaw : 0,
     trailingPct: trailPct
   });
 };
