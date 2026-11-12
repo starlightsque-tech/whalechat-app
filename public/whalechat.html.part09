@@ -182,13 +182,13 @@ INV.viewDash = function (params) {
     </div>
   </div>
 
-  <div class="card inv-note">${ic('shield', 14)} <span class="tiny">Live prices stream from <b>Alpaca</b> (IEX WebSocket + 1-minute bars). Trades settle instantly against your Whale Coin balance at 1 WC = $0.50.</span></div>`;
+  <div class="card inv-note">${ic('shield', 14)} <span class="tiny">Prices on this build are <b>simulated</b> for demonstration, moving every 5 seconds. Trades settle instantly against your Whale Coin balance at 1 WC = $0.50.</span></div>`;
 };
 
 /* ------------------------------ market ------------------------------ */
 INV.marketCat = 'All';
 INV.marketQuery = '';
-INV.CATS = ['All', 'US Stocks', 'Top Gainers', 'Top Losers', 'Most Traded', 'Trending', 'Dividend', 'New'];
+INV.CATS = ['All', 'US Stocks', 'Global Stocks', 'Forex', 'Crypto'];
 
 INV.marketFiltered = function () {
   let list = INV.stocks();
@@ -201,7 +201,7 @@ INV.marketFiltered = function () {
     else if (cat === 'Top Losers') list = list.sort((a, b) => (INV.quote(a.ticker).changePct) - (INV.quote(b.ticker).changePct));
     else if (cat === 'Most Traded') list = list.sort((a, b) => (INV.quote(b.ticker).vol) - (INV.quote(a.ticker).vol));
     else if (cat === 'Trending') list = list.slice().sort((a, b) => Math.abs(INV.quote(b.ticker).changePct) - Math.abs(INV.quote(a.ticker).changePct));
-    else if (cat === 'US Stocks') list = list.filter(s => (s.assetClass || 'us') === 'us');
+    else if (cat === 'Crypto') list = list.filter(s => s.crypto);
     else if (cat === 'Dividend') list = list.filter(s => (s.div || 0) > 0).sort((a, b) => b.div - a.div);
     else if (cat === 'New') list = list.filter(s => s.isNew || s.custom).slice().reverse();
     else list = list.filter(s => s.sector === cat);
@@ -241,7 +241,7 @@ INV.viewMarket = function () {
     <input id="ivSearch" placeholder="Search asset — AAPL, VOD.L, EUR/USD, BTC/USDT…" value="${esc(INV.marketQuery)}" autocomplete="off"/></div>
   <div class="chip-row inv-cats" id="ivCats">${INV.CATS.map(c => `<button class="chip ${c === INV.marketCat && !INV.marketQuery ? 'on' : ''}" data-act="inv-cat" data-cat="${esc(c)}">${esc(c)}</button>`).join('')}</div>
   <div class="inv-grid" id="ivList">${list.length ? list.map(INV.cardHTML).join('') : `<div class="inv-empty" style="grid-column:1/-1">${ic('search', 26)}<p class="small muted">No stocks match “${esc(INV.marketQuery)}”.</p></div>`}</div>
-  <div class="card inv-note" data-market-notice="1">${ic('help', 14)} <span class="tiny">Live market data via Alpaca (IEX) — US stocks with real-time ticks and 1-minute historical bars.</span></div>`;
+  <div class="card inv-note" data-market-notice="1">${ic('help', 14)} <span class="tiny">Live market data via Finnhub — US stocks, global stocks, forex and crypto.</span></div>`;
 };
 AFTER.invest = function (parts) {
   const sub = parts[1] || '';
@@ -316,7 +316,7 @@ INV.viewStock = function (rawTicker, params) {
       </div>
     </div>
     <div class="inv-chart" data-chart="${s.ticker}|${tf}|${mode}">${chart}</div>
-    <div class="tiny muted center wc-feed-notice" data-market-notice="1" style="margin-top:4px">Real-time market chart</div>
+    <div class="tiny muted center wc-feed-notice" data-market-notice="1" style="margin-top:4px">Simulated market data · 24/7</div>
   </div>
 
   <div class="inv-two">
