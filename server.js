@@ -91,6 +91,29 @@ function pgPersist() {
   pool.query('insert into whalechat_state (id, rev, updated_at, db) values (1,$1,now(),$2::jsonb) on conflict (id) do update set rev=excluded.rev, updated_at=now(), db=excluded.db', [store.rev, payload])
     .catch(e => console.error('[db] postgres write failed:', e.message));
 }
+/* Durable market-feed config: the Finnhub key lives in Postgres (not in the
+   synced app state), so a redeploy cannot silently drop Hybrid mode. */
+async function ensureMarketConfigTable() {
+  if (!pool) return;
+  await pool.query('create table if not exists whalechat_market_config (id int primary key, config jsonb not null, updated_at timestamptz not null default now())');
+}
+async function loadMarketConfig() {
+  if (!pool) return null;
+  try {
+    await ensureMarketConfigTable();
+    const r = await pool.query('select config from whalechat_market_config where id = 1');
+    return r.rows[0] ? r.rows[0].config : null;
+  } catch (e) { console.error('[market] durable config read failed:', e.message); return null; }
+}
+async function saveMarketConfig(cfg) {
+  if (!pool) return false;
+  try {
+    await ensureMarketConfigTable();
+    await pool.query('insert into whalechat_market_config (id, config, updated_at) values (1,$1::jsonb,now()) on conflict (id) do update set config=excluded.config, updated_at=now()', [JSON.stringify(cfg)]);
+    return true;
+  } catch (e) { console.error('[market] durable config write failed:', e.message); return false; }
+}
+
 async function initStorage() {
   if (!DATABASE_URL) return;
   try {
@@ -361,6 +384,7 @@ async function api(req, res, pathname, query) {
       return json(res, 400, { ok: false, error: 'api_key_required', message: 'Add a Finnhub API key before enabling Hybrid mode' });
     }
     const saved = market.saveConfig({ mode, refreshSec, apiKey: body.apiKey, clearKey: body.clearKey === true });
+    saveMarketConfig(market.rawConfig()).then((ok) => { if (ok) console.log('[market] config persisted to Postgres'); });
     console.log('[market] config saved by @' + admin.username + ' · mode', saved.mode, '· refresh', saved.refreshSec + 's', '· key', saved.hasKey ? 'set' : 'cleared');
     return json(res, 200, saved);
   }
@@ -560,6 +584,11 @@ server.keepAliveTimeout = 65000;
 server.headersTimeout = 70000;
 (async () => {
   await initStorage();
+  const durableMarket = await loadMarketConfig();
+  if (durableMarket) {
+    market.hydrateConfig(durableMarket);
+    console.log('[market] restored durable config · mode', durableMarket.mode || 'simulated', '· key', durableMarket.apiKey ? 'set' : 'not set');
+  }
   market.start();
   server.listen(PORT, HOST, () => {
     console.log(`[whalechat] listening on http://localhost:${PORT}`);
