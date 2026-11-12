@@ -46,16 +46,43 @@ const LT = {
 
   dirOf(t) { return t && t.direction ? t.direction : (t && t.side === 'short' ? 'FALL' : 'RISE'); },
   tpslOf(t) { return { tp: Number(t && t.takeProfitPrice) || 0, sl: Number(t && t.stopLossPrice) || 0 }; },
-  levelPrice(direction, entry, raw, mode, kind) {
+  /* trail the stop behind favourable price movement; only tightens, never loosens */
+  updateTrailing(t) {
+    if (!t || !t.trailingActive || t.status !== 'Open') return false;
+    const dist = Math.max(0.05, Math.min(50, Number(t.trailingStopPct) || 0)) / 100;
+    if (!(dist > 0)) return false;
+    const q = INV.quote(t.ticker);
+    if (!q || !(q.price > 0)) return false;
+    const dir = this.dirOf(t);
+    const entry = Number(t.entryPrice) || q.price;
+    let stop = Number(t.trailingStopPrice) || Number(t.stopLossPrice) || 0;
+    if (!(stop > 0)) stop = dir === 'RISE' ? entry * (1 - dist) : entry * (1 + dist);
+    const next = dir === 'RISE' ? q.price * (1 - dist) : q.price * (1 + dist);
+    const tightened = dir === 'RISE' ? Math.max(stop, next) : Math.min(stop, next);
+    const rounded = Math.round(tightened * 10000) / 10000;
+    const changed = rounded !== Math.round(stop * 10000) / 10000;
+    t.trailingStopPrice = rounded;
+    t.stopLossPrice = rounded;
+    return changed;
+  },
+  levelPrice(direction, entry, raw, mode, kind, capital, leverage) {
     const v = Math.abs(Number(raw) || 0);
     if (!v || !(entry > 0)) return 0;
     if (mode === 'price') return Math.round(v * 10000) / 10000;
-    const pct = v / 100;
     const rise = direction === 'RISE';
+    let pct;
+    if (mode === 'wc') {
+      const stake = Number(capital) || 0, lev = Math.max(1, Number(leverage) || 1);
+      if (!(stake > 0)) return 0;
+      pct = v / (stake * lev);                 /* WC profit / loss -> required price move */
+    } else {
+      pct = v / 100;
+    }
     const price = kind === 'tp'
       ? (rise ? entry * (1 + pct) : entry * (1 - pct))
       : (rise ? entry * (1 - pct) : entry * (1 + pct));
-    return Math.max(0.0001, Math.round(price * 10000) / 10000);
+    if (!(price > 0)) return 0;
+    return Math.round(price * 10000) / 10000;
   },
   validateLevels(direction, entry, tp, sl) {
     if (!(entry > 0)) return 'No live entry price for this symbol';
@@ -110,14 +137,23 @@ const LT = {
     const direction = side === 'short' ? 'FALL' : 'RISE';
     const tpPrice = Math.max(0, Number(o.tpPrice) || 0);
     const slPrice = Math.max(0, Number(o.slPrice) || 0);
+    const trailPct = Math.max(0, Math.min(50, Number(o.trailingPct) || 0));
     const levelErr = this.validateLevels(direction, q.price, tpPrice, slPrice);
     if (levelErr) { toast(levelErr, 'err'); return false; }
+    const trailStop = trailPct > 0
+      ? Math.round(q.price * (direction === 'FALL' ? (1 + trailPct / 100) : (1 - trailPct / 100)) * 10000) / 10000
+      : 0;
     const trade = {
       id: uid('lt'), userId: u.id, type: 'live', ticker, name: s.name,
       side: side === 'short' ? 'short' : 'long', direction,
       capitalCoins: capital, stakeAmount: capital, entryPrice: q.price, leverage: this.leverage(),
       takeProfitPrice: tpPrice > 0 ? Math.round(tpPrice * 10000) / 10000 : null,
-      stopLossPrice: slPrice > 0 ? Math.round(slPrice * 10000) / 10000 : null,
+      takeProfitMode: o.tpMode || 'PRICE',
+      stopLossPrice: trailPct > 0 ? trailStop : (slPrice > 0 ? Math.round(slPrice * 10000) / 10000 : null),
+      stopLossMode: trailPct > 0 ? 'TRAILING' : (o.slMode || 'PRICE'),
+      trailingActive: trailPct > 0,
+      trailingStopPct: trailPct || 0,
+      trailingStopPrice: trailPct > 0 ? trailStop : null,
       tpPct: Math.max(0, Math.min(500, Number(o.tpPct) || 0)),
       slPct: Math.max(0, Math.min(100, Number(o.slPct) || 0)),
       expiresAt: Date.now() + minutes * 60000,
@@ -128,7 +164,7 @@ const LT = {
     tx(u.id, 'trade-open', `${direction === 'FALL' ? 'Fall' : 'Rise'} ${ticker} · ${coins(capital)} WC`, -capital - fee,
       { tradeId: trade.id, leverage: trade.leverage, entry: q.price, direction });
     notify(u.id, 'Trade opened',
-      `${direction === 'FALL' ? 'Fall' : 'Rise'} ${ticker} with ${coins(capital)} WC at ${usd(q.price)}${tpPrice ? ' · TP ' + usd(tpPrice) : ''}${slPrice ? ' · SL ' + usd(slPrice) : ''} — closes in ${minutes} min.`,
+      `${direction === 'FALL' ? 'Fall' : 'Rise'} ${ticker} with ${coins(capital)} WC at ${usd(q.price)}${tpPrice ? ' · TP ' + usd(tpPrice) : ''}${trailPct ? ' · trailing ' + trailPct + '%' : (slPrice ? ' · SL ' + usd(slPrice) : '')} — closes in ${minutes} min.`,
       '#/invest/orders', 'trend');
     persist(); toast('Trade started — tracking live', 'ok'); render();
     return true;
@@ -180,21 +216,23 @@ const LT = {
   auto() {
     if (!DB || !DB.trades) return;
     this.open().forEach(t => {
+      this.updateTrailing(t);
       /* Finnhub-covered symbols are settled by the backend so a closed browser
          cannot miss a payout — avoid paying the same trade twice. */
       if (typeof WC_MARKET !== 'undefined' && typeof WC_MARKET.feedFresh === 'function' && WC_MARKET.feedFresh() && WC_MARKET.feed.quotes && WC_MARKET.feed.quotes[t.ticker]) return;
       const p = this.calc(t);
       const dir = this.dirOf(t);
       const lv = this.tpslOf(t);
+      const slReason = t.trailingActive ? 'Trailing Stop Hit' : 'Stop Loss Hit';
       if (dir === 'RISE') {
         if (lv.tp > 0 && p.price >= lv.tp) return void this.settle(t, 'Take Profit Hit');
-        if (lv.sl > 0 && p.price <= lv.sl) return void this.settle(t, 'Stop Loss Hit');
+        if (lv.sl > 0 && p.price <= lv.sl) return void this.settle(t, slReason);
       } else {
         if (lv.tp > 0 && p.price <= lv.tp) return void this.settle(t, 'Take Profit Hit');
-        if (lv.sl > 0 && p.price >= lv.sl) return void this.settle(t, 'Stop Loss Hit');
+        if (lv.sl > 0 && p.price >= lv.sl) return void this.settle(t, slReason);
       }
       if (t.tpPct > 0 && p.pnlPct >= t.tpPct) return void this.settle(t, 'Take Profit Hit');
-      if (t.slPct > 0 && p.pnlPct <= -t.slPct) return void this.settle(t, 'Stop Loss Hit');
+      if (t.slPct > 0 && p.pnlPct <= -t.slPct) return void this.settle(t, slReason);
       if (t.expiresAt && Date.now() >= t.expiresAt) return void this.settle(t, 'Time limit reached');
     });
   },
@@ -237,7 +275,8 @@ const LT = {
       </div>
       <div class="lt-levels">
         <span class="lt-lvl tp"><i></i>TP <b>${Number(t.takeProfitPrice) > 0 ? usd(t.takeProfitPrice) : '—'}</b></span>
-        <span class="lt-lvl sl"><i></i>SL <b>${Number(t.stopLossPrice) > 0 ? usd(t.stopLossPrice) : '—'}</b></span>
+        <span class="lt-lvl sl" data-lt-sl="${t.id}"><i></i>${t.trailingActive ? 'TSL' : 'SL'} <b>${Number(t.stopLossPrice) > 0 ? usd(t.stopLossPrice) : '—'}</b></span>
+        ${t.trailingActive ? `<span class="lt-lvl trail">trail ${Number(t.trailingStopPct).toFixed(1)}%</span>` : ''}
         <button class="lt-edit" data-act="lt-edit-tpsl" data-id="${t.id}">${ic('edit', 12)} Edit TP/SL</button>
       </div>
       <div class="lt-bar"><i style="width:${Math.min(100, Math.max(0, 50 + p.pnlPct))}%"
@@ -260,6 +299,9 @@ const LT = {
         <div class="small" style="font-weight:650">${esc(t.ticker)} ${t.side === 'short' ? 'Fall' : 'Rise'}
           <span class="tiny muted">· ${t.leverage}× · ${esc(t.closeReason || 'closed')}</span></div>
         <div class="tiny muted">${coins(t.capitalCoins)} WC @ ${usd(t.entryPrice)} → ${usd(t.exitPrice || 0)} · ${dateLabel(t.closedAt)} ${clockTime(t.closedAt)}</div>
+        <div class="lt-hist-levels">${Number(t.takeProfitPrice) > 0 ? `<span class="tp">TP ${usd(t.takeProfitPrice)}</span>` : '<span>TP —</span>'}
+          ${Number(t.stopLossPrice) > 0 ? `<span class="sl">${t.trailingActive ? 'TSL' : 'SL'} ${usd(t.stopLossPrice)}</span>` : '<span>SL —</span>'}
+          ${t.trailingActive ? `<span class="trail">trail ${Number(t.trailingStopPct).toFixed(1)}%</span>` : ''}</div>
         <div class="tiny ${win ? 'up' : lost ? 'down' : 'muted'}">
           ${lost ? 'Total loss — nothing returned' : (win ? '+' : '') + coins(pnl) + ' WC P/L'} ·
           returned ${coins(t.payoutCoins || 0)} WC</div>
@@ -291,6 +333,9 @@ const LT = {
         bar.style.width = Math.min(100, Math.max(0, 50 + p.pnlPct)) + '%';
         bar.className = p.pnlCoins >= 0 ? 'up' : 'down';
       }
+      document.querySelectorAll('[data-lt-sl="' + t.id + '"] b').forEach(el => {
+        el.textContent = Number(t.stopLossPrice) > 0 ? usd(t.stopLossPrice) : '—';
+      });
       const ret = document.querySelector('[data-lt="' + t.id + '"] .tiny.muted.center');
       if (ret) ret.textContent = 'Returns ' + coins(p.payoutCoins) + ' WC if closed now';
     });
@@ -369,36 +414,57 @@ const LT = {
           <input class="input" id="ltCapital" type="number" step="1" min="${this.MIN_CAPITAL}" placeholder="0"/></div>
         <div class="tiny muted" id="ltCapitalUsd">≈ $0.00 · balance ${coins(me().balance)} WC</div></div>
       <div class="lt-tpsl-grid">
-        <div class="lt-level-box">
+        <div class="lt-level-box" data-k="tp" data-mode="${LT.levels.tp}">
           <div class="between"><label class="label">Take Profit <span class="tiny muted">optional</span></label>
             <div class="lt-modebtns">
-              <button type="button" class="on" data-act="lt-mode" data-k="tp" data-mode="pct">%</button>
-              <button type="button" data-act="lt-mode" data-k="tp" data-mode="price">$</button>
+              <button type="button" class="${LT.levels.tp === 'pct' ? 'on' : ''}" data-act="lt-mode" data-k="tp" data-mode="pct">%</button>
+              <button type="button" class="${LT.levels.tp === 'price' ? 'on' : ''}" data-act="lt-mode" data-k="tp" data-mode="price">$</button>
+              <button type="button" class="${LT.levels.tp === 'wc' ? 'on' : ''}" data-act="lt-mode" data-k="tp" data-mode="wc">WC</button>
             </div></div>
-          <div class="input-wrap"><span class="inv-prefix" id="ltTpPrefix">%</span>
+          <div class="input-wrap"><span class="inv-prefix" id="ltTpPrefix">${LT.levels.tp === 'price' ? '$' : LT.levels.tp === 'wc' ? 'WC' : '%'}</span>
             <input class="input" id="ltTp" type="number" step="0.01" min="0" placeholder="optional"/></div>
-          <div class="lt-quick">
+          <div class="lt-quick" data-quick="pct">
             <button type="button" data-act="lt-quick" data-k="tp" data-pct="10">+10%</button>
             <button type="button" data-act="lt-quick" data-k="tp" data-pct="25">+25%</button>
             <button type="button" data-act="lt-quick" data-k="tp" data-pct="50">+50%</button>
+            <button type="button" data-act="lt-quick" data-k="tp" data-pct="100">+100%</button>
           </div>
+          <div class="lt-quick" data-quick="wc">
+            <button type="button" data-act="lt-quick" data-k="tp" data-unit="wc" data-val="10">+10 WC</button>
+            <button type="button" data-act="lt-quick" data-k="tp" data-unit="wc" data-val="25">+25 WC</button>
+            <button type="button" data-act="lt-quick" data-k="tp" data-unit="wc" data-val="50">+50 WC</button>
+          </div>
+          <div class="lt-preview" id="ltTpPreview">Target —</div>
         </div>
-        <div class="lt-level-box">
+        <div class="lt-level-box" data-k="sl" data-mode="${LT.levels.sl}">
           <div class="between"><label class="label">Stop Loss <span class="tiny muted">optional</span></label>
             <div class="lt-modebtns">
-              <button type="button" class="on" data-act="lt-mode" data-k="sl" data-mode="pct">%</button>
-              <button type="button" data-act="lt-mode" data-k="sl" data-mode="price">$</button>
+              <button type="button" class="${LT.levels.sl === 'pct' ? 'on' : ''}" data-act="lt-mode" data-k="sl" data-mode="pct">%</button>
+              <button type="button" class="${LT.levels.sl === 'price' ? 'on' : ''}" data-act="lt-mode" data-k="sl" data-mode="price">$</button>
+              <button type="button" class="${LT.levels.sl === 'wc' ? 'on' : ''}" data-act="lt-mode" data-k="sl" data-mode="wc">WC</button>
             </div></div>
-          <div class="input-wrap"><span class="inv-prefix" id="ltSlPrefix">%</span>
+          <div class="input-wrap"><span class="inv-prefix" id="ltSlPrefix">${LT.levels.sl === 'price' ? '$' : LT.levels.sl === 'wc' ? 'WC' : '%'}</span>
             <input class="input" id="ltSl" type="number" step="0.01" min="0" placeholder="optional"/></div>
-          <div class="lt-quick">
+          <div class="lt-quick" data-quick="pct">
             <button type="button" data-act="lt-quick" data-k="sl" data-pct="10">-10%</button>
             <button type="button" data-act="lt-quick" data-k="sl" data-pct="25">-25%</button>
             <button type="button" data-act="lt-quick" data-k="sl" data-pct="50">-50%</button>
+            <button type="button" data-act="lt-quick" data-k="sl" data-pct="100">-100%</button>
           </div>
+          <div class="lt-quick" data-quick="wc">
+            <button type="button" data-act="lt-quick" data-k="sl" data-unit="wc" data-val="10">-10 WC</button>
+            <button type="button" data-act="lt-quick" data-k="sl" data-unit="wc" data-val="25">-25 WC</button>
+            <button type="button" data-act="lt-quick" data-k="sl" data-unit="wc" data-val="50">-50 WC</button>
+          </div>
+          <div class="lt-preview" id="ltSlPreview">Target —</div>
         </div>
       </div>
-      <div class="tiny muted" id="ltTpslHint" style="margin:-2px 0 10px;line-height:1.55">Rise: TP above entry, SL below. Fall: TP below entry, SL above. Leave blank to trade to duration only.</div>
+      <label class="lt-trail-row">
+        <input type="checkbox" id="ltTrail"/>
+        <span class="small">Trailing stop</span>
+        <span class="lt-trail-dist"><input class="input" id="ltTrailPct" type="number" step="0.1" min="0.5" max="50" value="2"/>% behind price</span>
+      </label>
+      <div class="tiny muted" id="ltTpslHint" style="margin:-2px 0 10px;line-height:1.55">Rise: TP above entry, SL below. Fall: TP below entry, SL above. WC mode targets a Whale Coin profit/loss amount. Leave blank to trade to duration only.</div>
       <div class="field"><label class="label">Trade duration</label>
         <select class="input" id="ltDuration">${this.DURATIONS.map(d => `<option value="${d.m}" ${d.m === 60 ? 'selected' : ''}>${d.label}</option>`).join('')}</select></div>
       <button class="btn btn-primary" data-act="lt-start" data-t="${esc(ticker)}" style="width:100%">
@@ -467,6 +533,20 @@ const LT = {
   .lt-edit{margin-left:auto;border:1px solid var(--border);background:var(--surface);
     color:var(--accent);border-radius:8px;font-size:10px;font-weight:700;padding:3px 6px;cursor:pointer}
   .lt-lvl-head{display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:13px}
+  .lt-preview{margin-top:6px;font-size:10px;font-weight:650;color:var(--accent);font-variant-numeric:tabular-nums}
+  .lt-level-box .lt-quick{display:none}
+  .lt-level-box[data-mode="pct"] .lt-quick[data-quick="pct"],
+  .lt-level-box[data-mode="wc"] .lt-quick[data-quick="wc"]{display:flex}
+  .lt-trail-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 10px;
+    padding:8px 10px;border:1px dashed var(--border);border-radius:11px;background:var(--surface-2)}
+  .lt-trail-row input[type="checkbox"]{width:15px;height:15px;accent-color:var(--accent)}
+  .lt-trail-dist{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;color:var(--muted);margin-left:auto}
+  .lt-trail-dist .input{width:58px;padding:5px 7px;font-size:11px;height:auto}
+  .lt-hist-levels{display:flex;gap:8px;flex-wrap:wrap;margin-top:3px;font-size:9.5px;color:var(--muted)}
+  .lt-hist-levels span{background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:1px 5px}
+  .lt-hist-levels .tp{color:#22c55e} .lt-hist-levels .sl{color:#ef4444}
+  .lt-hist-levels .trail{color:var(--warn)}
+  .lt-lvl.trail{color:var(--warn);font-size:9.5px}
   @media(max-width:420px){.lt-tpsl-grid{grid-template-columns:1fr}}
   `;
   document.head.appendChild(st);
@@ -1053,9 +1133,12 @@ LT.stockHistory = function (ticker) {
     <div class="inv-list mt10">
       ${rows.slice(0, 6).map(t => `<div class="inv-row" style="align-items:flex-start">
         <div class="grow" style="min-width:0">
-          <div class="small" style="font-weight:650">${t.side === 'short' ? 'Short' : 'Long'} ${t.leverage}×
+          <div class="small" style="font-weight:650">${t.side === 'short' ? 'Fall' : 'Rise'} ${t.leverage}×
             <span class="tiny muted">· ${esc(t.closeReason || 'closed')}</span></div>
           <div class="tiny muted">${coins(t.capitalCoins)} WC · ${usd(t.entryPrice)} → ${usd(t.exitPrice || 0)} · ${dateLabel(t.closedAt)}</div>
+          <div class="lt-hist-levels">${Number(t.takeProfitPrice) > 0 ? `<span class="tp">TP ${usd(t.takeProfitPrice)}</span>` : '<span>TP —</span>'}
+            ${Number(t.stopLossPrice) > 0 ? `<span class="sl">${t.trailingActive ? 'TSL' : 'SL'} ${usd(t.stopLossPrice)}</span>` : '<span>SL —</span>'}
+            ${t.trailingActive ? `<span class="trail">trail ${Number(t.trailingStopPct).toFixed(1)}%</span>` : ''}</div>
         </div>
         <span class="tiny ${(t.pnlCoins || 0) >= 0 ? 'up' : 'down'}">${(t.pnlCoins || 0) >= 0 ? '+' : '−'}${coins(Math.abs(t.pnlCoins || 0))} WC</span>
       </div>`).join('')}
@@ -1508,24 +1591,56 @@ function ltPushBanner() {
 App.ltSide = function (id, ds) {
   document.querySelectorAll('.lt-side-btn').forEach(b => b.classList.toggle('on', b.dataset.side === ds.side));
   document.querySelectorAll('.lt-side-btn').forEach(b => b.dataset.side && b.classList.toggle('on', b.getAttribute('data-side') === ds.side));
+  LT.previewTargets();
 };
 LT.levels = { tp: 'pct', sl: 'pct' };
 
+LT.previewTargets = function () {
+  const m = (location.hash || '').match(/^#\/invest\/stock\/([A-Z0-9.]+)/i);
+  if (!m || typeof INV === 'undefined') return;
+  const q = INV.quote(m[1]);
+  if (!q) return;
+  const capEl = document.getElementById('ltCapital');
+  const capital = Number(capEl && capEl.value) || 0;
+  const sideEl = document.querySelector('.lt-side-btn.on');
+  const direction = sideEl && sideEl.getAttribute('data-side') === 'short' ? 'FALL' : 'RISE';
+  const lev = LT.leverage();
+  const tpRaw = Number((document.getElementById('ltTp') || {}).value) || 0;
+  const slRaw = Number((document.getElementById('ltSl') || {}).value) || 0;
+  const tp = LT.levelPrice(direction, q.price, tpRaw, LT.levels.tp, 'tp', capital, lev);
+  const sl = LT.levelPrice(direction, q.price, slRaw, LT.levels.sl, 'sl', capital, lev);
+  const trailOn = !!(document.getElementById('ltTrail') || {}).checked;
+  const trailPct = Number((document.getElementById('ltTrailPct') || {}).value) || 0;
+  const trailStop = trailOn && trailPct > 0
+    ? q.price * (direction === 'FALL' ? (1 + trailPct / 100) : (1 - trailPct / 100)) : 0;
+  const tpEl = document.getElementById('ltTpPreview');
+  const slEl = document.getElementById('ltSlPreview');
+  if (tpEl) tpEl.textContent = tp > 0 ? 'Target ' + usd(tp) + (LT.levels.tp === 'wc' ? ' · +' + Math.abs(tpRaw) + ' WC' : '') : 'Target —';
+  if (slEl) slEl.textContent = trailOn
+    ? (trailStop > 0 ? 'Starts ' + usd(trailStop) + ' · trails ' + trailPct + '%' : 'Trailing stop —')
+    : (sl > 0 ? 'Target ' + usd(sl) + (LT.levels.sl === 'wc' ? ' · -' + Math.abs(slRaw) + ' WC' : '') : 'Target —');
+};
+
 App.ltMode = function (id, ds) {
   const k = ds && ds.k === 'sl' ? 'sl' : 'tp';
-  LT.levels[k] = ds && ds.mode === 'price' ? 'price' : 'pct';
+  const mode = ds && (ds.mode === 'price' || ds.mode === 'wc') ? ds.mode : 'pct';
+  LT.levels[k] = mode;
+  const box = document.querySelector('.lt-level-box[data-k="' + k + '"]');
+  if (box) box.dataset.mode = mode;
   document.querySelectorAll('[data-act="lt-mode"][data-k="' + k + '"]').forEach(b => {
-    b.classList.toggle('on', b.getAttribute('data-mode') === LT.levels[k]);
+    b.classList.toggle('on', b.getAttribute('data-mode') === mode);
   });
   const pre = document.getElementById(k === 'tp' ? 'ltTpPrefix' : 'ltSlPrefix');
-  if (pre) pre.textContent = LT.levels[k] === 'price' ? '$' : '%';
+  if (pre) pre.textContent = mode === 'price' ? '$' : mode === 'wc' ? 'WC' : '%';
+  LT.previewTargets();
 };
 
 App.ltQuick = function (id, ds) {
   const k = ds && ds.k === 'sl' ? 'sl' : 'tp';
   const input = document.getElementById(k === 'tp' ? 'ltTp' : 'ltSl');
-  if (input) input.value = Math.abs(Number(ds && ds.pct) || 0) || '';
-  App.ltMode(null, { k, mode: 'pct' });
+  const wc = ds && ds.unit === 'wc';
+  if (input) input.value = wc ? (Number(ds.val) || '') : (Math.abs(Number(ds && ds.pct) || 0) || '');
+  App.ltMode(null, { k, mode: wc ? 'wc' : 'pct' });
 };
 
 App.ltStart = function (id, ds) {
@@ -1536,14 +1651,26 @@ App.ltStart = function (id, ds) {
   const q = INV.quote(ds.t);
   if (!q) return toast('No live price for ' + ds.t, 'err');
   const direction = side === 'short' ? 'FALL' : 'RISE';
+  const lev = LT.leverage();
   const tpRaw = Number((document.getElementById('ltTp') || {}).value) || 0;
   const slRaw = Number((document.getElementById('ltSl') || {}).value) || 0;
-  const tpPrice = LT.levelPrice(direction, q.price, tpRaw, LT.levels.tp, 'tp');
-  const slPrice = LT.levelPrice(direction, q.price, slRaw, LT.levels.sl, 'sl');
-  const err = LT.validateLevels(direction, q.price, tpPrice, slPrice);
+  const tpPrice = LT.levelPrice(direction, q.price, tpRaw, LT.levels.tp, 'tp', capital, lev);
+  const slPrice = LT.levelPrice(direction, q.price, slRaw, LT.levels.sl, 'sl', capital, lev);
+  const trailOn = !!(document.getElementById('ltTrail') || {}).checked;
+  const trailPct = trailOn ? (Number((document.getElementById('ltTrailPct') || {}).value) || 2) : 0;
+  if ((LT.levels.tp === 'wc' && tpRaw > 0 && !(tpPrice > 0)) || (LT.levels.sl === 'wc' && slRaw > 0 && !(slPrice > 0))) {
+    return toast('Enter a capital amount first — or use a smaller WC target', 'err');
+  }
+  const err = LT.validateLevels(direction, q.price, tpPrice, trailOn ? 0 : slPrice);
   if (err) return toast(err, 'err');
   const minutes = Number((document.getElementById('ltDuration') || {}).value) || 60;
-  LT.start(side, ds.t, capital, { tpPrice, slPrice, minutes });
+  const modeName = (m) => m === 'price' ? 'PRICE' : m === 'wc' ? 'WC' : 'PERCENT';
+  LT.start(side, ds.t, capital, {
+    tpPrice, slPrice, minutes,
+    tpMode: modeName(LT.levels.tp),
+    slMode: trailOn ? 'TRAILING' : modeName(LT.levels.sl),
+    trailingPct: trailPct
+  });
 };
 App.ltTp = function (id, ds) { const t = DB.trades.find(x => x.id === ds.id); LT.settle(t, 'Take Profit Hit'); };
 App.ltSl = function (id, ds) { const t = DB.trades.find(x => x.id === ds.id); LT.settle(t, 'Stop Loss Hit'); };
@@ -1554,6 +1681,8 @@ App.ltEditTpsl = function (id, ds) {
   const dir = LT.dirOf(t);
   const entry = Number(t.entryPrice) || 0;
   const { tp, sl } = LT.tpslOf(t);
+  const trailOn = !!t.trailingActive;
+  const trailPct = Number(t.trailingStopPct) || 2;
   const body = `
     <div class="lt-lvl-head">
       <span class="lt-side ${t.side}">${dir === 'RISE' ? 'Rise' : 'Fall'} ${t.leverage}×</span>
@@ -1565,6 +1694,8 @@ App.ltEditTpsl = function (id, ds) {
         <button type="button" data-act="lt-edit-quick" data-id="${t.id}" data-k="tp" data-pct="10">+10%</button>
         <button type="button" data-act="lt-edit-quick" data-id="${t.id}" data-k="tp" data-pct="25">+25%</button>
         <button type="button" data-act="lt-edit-quick" data-id="${t.id}" data-k="tp" data-pct="50">+50%</button>
+        <button type="button" data-act="lt-edit-quick-wc" data-id="${t.id}" data-k="tp" data-wc="25">+25 WC</button>
+        <button type="button" data-act="lt-edit-quick-wc" data-id="${t.id}" data-k="tp" data-wc="50">+50 WC</button>
         <button type="button" class="lt-clear" data-act="lt-edit-clear" data-id="${t.id}" data-k="tp">Clear</button>
       </div></div>
     <div class="field"><label class="label">Stop Loss price (USD)</label>
@@ -1573,26 +1704,51 @@ App.ltEditTpsl = function (id, ds) {
         <button type="button" data-act="lt-edit-quick" data-id="${t.id}" data-k="sl" data-pct="10">-10%</button>
         <button type="button" data-act="lt-edit-quick" data-id="${t.id}" data-k="sl" data-pct="25">-25%</button>
         <button type="button" data-act="lt-edit-quick" data-id="${t.id}" data-k="sl" data-pct="50">-50%</button>
+        <button type="button" data-act="lt-edit-quick-wc" data-id="${t.id}" data-k="sl" data-wc="25">-25 WC</button>
+        <button type="button" data-act="lt-edit-quick-wc" data-id="${t.id}" data-k="sl" data-wc="50">-50 WC</button>
         <button type="button" class="lt-clear" data-act="lt-edit-clear" data-id="${t.id}" data-k="sl">Clear</button>
       </div></div>
-    <div class="tiny muted">${dir === 'RISE' ? 'Rise trade: TP must be above entry and SL below entry.' : 'Fall trade: TP must be below entry and SL above entry.'} Changes apply on the next price tick.</div>`;
+    <label class="lt-trail-row">
+      <input type="checkbox" id="ltEditTrail" ${trailOn ? 'checked' : ''}/>
+      <span class="small">Trailing stop</span>
+      <span class="lt-trail-dist"><input class="input" id="ltEditTrailPct" type="number" step="0.1" min="0.5" max="50" value="${trailPct}"/>% behind price</span>
+    </label>
+    <div class="tiny muted">${dir === 'RISE' ? 'Rise trade: TP above entry, SL below entry.' : 'Fall trade: TP below entry, SL above entry.'} A trailing stop starts at the SL price (or one trail-width behind entry) and only moves in your favour.</div>`;
   openModal(modalShell('Take Profit / Stop Loss', body,
     `<button class="btn btn-ghost" data-close style="flex:1">Cancel</button>
      <button class="btn btn-ghost" id="ltTpClearBoth" style="flex:1">Remove both</button>
      <button class="btn btn-primary" id="ltTpSave" style="flex:1">Save</button>`), { locked: false });
-  const save = (tpVal, slVal) => {
-    const err = LT.validateLevels(dir, entry, tpVal, slVal);
+  const save = (tpVal, slVal, trailWanted) => {
+    const trailPctVal = trailWanted ? Math.max(0.5, Math.min(50, Number((document.getElementById('ltEditTrailPct') || {}).value) || 2)) : 0;
+    const initialTrail = trailPctVal > 0
+      ? (slVal > 0 ? slVal : entry * (dir === 'FALL' ? (1 + trailPctVal / 100) : (1 - trailPctVal / 100)))
+      : 0;
+    const err = LT.validateLevels(dir, entry, tpVal, trailPctVal > 0 ? initialTrail : slVal);
     if (err) return toast(err, 'err');
     t.takeProfitPrice = tpVal > 0 ? Math.round(tpVal * 10000) / 10000 : null;
-    t.stopLossPrice = slVal > 0 ? Math.round(slVal * 10000) / 10000 : null;
+    if (trailPctVal > 0) {
+      t.trailingActive = true;
+      t.trailingStopPct = trailPctVal;
+      t.trailingStopPrice = Math.round(initialTrail * 10000) / 10000;
+      t.stopLossPrice = t.trailingStopPrice;
+      t.stopLossMode = 'TRAILING';
+    } else {
+      t.trailingActive = false;
+      t.trailingStopPct = 0;
+      t.trailingStopPrice = null;
+      t.stopLossPrice = slVal > 0 ? Math.round(slVal * 10000) / 10000 : null;
+      t.stopLossMode = 'PRICE';
+    }
     t.tpPct = 0; t.slPct = 0;
     closeModal(); try { sync(); } catch (e) {}
     persist(); toast('TP / SL updated', 'ok'); render();
   };
   document.getElementById('ltTpSave').onclick = () => {
-    save(Number(document.getElementById('ltEditTp').value) || 0, Number(document.getElementById('ltEditSl').value) || 0);
+    save(Number(document.getElementById('ltEditTp').value) || 0,
+         Number(document.getElementById('ltEditSl').value) || 0,
+         !!(document.getElementById('ltEditTrail') || {}).checked);
   };
-  document.getElementById('ltTpClearBoth').onclick = () => save(0, 0);
+  document.getElementById('ltTpClearBoth').onclick = () => save(0, 0, false);
 };
 
 App.ltEditQuick = function (id, ds) {
@@ -1601,6 +1757,15 @@ App.ltEditQuick = function (id, ds) {
   const k = ds.k === 'sl' ? 'sl' : 'tp';
   const dir = LT.dirOf(t);
   const price = LT.levelPrice(dir, Number(t.entryPrice) || 0, ds.pct, 'pct', k);
+  const input = document.getElementById(k === 'tp' ? 'ltEditTp' : 'ltEditSl');
+  if (input) input.value = price;
+};
+
+App.ltEditQuickWc = function (id, ds) {
+  const t = DB.trades.find(x => x.id === ds.id);
+  if (!t) return;
+  const k = ds.k === 'sl' ? 'sl' : 'tp';
+  const price = LT.levelPrice(LT.dirOf(t), Number(t.entryPrice) || 0, ds.wc, 'wc', k, t.capitalCoins, t.leverage);
   const input = document.getElementById(k === 'tp' ? 'ltEditTp' : 'ltEditSl');
   if (input) input.value = price;
 };
@@ -1720,7 +1885,15 @@ function ltMountStock() {
   if (cap) cap.addEventListener('input', () => {
     const usdEl = document.getElementById('ltCapitalUsd');
     if (usdEl) usdEl.textContent = '≈ ' + usd(coinsToUsd(Number(cap.value) || 0)) + ' · balance ' + coins(me().balance) + ' WC';
+    LT.previewTargets();
   });
+  ['ltTp', 'ltSl', 'ltTrailPct'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', LT.previewTargets);
+  });
+  const trail = document.getElementById('ltTrail');
+  if (trail) trail.addEventListener('change', LT.previewTargets);
+  LT.previewTargets();
 }
 
 /* charts on every holding row (market page already charts every stock) */
