@@ -25,6 +25,13 @@ const market = new MarketService({
   persist: () => persistNow(),
   broadcast: (event, data) => { try { broadcast(event, data); } catch (e) {} }
 });
+const { BotService } = require('./bots');
+const bots = new BotService({
+  getDb: () => store.db,
+  persist: () => persistNow(),
+  broadcast: (event, data) => { try { broadcast(event, data); } catch (e) {} },
+  getQuote: (ticker) => market.spotQuote(ticker)
+});
 let pool = null;
 const BUILD = process.env.APP_BUILD || new Date().toISOString();
 
@@ -96,6 +103,8 @@ function ensureTradingAssets() {
   if (!db) return false;
   if (!Array.isArray(db.stocks)) db.stocks = [];
   let changed = false;
+  /* bot tier catalogue + settings live in the synced database; seed them once */
+  try { if (bots.ensureDefaults(db)) changed = true; } catch (e) { console.error('[bots] defaults:', e.message); }
   db.stocks.forEach((s) => {
     if (!s || !s.ticker) return;
     if (!s.assetClass) { s.assetClass = 'us'; changed = true; }
@@ -440,6 +449,52 @@ async function api(req, res, pathname, query) {
     try { return json(res, 200, { ok: true, holding: market.updateSpotTpsl(body) }); }
     catch (e) { return json(res, 400, { ok: false, error: e.message }); }
   }
+  /* --- trading bot assistant (server-side, runs while users are offline) --- */
+  if (pathname === '/api/bots/state' && req.method === 'GET') {
+    const userId = query.get('userId') || '';
+    const u = (store.db && (store.db.users || []).find(x => x.id === userId));
+    if (!u) return json(res, 404, { ok: false, error: 'user_not_found' });
+    try { return json(res, 200, bots.publicState(userId)); }
+    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+  if (pathname === '/api/bots/subscribe' && req.method === 'POST') {
+    const body = await readBody(req);
+    const u = (store.db && (store.db.users || []).find(x => x.id === body.userId));
+    if (!u) return json(res, 404, { ok: false, error: 'user_not_found' });
+    try { return json(res, 200, bots.subscribe(body)); }
+    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+  if (pathname === '/api/bots/start' && req.method === 'POST') {
+    const body = await readBody(req);
+    const u = (store.db && (store.db.users || []).find(x => x.id === body.userId));
+    if (!u) return json(res, 404, { ok: false, error: 'user_not_found' });
+    try { return json(res, 200, bots.start(body)); }
+    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+  if (pathname === '/api/bots/stop' && req.method === 'POST') {
+    const body = await readBody(req);
+    const u = (store.db && (store.db.users || []).find(x => x.id === body.userId));
+    if (!u) return json(res, 404, { ok: false, error: 'user_not_found' });
+    try { return json(res, 200, bots.stop(body)); }
+    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+  if (pathname === '/api/bots/admin' && req.method === 'GET') {
+    const adminId = query.get('adminId') || '';
+    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === adminId && u.role === 'admin') : null;
+    if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
+    try { return json(res, 200, bots.adminState()); }
+    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+  if (pathname === '/api/bots/admin/config' && req.method === 'POST') {
+    const body = await readBody(req);
+    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === body.adminId && u.role === 'admin') : null;
+    if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
+    try {
+      const saved = bots.saveAdminConfig(body);
+      console.log('[bots] config saved by @' + admin.username);
+      return json(res, 200, saved);
+    } catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
   if (pathname === '/api/market/search' && req.method === 'GET') {
     const adminId = query.get('adminId') || '';
     const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === adminId && u.role === 'admin') : null;
@@ -668,6 +723,7 @@ server.headersTimeout = 70000;
     console.log('[market] restored durable config · mode', durableMarket.mode || 'simulated', '· key', durableMarket.apiKey ? 'set' : 'not set');
   }
   market.start();
+  bots.startTimers();
   server.listen(PORT, HOST, () => {
     console.log(`[whalechat] listening on http://localhost:${PORT}`);
     console.log(`[whalechat] data: ${DATA_DIR}`);
@@ -679,6 +735,7 @@ let stopping = false;
 function shutdown(signal) {
   if (stopping) return; stopping = true;
   try { market.stop(); } catch (e) {}
+  try { bots.stopTimers(); } catch (e) {}
   console.log(`[whalechat] ${signal} — saving and exiting`);
   try { if (store.db) snapshot('shutdown'); } catch (e) {}
   try { persistNow(); } catch (e) {}
