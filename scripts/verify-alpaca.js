@@ -64,7 +64,7 @@ function get(url) {
 
   const start = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
   const end = new Date().toISOString().slice(0, 10);
-  const div = await get(tradingBase + '/v1/corporate-actions?ca_types=dividend&start=' + start + '&end=' + end + '&symbols=AAPL,MSFT');
+  const div = await get(dataBase + '/v1/corporate-actions?ca_types=dividend&start=' + start + '&end=' + end + '&symbols=AAPL,MSFT');
   const divs = (div.data && div.data.corporate_actions && div.data.corporate_actions.dividends) || [];
   check(div.status === 200, 'corporate actions', div.status + ' · ' + divs.length + ' dividend(s)');
 
