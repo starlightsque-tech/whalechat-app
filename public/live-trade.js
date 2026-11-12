@@ -1104,6 +1104,10 @@ function ltBotsView() {
   if (cfg.enabled) LT.seedBots();
   const bots = (DB.bots || []).map(rec => ({ rec, u: findUser(rec.botId), meta: BOT_ROSTER.find(b => b.slug === rec.slug) })).filter(x => x.u);
   const orders = (DB.orders || []).filter(o => o.simulated);
+  const allShoppers = (DB.users || []).filter(u => u.isBot && !u.isDemoSeller);
+  const generatedUsers = allShoppers.filter(u => u.isDemoUser);
+  const duCfg = LT.demoUsersCfg ? LT.demoUsersCfg() : { generated: 0 };
+  const orderUsers = new Set(orders.map(o => o.buyerId)).size;
   const tabs = `<div class="admin-nav">${ADMIN_NAV.map(n => {
     const key = n.href.replace('#/admin', '') || '';
     return `<a href="${n.href}" class="${key === '/bots' ? 'on' : ''}">${n.label}</a>`;
@@ -1124,13 +1128,48 @@ function ltBotsView() {
       <button class="btn btn-ghost" data-act="bot-run-now">${ic('play', 14)} Place orders now</button>
     </div>
     <div class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap">
-      <span class="badge">${bots.length} shoppers</span>
+      <span class="badge">${allShoppers.length} demo users</span>
+      <span class="badge">${bots.length} scheduled shoppers</span>
       <span class="badge">${orders.length} demo orders</span>
+      <span class="badge">${orderUsers} users have ordered</span>
       <span class="badge">$${(cfg.gmvUsd || 0).toFixed(2)} simulated spend</span>
     </div>
     <div class="inv-note tiny" style="margin-top:12px">${ic('shield', 13)}
       <span>Demo orders are marked <b>simulated</b> on the order, and each account carries a bot flag, so this revenue is
       always distinguishable from real sales. It must never be treated as withdrawable money.</span></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Generate demo users</div>
+    <div class="tiny muted" style="line-height:1.7;margin-bottom:10px">
+      Create up to <b>10,000</b> demo shopper accounts with realistic names, cities and profile photos.
+      Generated users are marked <b>demo</b>, cannot be signed into, and never touch real balances.
+    </div>
+    <div class="row wrap" style="gap:8px;align-items:flex-end">
+      <div class="field" style="margin:0;width:150px"><label class="label">How many users</label>
+        <input class="input" id="demoUserCount" type="number" min="1" max="10000" step="1" value="100" inputmode="numeric"/></div>
+      <button class="btn btn-primary" data-act="demo-users-generate">${ic('users', 15)} Generate users</button>
+    </div>
+    <div class="row gap8 mt10" style="flex-wrap:wrap">
+      <span class="badge">${allShoppers.length} demo users</span>
+      <span class="badge">${generatedUsers.length} generated</span>
+      <span class="badge">8 portrait photos in rotation</span>
+    </div>
+    <div class="tiny muted mt6">Large fleets use compact records and are capped by this device's storage — if a run won't fit, the app says so and changes nothing.</div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Demo orders</div>
+    <div class="tiny muted" style="line-height:1.7;margin-bottom:10px">
+      Choose how many demo users should place an order. Each selected user gets one simulated order
+      from a demo storefront, dated within the last three weeks.
+    </div>
+    <div class="row wrap" style="gap:8px;align-items:flex-end">
+      <div class="field" style="margin:0;width:190px"><label class="label">Users that order</label>
+        <input class="input" id="demoOrderUsers" type="number" min="1" max="${Math.max(1, allShoppers.length)}" step="1" value="${Math.min(50, Math.max(1, allShoppers.length))}" inputmode="numeric"/></div>
+      <button class="btn btn-primary" data-act="demo-users-orders">${ic('bag', 15)} Create orders</button>
+    </div>
+    <div class="tiny muted mt10">${duCfg.orderAt ? `Last run: ${duCfg.ordering} users ordered ${timeAgo(duCfg.orderAt)}. ` : ''}Orders are flagged <b>simulated</b> and appear in the Demo activity dashboard.</div>
   </div>
 
   <div class="card">
