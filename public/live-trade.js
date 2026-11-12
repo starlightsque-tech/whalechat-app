@@ -116,10 +116,10 @@ const LT = {
     };
     u.balance = Math.round((u.balance - capital - fee) * 100) / 100;
     DB.trades.unshift(trade);
-    tx(u.id, 'trade-open', `${side === 'short' ? 'Short' : 'Long'} ${ticker} · ${coins(capital)} WC`, -capital - fee,
-      { tradeId: trade.id, leverage: trade.leverage, entry: q.price });
+    tx(u.id, 'trade-open', `${direction === 'FALL' ? 'Fall' : 'Rise'} ${ticker} · ${coins(capital)} WC`, -capital - fee,
+      { tradeId: trade.id, leverage: trade.leverage, entry: q.price, direction });
     notify(u.id, 'Trade opened',
-      `${side === 'short' ? 'Short' : 'Long'} ${ticker} with ${coins(capital)} WC at ${usd(q.price)} — closes in ${minutes} min.`,
+      `${direction === 'FALL' ? 'Fall' : 'Rise'} ${ticker} with ${coins(capital)} WC at ${usd(q.price)}${tpPrice ? ' · TP ' + usd(tpPrice) : ''}${slPrice ? ' · SL ' + usd(slPrice) : ''} — closes in ${minutes} min.`,
       '#/invest/orders', 'trend');
     persist(); toast('Trade started — tracking live', 'ok'); render();
     return true;
@@ -204,7 +204,7 @@ const LT = {
     const p = this.calc(t);
     const s = INV.stock(t.ticker) || { ticker: t.ticker, color: '#3aa0ff' };
     const up = p.pnlCoins > 0, down = p.pnlCoins < 0;
-    const dirLabel = t.side === 'short' ? 'Short' : 'Long';
+    const dirLabel = t.side === 'short' ? 'Fall' : 'Rise';
     return `<div class="lt-card" data-lt="${t.id}">
       <div class="row" style="gap:9px;align-items:center">
         ${INV.logoHTML(s, 32)}
@@ -248,7 +248,7 @@ const LT = {
     const win = pnl > 0, lost = t.result === 'loss';
     return `<div class="inv-row" style="align-items:flex-start">
       <div class="grow" style="min-width:0">
-        <div class="small" style="font-weight:650">${esc(t.ticker)} ${t.side === 'short' ? 'Short' : 'Long'}
+        <div class="small" style="font-weight:650">${esc(t.ticker)} ${t.side === 'short' ? 'Fall' : 'Rise'}
           <span class="tiny muted">· ${t.leverage}× · ${esc(t.closeReason || 'closed')}</span></div>
         <div class="tiny muted">${coins(t.capitalCoins)} WC @ ${usd(t.entryPrice)} → ${usd(t.exitPrice || 0)} · ${dateLabel(t.closedAt)} ${clockTime(t.closedAt)}</div>
         <div class="tiny ${win ? 'up' : lost ? 'down' : 'muted'}">
@@ -352,8 +352,8 @@ const LT = {
       <div class="tiny muted" style="margin:4px 0 10px;line-height:1.6">
         Enter your limit and how long the trade runs, then press <b>Buy</b>. The trade starts immediately and earns or loses in real time.</div>
       <div class="lt-side-pick">
-        <button class="lt-side-btn on" data-act="lt-side" data-side="long">▲ Long (price rises)</button>
-        <button class="lt-side-btn" data-act="lt-side" data-side="short">▼ Short (price falls)</button>
+        <button class="lt-side-btn on" data-act="lt-side" data-side="long">▲ Rise (price up)</button>
+        <button class="lt-side-btn" data-act="lt-side" data-side="short">▼ Fall (price down)</button>
       </div>
       <div class="field"><label class="label">Capital (Whale Coin)</label>
         <div class="input-wrap"><span class="inv-prefix">WC</span>
