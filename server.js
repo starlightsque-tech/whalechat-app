@@ -18,6 +18,13 @@ const STARTED = Date.now();
 const DATABASE_URL = process.env.DATABASE_URL || '';
 let email = null;
 try { email = require('./email'); } catch (e) { console.error('[email] module unavailable:', e.message); }
+const { MarketService } = require('./market');
+const market = new MarketService({
+  dataDir: DATA_DIR,
+  getDb: () => store.db,
+  persist: () => persistNow(),
+  broadcast: (event, data) => { try { broadcast(event, data); } catch (e) {} }
+});
 let pool = null;
 const BUILD = process.env.APP_BUILD || new Date().toISOString();
 
@@ -291,7 +298,7 @@ async function dispatchPushes(pushes, db) {
 
 async function api(req, res, pathname, query) {
   if (pathname === '/api/health' && req.method === 'GET') {
-    return json(res, 200, { ok: true, app: 'whalechat', version: readJSON(path.join(PUBLIC_DIR, 'version.json'), {}).version || null, build: (readJSON(path.join(PUBLIC_DIR, 'version.json'), {}).build) || BUILD, uptimeSec: Math.floor((Date.now() - STARTED) / 1000), rev: store.rev, users: (store.db && store.db.users) ? store.db.users.length : 0, clients: clients.size, push: !!webpush, publicUrl: PUBLIC_URL || null, storage: pool ? 'postgres' : 'file', email: !!(email && email.configured()) });
+    return json(res, 200, { ok: true, app: 'whalechat', version: readJSON(path.join(PUBLIC_DIR, 'version.json'), {}).version || null, build: (readJSON(path.join(PUBLIC_DIR, 'version.json'), {}).build) || BUILD, uptimeSec: Math.floor((Date.now() - STARTED) / 1000), rev: store.rev, users: (store.db && store.db.users) ? store.db.users.length : 0, clients: clients.size, push: !!webpush, publicUrl: PUBLIC_URL || null, storage: pool ? 'postgres' : 'file', email: !!(email && email.configured()), market: market.status() });
   }
   if (pathname === '/api/state' && req.method === 'GET') return json(res, 200, { rev: store.rev, db: store.db, updatedAt: store.updatedAt });
   if (pathname === '/api/state/init' && req.method === 'POST') {
@@ -321,6 +328,40 @@ async function api(req, res, pathname, query) {
     const ping = setInterval(() => { try { res.write(': ping\n\n'); } catch (e) {} }, 25000);
     req.on('close', () => { clearInterval(ping); clients.delete(res); });
     return;
+  }
+  // --- market data (Finnhub stays server-side) -------------------------
+  if (pathname === '/api/market/quotes' && req.method === 'GET') {
+    return json(res, 200, market.snapshot());
+  }
+  if (pathname === '/api/market/status' && req.method === 'GET') {
+    return json(res, 200, Object.assign({ ok: true }, market.status()));
+  }
+  if (pathname === '/api/market/config' && req.method === 'GET') {
+    const adminId = query.get('adminId') || '';
+    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === adminId && u.role === 'admin') : null;
+    if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
+    return json(res, 200, market.publicConfig());
+  }
+  if (pathname === '/api/market/config' && req.method === 'POST') {
+    const body = await readBody(req);
+    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === body.adminId && u.role === 'admin') : null;
+    if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
+    const mode = body.mode === 'hybrid' ? 'hybrid' : 'simulated';
+    const refreshSec = Math.min(300, Math.max(5, Math.round(Number(body.refreshSec) || 15)));
+    if (mode === 'hybrid' && !body.apiKey && !market.config.apiKey) {
+      return json(res, 400, { ok: false, error: 'api_key_required', message: 'Add a Finnhub API key before enabling Hybrid mode' });
+    }
+    const saved = market.saveConfig({ mode, refreshSec, apiKey: body.apiKey, clearKey: body.clearKey === true });
+    console.log('[market] config saved by @' + admin.username + ' · mode', saved.mode, '· refresh', saved.refreshSec + 's', '· key', saved.hasKey ? 'set' : 'cleared');
+    return json(res, 200, saved);
+  }
+  if (pathname === '/api/market/test' && req.method === 'POST') {
+    const body = await readBody(req);
+    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === body.adminId && u.role === 'admin') : null;
+    if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
+    if (!market.config.apiKey) return json(res, 400, { ok: false, error: 'no_key', message: 'Save a Finnhub API key first' });
+    const q = await market.fetchQuote('AAPL');
+    return json(res, 200, { ok: !!q, price: q ? q.price : null, symbol: 'AAPL', status: market.status(), message: q ? 'Finnhub connection OK' : (market.lastError || 'Finnhub did not return a quote') });
   }
   // --- bonus claim (atomic one-time code) -------------------------------
   if (pathname === '/api/bonus/claim' && req.method === 'POST') {
@@ -510,6 +551,7 @@ server.keepAliveTimeout = 65000;
 server.headersTimeout = 70000;
 (async () => {
   await initStorage();
+  market.start();
   server.listen(PORT, HOST, () => {
     console.log(`[whalechat] listening on http://localhost:${PORT}`);
     console.log(`[whalechat] data: ${DATA_DIR}`);
@@ -520,6 +562,7 @@ server.headersTimeout = 70000;
 let stopping = false;
 function shutdown(signal) {
   if (stopping) return; stopping = true;
+  try { market.stop(); } catch (e) {}
   console.log(`[whalechat] ${signal} — saving and exiting`);
   try { if (store.db) snapshot('shutdown'); } catch (e) {}
   try { persistNow(); } catch (e) {}
