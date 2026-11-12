@@ -424,10 +424,19 @@
     return vals.map((v, i) => ({ time: Math.floor(now - (n - 1 - i) * step), value: Math.max(0, Number(v) || 0) }));
   }
 
-  async function mountPortfolioChart() {
+  function portfolioSig() {
+    try {
+      if (typeof LT === 'undefined' || !LT.positions) return '';
+      return (LT.positions(me().id) || []).map((p) => [p.kind, p.ticker, p.trade ? p.trade.id : (p.holding ? p.holding.id : '')].join(':')).join('|');
+    } catch (e) { return ''; }
+  }
+  MK.portfolioSig = '';
+
+  async function mountPortfolioChart(force) {
     const host = document.getElementById('ltDashChart');
     if (!host || typeof LT === 'undefined' || !LT.seriesWithTrades) return;
-    if (MK.chart && MK.chart.mode === 'portfolio' && MK.chart.host === host) { updateChart(); return; }
+    const sig = portfolioSig();
+    if (!force && MK.chart && MK.chart.mode === 'portfolio' && MK.chart.host === host && MK.chart.portfolioSig === sig) { updateChart(); return; }
     let vals = [];
     const tf = host.getAttribute('data-ltd-chart') || '1M';
     try { vals = LT.seriesWithTrades(tf, me().id) || []; } catch (e) {}
@@ -444,8 +453,18 @@
         data: portfolioTimeline(vals, tf),
         baseline: Number(vals[0]) || 0, side: 'long'
       });
+      if (MK.chart) { MK.chart.portfolioSig = sig; MK.portfolioSig = sig; }
     } catch (e) { /* legacy chart remains if the CDN is unavailable */ }
   }
+
+  window.addEventListener('wc:trade-opened', () => {
+    MK.portfolioSig = '';
+    if (document.getElementById('ltDashChart')) setTimeout(() => mountPortfolioChart(true), 250);
+  });
+  window.addEventListener('wc:trade-closed', () => {
+    MK.portfolioSig = '';
+    if (document.getElementById('ltDashChart')) setTimeout(() => mountPortfolioChart(true), 250);
+  });
 
   function appendPoint(c, time, value) {
     try {
@@ -460,6 +479,8 @@
     if (!c) return;
     if (!document.body.contains(c.host)) { destroyChart(); return; }
     if (c.mode === 'portfolio') {
+      const sig = portfolioSig();
+      if (c.portfolioSig !== sig) { mountPortfolioChart(true); return; }
       let s = null;
       try { s = LT.summary(me().id); } catch (e) { return; }
       if (!s) return;
@@ -496,6 +517,102 @@
   }
 
   /* ------------------------------ admin panel ------------------------------- */
+  function tradingGuideHTML() {
+    return `<div class="card admin-guide" id="tradingGuideCard">
+      <div class="between" style="align-items:flex-start;gap:10px">
+        <div><div class="card-title" style="margin:0">How WhaleChat stock trading works</div>
+          <div class="tiny muted" style="margin-top:3px">Admin-only operations guide · read this before changing leverage, fees or payouts.</div></div>
+        <span class="badge badge-accent">Admin note</span>
+      </div>
+      <div class="guide-intro">
+        WhaleChat is a <b>virtual</b> trading product. Users trade with Whale Coin (WC), not real securities.
+        The platform never sends orders to a broker; every fill is simulated against the shared market feed.
+        At the current conversion, <b>1 WC = $0.50 USD</b>.
+      </div>
+
+      <details class="guide-sec" open>
+        <summary>1 · Opening a Rise or Fall trade</summary>
+        <p>A user chooses a stock, a direction and a stake in WC:</p>
+        <div class="guide-grid">
+          <div><b>Rise</b><span>The user profits when the price goes up.</span></div>
+          <div><b>Fall</b><span>The user profits when the price goes down.</span></div>
+        </div>
+        <p>At entry the stake is <b>held</b> (debited from the available WC balance) and the entry price is recorded.
+        A trading fee (Admin → Stocks → Trading fee) is charged once at entry. Closing the trade does not charge a second fee.</p>
+        <p>The trade has a duration (5 minutes to 1 day). It also closes early when Take Profit, Stop Loss, a trailing stop,
+        or total loss is reached. The <b>entry price is the baseline</b> for the position.</p>
+      </details>
+
+      <details class="guide-sec">
+        <summary>2 · How profit and loss are calculated</summary>
+        <p>For a position with <code>stake</code> WC, <code>leverage</code>×, entry price <code>E</code> and current price <code>P</code>:</p>
+        <pre>move      = (P − E) / E
+direction = +1 for Rise, −1 for Fall
+pnlWC     = stake × leverage × move × direction
+payout    = max(0, stake + pnlWC)</pre>
+        <p>Losses are capped at the stake: a position can lose 100% of the stake, never more. A leveraged position is
+        wiped out by a <code>100 / leverage</code>% adverse move (for example, 20% at 5× leverage).</p>
+        <div class="guide-examples">
+          <div class="guide-example win"><b>Rise win</b><span>Stake 100 WC · 5× · entry $100 → exit $110</span><span>move +10% → PnL <b>+50 WC</b> → payout <b>150 WC</b></span></div>
+          <div class="guide-example win"><b>Fall win</b><span>Stake 100 WC · 5× · entry $100 → exit $90</span><span>move −10% → PnL <b>+50 WC</b> → payout <b>150 WC</b></span></div>
+          <div class="guide-example loss"><b>Rise loss</b><span>Stake 100 WC · 5× · entry $100 → exit $95</span><span>move −5% → PnL <b>−25 WC</b> → payout <b>75 WC</b></span></div>
+          <div class="guide-example loss"><b>Total loss</b><span>Stake 100 WC · 5× · 20%+ adverse move</span><span>PnL capped at <b>−100 WC</b> → payout <b>0 WC</b></span></div>
+        </div>
+      </details>
+
+      <details class="guide-sec">
+        <summary>3 · Take Profit, Stop Loss and trailing stops</summary>
+        <p>Users can attach optional levels at entry and edit them later from Active Trades:</p>
+        <ul>
+          <li><b>TP</b> — closes the trade when the target is reached. Rise: target above entry. Fall: target below entry.</li>
+          <li><b>SL</b> — closes the trade when the stop is reached. Rise: stop below entry. Fall: stop above entry.</li>
+          <li><b>WC mode</b> — the user enters the profit/loss amount in WC; the app converts it to a price using stake × leverage.</li>
+          <li><b>Trailing stop</b> — the stop follows the best price by a chosen percentage and only tightens. It never moves backwards.</li>
+        </ul>
+        <p>Close reasons are written to trade history exactly as <code>Take Profit Hit</code>, <code>Stop Loss Hit</code>,
+        <code>Trailing Stop Hit</code>, <code>Time limit reached</code>, or a manual close reason. The chart draws
+        Entry / TP / SL or TSL price lines until the trade closes.</p>
+      </details>
+
+      <details class="guide-sec">
+        <summary>4 · Settlement, payouts and notifications</summary>
+        <p>The backend checks every open trade at least once per second on both live Finnhub ticks and 24/7 simulated ticks.
+        When a level is crossed, the server settles the trade immediately:</p>
+        <ol>
+          <li>Calculate the final PnL at the trigger price, capped at −stake.</li>
+          <li>Credit the payout to the user's WC balance.</li>
+          <li>Write a transaction, set the close reason and status to Completed.</li>
+          <li>Create an in-app notification and broadcast the change; the client shows a real-time toast.</li>
+        </ol>
+        <p>This happens server-side, so a payout is not missed if the user closes the browser. The trade history retains
+        the entry, exit, TP/SL/TSL levels and the result.</p>
+      </details>
+
+      <details class="guide-sec">
+        <summary>5 · Market data: Hybrid Finnhub vs 24/7 OTC fallback</summary>
+        <p><b>Hybrid</b> seeds all 16 symbols from Finnhub REST, then keeps one shared backend WebSocket open.
+        Browsers never call Finnhub and never see the API key. Prices are cached on the server and shared by every user.</p>
+        <p>When the US market is closed, Finnhub returns HTTP 429, or WebSocket ticks stop, the server switches to
+        <b>24/7 OTC mode</b>: it continues smooth micro-ticks from the last real close, so open trades never freeze and
+        users can trade around the clock. The notice shows <b>“Live market data via Finnhub”</b> while the live session is
+        healthy, and <b>“24/7 OTC market mode active (based on last real close)”</b> while the fallback is running.</p>
+      </details>
+
+      <details class="guide-sec">
+        <summary>6 · Admin risk and payout controls</summary>
+        <ul>
+          <li><b>Trading fee</b> — 0% to 5%, charged at entry. It is revenue and is not returned with the stake.</li>
+          <li><b>Leverage</b> — 1× to 20×. Higher leverage magnifies both gains and losses and shortens the wipe-out distance.</li>
+          <li><b>Pause symbol</b> — blocks new trades on a stock while leaving existing positions settle normally.</li>
+          <li><b>Edit balance</b> — manual adjustment for support/refunds; it creates an admin audit entry.</li>
+          <li><b>Minimum stake</b> — 5 WC. Payouts and balances are rounded to two decimals.</li>
+        </ul>
+        <p><b>Important:</b> do not change leverage to disguise losses. The payout formula is deterministic, and every
+        settlement is recorded with its reason so support can reconcile a user's balance.</p>
+      </details>
+    </div>`;
+  }
+
   function adminCardHTML() {
     return `<div class="card" id="mktFeedCard">
       <div class="between" style="align-items:flex-start;gap:10px">
@@ -637,7 +754,7 @@
     INV.viewAdminStocks = function () {
       const html = baseAdmin.apply(this, arguments);
       if (/Admin access only/.test(html)) return html;
-      return html + adminCardHTML();
+      return html + adminCardHTML() + tradingGuideHTML();
     };
     INV.__mkAdminPatched = true;
   }
@@ -693,6 +810,30 @@
     .mkt-stat span{font-size:9.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted-2);font-weight:700}
     .mkt-stat b{font-size:11.5px;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .mkt-stat b.up{color:var(--success)} .mkt-stat b.down{color:var(--danger)}
+    .admin-guide .guide-intro{margin-top:10px;padding:11px 12px;border-radius:12px;border:1px solid var(--border);
+      background:var(--surface-2);font-size:12px;line-height:1.7;color:var(--muted)}
+    .guide-sec{margin-top:9px;border:1px solid var(--border);border-radius:12px;background:var(--surface-2);overflow:hidden}
+    .guide-sec summary{cursor:pointer;padding:11px 13px;font-size:12px;font-weight:700;color:var(--text);list-style:none}
+    .guide-sec summary::-webkit-details-marker{display:none}
+    .guide-sec summary:before{content:'▸';display:inline-block;margin-right:7px;color:var(--accent);transition:transform .15s}
+    .guide-sec[open] summary:before{transform:rotate(90deg)}
+    .guide-sec p,.guide-sec ul,.guide-sec ol,.guide-sec pre{margin:0 13px 10px;font-size:11.5px;line-height:1.7;color:var(--muted)}
+    .guide-sec ul,.guide-sec ol{padding-left:18px}
+    .guide-sec code{background:rgba(255,255,255,.06);border-radius:4px;padding:1px 4px;color:var(--text)}
+    .guide-sec pre{background:#04101a;border:1px solid var(--border);border-radius:9px;padding:9px 10px;overflow:auto;color:#bfe9ff;font-size:11px}
+    .guide-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:0 13px 10px}
+    .guide-grid div{display:flex;flex-direction:column;gap:2px;border:1px solid var(--border);border-radius:9px;padding:8px;background:var(--surface)}
+    .guide-grid b{font-size:11.5px} .guide-grid span{font-size:10.5px;color:var(--muted);line-height:1.5}
+    .guide-examples{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:0 13px 12px}
+    .guide-example{display:flex;flex-direction:column;gap:2px;border-radius:9px;padding:8px;font-size:10.5px;line-height:1.5;
+      border:1px solid var(--border);background:var(--surface)}
+    .guide-example.win{border-color:rgba(34,197,94,.25)} .guide-example.loss{border-color:rgba(239,68,68,.25)}
+    .guide-example b{font-size:11px} .guide-example span{color:var(--muted)}
+    @media(max-width:520px){.guide-grid,.guide-examples{grid-template-columns:1fr}}
+    .lt-live-badge{display:inline-flex;align-items:center;gap:5px;font-size:9px;font-weight:800;letter-spacing:.08em;
+      color:var(--success);border:1px solid rgba(34,197,94,.30);background:rgba(34,197,94,.10);border-radius:99px;padding:2px 7px}
+    .lt-live-badge i{width:6px;height:6px;border-radius:50%;background:#22c55e;animation:ltPulse 1.2s ease-in-out infinite}
+    @keyframes ltPulse{0%,100%{opacity:.35;transform:scale(.8)}50%{opacity:1;transform:scale(1.15)}}
     `;
     document.head.appendChild(st);
   })();
@@ -704,6 +845,7 @@
     poll();
     setInterval(poll, 2500);
     setInterval(() => { try { paintNotice(); paintAdminStatus(); } catch (e) {} }, 3000);
+    setInterval(() => { try { if (MK.chart && MK.chart.mode === 'portfolio') updateChart(); } catch (e) {} }, 1000);
     setInterval(() => { try { if (MK.chart) updateChart(); checkSettledToasts(); } catch (e) {} }, 2000);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
