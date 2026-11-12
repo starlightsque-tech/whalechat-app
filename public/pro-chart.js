@@ -751,6 +751,221 @@
     }
   }
 
+  /* ---------------------------- equity / ROI chart -------------------------
+     Used by the WhaleChat investment plans: principal + accrued profit over
+     time, with invested/target price lines, ROI HUD and a live 1s loop. */
+  class EquityChart {
+    constructor(host, opts) {
+      this.host = host;
+      this.opts = opts || {};
+      this.key = this.opts.key || 'default';
+      this.unit = this.opts.unit || 'wc';
+      this.points = (this.opts.points || []).slice();
+      this.destroyed = false;
+      this._build();
+    }
+
+    _build() {
+      injectStyles();
+      const host = this.host;
+      host.__wcLwc = true;
+      if (host.hasAttribute('data-chart')) host.removeAttribute('data-chart');
+      host.innerHTML = '';
+      this.wrap = document.createElement('div');
+      this.wrap.className = 'pc-wrap';
+      this.wrap.style.height = (this.opts.height || 300) + 'px';
+      const hud = this.opts.hud || {};
+      this.wrap.innerHTML =
+        '<div class="pc-canvas"></div>' +
+        '<div class="pc-loading">Loading plan chart…</div>' +
+        `<div class="pc-hud" data-pe="hud">
+          <div class="pc-sym"><i class="pc-dot"></i><span data-pe="title">${esc(hud.title || 'WhaleChat plans')}</span></div>
+          <div class="pc-price" data-pe="value">—</div>
+          <div class="pc-row"><span>ROI</span><b data-pe="roi">—</b></div>
+          <div class="pc-row"><span>Earnings</span><b data-pe="earn">—</b></div>
+          <div class="pc-row"><span>Matures</span><b data-pe="matures">—</b></div>
+          <div class="pc-hover" data-pe="hover">Hover the chart for value + time</div>
+        </div>`;
+      host.appendChild(this.wrap);
+      this.canvas = this.wrap.querySelector('.pc-canvas');
+      this.el = {
+        title: this.wrap.querySelector('[data-pe="title"]'),
+        value: this.wrap.querySelector('[data-pe="value"]'),
+        roi: this.wrap.querySelector('[data-pe="roi"]'),
+        earn: this.wrap.querySelector('[data-pe="earn"]'),
+        matures: this.wrap.querySelector('[data-pe="matures"]'),
+        hover: this.wrap.querySelector('[data-pe="hover"]')
+      };
+      this._ready = this._init();
+    }
+
+    async _init() {
+      try {
+        const LWC = await loadLWC();
+        if (this.destroyed) return;
+        this.LWC = LWC;
+        this.chart = LWC.createChart(this.canvas, {
+          width: this.wrap.clientWidth || 320,
+          height: this.wrap.clientHeight || 300,
+          layout: {
+            background: { type: LWC.ColorType.Solid, color: OBSIDIAN },
+            textColor: '#8B93A7',
+            fontFamily: "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace",
+            fontSize: 10,
+            attributionLogo: false
+          },
+          grid: { vertLines: { color: 'rgba(255,255,255,0.03)' }, horzLines: { color: 'rgba(255,255,255,0.03)' } },
+          rightPriceScale: { borderColor: 'rgba(255,255,255,0.08)', scaleMargins: { top: 0.16, bottom: 0.12 } },
+          timeScale: { borderColor: 'rgba(255,255,255,0.08)', timeVisible: true, secondsVisible: false, rightOffset: 4, barSpacing: 8 },
+          crosshair: {
+            mode: LWC.CrosshairMode.Normal,
+            vertLine: { color: 'rgba(0,245,212,.35)', style: LWC.LineStyle.Dashed, labelBackgroundColor: '#00C2A8' },
+            horzLine: { color: 'rgba(255,255,255,.18)', style: LWC.LineStyle.Dashed, labelBackgroundColor: '#1B2434' }
+          },
+          localization: { priceFormatter: (p) => this.unit === 'wc' ? Number(p).toFixed(2) : '$' + Number(p).toFixed(2) }
+        });
+        const loading = this.wrap.querySelector('.pc-loading');
+        if (loading) loading.remove();
+        this.ro = new ResizeObserver(() => {
+          if (!this.chart || this.destroyed) return;
+          const w = this.wrap.clientWidth, h = this.wrap.clientHeight;
+          if (w > 0 && h > 0) this.chart.applyOptions({ width: w, height: h });
+        });
+        this.ro.observe(this.wrap);
+        this.chart.subscribeCrosshairMove((param) => {
+          if (!this.el.hover) return;
+          if (!param || !param.time || !param.point) { this.el.hover.textContent = 'Hover the chart for value + time'; return; }
+          let v = 0;
+          try { const d = param.seriesData.get(this.series); if (d) v = d.value; } catch (e) {}
+          const tm = new Date(Number(param.time) * 1000);
+          this.el.hover.textContent = tm.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' +
+            tm.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' · ' +
+            (this.unit === 'wc' ? Number(v).toFixed(2) + ' WC' : usd(v));
+        });
+        this.series = this.chart.addSeries(LWC.AreaSeries, {
+          lineColor: CYAN, lineWidth: 2,
+          topColor: 'rgba(0,245,212,.30)', bottomColor: 'rgba(0,245,212,.02)',
+          priceLineVisible: false, lastValueVisible: true
+        });
+        this._applyData();
+        this._startLive();
+        this.paint();
+      } catch (e) {
+        const loading = this.wrap.querySelector('.pc-loading');
+        if (loading) loading.innerHTML = '<div class="pc-err">Plan chart could not load.<br>' + esc(e.message) + '</div>';
+      }
+    }
+
+    _stablePoints() {
+      /* strictly increasing unique seconds required by lightweight-charts */
+      const out = [];
+      (this.points || []).forEach((p) => {
+        const t = Math.floor((Number(p.t) || 0) / 1000);
+        const v = Number(p.v);
+        if (!(t > 0) || !Number.isFinite(v)) return;
+        const last = out[out.length - 1];
+        if (last && t <= last.time) last.value = v;
+        else out.push({ time: t, value: v });
+      });
+      return out;
+    }
+
+    _applyData() {
+      if (!this.series || !this.LWC) return;
+      const data = this._stablePoints();
+      this.data = data;
+      try { this.series.setData(data); } catch (e) {}
+      (this._lines || []).forEach((l) => { try { this.series.removePriceLine(l); } catch (e) {} });
+      this._lines = [];
+      (this.opts.lines || []).forEach((ln) => {
+        const price = Number(ln.price);
+        if (!(price > 0)) return;
+        try {
+          this._lines.push(this.series.createPriceLine({
+            price, color: ln.color || '#8B93A7', lineWidth: 1,
+            lineStyle: ln.style != null ? ln.style : this.LWC.LineStyle.Dashed,
+            axisLabelVisible: true, title: ln.title || ''
+          }));
+        } catch (e) {}
+      });
+      if (this.chart && data.length) this.chart.timeScale().fitContent();
+    }
+
+    setData(points, opts) {
+      this.points = (points || []).slice();
+      if (opts) {
+        this.opts = Object.assign({}, this.opts, opts);
+        this.unit = this.opts.unit || this.unit;
+        const hud = this.opts.hud || {};
+        if (this.el.title) this.el.title.textContent = hud.title || 'WhaleChat plans';
+        if (this.el.matures) this.el.matures.textContent = hud.matures || '—';
+      }
+      this._applyData();
+      this.paint();
+    }
+
+    _startLive() {
+      this.timer = setInterval(() => {
+        if (this.destroyed) return;
+        this.paint();
+        if (!this.opts.getLive) return;
+        const live = this.opts.getLive();
+        if (!live || !(Number(live.value) >= 0)) return;
+        const now = Math.floor(Date.now() / 1000);
+        const v = Number(live.value);
+        if (!this.data || !this.data.length) { this.data = [{ time: now, value: v }]; try { this.series.setData(this.data); } catch (e) {} return; }
+        const last = this.data[this.data.length - 1];
+        if (now <= last.time) last.value = v;
+        else this.data.push({ time: now, value: v });
+        try { this.series.update({ time: now <= last.time ? last.time : now, value: v }); } catch (e) {}
+        if (this.data.length > 1200) this.data = this.data.slice(-900);
+      }, 1000);
+    }
+
+    paint() {
+      const live = this.opts.getLive ? (this.opts.getLive() || {}) : (this.opts.hud || {});
+      const wc = (v) => (Number(v) || 0).toFixed(2) + ' WC';
+      if (this.el.value) this.el.value.textContent = live.value != null ? wc(live.value) : '—';
+      if (this.el.roi) {
+        const r = Number(live.roiPct) || 0;
+        this.el.roi.textContent = (r >= 0 ? '+' : '−') + Math.abs(r).toFixed(2) + '%';
+        this.el.roi.className = r >= 0 ? 'up' : 'down';
+      }
+      if (this.el.earn) {
+        const e = Number(live.earnCoins) || 0;
+        this.el.earn.textContent = (e >= 0 ? '+' : '−') + Math.abs(e).toFixed(2) + ' WC';
+        this.el.earn.className = e >= 0 ? 'up' : 'down';
+      }
+      if (this.el.matures && live.matures) this.el.matures.textContent = live.matures;
+    }
+
+    destroy() {
+      this.destroyed = true;
+      clearInterval(this.timer);
+      try { if (this.ro) this.ro.disconnect(); } catch (e) {}
+      try { if (this.chart) this.chart.remove(); } catch (e) {}
+      try { if (this.wrap && this.wrap.parentNode) this.wrap.parentNode.removeChild(this.wrap); } catch (e) {}
+      this.chart = null; this.series = null;
+      const i = PC.equities.indexOf(this);
+      if (i >= 0) PC.equities.splice(i, 1);
+    }
+  }
+  PC.equities = PC.equities || [];
+
+  PC.mountEquity = function (host, opts) {
+    if (!host) return null;
+    const key = (opts && opts.key) || 'default';
+    const existing = PC.equities.find((e) => e.host === host);
+    if (existing && existing.key === key) {
+      existing.setData((opts && opts.points) || [], opts);
+      return existing;
+    }
+    if (existing) existing.destroy();
+    const inst = new EquityChart(host, opts || {});
+    PC.equities.push(inst);
+    return inst;
+  };
+
   /* ------------------------------- mounting ------------------------------- */
   function findStockHost() {
     return document.querySelector('.inv-chart[data-lt-live-chart], .inv-chart[data-chart]:not([data-chart^="__portfolio__"])');
@@ -824,6 +1039,7 @@
         try {
           /* clean instances whose host was re-rendered away */
           PC.instances.slice().forEach((i) => { if (!document.body.contains(i.host)) i.destroy(); });
+          (PC.equities || []).slice().forEach((e) => { if (!document.body.contains(e.host)) e.destroy(); });
           if (document.getElementById('ltDashChart') || document.querySelector('.inv-chart[data-chart^="__portfolio__"]')) PC.mountPortfolio();
           if ((location.hash || '').startsWith('#/invest/stock/')) PC.mountStock();
           PC.instances.forEach((i) => { if (i.mode === 'stock') i._syncButtons(); });
@@ -835,6 +1051,7 @@
   window.addEventListener('hashchange', () => {
     setTimeout(() => {
       PC.instances.slice().forEach((i) => { if (!document.body.contains(i.host)) i.destroy(); });
+      (PC.equities || []).slice().forEach((e) => { if (!document.body.contains(e.host)) e.destroy(); });
     }, 60);
   });
 })();
