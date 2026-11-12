@@ -1,8 +1,8 @@
 {
-  "version": "3.16.0",
-  "build": "2026-11-12T09:40:00Z",
+  "version": "3.17.0",
+  "build": "2026-11-12T11:05:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.16.0 - company-only support chat, vendor/shopper chat lock, multi-product vendor refunds with admin approval.",
-  "releasedAt": "2026-11-12T09:40:00Z",
+  "notes": "WhaleChat 3.17.0 - Finnhub hybrid market feed (server-side WebSocket + rate-limit-safe 24/7 fallback), TradingView lightweight-charts baseline entry-price chart, admin market data controls, server-side trade settlement.",
+  "releasedAt": "2026-11-12T11:05:00Z",
   "minimum": "3.0.0"
 }
