@@ -159,8 +159,8 @@
     const onStock = /^#\/invest\/stock\//.test(location.hash || '');
     const meta = MK.chartMeta;
     if (onStock && meta && meta.ticker) {
+      if (meta.source === 'analysis') return 'Live technical analysis · real-time market data';
       if (meta.source === 'tradingview') return 'TradingView · real-time market chart · live trades';
-      if (meta.source === 'finnhub') return 'Finnhub · real-time chart · live market trades';
       if (meta.source === 'live') return 'Live market chart · real-time ticks';
     }
     if (MK.feed && MK.feed.notice) return MK.feed.notice;
@@ -272,22 +272,12 @@
     try { const lq = INV.quote(ticker); ovKey = Number(lq && lq.overridePct) || 0; } catch (e) {}
     const cacheKey = ticker + '|' + frame + '|ov' + ovKey;
     const cached = MK.historyCache && MK.historyCache[cacheKey];
-    if (cached && Date.now() - cached.at < 45000) {
-      MK.chartMeta = cached.meta || MK.chartMeta;
-      return cached.points;
-    }
+    if (cached && Date.now() - cached.at < 45000) return cached.points;
     try {
-      /* Finnhub candles (real market data per timeframe, override already applied) */
-      const r = await getJSON('/api/market/chart?ticker=' + encodeURIComponent(ticker) + '&tf=' + encodeURIComponent(frame), {}, 20000);
-      const d = r.data || {};
-      let points = (d.ok && Array.isArray(d.points)) ? d.points : [];
-      const meta = { ticker, tf: frame, source: d.source || 'none', resolution: d.resolution || '', error: d.chartError || '', at: Date.now() };
-      if (!points.length) {
-        const fb = await getJSON('/api/market/history?tickers=' + encodeURIComponent(ticker) + '&limit=900', {}, 7000);
-        const h = (fb.data && fb.data.history) || {};
-        points = Array.isArray(h[ticker]) ? h[ticker] : [];
-        if (points.length) meta.source = 'live';
-      }
+      const fb = await getJSON('/api/market/history?tickers=' + encodeURIComponent(ticker) + '&limit=900', {}, 7000);
+      const h = (fb.data && fb.data.history) || {};
+      const points = Array.isArray(h[ticker]) ? h[ticker] : [];
+      const meta = { ticker, tf: frame, source: 'live', at: Date.now() };
       MK.chartMeta = meta;
       MK.historyCache = MK.historyCache || {};
       MK.historyCache[cacheKey] = { at: Date.now(), points, meta };
@@ -348,154 +338,7 @@
     });
   }
 
-  /* ------------------------ TradingView chart ---------------------------
-     The stock page uses TradingView's symbol-overview widget for real market
-     prices, wired to the symbol the user is trading. The app's live position
-     overlay (Trade value / Earnings / Entry) and the Sell + TP/SL controls
-     stay on top of it. If TradingView cannot load, the page falls back to the
-     server chart (Finnhub candles / live ticks). */
-  function tvSymbolFor(ticker, stock) {
-    const t = String(ticker || '').toUpperCase().replace(/[^A-Z0-9.]/g, '');
-    const ex = String((stock && stock.exchange) || '').toUpperCase();
-    const known = { NASDAQ: 'NASDAQ', NYSE: 'NYSE', AMEX: 'AMEX', ARCA: 'AMEX', BATS: 'BATS', OTC: 'OTC' };
-    const prefix = known[ex] || '';
-    return prefix ? (prefix + ':' + t) : t;
-  }
-
-  function tvConfig(ticker, stock, height) {
-    const sym = tvSymbolFor(ticker, stock);
-    const name = (stock && stock.name) || ticker;
-    return {
-      lineWidth: 2,
-      lineType: 0,
-      chartType: 'area',
-      fontColor: '#8ba4b6',
-      gridLineColor: 'rgba(255,255,255,0.06)',
-      volumeUpColor: 'rgba(34,171,148,0.35)',
-      volumeDownColor: 'rgba(247,82,95,0.35)',
-      backgroundColor: 'rgba(0,0,0,0)',
-      widgetFontColor: '#DBDBDB',
-      upColor: '#22c55e',
-      downColor: '#ef4444',
-      borderUpColor: '#22c55e',
-      borderDownColor: '#ef4444',
-      wickUpColor: '#22c55e',
-      wickDownColor: '#ef4444',
-      colorTheme: 'dark',
-      isTransparent: true,
-      locale: 'en',
-      chartOnly: true,
-      scalePosition: 'right',
-      scaleMode: 'Normal',
-      fontFamily: '-apple-system, BlinkMacSystemFont, Trebuchet MS, Roboto, Ubuntu, sans-serif',
-      valuesTracking: '1',
-      changeMode: 'price-and-percent',
-      symbols: [[name, sym + '|1D']],
-      dateRanges: ['1d|1', '1m|30', '3m|60', '12m|1D', '60m|1W', 'all|1M'],
-      fontSize: '10',
-      headerFontSize: 'medium',
-      autosize: true,
-      width: '100%',
-      height: height || 380,
-      noTimeScale: false,
-      hideDateRanges: false,
-      hideMarketStatus: false,
-      hideSymbolLogo: false
-    };
-  }
-
-  async function tvFallback(host, cfg) {
-    if (!document.body.contains(host)) return;
-    const data = await stockData(cfg.ticker, cfg.tf);
-    const pos = positionFor(cfg.ticker);
-    if (!document.body.contains(host)) return;
-    try {
-      await makeChart(host, Object.assign({}, cfg, {
-        tvSymbol: '',
-        data,
-        baseline: pos ? Number(pos.entryPrice) : Number(data[0].value),
-        side: pos ? pos.side : 'long'
-      }));
-    } catch (e) { /* keep the loading state */ }
-  }
-
-  function makeTVChart(host, cfg) {
-    host.classList.add('wc-chart-host');
-    host.__wcLwc = true;
-    host.removeAttribute('data-chart');
-    host.innerHTML = '';
-    const card = host.closest('.inv-pricecard');
-    if (card) card.classList.add('wc-tv-mode');
-    const wrap = document.createElement('div');
-    wrap.className = 'wc-lwc wc-tv-wrap';
-    wrap.id = 'wcLwcHost';
-    const height = Math.max(300, Math.round(Number(cfg.height) || 380));
-    wrap.style.height = height + 'px';
-    host.appendChild(wrap);
-
-    const tvHost = document.createElement('div');
-    tvHost.className = 'wc-tv-host';
-    tvHost.style.height = (height - 26) + 'px';
-    wrap.appendChild(tvHost);
-
-    const box = document.createElement('div');
-    box.className = 'tradingview-widget-container';
-    box.style.height = '100%';
-    const inner = document.createElement('div');
-    inner.className = 'tradingview-widget-container__widget';
-    inner.style.height = '100%';
-    box.appendChild(inner);
-    const script = document.createElement('script');
-    script.type = 'text/javascript';
-    script.async = true;
-    script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-symbol-overview.js';
-    script.text = JSON.stringify(tvConfig(cfg.ticker, INV.stock(cfg.ticker), height - 26));
-    box.appendChild(script);
-    tvHost.appendChild(box);
-
-    const credit = document.createElement('div');
-    credit.className = 'wc-tv-credit';
-    credit.innerHTML = 'Real-time chart by <a href="https://www.tradingview.com/" target="_blank" rel="noopener nofollow">TradingView</a>';
-    wrap.appendChild(credit);
-
-    /* live trade overlay (same figures as the trade ticket) */
-    const banner = document.createElement('div');
-    banner.className = 'wc-pos-banner';
-    banner.style.display = 'none';
-    wrap.appendChild(banner);
-
-    MK.chartMeta = { ticker: cfg.ticker, tf: cfg.tf || '1D', source: 'tradingview', at: Date.now() };
-    MK.chart = {
-      mode: 'stock', ticker: cfg.ticker, tf: cfg.tf, tv: true, chart: null, series: null,
-      host, wrap, banner, basePrice: 0, defaultBase: 0, side: 'long', points: 0, lastTime: 0
-    };
-    try {
-      const q0 = (typeof INV !== 'undefined' && INV.quote) ? INV.quote(cfg.ticker) : null;
-      updatePositionBanner(MK.chart, (q0 && q0.price) || 0);
-    } catch (e) {}
-
-    /* TradingView blocked / offline -> restore the server chart */
-    const started = Date.now();
-    MK.chart.tvTimer = setTimeout(() => {
-      const nowChart = MK.chart;
-      if (!nowChart || !nowChart.tv || nowChart.host !== host) return;
-      if (tvHost.querySelector('iframe, .tradingview-widget-container iframe') || tvHost.querySelector('canvas')) return;
-      if (!document.body.contains(host)) return;
-      destroyChart();
-      tvFallback(host, cfg);
-    }, 9000);
-    if (MK.chart.tvTimer.unref) MK.chart.tvTimer.unref();
-    /* clear the timer as soon as the widget paints */
-    const watch = setInterval(() => {
-      if (!MK.chart || !MK.chart.tv || MK.chart.host !== host) { clearInterval(watch); return; }
-      if (tvHost.querySelector('iframe')) { clearInterval(watch); if (MK.chart.tvTimer) clearTimeout(MK.chart.tvTimer); }
-      if (Date.now() - started > 20000) clearInterval(watch);
-    }, 500);
-    return MK.chart;
-  }
-
   function makeChart(host, cfg) {
-    if (cfg.mode === 'stock' && cfg.tvSymbol) return Promise.resolve(makeTVChart(host, cfg));
     return loadLWC().then((LWC) => {
       if (!document.body.contains(host)) return null;
       host.classList.add('wc-chart-host');
@@ -660,30 +503,13 @@
     const ticker = (host.getAttribute('data-lt-live-chart') || spec[0] || currentTicker()).toUpperCase();
     const tf = (spec[1] || '1D').toUpperCase();
     if (!ticker) return;
-    if (MK.chart && MK.chart.mode === 'stock' && MK.chart.ticker === ticker && MK.chart.tf === tf && document.body.contains(MK.chart.host)) {
-      host.__wcLwc = true;
-      updateChart();
+    /* The stock page chart is the TradingView technical-analysis + mini-chart
+       module (public/trade-analysis.js). No Alpaca chart renders here. */
+    if (window.WC_TA && typeof window.WC_TA.mount === 'function') {
+      window.WC_TA.mount(host, ticker, tf);
       return;
     }
     destroyChart();
-    const height = Math.round(Math.max(320, Math.min(470, (window.innerHeight || 780) * 0.5)));
-    /* TradingView is the stock chart: real market prices, live */
-    if (MK.useTradingView !== false) {
-      try { makeTVChart(host, { mode: 'stock', ticker, tf, height }); return; } catch (e) {}
-    }
-    host.innerHTML = '<div class="wc-lwc-loading">Loading real market chart…</div>';
-    const data = await stockData(ticker, tf);
-    const pos = positionFor(ticker);
-    try {
-      await makeChart(host, {
-        mode: 'stock', ticker, data, tf, height, tvSymbol: '',
-        baseline: pos ? Number(pos.entryPrice) : Number(data[0].value),
-        side: pos ? pos.side : 'long'
-      });
-    } catch (e) {
-      MK.chartLoading = null;
-      try { host.classList.remove('wc-chart-host'); host.innerHTML = INV.lineChart(INV.series(ticker, '1D'), { h: 150 }); } catch (err) {}
-    }
   }
 
   function portfolioTimeline(vals, tf) {
@@ -894,13 +720,6 @@
           <code id="alpEndpoint">https://paper-api.alpaca.markets/v2</code></div>
         <div class="tiny muted">Set automatically from the environment — paper keys use the paper host, live keys use <code>api.alpaca.markets</code>. Data is always read from <code>data.alpaca.markets</code>.</div>
       </div>
-      <div class="mkt-endpoint" style="margin-top:2px">
-        <div><span class="tiny muted">Chart provider</span> <b>Finnhub</b> <span class="badge badge-warn" id="fhBadge">Not set</span></div>
-        <div class="field" style="margin-top:8px;margin-bottom:0"><label class="label">Finnhub API key</label>
-          <input class="input" id="fhKey" type="password" autocomplete="new-password" placeholder="Paste your Finnhub API key"/>
-          <div class="tiny muted mt6" id="fhHint">Powers the real-time stock chart. Leave blank to keep the saved key.</div></div>
-        <label class="checkline tiny muted" style="margin-top:6px"><input type="checkbox" id="fhClear"/> Clear saved Finnhub key</label>
-      </div>
       <div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end">
         <div class="field grow" style="margin:0;min-width:180px"><label class="label">Environment</label>
           <select class="input" id="alpMode">
@@ -1019,18 +838,6 @@
       if (hint) hint.textContent = r.data.hasKeys
         ? 'Keys are saved on the server (' + r.data.keyIdMasked + '). Leave both blank to keep them.'
         : 'No Alpaca keys saved yet. Add the Key ID and Secret Key, then Test Connection & Save.';
-      const fh = r.data.finnhub || {};
-      const fhKey = document.getElementById('fhKey');
-      const fhHint = document.getElementById('fhHint');
-      const fhBadge = document.getElementById('fhBadge');
-      if (fhKey) fhKey.placeholder = fh.configured ? 'Saved key ' + fh.maskedKey + ' — leave blank to keep' : 'Paste your Finnhub API key';
-      if (fhHint) fhHint.textContent = fh.configured
-        ? 'Chart candles come from Finnhub (key ' + fh.maskedKey + ').' + (fh.lastError ? ' Last error: ' + fh.lastError : '')
-        : 'No Finnhub key yet — the chart falls back to the live tick feed.';
-      if (fhBadge) {
-        fhBadge.className = 'badge ' + (fh.configured ? 'badge-success' : 'badge-warn');
-        fhBadge.textContent = fh.configured ? (fh.lastError ? 'Key saved · error' : 'Connected') : 'Not set';
-      }
       paintAdminStatus();
     } catch (e) { /* keep static card */ }
     finally { MK.adminLoading = false; }
@@ -1096,9 +903,7 @@
           refreshSec: Number((document.getElementById('alpRefresh') || {}).value) || 15,
           syncEnabled: !!((document.getElementById('alpSyncEnabled') || {}).checked),
           syncIntervalMin: Number((document.getElementById('alpSyncInterval') || {}).value) || 60,
-          clearKeys: !!((document.getElementById('alpClearKeys') || {}).checked),
-          finnhubKey: ((document.getElementById('fhKey') || {}).value || '').trim(),
-          clearFinnhub: !!((document.getElementById('fhClear') || {}).checked)
+          clearKeys: !!((document.getElementById('alpClearKeys') || {}).checked)
         };
         const keyId = ((document.getElementById('alpKeyId') || {}).value || '').trim();
         const secret = ((document.getElementById('alpSecret') || {}).value || '').trim();
@@ -1538,14 +1343,6 @@
     .inv-chart.wc-chart-host{height:auto;min-height:320px}
     .wc-lwc{width:100%;height:100%;min-height:320px;position:relative}
     .inv-chart.wc-chart-host{position:relative}
-    .wc-tv-wrap{display:flex;flex-direction:column}
-    .wc-tv-host{width:100%;min-height:260px;overflow:hidden;border-radius:10px}
-    .wc-tv-host .tradingview-widget-container{height:100%}
-    .wc-tv-host iframe{width:100%!important;height:100%!important;display:block}
-    .wc-tv-credit{font-size:9.5px;color:var(--muted-2);text-align:right;padding:2px 2px 0}
-    .wc-tv-credit a{color:var(--muted)}
-    .wc-tv-mode .inv-seg{display:none}
-    .wc-tv-mode .inv-pricecard .inv-seg{display:none}
     .wc-chart-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center}
     .wc-chart-actions .btn{min-height:42px;font-weight:700}
     .wc-chart-actions-note{flex:0 0 100%;font-size:10.5px;line-height:1.5;color:var(--muted)}
