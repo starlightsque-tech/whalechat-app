@@ -159,8 +159,7 @@
     const content = document.getElementById('content');
     const host = document.getElementById('ltTicketMount');
     if (!content) return;
-    S.mountQuickActions();
-    if (document.getElementById('spotTicketCard')) { S.paint(); S.paintQuick(); return; }
+    if (document.getElementById('spotTicketCard')) { S.paint(); return; }
     const old = document.getElementById('ltTicket');
     if (old) old.remove();                       /* replace the leveraged order form */
     const box = document.createElement('div');
@@ -182,51 +181,6 @@
     }
     S.preview();
   }
-
-  /* Exit controls pinned directly under the chart so the user never has to
-     scroll down to the Buy card while watching live price movement. */
-  S.mountQuickActions = function () {
-    const ticker = S.ticker;
-    if (!ticker) return;
-    const card = document.querySelector('.inv-chartcard');
-    if (!card) return;
-    if (document.getElementById('wcChartActions')) { S.paintQuick(); return; }
-    const h = holdingFor(ticker);
-    const bar = document.createElement('div');
-    bar.id = 'wcChartActions';
-    bar.className = 'wc-chart-actions';
-    bar.innerHTML = `
-      <button class="btn btn-danger grow" id="wcQuickSell" data-act="spot-sell" data-t="${escSpot(ticker)}" ${h ? '' : 'disabled'}>Sell position</button>
-      <button class="btn btn-soft grow" id="wcQuickTpsl" data-act="spot-edit" data-t="${escSpot(ticker)}" ${h ? '' : 'disabled'}>Take Profit / Loss</button>
-      <div class="wc-chart-live" id="wcChartLive"></div>
-      <div class="wc-chart-actions-note">${h ? 'Live exit controls for ' + escSpot(label(ticker)) + ' — set take profit or stop loss without leaving the chart.' : 'Buy below to open a position. Sell and Take Profit / Loss unlock as soon as you own shares.'}</div>`;
-    card.appendChild(bar);
-    S.paintQuick();
-  };
-
-  S.paintQuick = function () {
-    const box = document.getElementById('wcChartLive');
-    const sellBtn = document.getElementById('wcQuickSell');
-    const tpslBtn = document.getElementById('wcQuickTpsl');
-    const h = holdingFor(S.ticker);
-    const q = qFor(S.ticker);
-    if (sellBtn) sellBtn.disabled = !h;
-    if (tpslBtn) tpslBtn.disabled = !h;
-    if (!box) return;
-    if (!h || !q || !(Number(q.price) > 0)) {
-      box.innerHTML = '<span>No open position</span><b>—</b>';
-      return;
-    }
-    const shares = Number(h.shares) || 0;
-    const entry = Number(h.avgPrice) || 0;
-    const investedUsd = Number(h.investedUsd) > 0 ? Number(h.investedUsd) : shares * entry;
-    const valueUsd = shares * Number(q.price);
-    const plUsd = valueUsd - investedUsd;
-    const up = plUsd >= 0;
-    box.innerHTML = '<span>Trade value</span><b>' + usd(valueUsd) + '</b>' +
-      '<span>Earnings / Losses</span><b class="' + (up ? 'up' : 'down') + '">' + (up ? '+' : '−') + usd(Math.abs(plUsd)) + '</b>' +
-      '<span>Entry</span><b>' + px(S.ticker, entry) + '</b>';
-  };
 
   function allPositionsHTML() {
     let hs = [];
@@ -436,15 +390,6 @@
     const st = document.createElement('style');
     st.id = 'spot-order-style';
     st.textContent = `
-    .wc-chart-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center}
-    .wc-chart-actions .btn{min-height:42px;font-weight:700}
-    .wc-chart-actions-note{flex:0 0 100%;font-size:10.5px;line-height:1.5;color:var(--muted)}
-    .wc-chart-live{flex:0 0 100%;display:flex;gap:10px;flex-wrap:wrap;font-size:11px;font-variant-numeric:tabular-nums;
-      padding:7px 9px;border:1px solid var(--border);border-radius:9px;background:var(--surface-2)}
-    .wc-chart-live span{color:var(--muted)}
-    .wc-chart-live b{color:var(--text)}
-    .wc-chart-live b.up{color:var(--success)} .wc-chart-live b.down{color:var(--danger)}
-    @media(max-width:420px){.wc-chart-actions .btn{flex:1 1 100%}}
     .spot-position{margin-top:12px;padding:10px;border:1px solid var(--border);border-radius:12px;background:var(--surface-2)}
     .spot-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:8px}
     .spot-grid div{display:flex;flex-direction:column;gap:1px}
@@ -461,5 +406,5 @@
     document.head.appendChild(st);
   })();
 
-  setInterval(() => { try { if (document.getElementById('spotPosition')) S.paint(); S.paintQuick(); } catch (e) {} }, 2000);
+  setInterval(() => { try { if (document.getElementById('spotPosition')) S.paint(); } catch (e) {} }, 2000);
 })();
