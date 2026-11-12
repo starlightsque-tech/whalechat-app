@@ -419,6 +419,27 @@ async function api(req, res, pathname, query) {
     console.log('[market] config saved by @' + admin.username + ' · mode', saved.mode, '· refresh', saved.refreshSec + 's', '· key', saved.hasKey ? 'set' : 'cleared');
     return json(res, 200, saved);
   }
+  if (pathname === '/api/market/spot/buy' && req.method === 'POST') {
+    const body = await readBody(req);
+    const u = (store.db && (store.db.users || []).find(x => x.id === body.userId));
+    if (!u) return json(res, 404, { ok: false, error: 'user_not_found' });
+    try { return json(res, 200, Object.assign({ ok: true }, market.buySpot(body))); }
+    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+  if (pathname === '/api/market/spot/sell' && req.method === 'POST') {
+    const body = await readBody(req);
+    const u = (store.db && (store.db.users || []).find(x => x.id === body.userId));
+    if (!u) return json(res, 404, { ok: false, error: 'user_not_found' });
+    try { return json(res, 200, Object.assign({ ok: true }, market.sellSpot(body))); }
+    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+  if (pathname === '/api/market/spot/tpsl' && req.method === 'POST') {
+    const body = await readBody(req);
+    const u = (store.db && (store.db.users || []).find(x => x.id === body.userId));
+    if (!u) return json(res, 404, { ok: false, error: 'user_not_found' });
+    try { return json(res, 200, { ok: true, holding: market.updateSpotTpsl(body) }); }
+    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
   if (pathname === '/api/market/search' && req.method === 'GET') {
     const adminId = query.get('adminId') || '';
     const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === adminId && u.role === 'admin') : null;
