@@ -732,7 +732,7 @@ App.reactStatus = function (id, ds) {
 /* =========================================================================
    Marketplace, cart, checkout, orders, vendor system
    ========================================================================= */
-const CATEGORIES = ['All', 'Phones', 'Laptops', 'Tablets', 'Headphones', 'Chargers', 'Video Games', 'Phone Pouches', 'Accessories'];
+const CATEGORIES = ['All', 'Phones', 'Laptops', 'Tablets', 'Headphones', 'Chargers', 'Video Games', 'Phone Pouches', 'Accessories', 'Fridges', 'Solar Lamps', 'Watches', 'Sound Systems', 'JBL Players', 'Speakers', 'Power Banks'];
 let MARKET_FILTER = { cat: 'All', q: '' };
 
 VIEWS.market = function () {
@@ -761,7 +761,7 @@ VIEWS.market = function () {
       <div class="grow" style="min-width:0"><div class="tiny muted">${esc(p.category)}</div><div class="small ellipsis" style="font-weight:600">${esc(p.name)}</div>
       <div class="tiny" style="color:var(--accent);font-weight:700;margin-top:2px">${coins(p.priceUsd / COIN_USD)} WC</div></div></a>`).join('')}</div>` : ''}
     <div class="between wrap gap14 mb16">
-      <div class="chip-row">${cats.slice(0, 9).map(c => `<button class="chip ${MARKET_FILTER.cat === c ? 'on' : ''}" data-act="market-cat" data-id="${esc(c)}">${esc(c)}</button>`).join('')}</div>
+      <div class="chip-row">${cats.map(c => `<button class="chip ${MARKET_FILTER.cat === c ? 'on' : ''}" data-act="market-cat" data-id="${esc(c)}">${esc(c)}</button>`).join('')}</div>
       <div class="row gap6">
         <div class="searchbar hide-mobile" style="width:220px">${ic('search', 16)}<input id="marketSearch" placeholder="Search…" value="${esc(MARKET_FILTER.q)}"/></div>
         <span class="badge">${filtered.length} product${filtered.length === 1 ? '' : 's'}</span>
