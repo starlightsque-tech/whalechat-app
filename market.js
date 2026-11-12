@@ -445,7 +445,10 @@ class MarketService {
       const r = await this.getJSON(host + pathname, timeout || 12000, this.authHeaders());
       this.lastLatencyMs = Date.now() - t0;
       if (r.status === 200) { this.lastRestOkAt = Date.now(); }
-      else { this.lastRestFailAt = Date.now(); this.lastRestFail = 'HTTP ' + r.status; }
+      else {
+        this.lastRestFailAt = Date.now();
+        this.lastRestFail = String(pathname).split('?')[0] + ' · HTTP ' + r.status;
+      }
       last = r;
       if (r.status === 429) {
         this.rateLimitedUntil = Date.now() + 30000;
@@ -897,7 +900,8 @@ class MarketService {
       keys ? ('Key ID ' + this.maskedKeyId()) : 'No Alpaca Key ID / Secret saved');
 
     const restAge = st.lastRealAt ? now - st.lastRealAt : null;
-    const failing = this.lastRestFailAt && this.lastRestFailAt > (this.lastRestOkAt || 0);
+    /* a failure older than two minutes is stale — a newer success clears it */
+    const failing = this.lastRestFailAt && this.lastRestFailAt > (this.lastRestOkAt || 0) && (now - this.lastRestFailAt) < 120000;
     const restState = !keys ? 'error' : failing ? 'warn' : restAge == null ? 'warn' : restAge < 300000 ? 'ok' : 'warn';
     add('rest', 'REST snapshots', restState,
       failing ? ('Failing · ' + (this.lastRestFail || 'request error'))
@@ -980,10 +984,13 @@ class MarketService {
     const out = [];
     for (let i = 0; i < list.length; i += 100) {
       const chunk = list.slice(i, i + 100);
-      const path = '/v1/corporate-actions?ca_types=dividend&start=' + isoDate(start) + '&end=' + isoDate(end) + '&symbols=' + encodeURIComponent(chunk.join(','));
+      /* Alpaca renamed the filter to `types` and returns `cash_dividends`.
+         Keep the legacy keys as a fallback for older deployments. */
+      const path = '/v1/corporate-actions?types=cash_dividend&start=' + isoDate(start) + '&end=' + isoDate(end) + '&symbols=' + encodeURIComponent(chunk.join(','));
       /* Corporate Actions lives on the market-data host, not the trading host */
       const data = await this.apiGet(path, 'data', 20000);
-      const divs = (data && data.corporate_actions && data.corporate_actions.dividends) || [];
+      const ca = (data && data.corporate_actions) || {};
+      const divs = ca.cash_dividends || ca.dividends || [];
       out.push.apply(out, divs);
       if (i + 100 < list.length) await sleep(SEED_DELAY_MS);
     }
