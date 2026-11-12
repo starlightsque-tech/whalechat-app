@@ -369,7 +369,7 @@
     const c = MK.chart;
     if (!c || c.mode !== 'stock') return;
     const pos = positionFor(c.ticker);
-    const key = pos ? [pos.id, pos.entryPrice, pos.takeProfitPrice, pos.stopLossPrice].join('|') : 'none';
+    const key = pos ? [pos.id, pos.entryPrice, pos.takeProfitPrice, pos.stopLossPrice, pos.trailingActive, pos.trailingStopPct].join('|') : 'none';
     if (c.lineKey === key) return;
     (c.lines || []).forEach((line) => { try { c.series.removePriceLine(line); } catch (e) {} });
     c.lines = [];
@@ -386,7 +386,7 @@
     };
     add(pos.entryPrice, '#60a5fa', 'Entry $' + Number(pos.entryPrice).toFixed(2), 2);
     add(pos.takeProfitPrice, '#22c55e', 'TP $' + Number(pos.takeProfitPrice).toFixed(2), 0);
-    add(pos.stopLossPrice, '#ef4444', 'SL $' + Number(pos.stopLossPrice).toFixed(2), 0);
+    add(pos.stopLossPrice, '#ef4444', (pos.trailingActive ? 'TSL $' : 'SL $') + Number(pos.stopLossPrice).toFixed(2), 0);
   }
 
   async function mountChart() {
