@@ -61,7 +61,6 @@ const MODULES = [
   { file: 'live-trade.js', marker: 'wc-live-trade' },
   { file: 'assets-multi.js', marker: 'wc-assets-multi' },
   { file: 'spot-orders.js', marker: 'wc-spot-orders' },
-  { file: 'trade-analysis.js', marker: 'wc-trade-analysis' },
   { file: 'market-live.js', marker: 'wc-market-live' },
   { file: 'trading-bots.js', marker: 'wc-trading-bots' },
   { file: 'whalechat-shares.js', marker: 'wc-whalechat-shares' },
