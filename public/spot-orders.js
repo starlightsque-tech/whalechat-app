@@ -96,7 +96,20 @@
       </div>
       <div class="row" style="gap:7px;margin-top:9px">
         <button class="btn btn-danger grow" data-act="spot-sell" data-t="${escSpot(ticker)}">Sell now</button>
-        <button class="btn btn-ghost grow" data-act="spot-edit" data-t="${escSpot(ticker)}">TP / SL</button>
+        <button class="btn btn-ghost grow" data-act="spot-toggle-tpsl" data-t="${escSpot(ticker)}">TP / SL</button>
+      </div>
+      <div class="spot-tpsl-edit" id="spotTpSlEditor" hidden data-t="${escSpot(ticker)}">
+        <div class="row" style="gap:8px">
+          <div class="field grow" style="margin:0"><label class="label">Take Profit</label>
+            <input class="input" id="spotInlineTp" type="number" step="0.01" min="0" value="${Number(h.takeProfitPrice) > 0 ? h.takeProfitPrice : ''}" placeholder="optional"/></div>
+          <div class="field grow" style="margin:0"><label class="label">Stop Loss</label>
+            <input class="input" id="spotInlineSl" type="number" step="0.01" min="0" value="${Number(h.stopLossPrice) > 0 ? h.stopLossPrice : ''}" placeholder="optional"/></div>
+        </div>
+        <div class="row" style="gap:8px;margin-top:8px">
+          <button class="btn btn-sm btn-primary grow" data-act="spot-save-tpsl" data-t="${escSpot(ticker)}">Save TP / SL</button>
+          <button class="btn btn-sm btn-ghost" data-act="spot-clear-tpsl" data-t="${escSpot(ticker)}">Clear</button>
+        </div>
+        <div class="tiny muted" style="margin-top:5px">TP must be above entry, SL below. The backend executes the first level hit.</div>
       </div>
       <div class="tiny muted center" style="margin-top:5px">Payout = quantity × current live price · credited to WC</div>
     </div>`;
@@ -220,6 +233,33 @@
       } catch (e) { tmsg('Sell failed: ' + e.message, 'err'); }
     };
 
+    App.spotSaveTpsl = async function (id, ds) {
+      const ticker = ds.t || S.ticker;
+      const tp = Number((document.getElementById('spotInlineTp') || {}).value) || 0;
+      const sl = Number((document.getElementById('spotInlineSl') || {}).value) || 0;
+      try {
+        const r = await apiJSON('/api/market/spot/tpsl', { method: 'POST', body: JSON.stringify({ userId: me().id, ticker, tpPrice: tp, slPrice: sl }) }, 20000);
+        if (!r.res || !r.res.ok || !r.data || !r.data.ok) return tmsg((r.data && r.data.error) || 'Update failed', 'err');
+        await Remote.refresh(true); tmsg('TP / SL updated', 'ok'); render();
+      } catch (e) { tmsg('Update failed: ' + e.message, 'err'); }
+    };
+
+    App.spotClearTpsl = function (id, ds) {
+      const ed = document.getElementById('spotTpSlEditor');
+      if (!ed) return;
+      const tp = document.getElementById('spotInlineTp');
+      const sl = document.getElementById('spotInlineSl');
+      if (tp) tp.value = ''; if (sl) sl.value = '';
+      App.spotSaveTpsl(id, ds);
+    };
+
+    App.spotToggleTpsl = function () {
+      const ed = document.getElementById('spotTpSlEditor');
+      if (!ed) return;
+      ed.hidden = !ed.hidden;
+      if (!ed.hidden) { const i = document.getElementById('spotInlineTp'); if (i) i.focus(); }
+    };
+
     App.spotEdit = function (id, ds) {
       const ticker = ds.t || S.ticker;
       const h = holdingFor(ticker); if (!h) return tmsg('No open position', 'err');
@@ -271,6 +311,7 @@
     .spot-grid b{font-size:11.5px;font-variant-numeric:tabular-nums}
     .spot-row{display:flex;gap:8px;align-items:center;padding:9px 0;border-top:1px solid var(--border)}
     .spot-row:first-of-type{border-top:none}
+    .spot-tpsl-edit{margin-top:9px;padding:9px;border:1px dashed var(--border);border-radius:10px;background:var(--surface)}
     @media(max-width:420px){.spot-grid{grid-template-columns:1fr 1fr}}
     `;
     document.head.appendChild(st);
