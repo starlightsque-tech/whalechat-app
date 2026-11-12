@@ -1,8 +1,8 @@
 {
-  "version": "3.20.0",
-  "build": "2026-11-12T13:05:00Z",
+  "version": "3.20.1",
+  "build": "2026-11-12T13:25:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.20.0 - live portfolio tick chart, immediate performance updates on trade open/close, admin-only detailed trading guide.",
-  "releasedAt": "2026-11-12T13:05:00Z",
+  "notes": "WhaleChat 3.20.1 - durable hybrid market config across redeploys, live portfolio ticks, admin trading guide.",
+  "releasedAt": "2026-11-12T13:25:00Z",
   "minimum": "3.0.0"
 }
