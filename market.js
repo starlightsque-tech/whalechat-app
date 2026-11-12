@@ -845,8 +845,9 @@ class MarketService {
     if (!q) throw new Error('No live Finnhub quote for this asset yet');
     const tp = Number(opts.tpPrice) || 0;
     const sl = Number(opts.slPrice) || 0;
-    if (tp > 0 && tp <= q.price) throw new Error('Take Profit must be above the current price');
-    if (sl > 0 && sl >= q.price) throw new Error('Stop Loss must be below the current price');
+    const entry = Number(holding.avgPrice) || q.price;
+    if (tp > 0 && tp <= entry) throw new Error('Take Profit must be above the position entry price');
+    if (sl > 0 && sl >= entry) throw new Error('Stop Loss must be below the position entry price');
     holding.takeProfitPrice = tp > 0 ? round(tp, 4) : null;
     holding.stopLossPrice = sl > 0 ? round(sl, 4) : null;
     holding.updatedAt = Date.now();
