@@ -1,14 +1,27 @@
 /* =========================================================================
    WhaleChat multi-asset markets — US / Global / Forex / Crypto
    Catalogue metadata, category tabs and the Admin → Markets asset finder.
-   Prices themselves come only from the backend Alpaca feed.
+   Prices themselves come only from the backend Finnhub feed.
    ========================================================================= */
 'use strict';
 (function () {
   if (typeof window === 'undefined') return;
 
-  const EXTRA_ASSETS = [];
-
+  const EXTRA_ASSETS = [
+    { ticker: 'VOD_L', displayTicker: 'VOD.L', finnhubSymbol: 'VOD.L', assetClass: 'global', name: 'Vodafone Group', exchange: 'London', currency: 'GBP', sector: 'Communication', color: '#e60000' },
+    { ticker: 'SAP_DE', displayTicker: 'SAP.DE', finnhubSymbol: 'SAP.DE', assetClass: 'global', name: 'SAP SE', exchange: 'Frankfurt', currency: 'EUR', sector: 'Technology', color: '#0faaff' },
+    { ticker: '7203_T', displayTicker: '7203.T', finnhubSymbol: '7203.T', assetClass: 'global', name: 'Toyota Motor', exchange: 'Tokyo', currency: 'JPY', sector: 'Automotive', color: '#eb0a1e' },
+    { ticker: 'SHOP_TO', displayTicker: 'SHOP.TO', finnhubSymbol: 'SHOP.TO', assetClass: 'global', name: 'Shopify Inc.', exchange: 'Toronto', currency: 'CAD', sector: 'Technology', color: '#96bf48' },
+    { ticker: 'EURUSD', displayTicker: 'EUR/USD', finnhubSymbol: 'OANDA:EUR_USD', assetClass: 'forex', name: 'Euro / US Dollar', exchange: 'OANDA', currency: 'USD', sector: 'Forex', color: '#2f6fd0' },
+    { ticker: 'GBPUSD', displayTicker: 'GBP/USD', finnhubSymbol: 'OANDA:GBP_USD', assetClass: 'forex', name: 'British Pound / US Dollar', exchange: 'OANDA', currency: 'USD', sector: 'Forex', color: '#7a5cff' },
+    { ticker: 'USDJPY', displayTicker: 'USD/JPY', finnhubSymbol: 'OANDA:USD_JPY', assetClass: 'forex', name: 'US Dollar / Japanese Yen', exchange: 'OANDA', currency: 'JPY', sector: 'Forex', color: '#e60012' },
+    { ticker: 'XAUUSD', displayTicker: 'XAU/USD', finnhubSymbol: 'OANDA:XAU_USD', assetClass: 'forex', name: 'Gold / US Dollar', exchange: 'OANDA', currency: 'USD', sector: 'Forex', color: '#ffc861' },
+    { ticker: 'BTCUSDT', displayTicker: 'BTC/USDT', finnhubSymbol: 'BINANCE:BTCUSDT', assetClass: 'crypto', name: 'Bitcoin', exchange: 'Binance', currency: 'USDT', sector: 'Crypto', color: '#f7931a' },
+    { ticker: 'ETHUSDT', displayTicker: 'ETH/USDT', finnhubSymbol: 'BINANCE:ETHUSDT', assetClass: 'crypto', name: 'Ethereum', exchange: 'Binance', currency: 'USDT', sector: 'Crypto', color: '#627eea' },
+    { ticker: 'SOLUSDT', displayTicker: 'SOL/USDT', finnhubSymbol: 'BINANCE:SOLUSDT', assetClass: 'crypto', name: 'Solana', exchange: 'Binance', currency: 'USDT', sector: 'Crypto', color: '#14f195' },
+    { ticker: 'BNBUSDT', displayTicker: 'BNB/USDT', finnhubSymbol: 'BINANCE:BNBUSDT', assetClass: 'crypto', name: 'BNB', exchange: 'Binance', currency: 'USDT', sector: 'Crypto', color: '#f3ba2f' },
+    { ticker: 'XRPUSDT', displayTicker: 'XRP/USDT', finnhubSymbol: 'BINANCE:XRPUSDT', assetClass: 'crypto', name: 'XRP', exchange: 'Binance', currency: 'USDT', sector: 'Crypto', color: '#23292f' }
+  ];
   const CLASS_LABEL = { us: 'US', global: 'Global', forex: 'FX', crypto: 'Crypto' };
 
   function ensureAssets() {
@@ -17,12 +30,10 @@
     DB.stocks.forEach((s) => {
       if (!s || !s.ticker) return;
       if (!s.assetClass) { s.assetClass = 'us'; changed = true; }
-      if (!s.alpacaSymbol) { s.alpacaSymbol = String(s.ticker).toUpperCase(); changed = true; }
-      if (s.overridePct == null) { s.overridePct = 0; changed = true; }
-      if (s.assetClass === 'forex' || s.assetClass === 'crypto' || s.assetClass === 'global') { s.assetClass = 'us'; changed = true; }
+      if (!s.finnhubSymbol) { s.finnhubSymbol = String(s.ticker).toUpperCase(); changed = true; }
       if (!s.displayTicker) { s.displayTicker = String(s.ticker).toUpperCase(); changed = true; }
-      if (!s.exchange) { s.exchange = 'US'; changed = true; }
-      if (!s.currency) { s.currency = 'USD'; changed = true; }
+      if (!s.exchange) { s.exchange = s.assetClass === 'forex' ? 'OANDA' : s.assetClass === 'crypto' ? 'Binance' : 'US'; changed = true; }
+      if (!s.currency) { s.currency = s.assetClass === 'crypto' ? 'USDT' : 'USD'; changed = true; }
     });
     EXTRA_ASSETS.forEach((a) => {
       if (DB.stocks.some((s) => String(s.ticker).toUpperCase() === a.ticker)) return;
@@ -70,8 +81,16 @@
     INV.assetClass = assetClass;
     INV.priceText = priceText;
     INV.assetClassBadge = classBadge;
-    INV.CATS = ['All', 'US Stocks', 'Top Gainers', 'Top Losers', 'Most Traded', 'Trending', 'Dividend', 'New'];
-    if (!INV.marketCat || !INV.CATS.includes(INV.marketCat)) INV.marketCat = 'All';
+    INV.CATS = ['All', 'US Stocks', 'Global Stocks', 'Forex', 'Crypto'];
+    if (!INV.marketCat || ['Top Gainers', 'Top Losers', 'Most Traded', 'Trending', 'Technology', 'Crypto', 'Dividend', 'New'].includes(INV.marketCat)) INV.marketCat = 'All';
+    INV.marketFiltered = function () {
+      let list = INV.stocks();
+      const q = String(INV.marketQuery || '').trim().toLowerCase();
+      if (q) list = list.filter((s) => [s.ticker, s.displayTicker, s.name, s.sector].some((v) => String(v || '').toLowerCase().includes(q)));
+      const map = { 'US Stocks': 'us', 'Global Stocks': 'global', 'Forex': 'forex', 'Crypto': 'crypto' };
+      if (map[INV.marketCat]) list = list.filter((s) => (s.assetClass || 'us') === map[INV.marketCat]);
+      return list.slice().sort((a, b) => String(a.displayTicker || a.ticker).localeCompare(String(b.displayTicker || b.ticker)));
+    };
     if (typeof ADMIN_NAV !== 'undefined' && Array.isArray(ADMIN_NAV)) {
       const n = ADMIN_NAV.find((x) => x.href === '#/admin/stocks');
       if (n) n.label = 'Markets';
@@ -96,17 +115,22 @@
   function searchCard() {
     return `<div class="card" id="assetFinderCard">
       <div class="between" style="align-items:flex-start;gap:10px">
-        <div><div class="card-title" style="margin:0">Search &amp; add stock from Alpaca</div>
-          <div class="tiny muted" style="margin-top:3px">Tradable US equities are added to the live Alpaca feed.</div></div>
+        <div><div class="card-title" style="margin:0">Search &amp; add asset from Finnhub</div>
+          <div class="tiny muted" style="margin-top:3px">US, global, forex and crypto symbols are added to the live Finnhub feed.</div></div>
         <span class="badge badge-accent">Markets</span>
       </div>
       <div class="row" style="gap:7px;margin-top:11px;flex-wrap:wrap">
-        <select class="input" id="assetClass" style="max-width:160px"><option value="us">US Stocks</option></select>
-        <input class="input grow" id="assetQuery" placeholder="Search e.g. AAPL, MSFT, NVDA" style="min-width:170px"/>
+        <select class="input" id="assetClass" style="max-width:160px">
+          <option value="us">US Stocks</option>
+          <option value="global">Global Stocks</option>
+          <option value="forex">Forex Pairs</option>
+          <option value="crypto">Crypto</option>
+        </select>
+        <input class="input grow" id="assetQuery" placeholder="Search e.g. AAPL, VOD.L, EUR_USD, BTCUSDT" style="min-width:170px"/>
         <button class="btn btn-primary" data-act="asset-search">Search</button>
       </div>
-      <div id="assetResults" class="asset-results"><div class="tiny muted" style="margin-top:8px">Search Alpaca to add a new tradable stock.</div></div>
-      <div class="tiny muted" style="margin-top:7px">Alpaca market data covers US equities. Unpriced assets stay visible but trading is blocked until a live quote arrives.</div>
+      <div id="assetResults" class="asset-results"><div class="tiny muted" style="margin-top:8px">Search Finnhub to add a new tradable asset.</div></div>
+      <div class="tiny muted" style="margin-top:7px">Global exchange quotes require a Finnhub plan that includes international data. Unpriced assets stay visible but trading is blocked until a real quote arrives.</div>
     </div>`;
   }
 
@@ -129,7 +153,7 @@
       const cls = (document.getElementById('assetClass') || {}).value || 'us';
       if (!q) return toastMsg('Enter a symbol or company name', 'err');
       const box = document.getElementById('assetResults');
-      if (box) box.innerHTML = '<div class="tiny muted" style="margin-top:8px">Searching Alpaca…</div>';
+      if (box) box.innerHTML = '<div class="tiny muted" style="margin-top:8px">Searching Finnhub…</div>';
       try {
         const meId = (typeof me === 'function' && me()) ? me().id : '';
         const r = await apiJSON('/api/market/search?q=' + encodeURIComponent(q) + '&class=' + encodeURIComponent(cls) + '&adminId=' + encodeURIComponent(meId), {}, 20000);
@@ -140,7 +164,7 @@
             <div class="tiny muted ellipsis">${escAsset(x.description || '')} · ${escAsset(x.type || '')}</div>
             <div class="tiny muted">${escAsset(x.symbol)}</div></div>
           <button class="btn btn-sm btn-primary" data-act="asset-add" data-class="${escAsset(cls)}" data-symbol="${escAsset(x.symbol)}">Add</button>
-        </div>`).join('') : '<div class="tiny muted" style="margin-top:8px">No matching US stocks.</div>';
+        </div>`).join('') : '<div class="tiny muted" style="margin-top:8px">No matching symbols.</div>';
       } catch (e) { if (box) box.innerHTML = '<div class="tiny down" style="margin-top:8px">' + escAsset(e.message) + '</div>'; }
     };
 
@@ -152,7 +176,7 @@
         const meId = (typeof me === 'function' && me()) ? me().id : '';
         const r = await apiJSON('/api/market/assets/add', { method: 'POST', body: JSON.stringify({ adminId: meId, class: ds.class, symbol: ds.symbol }) }, 40000);
         if (!r.res || !r.res.ok || !r.data || !r.data.ok) return toastMsg((r.data && r.data.error) || 'Could not add asset', 'err');
-        toastMsg(r.data.existing ? 'Asset already listed' : 'Asset added to the live Alpaca feed', 'ok');
+        toastMsg(r.data.existing ? 'Asset already listed' : 'Asset added to live Finnhub feed', 'ok');
         try { await Remote.refresh(true); } catch (e) {}
         render();
       } catch (e) { toastMsg('Add failed: ' + e.message, 'err'); }
