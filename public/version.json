@@ -1,8 +1,8 @@
 {
-  "version": "3.18.0",
-  "build": "2026-11-12T12:55:00Z",
+  "version": "3.19.0",
+  "build": "2026-11-12T14:05:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.18.0 - lightweight-charts on stock and portfolio pages with live/OTC modes, absolute Take Profit / Stop Loss with editable levels and chart price lines, server-side TP/SL auto-close and WC payouts.",
-  "releasedAt": "2026-11-12T12:55:00Z",
+  "notes": "WhaleChat 3.19.0 - TP/SL presets and history levels, WC target mode, trailing stop with chart TSL line, backend trailing settlement, Finnhub verification harness.",
+  "releasedAt": "2026-11-12T14:05:00Z",
   "minimum": "3.0.0"
 }
