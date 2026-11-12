@@ -1,8 +1,8 @@
 {
   "version": "3.25.0",
-  "build": "2026-11-13T07:00:00Z",
+  "build": "2026-11-13T09:00:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.25.0 (restored) + Pro Chart: TradingView Lightweight Charts v5 for stock trading and portfolio performance, neon baseline/candles, glass HUD, entry/TP/SL lines, BUY/SELL markers and on-chart buy/sell controls. Finnhub market data.",
-  "releasedAt": "2026-11-13T07:00:00Z",
+  "notes": "WhaleChat 3.25.0 (restored) + Pro Chart: Lightweight Charts v5 for stock trading, portfolio performance and WhaleChat investment-plan ROI progress with live accrual, invested/target lines and per-plan switching.",
+  "releasedAt": "2026-11-13T09:00:00Z",
   "minimum": "3.0.0"
 }
