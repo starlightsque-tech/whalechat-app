@@ -29,6 +29,15 @@ const LT = {
     list.forEach(t => {
       if (!t.direction) t.direction = t.side === 'short' ? 'FALL' : 'RISE';
       if (t.stakeAmount == null) t.stakeAmount = t.capitalCoins;
+      const entry = Number(t.entryPrice) || 0, lev = Math.max(1, Number(t.leverage) || 1);
+      if (!(Number(t.takeProfitPrice) > 0) && Number(t.tpPct) > 0 && entry > 0) {
+        const m = Number(t.tpPct) / (100 * lev);
+        t.takeProfitPrice = Math.round(entry * (t.direction === 'FALL' ? (1 - m) : (1 + m)) * 10000) / 10000;
+      }
+      if (!(Number(t.stopLossPrice) > 0) && Number(t.slPct) > 0 && entry > 0) {
+        const m = Number(t.slPct) / (100 * lev);
+        t.stopLossPrice = Math.round(entry * (t.direction === 'FALL' ? (1 + m) : (1 - m)) * 10000) / 10000;
+      }
     });
     return list;
   },
