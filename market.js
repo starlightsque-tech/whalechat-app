@@ -330,7 +330,7 @@ class MarketService {
     const now = Date.now();
     if (now - this._lastSettleAt < 500) return;
     this._lastSettleAt = now;
-    try { this.settleTrades(); } catch (e) { this.lastError = e.message; }
+    try { this.settleTrades(); this.settleSpot(); } catch (e) { this.lastError = e.message; }
   }
 
   /* --------------------------- Finnhub REST ----------------------------- */
@@ -734,6 +734,152 @@ class MarketService {
     };
   }
 
+  /* ------------------------- spot buy / sell ---------------------------- */
+  spotQuote(ticker) {
+    const q = this.quotes[String(ticker || '').toUpperCase()];
+    return q && Number(q.price) > 0 ? q : null;
+  }
+
+  buySpot(opts) {
+    const db = this.getDb && this.getDb();
+    if (!db) throw new Error('Database not ready');
+    const userId = String(opts.userId || '');
+    const ticker = String(opts.ticker || '').toUpperCase();
+    const u = (db.users || []).find((x) => x.id === userId);
+    if (!u) throw new Error('User not found');
+    const q = this.spotQuote(ticker);
+    if (!q) throw new Error('No live Finnhub quote for this asset yet');
+    const stock = (db.stocks || []).find((s) => s.ticker === ticker);
+    if ((db.invest && db.invest.paused && db.invest.paused[ticker]) || (stock && stock.paused)) throw new Error('Trading is paused for this asset');
+    let qty = Number(opts.shares) || 0;
+    if (!(qty > 0) && Number(opts.amountCoins) > 0) qty = (Number(opts.amountCoins) * 0.5) / q.price;
+    qty = Math.round(qty * 1e8) / 1e8;
+    if (!(qty > 0)) throw new Error('Enter an investment amount or quantity');
+    const cost = Math.round((qty * q.price / 0.5) * 100) / 100;
+    if (!(cost > 0)) throw new Error('Order value is too small');
+    if ((Number(u.balance) || 0) < cost) throw new Error('Not enough WC — top up your wallet');
+    const tp = Number(opts.tpPrice) || 0;
+    const sl = Number(opts.slPrice) || 0;
+    if (tp > 0 && tp <= q.price) throw new Error('Take Profit must be above the current price');
+    if (sl > 0 && sl >= q.price) throw new Error('Stop Loss must be below the current price');
+    u.balance = Math.round((Number(u.balance) - cost) * 100) / 100;
+    db.holdings = db.holdings || [];
+    let holding = db.holdings.find((h) => h.userId === userId && h.ticker === ticker);
+    if (holding) {
+      const oldShares = Number(holding.shares) || 0;
+      const newShares = oldShares + qty;
+      holding.avgPrice = Math.round(((oldShares * (Number(holding.avgPrice) || q.price)) + qty * q.price) / newShares * 10000) / 10000;
+      holding.shares = newShares;
+      holding.investedCoins = Math.round(((Number(holding.investedCoins) || 0) + cost) * 100) / 100;
+      if (tp > 0) holding.takeProfitPrice = round(tp, 4);
+      if (sl > 0) holding.stopLossPrice = round(sl, 4);
+      holding.updatedAt = Date.now();
+    } else {
+      holding = {
+        id: id('hd'), userId, ticker, shares: qty, avgPrice: round(q.price, 4),
+        investedCoins: cost, takeProfitPrice: tp > 0 ? round(tp, 4) : null,
+        stopLossPrice: sl > 0 ? round(sl, 4) : null, createdAt: Date.now(), updatedAt: Date.now()
+      };
+      db.holdings.push(holding);
+    }
+    const order = {
+      id: id('tr'), userId, ticker, name: (db.stocks || []).find((s) => s.ticker === ticker)?.name || ticker,
+      side: 'buy', shares: qty, priceUsd: round(q.price, 4), coins: cost, feeCoins: 0,
+      type: 'market', status: 'Completed', plUsd: 0, reason: 'Market buy', createdAt: Date.now()
+    };
+    db.trades = db.trades || []; db.trades.unshift(order);
+    db.txs = db.txs || [];
+    db.txs.unshift({ id: id('tx_'), userId, type: 'stock-buy', label: `Bought ${qty} ${ticker} @ $${round(q.price, 4)}`, coins: -cost, meta: { ticker, shares: qty, priceUsd: q.price, spot: true }, createdAt: Date.now() });
+    db.notifications = db.notifications || [];
+    db.notifications.unshift({ id: id('nt_'), userId, title: 'Purchase complete', body: `Bought ${qty} ${ticker} @ $${round(q.price, 4)} · ${cost} WC`, link: '#/invest/stock/' + ticker, icon: 'trend', read: false, createdAt: Date.now() });
+    this.persist();
+    try { this.broadcast('change', { rev: null, source: 'spot-buy', at: Date.now() }); } catch (e) {}
+    return { holding, order, cost };
+  }
+
+  sellSpotInternal(db, holding, price, reason) {
+    if (!holding || !(Number(holding.shares) > 0)) return null;
+    const u = (db.users || []).find((x) => x.id === holding.userId);
+    if (!u) return null;
+    const shares = Number(holding.shares);
+    const payoutUsd = shares * Number(price);
+    const payout = Math.round((payoutUsd / 0.5) * 100) / 100;
+    u.balance = Math.round((Number(u.balance) + payout) * 100) / 100;
+    const plUsd = Math.round((Number(price) - Number(holding.avgPrice)) * shares * 100) / 100;
+    db.holdings = (db.holdings || []).filter((h) => h.id !== holding.id);
+    const order = {
+      id: id('tr'), userId: holding.userId, ticker: holding.ticker, name: (db.stocks || []).find((s) => s.ticker === holding.ticker)?.name || holding.ticker,
+      side: 'sell', shares, priceUsd: round(price, 4), coins: payout, feeCoins: 0,
+      type: 'market', status: 'Completed', plUsd, reason, createdAt: Date.now()
+    };
+    db.trades = db.trades || []; db.trades.unshift(order);
+    db.txs = db.txs || [];
+    db.txs.unshift({ id: id('tx_'), userId: u.id, type: 'stock-sell', label: `Sold ${shares} ${holding.ticker} @ $${round(price, 4)} · ${reason}`, coins: payout, meta: { ticker: holding.ticker, shares, priceUsd: price, spot: true, reason }, createdAt: Date.now() });
+    db.notifications = db.notifications || [];
+    db.notifications.unshift({ id: id('nt_'), userId: u.id, title: reason, body: `Sold ${shares} ${holding.ticker} @ $${round(price, 4)} · ${payout} WC credited.`, link: '#/invest/orders', icon: reason === 'Take Profit Hit' ? 'trend' : 'ban', read: false, createdAt: Date.now() });
+    return { order, payout, plUsd };
+  }
+
+  sellSpot(opts) {
+    const db = this.getDb && this.getDb();
+    if (!db) throw new Error('Database not ready');
+    const userId = String(opts.userId || '');
+    const ticker = String(opts.ticker || '').toUpperCase();
+    const holding = (db.holdings || []).find((h) => h.userId === userId && h.ticker === ticker);
+    if (!holding) throw new Error('No open position for this asset');
+    const q = this.spotQuote(ticker);
+    if (!q) throw new Error('No live Finnhub quote for this asset yet');
+    const out = this.sellSpotInternal(db, holding, q.price, 'Manual sell');
+    if (!out) throw new Error('Could not sell this position');
+    this.persist();
+    try { this.broadcast('change', { rev: null, source: 'spot-sell', at: Date.now() }); } catch (e) {}
+    return out;
+  }
+
+  updateSpotTpsl(opts) {
+    const db = this.getDb && this.getDb();
+    if (!db) throw new Error('Database not ready');
+    const holding = (db.holdings || []).find((h) => h.userId === String(opts.userId || '') && h.ticker === String(opts.ticker || '').toUpperCase());
+    if (!holding) throw new Error('No open position for this asset');
+    const q = this.spotQuote(holding.ticker);
+    if (!q) throw new Error('No live Finnhub quote for this asset yet');
+    const tp = Number(opts.tpPrice) || 0;
+    const sl = Number(opts.slPrice) || 0;
+    if (tp > 0 && tp <= q.price) throw new Error('Take Profit must be above the current price');
+    if (sl > 0 && sl >= q.price) throw new Error('Stop Loss must be below the current price');
+    holding.takeProfitPrice = tp > 0 ? round(tp, 4) : null;
+    holding.stopLossPrice = sl > 0 ? round(sl, 4) : null;
+    holding.updatedAt = Date.now();
+    this.persist();
+    try { this.broadcast('change', { rev: null, source: 'spot-tpsl', at: Date.now() }); } catch (e) {}
+    return holding;
+  }
+
+  settleSpot() {
+    const db = this.getDb && this.getDb();
+    if (!db || !Array.isArray(db.holdings)) return 0;
+    let changed = 0;
+    for (const h of db.holdings.slice()) {
+      if (!h || !(Number(h.shares) > 0)) continue;
+      const tp = Number(h.takeProfitPrice) || 0;
+      const sl = Number(h.stopLossPrice) || 0;
+      if (!tp && !sl) continue;
+      const q = this.quotes[h.ticker];
+      if (!q || !(q.price > 0)) continue;
+      let reason = '';
+      if (tp > 0 && q.price >= tp) reason = 'Take Profit Hit';
+      else if (sl > 0 && q.price <= sl) reason = 'Stop Loss Hit';
+      if (!reason) continue;
+      if (this.sellSpotInternal(db, h, q.price, reason)) changed++;
+    }
+    if (changed) {
+      this.persist();
+      try { this.broadcast('change', { rev: null, source: 'spot-settlement', at: Date.now() }); } catch (e) {}
+      console.log('[market] settled', changed, 'spot position(s) on TP/SL');
+    }
+    return changed;
+  }
+
   /* --------------------------- settlement ------------------------------- */
   settleTrades() {
     if (this.settleLock) return 0;
@@ -912,7 +1058,7 @@ class MarketService {
     this.refreshAssets();
     this.seedBaseQuotes();
     /* TP/SL checks run every second so a level hit is settled immediately */
-    this.timers.push(setInterval(() => { try { this.settleTrades(); } catch (e) { this.lastError = e.message; } }, 1000));
+    this.timers.push(setInterval(() => { try { this.settleTrades(); this.settleSpot(); } catch (e) { this.lastError = e.message; } }, 1000));
     this.timers.push(setInterval(() => {
       try {
         if (this.config.mode === 'hybrid' && this.config.apiKey) this.pollCycle();
