@@ -118,7 +118,13 @@
     if (!INV.__mkSeriesPatched) {
       INV.series = function (ticker, tf) {
         const key = String(ticker || '').toUpperCase();
-        const cached = MK.historyCache && MK.historyCache[key];
+        const cache = MK.historyCache || {};
+        const frame = String(tf || '1D').toUpperCase();
+        let cached = cache[key + '|' + frame + '|ov0'] || cache[key + '|' + frame];
+        if (!cached) {
+          const hit = Object.keys(cache).find((k) => k.indexOf(key + '|' + frame + '|') === 0);
+          if (hit) cached = cache[hit];
+        }
         if (cached && cached.points && cached.points.length > 1) {
           const pts = cleanPoints(cached.points, key, 900);
           if (pts.length > 1) return pts.map((p) => p.value);
@@ -150,6 +156,12 @@
 
   /* ------------------------------ market notice ----------------------------- */
   function noticeText() {
+    const onStock = /^#\/invest\/stock\//.test(location.hash || '');
+    const meta = MK.chartMeta;
+    if (onStock && meta && meta.ticker) {
+      if (meta.source === 'finnhub') return 'Finnhub · real-time chart · live market trades';
+      if (meta.source === 'live') return 'Live market chart · real-time ticks';
+    }
     if (MK.feed && MK.feed.notice) return MK.feed.notice;
     return 'Add Alpaca API keys in Admin → Stocks';
   }
@@ -253,27 +265,31 @@
     return vals.map((v, i) => ({ time: now - (vals.length - 1 - i) * step, value: Math.max(0.0001, Number(v) || 0) }));
   }
 
-  async function fetchHistory(ticker) {
+  async function fetchHistory(ticker, tf) {
+    const frame = tf || '1D';
     let ovKey = 0;
     try { const lq = INV.quote(ticker); ovKey = Number(lq && lq.overridePct) || 0; } catch (e) {}
-    const cacheKey = ticker + '|ov' + ovKey;
+    const cacheKey = ticker + '|' + frame + '|ov' + ovKey;
     const cached = MK.historyCache && MK.historyCache[cacheKey];
-    if (cached && Date.now() - cached.at < 45000) return cached.points;
+    if (cached && Date.now() - cached.at < 45000) {
+      MK.chartMeta = cached.meta || MK.chartMeta;
+      return cached.points;
+    }
     try {
-      /* Alpaca 1-minute bars, already multiplied by the admin Override % server-side */
-      const r = await getJSON('/api/market/bars?ticker=' + encodeURIComponent(ticker) + '&limit=900&timeframe=1Min', {}, 15000);
+      /* Finnhub candles (real market data per timeframe, override already applied) */
+      const r = await getJSON('/api/market/chart?ticker=' + encodeURIComponent(ticker) + '&tf=' + encodeURIComponent(frame), {}, 20000);
       const d = r.data || {};
-      let points = [];
-      if (d.ok && Array.isArray(d.bars) && d.bars.length) {
-        points = d.bars.map((b) => ({ t: Number(b.t) || 0, p: Number(b.c) || 0 }));
-      }
+      let points = (d.ok && Array.isArray(d.points)) ? d.points : [];
+      const meta = { ticker, tf: frame, source: d.source || 'none', resolution: d.resolution || '', error: d.chartError || '', at: Date.now() };
       if (!points.length) {
         const fb = await getJSON('/api/market/history?tickers=' + encodeURIComponent(ticker) + '&limit=900', {}, 7000);
         const h = (fb.data && fb.data.history) || {};
         points = Array.isArray(h[ticker]) ? h[ticker] : [];
+        if (points.length) meta.source = 'live';
       }
+      MK.chartMeta = meta;
       MK.historyCache = MK.historyCache || {};
-      MK.historyCache[cacheKey] = { at: Date.now(), points };
+      MK.historyCache[cacheKey] = { at: Date.now(), points, meta };
       return points;
     } catch (e) { return []; }
   }
@@ -292,9 +308,10 @@
     return out;
   }
 
-  async function stockData(ticker) {
-    const pts = cleanPoints(await fetchHistory(ticker), ticker, 900);
-    let data = pts.length >= 2 ? pts : fallbackData(ticker, '1D');
+  async function stockData(ticker, tf) {
+    const frame = tf || '1D';
+    const pts = cleanPoints(await fetchHistory(ticker, frame), ticker, 900);
+    let data = pts.length >= 2 ? pts : fallbackData(ticker, frame);
     let q = null;
     try { q = INV.quote(ticker); } catch (e) {}
     if (q && q.price > 0) {
@@ -343,9 +360,11 @@
       const data = cfg.data && cfg.data.length >= 2 ? cfg.data : [{ time: Math.floor(Date.now() / 1000) - 60, value: 100 }, { time: Math.floor(Date.now() / 1000), value: 100 }];
       const defaultBase = Number(cfg.baseline) > 0 ? Number(cfg.baseline) : Number(data[0].value) || 100;
       const side = cfg.side === 'short' ? 'short' : 'long';
+      const chartHeight = Math.max(160, Math.round(Number(cfg.height) || 240));
+      wrap.style.height = chartHeight + 'px';
       const chart = LWC.createChart(wrap, {
         width: wrap.clientWidth || host.clientWidth || 320,
-        height: 240,
+        height: chartHeight,
         layout: {
           background: { type: LWC.ColorType.Solid, color: 'transparent' },
           textColor: '#8ba4b6',
@@ -415,7 +434,7 @@
       wrap.appendChild(banner);
 
       MK.chart = {
-        mode: cfg.mode || 'stock', ticker: cfg.ticker || '', chart, series, host, wrap, LWC,
+        mode: cfg.mode || 'stock', ticker: cfg.ticker || '', tf: cfg.tf || '', chart, series, host, wrap, LWC,
         basePrice: defaultBase, defaultBase, side, banner,
         lastTime: data[data.length - 1].time,
         points: data.length, lines: [], lineKey: ''
@@ -444,13 +463,20 @@
     if (!h || !(Number(h.shares) > 0) || !(Number(price) > 0)) { c.banner.style.display = 'none'; return; }
     const shares = Number(h.shares) || 0;
     const px = Number(price) || 0;
-    const investedUsd = Number(h.investedUsd) > 0 ? Number(h.investedUsd) : shares * (Number(h.avgPrice) || px);
-    const valueUsd = shares * px;
-    const pnlUsd = valueUsd - investedUsd;
+    const entryUsd = Number(h.avgPrice) || px;
+    const investedUsd = Number(h.investedUsd) > 0 ? Number(h.investedUsd) : shares * entryUsd;
+    /* Trade value = what was paid for the position, repriced live with every
+       tick: +earnings as the price rises, -losses as it falls, until the trade
+       is closed. The second row counts the earnings / losses in real time. */
+    const tradeValueUsd = investedUsd + (shares * px - investedUsd);
+    const pnlUsd = tradeValueUsd - investedUsd;
     const pnlCoins = pnlUsd / 0.5;
     const up = pnlUsd >= 0;
-    c.banner.innerHTML = '<div class="wc-pos-line"><span>Position value</span><b>' + usd(valueUsd) + ' <i>(' + (Math.round((valueUsd / 0.5) * 100) / 100).toFixed(2) + ' WC)</i></b></div>' +
-      '<div class="wc-pos-line"><span>Unrealized P&amp;L</span><b class="' + (up ? 'up' : 'down') + '">' + (up ? '+' : '−') + usd(Math.abs(pnlUsd)) + ' <i>(' + (up ? '+' : '−') + Math.abs(pnlCoins).toFixed(2) + ' WC)</i></b></div>';
+    const pnlPct = investedUsd > 0 ? (pnlUsd / investedUsd) * 100 : 0;
+    c.banner.innerHTML =
+      '<div class="wc-pos-line"><span>Trade value</span><b>' + usd(tradeValueUsd) + ' <i>(' + (Math.round((tradeValueUsd / 0.5) * 100) / 100).toFixed(2) + ' WC)</i></b></div>' +
+      '<div class="wc-pos-line"><span>Earnings / Losses</span><b class="' + (up ? 'up' : 'down') + '">' + (up ? '+' : '−') + usd(Math.abs(pnlUsd)) + ' <i>(' + (up ? '+' : '−') + Math.abs(pnlCoins).toFixed(2) + ' WC · ' + (up ? '+' : '−') + Math.abs(pnlPct).toFixed(2) + '%)</i></b></div>' +
+      '<div class="wc-pos-line"><span>Entry price</span><b>' + usd(entryUsd) + ' <i>(' + (Math.round((entryUsd / 0.5) * 100) / 100).toFixed(2) + ' WC)</i></b></div>';
     c.banner.style.display = 'block';
   }
 
@@ -481,20 +507,24 @@
   async function mountChart() {
     const host = document.querySelector('.inv-chart[data-lt-live-chart], .inv-chart[data-chart]');
     if (!host) { destroyChart(); return; }
-    const ticker = (host.getAttribute('data-lt-live-chart') || (host.getAttribute('data-chart') || '').split('|')[0] || currentTicker()).toUpperCase();
+    const spec = (host.getAttribute('data-chart') || '').split('|');
+    const ticker = (host.getAttribute('data-lt-live-chart') || spec[0] || currentTicker()).toUpperCase();
+    const tf = (spec[1] || '1D').toUpperCase();
     if (!ticker) return;
-    if (MK.chart && MK.chart.mode === 'stock' && MK.chart.ticker === ticker && document.body.contains(MK.chart.host)) {
+    if (MK.chart && MK.chart.mode === 'stock' && MK.chart.ticker === ticker && MK.chart.tf === tf && document.body.contains(MK.chart.host)) {
       host.__wcLwc = true;
       updateChart();
       return;
     }
     destroyChart();
-    host.innerHTML = '<div class="wc-lwc-loading">Loading live chart…</div>';
-    const data = await stockData(ticker);
+    host.innerHTML = '<div class="wc-lwc-loading">Loading real market chart…</div>';
+    const data = await stockData(ticker, tf);
     const pos = positionFor(ticker);
+    /* full-width performance chart: taller than the old 240px strip */
+    const height = Math.round(Math.max(320, Math.min(470, (window.innerHeight || 780) * 0.5)));
     try {
       await makeChart(host, {
-        mode: 'stock', ticker, data,
+        mode: 'stock', ticker, data, tf, height,
         baseline: pos ? Number(pos.entryPrice) : Number(data[0].value),
         side: pos ? pos.side : 'long'
       });
@@ -597,7 +627,7 @@
     const time = now > c.lastTime ? now : c.lastTime + 1;
     appendPoint(c, time, q.price);
     if (c.points > 900) {
-      stockData(ticker).then((fresh) => {
+      stockData(ticker, c.tf).then((fresh) => {
         if (!MK.chart || MK.chart !== c) return;
         c.series.setData(fresh);
         c.lastTime = fresh[fresh.length - 1].time;
@@ -710,6 +740,13 @@
         <div><span class="tiny muted">API endpoint</span>
           <code id="alpEndpoint">https://paper-api.alpaca.markets/v2</code></div>
         <div class="tiny muted">Set automatically from the environment — paper keys use the paper host, live keys use <code>api.alpaca.markets</code>. Data is always read from <code>data.alpaca.markets</code>.</div>
+      </div>
+      <div class="mkt-endpoint" style="margin-top:2px">
+        <div><span class="tiny muted">Chart provider</span> <b>Finnhub</b> <span class="badge badge-warn" id="fhBadge">Not set</span></div>
+        <div class="field" style="margin-top:8px;margin-bottom:0"><label class="label">Finnhub API key</label>
+          <input class="input" id="fhKey" type="password" autocomplete="new-password" placeholder="Paste your Finnhub API key"/>
+          <div class="tiny muted mt6" id="fhHint">Powers the real-time stock chart. Leave blank to keep the saved key.</div></div>
+        <label class="checkline tiny muted" style="margin-top:6px"><input type="checkbox" id="fhClear"/> Clear saved Finnhub key</label>
       </div>
       <div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end">
         <div class="field grow" style="margin:0;min-width:180px"><label class="label">Environment</label>
@@ -829,6 +866,18 @@
       if (hint) hint.textContent = r.data.hasKeys
         ? 'Keys are saved on the server (' + r.data.keyIdMasked + '). Leave both blank to keep them.'
         : 'No Alpaca keys saved yet. Add the Key ID and Secret Key, then Test Connection & Save.';
+      const fh = r.data.finnhub || {};
+      const fhKey = document.getElementById('fhKey');
+      const fhHint = document.getElementById('fhHint');
+      const fhBadge = document.getElementById('fhBadge');
+      if (fhKey) fhKey.placeholder = fh.configured ? 'Saved key ' + fh.maskedKey + ' — leave blank to keep' : 'Paste your Finnhub API key';
+      if (fhHint) fhHint.textContent = fh.configured
+        ? 'Chart candles come from Finnhub (key ' + fh.maskedKey + ').' + (fh.lastError ? ' Last error: ' + fh.lastError : '')
+        : 'No Finnhub key yet — the chart falls back to the live tick feed.';
+      if (fhBadge) {
+        fhBadge.className = 'badge ' + (fh.configured ? 'badge-success' : 'badge-warn');
+        fhBadge.textContent = fh.configured ? (fh.lastError ? 'Key saved · error' : 'Connected') : 'Not set';
+      }
       paintAdminStatus();
     } catch (e) { /* keep static card */ }
     finally { MK.adminLoading = false; }
@@ -894,7 +943,9 @@
           refreshSec: Number((document.getElementById('alpRefresh') || {}).value) || 15,
           syncEnabled: !!((document.getElementById('alpSyncEnabled') || {}).checked),
           syncIntervalMin: Number((document.getElementById('alpSyncInterval') || {}).value) || 60,
-          clearKeys: !!((document.getElementById('alpClearKeys') || {}).checked)
+          clearKeys: !!((document.getElementById('alpClearKeys') || {}).checked),
+          finnhubKey: ((document.getElementById('fhKey') || {}).value || '').trim(),
+          clearFinnhub: !!((document.getElementById('fhClear') || {}).checked)
         };
         const keyId = ((document.getElementById('alpKeyId') || {}).value || '').trim();
         const secret = ((document.getElementById('alpSecret') || {}).value || '').trim();
@@ -1331,9 +1382,17 @@
     const st = document.createElement('style');
     st.id = 'wc-market-style';
     st.textContent = `
-    .inv-chart.wc-chart-host{height:240px !important}
-    .wc-lwc{width:100%;height:240px;position:relative}
+    .inv-chart.wc-chart-host{height:auto;min-height:320px}
+    .wc-lwc{width:100%;height:100%;min-height:320px;position:relative}
     .inv-chart.wc-chart-host{position:relative}
+    .wc-chart-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center}
+    .wc-chart-actions .btn{min-height:42px;font-weight:700}
+    .wc-chart-actions-note{flex:0 0 100%;font-size:10.5px;line-height:1.5;color:var(--muted)}
+    .wc-chart-live{flex:0 0 100%;display:flex;gap:10px;flex-wrap:wrap;font-size:11px;font-variant-numeric:tabular-nums;
+      padding:7px 9px;border:1px solid var(--border);border-radius:9px;background:var(--surface-2)}
+    .wc-chart-live span{color:var(--muted)}
+    .wc-chart-live b{color:var(--text)}
+    .wc-chart-live b.up{color:var(--success)} .wc-chart-live b.down{color:var(--danger)}
     .wc-chart-tip{position:absolute;z-index:9;pointer-events:none;padding:6px 8px;border-radius:8px;
       background:rgba(4,16,26,.94);border:1px solid rgba(46,230,201,.35);box-shadow:0 8px 22px rgba(0,0,0,.45);
       font-size:10.5px;line-height:1.45;max-width:180px}
