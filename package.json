@@ -1,6 +1,6 @@
 {
   "name": "whalechat",
-  "version": "3.15.0",
+  "version": "3.16.0",
   "private": true,
   "description": "WhaleChat \u2014 chat, marketplace and wallet. Web app + sync server + Android/iOS shells.",
   "main": "server.js",
