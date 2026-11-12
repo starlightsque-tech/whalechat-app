@@ -16,6 +16,7 @@
   MK.chart = null;
   MK.chartLoading = null;
   MK.adminLoaded = false;
+  MK.historyCache = {};
 
   const LWC_URL = 'https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js';
 
@@ -86,7 +87,7 @@
         MK.lastPollAt = Date.now();
         applyQuotes(r.data);
       }
-    } catch (e) { /* local mode / offline: the built-in simulator keeps running */ }
+    } catch (e) { /* local mode / offline: cached Finnhub prices remain */ }
   }
 
   function feedFresh() {
@@ -96,32 +97,11 @@
   }
   MK.feedFresh = feedFresh;
 
-  /* Keep the client simulation from fighting the authoritative server cache. */
+  /* No browser-side price generator: the backend Finnhub feed is the only source. */
   function patchTick() {
     if (typeof INV === 'undefined' || INV.__mkTickPatched) return;
-    const baseTick = INV.tick;
     INV.tick = function () {
-      if (!feedFresh()) return baseTick.apply(INV, arguments);
       const now = Date.now();
-      /* only tickers Finnhub does not cover keep the local simulator */
-      INV.stocks().forEach((s) => {
-        if (MK.feed.quotes[s.ticker]) return;
-        const q = INV.quote(s.ticker);
-        if (!q) return;
-        const vol = INV.volatility(s) / 14;
-        const shock = (Math.random() - 0.5) * 2 * vol;
-        const next = Math.max(0.5, q.price * (1 + shock));
-        q.dir = next > q.price ? 1 : next < q.price ? -1 : 0;
-        q.price = Math.round(next * 100) / 100;
-        q.dayHigh = Math.max(q.dayHigh, q.price);
-        q.dayLow = Math.min(q.dayLow, q.price);
-        q.changePct = q.prevClose ? ((q.price - q.prevClose) / q.prevClose) * 100 : 0;
-        q.changeUsd = q.price - q.prevClose;
-        q.updatedAt = now;
-        s.price = q.price;
-        const key = s.ticker + '::1D';
-        if (INV.seriesCache[key]) INV.seriesCache[key][INV.seriesCache[key].length - 1] = q.price;
-      });
       INV.checkAlerts();
       INV.runLimitOrders();
       INV.paint();
@@ -131,12 +111,44 @@
       }
     };
     INV.__mkTickPatched = true;
+    /* Replace the old random-walk chart series with real backend history. */
+    if (!INV.__mkSeriesPatched) {
+      INV.series = function (ticker, tf) {
+        const key = String(ticker || '').toUpperCase();
+        const cached = MK.historyCache && MK.historyCache[key];
+        if (cached && cached.points && cached.points.length > 1) {
+          const pts = cleanPoints(cached.points, key, 900);
+          if (pts.length > 1) return pts.map((p) => p.value);
+        }
+        let q = null;
+        try { q = INV.quote(key); } catch (e) {}
+        const price = (q && q.price > 0) ? Number(q.price) : 0;
+        return [price, price];
+      };
+      INV.__mkSeriesPatched = true;
+    }
+  }
+
+  async function prefetchHistories(tickers) {
+    const list = Array.from(new Set((tickers || []).filter(Boolean)));
+    for (let i = 0; i < list.length; i += 20) {
+      const chunk = list.slice(i, i + 20);
+      try {
+        const r = await getJSON('/api/market/history?tickers=' + encodeURIComponent(chunk.join(',')) + '&limit=240', {}, 10000);
+        const hist = (r.data && r.data.history) || {};
+        Object.keys(hist).forEach((t) => {
+          if (Array.isArray(hist[t]) && hist[t].length) {
+            MK.historyCache[t] = { at: Date.now(), points: hist[t] };
+          }
+        });
+      } catch (e) {}
+    }
   }
 
   /* ------------------------------ market notice ----------------------------- */
   function noticeText() {
     if (MK.feed && MK.feed.notice) return MK.feed.notice;
-    return 'Simulated market data · 24/7';
+    return 'Connect Finnhub in Admin → Markets';
   }
 
   function noticeLive() {
@@ -635,13 +647,13 @@
       </details>
 
       <details class="guide-sec">
-        <summary>4 · Settlement and market data</summary>
+        <summary>4 · Settlement and real market data</summary>
         <ul class="guide-list">
           <li>The server checks open trades at least once per second and settles on the tick that hits a level.</li>
           <li>Close reasons: <code>Take Profit Hit</code>, <code>Stop Loss Hit</code>, <code>Trailing Stop Hit</code>, <code>Time limit reached</code>.</li>
           <li>Payout, transaction, notification and toast are produced even if the user's browser is closed.</li>
-          <li><b>Hybrid:</b> Finnhub REST seeds 16 symbols, then one backend WebSocket streams live ticks.</li>
-          <li><b>OTC fallback:</b> when the market is closed, 429 is returned or ticks stop, the server keeps trading alive from the last real close.</li>
+          <li><b>Hybrid:</b> Finnhub REST seeds every listed stock, forex pair and crypto pair; one backend WebSocket streams live ticks.</li>
+          <li><b>No fake ticks:</b> closed stock exchanges hold the last real print. Crypto streams 24/7 and Forex 24/5 through Finnhub.</li>
         </ul>
       </details>
 
@@ -671,8 +683,7 @@
       <div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end">
         <div class="field grow" style="margin:0;min-width:200px"><label class="label">Data mode</label>
           <select class="input" id="mktMode">
-            <option value="hybrid">Hybrid (Live Finnhub + 24/7 Simulated Fallback)</option>
-            <option value="simulated">Simulated Only</option>
+            <option value="hybrid">Live Finnhub (real prices only)</option>
           </select></div>
         <div class="field" style="margin:0;width:170px"><label class="label">Refresh interval (seconds)</label>
           <input class="input" id="mktRefresh" type="number" min="5" max="300" step="1" value="15"/></div>
@@ -684,9 +695,9 @@
       </div>
       <div class="mkt-status" id="mktStatus">Reading feed status…</div>
       <div class="tiny muted" style="margin-top:6px;line-height:1.6">
-        Hybrid mode seeds 16 tickers 1.2 seconds apart, then keeps one shared WebSocket open for real-time ticks.
-        If Finnhub returns HTTP 429, the US market is closed, or ticks stop, the server keeps trading alive with
-        smooth micro-ticks from the last real close — so open Rise/Fall positions never freeze at the weekend.
+        Hybrid mode seeds every listed asset from Finnhub REST, then keeps one shared WebSocket open for
+        second-by-second ticks. Crypto streams 24/7 and Forex 24/5; closed stock venues hold the last real
+        print instead of generating fake movement. All browser prices come from this backend cache.
       </div>
     </div>`;
   }
@@ -700,8 +711,8 @@
     const st = (MK.feed && MK.feed.status) || (MK.config && MK.config.status) || {};
     if (badge) {
       const live = st.source === 'live';
-      badge.className = 'badge ' + (live ? 'badge-success' : st.mode === 'hybrid' ? 'badge-warn' : 'badge-accent');
-      badge.textContent = st.mode === 'hybrid' ? (live ? 'Live · Finnhub' : 'Fallback · 24/7') : 'Simulated only';
+      badge.className = 'badge ' + (live ? 'badge-success' : 'badge-warn');
+      badge.textContent = live ? 'Live · Finnhub' : (st.mode === 'hybrid' ? 'Offline / limited' : 'No Finnhub key');
     }
     if (!box) return;
     const when = (ms) => ms ? new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
@@ -831,7 +842,7 @@
     App.divSync = async function () {
       if (typeof Remote === 'undefined' || !Remote.enabled) return adminToast('Connect the sync server first', 'err');
       const btn = document.querySelector('[data-act="div-sync"]');
-      if (btn) { btn.disabled = true; btn.textContent = 'Syncing 16 symbols…'; }
+      if (btn) { btn.disabled = true; btn.textContent = 'Syncing all assets…'; }
       try {
         const meId = (typeof me === 'function' && me()) ? me().id : '';
         const r = await getJSON('/api/market/dividends/sync', { method: 'POST', body: JSON.stringify({ adminId: meId }) }, 45000);
@@ -862,6 +873,14 @@
   function enhance() {
     paintNotice();
     paintAdminStatus();
+    const h = location.hash || '';
+    let tickers = [];
+    try {
+      if (h.startsWith('#/invest/market')) tickers = INV.stocks().map((s) => s.ticker);
+      else if (h === '#/invest' || h.startsWith('#/invest?')) tickers = (LT.positions ? LT.positions(me().id).map((p) => p.ticker) : []).concat((DB.watchlist || []).filter((w) => w.userId === me().id).map((w) => w.ticker));
+      else if (h.startsWith('#/invest/watchlist')) tickers = (DB.watchlist || []).filter((w) => w.userId === me().id).map((w) => w.ticker);
+    } catch (e) {}
+    if (tickers.length) prefetchHistories(tickers).then(() => { try { INV.paint(); if (MK.chart) updateChart(); } catch (e) {} });
     if (document.getElementById('ltDashChart')) setTimeout(mountPortfolioChart, 60);
     if (currentTicker()) {
       const host = document.querySelector('.inv-chart[data-lt-live-chart], .inv-chart[data-chart]');
