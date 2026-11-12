@@ -60,6 +60,7 @@
     const s = assetMeta(value);
     const cls = s && s.assetClass;
     const n = Number(price) || 0;
+    if (!(n > 0)) return '—';
     let dec = 2;
     if (cls === 'forex') dec = 4;
     else if (cls === 'crypto') dec = n >= 100 ? 2 : n >= 1 ? 2 : 4;
@@ -129,6 +130,7 @@
         <button class="btn btn-primary" data-act="asset-search">Search</button>
       </div>
       <div id="assetResults" class="asset-results"><div class="tiny muted" style="margin-top:8px">Search Finnhub to add a new tradable asset.</div></div>
+      <div class="tiny muted" style="margin-top:7px">Global exchange quotes require a Finnhub plan that includes international data. Unpriced assets stay visible but trading is blocked until a real quote arrives.</div>
     </div>`;
   }
 
