@@ -9,3 +9,12 @@ mobile/android/local.properties
 mobile/ios/App/Pods/
 *.apk
 *.zip
+
+# decoded build output (committed as .b64 only)
+public/assets/*.png
+public/assets/*.jpg
+public/products/*.jpg
+public/bots/*.jpg
+public/demo/products/*.jpg
+public/demo/sellers/*.jpg
+public/whalechat.html
