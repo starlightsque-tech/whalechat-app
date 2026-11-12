@@ -626,6 +626,7 @@ class MarketService {
       lastError: this.lastError || '',
       tickers: this.assetList().length,
       assetCounts: this.assetClasses(),
+      unpriced: this.assetList().filter((a) => !(this.quotes[a.ticker] && this.quotes[a.ticker].price > 0)).length,
       dividends: this.dividendStatus(),
       startedAt: this.startedAt
     };
