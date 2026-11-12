@@ -73,6 +73,16 @@ const MAX_WS_SYMBOLS = Math.max(20, Math.min(500, Number(process.env.ALPACA_MAX_
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const round = (v, n) => Math.round(v * Math.pow(10, n)) / Math.pow(10, n);
 
+function humanAge(ms) {
+  if (ms == null || !Number.isFinite(Number(ms))) return 'never';
+  const s = Math.max(0, Math.round(Number(ms) / 1000));
+  if (s < 5) return 'just now';
+  if (s < 60) return s + 's ago';
+  if (s < 3600) return Math.round(s / 60) + 'm ago';
+  if (s < 86400) return Math.round(s / 3600) + 'h ago';
+  return Math.round(s / 86400) + 'd ago';
+}
+
 function nyClock(d) {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/New_York', weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false
@@ -145,6 +155,12 @@ class MarketService {
     this.maxCallsPerMin = Math.max(30, Math.min(200, Number(process.env.ALPACA_MAX_CALLS_PER_MIN) || 180));
     this.seedOk = 0;
     this.seedFailed = [];
+    this.lastLatencyMs = 0;
+    this.lastRestOkAt = 0;
+    this.lastRestFailAt = 0;
+    this.lastRestFail = '';
+    this.lastTestAt = 0;
+    this.lastTestOk = null;
   }
 
   /* ------------------------------- config ------------------------------- */
@@ -218,6 +234,11 @@ class MarketService {
     this.writeConfigFile();
     this.restart();
     return this.publicConfig();
+  }
+
+  maskedKeyId() {
+    const key = this.config.keyId || '';
+    return key ? (key.slice(0, 4) + '…' + key.slice(-4)) : '';
   }
 
   publicConfig() {
@@ -420,7 +441,11 @@ class MarketService {
     for (let attempt = 0; attempt < 3; attempt++) {
       await this.waitForCooldown();
       await this.reserveApiCall();
+      const t0 = Date.now();
       const r = await this.getJSON(host + pathname, timeout || 12000, this.authHeaders());
+      this.lastLatencyMs = Date.now() - t0;
+      if (r.status === 200) { this.lastRestOkAt = Date.now(); }
+      else { this.lastRestFailAt = Date.now(); this.lastRestFail = 'HTTP ' + r.status; }
       last = r;
       if (r.status === 429) {
         this.rateLimitedUntil = Date.now() + 30000;
@@ -824,6 +849,100 @@ class MarketService {
     return { ok: true, at: Date.now(), source: this.source(), marketOpen: usMarketOpen(), notice: this.notice(), status: this.status(), quotes: this.quotes };
   }
 
+  /* --------------------- market audit trail -----------------------------
+     Durable, append-only log of every admin override change and every data
+     sync (manual + scheduled). Secrets are never recorded: only a masked key
+     id is ever stored. */
+  audit(action, opts) {
+    const db = this.getDb && this.getDb();
+    if (!db) return null;
+    const o = opts || {};
+    if (!Array.isArray(db.marketAudit)) db.marketAudit = [];
+    const entry = {
+      id: id('ma'),
+      at: Date.now(),
+      action: String(action || 'event'),
+      category: o.category || 'system',
+      actor: String(o.actor || 'system').slice(0, 60),
+      actorId: o.actorId || null,
+      target: String(o.target || '').slice(0, 120),
+      summary: String(o.summary || '').slice(0, 400),
+      changes: Array.isArray(o.changes) ? o.changes.slice(0, 50) : [],
+      result: o.result || 'ok',
+      durationMs: o.durationMs != null ? Number(o.durationMs) : null
+    };
+    db.marketAudit.unshift(entry);
+    if (db.marketAudit.length > 1000) db.marketAudit.length = 1000;
+    try { this.persist(); } catch (e) {}
+    return entry;
+  }
+
+  auditList(limit, category) {
+    const db = this.getDb && this.getDb();
+    const all = (db && Array.isArray(db.marketAudit)) ? db.marketAudit : [];
+    const cat = String(category || '').toLowerCase();
+    const rows = cat && cat !== 'all' ? all.filter((e) => String(e.category || '').toLowerCase() === cat) : all;
+    return rows.slice(0, Math.max(1, Math.min(500, Number(limit) || 100)));
+  }
+
+  /* --------------------- connection health ----------------------------- */
+  health() {
+    const st = this.status();
+    const now = Date.now();
+    const checks = [];
+    const add = (key, label, state, detail) => checks.push({ key, label, state, detail });
+    const keys = !!st.hasKeys;
+
+    add('keys', 'API credentials', keys ? 'ok' : 'error',
+      keys ? ('Key ID ' + this.maskedKeyId()) : 'No Alpaca Key ID / Secret saved');
+
+    const restAge = st.lastRealAt ? now - st.lastRealAt : null;
+    const failing = this.lastRestFailAt && this.lastRestFailAt > (this.lastRestOkAt || 0);
+    const restState = !keys ? 'error' : failing ? 'warn' : restAge == null ? 'warn' : restAge < 300000 ? 'ok' : 'warn';
+    add('rest', 'REST snapshots', restState,
+      failing ? ('Failing · ' + (this.lastRestFail || 'request error'))
+        : 'Last tick ' + humanAge(restAge) + (this.lastLatencyMs ? ' · ' + this.lastLatencyMs + ' ms' : ''));
+
+    const wsState = !keys ? 'error' : (st.wsConnected && st.wsAuthed) ? 'ok' : 'warn';
+    add('ws', 'IEX WebSocket', wsState,
+      !keys ? 'Needs credentials' : st.wsConnected ? (st.wsAuthed ? 'Authenticated · ' + st.wsTicks + ' ticks' : 'Open · authenticating') : 'Offline · REST fallback active');
+
+    const limited = st.rateLimitedUntil && st.rateLimitedUntil > now;
+    add('rate', 'Rate limit', limited ? 'error' : 'ok',
+      limited ? ('Cooling down until ' + new Date(st.rateLimitedUntil).toLocaleTimeString()) : ((st.apiCallsLastMin || 0) + ' / ' + (st.apiBudgetPerMin || 180) + ' calls per min'));
+
+    const syncEvery = Math.max(5, Number(st.sync && st.sync.intervalMin) || 60) * 60000;
+    const syncAge = st.sync && st.sync.lastSyncAt ? now - st.sync.lastSyncAt : null;
+    let syncState = 'ok', syncDetail = 'Never synced yet';
+    if (!st.sync || !st.sync.enabled) { syncState = 'warn'; syncDetail = 'Auto-sync is off'; }
+    else if (syncAge != null && syncAge < syncEvery * 1.5) { syncDetail = 'Last full sync ' + humanAge(syncAge) + ' · every ' + st.sync.intervalMin + ' min'; }
+    else if (syncAge == null) { syncState = 'warn'; syncDetail = 'Waiting for the first scheduled sync'; }
+    else { syncState = 'warn'; syncDetail = 'Overdue · last full sync ' + humanAge(syncAge); }
+    if (st.sync && st.sync.lastError) { syncState = 'warn'; syncDetail = 'Last error: ' + st.sync.lastError; }
+    add('sync', 'Scheduled data sync', syncState, syncDetail);
+
+    const priced = st.tickers ? (st.tickers - (st.unpriced || 0)) / st.tickers : 0;
+    const priceState = !st.tickers ? 'warn' : priced >= 0.95 ? 'ok' : priced >= 0.6 ? 'warn' : 'error';
+    add('pricing', 'Price coverage', priceState, (st.tickers - (st.unpriced || 0)) + ' / ' + st.tickers + ' symbols priced');
+
+    add('session', 'Trading session', 'info', st.marketOpen ? 'US market open' : 'US market closed');
+
+    const scored = checks.filter((c) => c.state !== 'info');
+    const points = scored.reduce((sum, c) => sum + (c.state === 'ok' ? 100 : c.state === 'warn' ? 55 : 0), 0);
+    const score = scored.length ? Math.round(points / scored.length) : 100;
+    const grade = score >= 90 ? 'healthy' : score >= 70 ? 'degraded' : score >= 40 ? 'at risk' : 'offline';
+    return {
+      ok: true, at: now, score, grade, checks,
+      latencyMs: this.lastLatencyMs || null,
+      lastRestOkAt: this.lastRestOkAt || null,
+      lastRestFailAt: this.lastRestFailAt || null,
+      lastTestAt: this.lastTestAt || null,
+      lastTestOk: this.lastTestOk,
+      uptimeSec: Math.floor((now - this.startedAt) / 1000),
+      status: st
+    };
+  }
+
   /* --------------------------- dividends ------------------------------- */
   fallbackDividendMap() { return {}; }
 
@@ -887,8 +1006,11 @@ class MarketService {
     }
   }
 
-  async syncDividends(manual) {
+  async syncDividends(manual, actor, nested) {
     if (this.syncingDividends) return this.dividendStatus();
+    const started = Date.now();
+    const who = (actor && actor.name) || (manual ? (nested ? 'admin' : 'admin') : 'scheduler');
+    const whoId = (actor && actor.id) || null;
     this.syncingDividends = true;
     const db = this.getDb && this.getDb();
     const prior = (db && db.invest && db.invest.dividendYields) || {};
@@ -932,6 +1054,14 @@ class MarketService {
       this.applyDividendMap(map, source, fetched);
       console.log('[market] dividends synced ·', source, '·', fetched + '/' + stockAssets.length, 'symbols', failed ? '· ' + failed + ' pending' : '');
       if (failed && !this.stopped) this.scheduleDividendRetry();
+      if (!nested) {
+        this.audit('sync.dividends', {
+          category: 'sync', actor: who, actorId: whoId, target: 'Dividend data', result: failed && !fetched ? 'error' : 'ok',
+          durationMs: Date.now() - started,
+          summary: fetched + ' / ' + stockAssets.length + ' symbols updated' + (failed ? ' · ' + failed + ' pending' : ''),
+          changes: [{ field: 'dividends', from: null, to: fetched }]
+        });
+      }
     } finally { this.syncingDividends = false; }
     return this.dividendStatus();
   }
@@ -941,7 +1071,7 @@ class MarketService {
     this.dividendRetryTimer = setTimeout(() => {
       this.dividendRetryTimer = null;
       if (this.stopped) return;
-      this.syncDividends(true).catch((e) => { this.lastError = 'Dividend retry failed: ' + e.message; });
+      this.syncDividends(true, null, false).catch((e) => { this.lastError = 'Dividend retry failed: ' + e.message; });
     }, 180000);
     if (this.dividendRetryTimer.unref) this.dividendRetryTimer.unref();
   }
@@ -959,33 +1089,58 @@ class MarketService {
     };
   }
 
-  async testConnection() {
-    if (!this.configured()) return { ok: false, message: 'Add your Alpaca API Key ID and Secret Key first' };
+  async testConnection(actor) {
+    if (!this.configured()) {
+      this.audit('connection.test', { category: 'connection', actor: (actor && actor.name) || 'admin', actorId: (actor && actor.id) || null, target: 'Alpaca', summary: 'Connection test blocked — no API keys saved', result: 'error' });
+      return { ok: false, message: 'Add your Alpaca API Key ID and Secret Key first' };
+    }
+    const started = Date.now();
     try {
       const snap = await this.fetchSnapshots(['AAPL']);
       const q = this.snapshotForSymbol(snap.AAPL);
-      if (!q) return { ok: false, message: 'Alpaca replied but returned no AAPL price', status: this.status() };
+      if (!q) {
+        this.lastTestAt = Date.now(); this.lastTestOk = false;
+        this.audit('connection.test', { category: 'connection', actor: (actor && actor.name) || 'admin', actorId: (actor && actor.id) || null, target: 'Alpaca', summary: 'Alpaca replied but returned no AAPL price', result: 'error', durationMs: Date.now() - started });
+        return { ok: false, message: 'Alpaca replied but returned no AAPL price', status: this.status() };
+      }
       try { await this.apiGet('/v2/account', 'trading', 8000); } catch (e) { /* data-only keys are fine */ }
+      this.lastTestAt = Date.now(); this.lastTestOk = true;
+      this.audit('connection.test', { category: 'connection', actor: (actor && actor.name) || 'admin', actorId: (actor && actor.id) || null, target: 'Alpaca · ' + this.config.mode + ' / ' + String(this.config.feed).toUpperCase(), summary: 'Connection OK · AAPL $' + Number(q.price).toFixed(2) + ' · ' + (Date.now() - started) + ' ms', result: 'ok', durationMs: Date.now() - started });
       return { ok: true, price: q.price, rawPrice: q.price, symbol: 'AAPL', message: 'Alpaca connection OK', status: this.status() };
     } catch (e) {
+      this.lastTestAt = Date.now(); this.lastTestOk = false;
+      this.audit('connection.test', { category: 'connection', actor: (actor && actor.name) || 'admin', actorId: (actor && actor.id) || null, target: 'Alpaca', summary: 'Connection failed · ' + (e.message || 'unknown error'), result: 'error', durationMs: Date.now() - started });
       return { ok: false, message: e.message || 'Alpaca connection failed', status: this.status() };
     }
   }
 
-  async syncAll(manual) {
+  async syncAll(manual, actor) {
     if (this.syncRunning) return this.status();
-    if (!this.configured()) throw new Error('Add your Alpaca API keys first');
+    const who = (actor && actor.name) || (manual ? 'admin' : 'scheduler');
+    const whoId = (actor && actor.id) || null;
+    if (!this.configured()) {
+      this.audit('sync.failed', { category: 'sync', actor: who, actorId: whoId, target: 'Alpaca full sync', summary: 'No API keys saved', result: 'error' });
+      throw new Error('Add your Alpaca API keys first');
+    }
+    const started = Date.now();
     this.syncRunning = true;
     this.lastSyncError = '';
     try {
       const assets = await this.syncAssets();
       await this.seedFromAlpaca();
-      await this.syncDividends(manual);
+      await this.syncDividends(manual, null, true);
       this.lastSyncAt = Date.now();
       console.log('[market] Alpaca full sync complete · assets', assets, '· prices', this.seedOk, '· dividends', this.dividendFetched);
+      this.audit('sync.completed', {
+        category: 'sync', actor: who, actorId: whoId, target: 'Alpaca full sync', result: 'ok',
+        durationMs: Date.now() - started,
+        summary: 'Assets ' + (assets && assets.tracked ? assets.tracked : this.assetList().length) + ' · prices ' + this.seedOk + ' · dividends ' + this.dividendFetched,
+        changes: [{ field: 'assets', from: null, to: (assets && assets.tracked) || this.assetList().length }, { field: 'prices', from: null, to: this.seedOk }, { field: 'dividends', from: null, to: this.dividendFetched }]
+      });
     } catch (e) {
       this.lastSyncError = e.message;
       this.lastError = 'Alpaca sync failed: ' + e.message;
+      this.audit('sync.failed', { category: 'sync', actor: who, actorId: whoId, target: 'Alpaca full sync', summary: e.message, result: 'error', durationMs: Date.now() - started });
       throw e;
     } finally { this.syncRunning = false; }
     return this.status();
@@ -1017,24 +1172,31 @@ class MarketService {
     }).sort((a, b) => a.symbol.localeCompare(b.symbol));
   }
 
-  saveStockSettings(updates) {
+  saveStockSettings(updates, actor) {
     const db = this.getDb && this.getDb();
     if (!db) throw new Error('Database not ready');
     db.invest = db.invest || {};
     db.invest.paused = db.invest.paused || {};
     let changed = 0;
+    const changes = [];
     for (const u of (updates || [])) {
       if (!u || !u.ticker) continue;
       const stock = (db.stocks || []).find((s) => String(s.ticker).toUpperCase() === String(u.ticker).toUpperCase());
       if (!stock) continue;
+      const ticker = String(stock.ticker).toUpperCase();
       if (u.overridePct != null) {
         const n = Number(u.overridePct);
         if (!Number.isFinite(n)) throw new Error('Invalid override for ' + u.ticker);
-        stock.overridePct = Math.max(-90, Math.min(500, Math.round(n * 100) / 100));
+        const prev = Number(stock.overridePct) || 0;
+        const next = Math.max(-90, Math.min(500, Math.round(n * 100) / 100));
+        stock.overridePct = next;
+        if (next !== prev) changes.push({ ticker, field: 'overridePct', from: prev, to: next });
       }
       if (u.paused != null) {
+        const prevPaused = !!(stock.paused || (db.invest.paused && db.invest.paused[stock.ticker]));
         stock.paused = !!u.paused;
         db.invest.paused[stock.ticker] = !!u.paused;
+        if (!!u.paused !== prevPaused) changes.push({ ticker, field: 'active', from: !prevPaused, to: !u.paused });
       }
       changed++;
     }
@@ -1042,6 +1204,19 @@ class MarketService {
     this.repriceAll();
     this.barsCache.clear();
     this.persist();
+    if (changes.length) {
+      const overrides = changes.filter((c) => c.field === 'overridePct').length;
+      const toggles = changes.length - overrides;
+      const summary = [overrides ? overrides + ' override' + (overrides === 1 ? '' : 's') : '', toggles ? toggles + ' active toggle' + (toggles === 1 ? '' : 's') : ''].filter(Boolean).join(' · ');
+      this.audit('overrides.saved', {
+        category: 'override',
+        actor: (actor && actor.name) || 'admin',
+        actorId: (actor && actor.id) || null,
+        target: overrides ? 'Price overrides' : 'Trading status',
+        summary,
+        changes
+      });
+    }
     if (changed) {
       try { this.broadcast('change', { rev: null, source: 'market-overrides', at: Date.now() }); } catch (e) {}
     }
