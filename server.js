@@ -18,7 +18,7 @@ const STARTED = Date.now();
 const DATABASE_URL = process.env.DATABASE_URL || '';
 let email = null;
 try { email = require('./email'); } catch (e) { console.error('[email] module unavailable:', e.message); }
-const { MarketService } = require('./market');
+const { MarketService, DEFAULT_ASSETS, assetKey, displayTickerFor } = require('./market');
 const market = new MarketService({
   dataDir: DATA_DIR,
   getDb: () => store.db,
@@ -91,6 +91,33 @@ function pgPersist() {
   pool.query('insert into whalechat_state (id, rev, updated_at, db) values (1,$1,now(),$2::jsonb) on conflict (id) do update set rev=excluded.rev, updated_at=now(), db=excluded.db', [store.rev, payload])
     .catch(e => console.error('[db] postgres write failed:', e.message));
 }
+function ensureTradingAssets() {
+  const db = store.db;
+  if (!db) return false;
+  if (!Array.isArray(db.stocks)) db.stocks = [];
+  let changed = false;
+  db.stocks.forEach((s) => {
+    if (!s || !s.ticker) return;
+    if (!s.assetClass) { s.assetClass = 'us'; changed = true; }
+    if (!s.finnhubSymbol) { s.finnhubSymbol = String(s.ticker).toUpperCase(); changed = true; }
+    if (!s.displayTicker) { s.displayTicker = String(s.ticker).toUpperCase(); changed = true; }
+    if (!s.exchange) { s.exchange = s.assetClass === 'forex' ? 'OANDA' : s.assetClass === 'crypto' ? 'Binance' : 'US'; changed = true; }
+    if (!s.currency) { s.currency = s.assetClass === 'crypto' ? 'USDT' : 'USD'; changed = true; }
+  });
+  DEFAULT_ASSETS.forEach((a) => {
+    if (!db.stocks.some((s) => String(s.ticker).toUpperCase() === String(a.ticker).toUpperCase())) {
+      db.stocks.push(Object.assign({ id: 'st_' + String(a.ticker).toLowerCase().replace(/[^a-z0-9]/g, ''), price: 0, prevClose: 0, div: 0, paused: false, custom: false, createdAt: Date.now() }, a));
+      changed = true;
+    }
+  });
+  if (changed) {
+    store.rev += 1; store.updatedAt = Date.now(); persistNow();
+    try { broadcast('change', { rev: store.rev, source: 'asset-migration', at: store.updatedAt }); } catch (e) {}
+    console.log('[market] asset catalogue migrated ·', db.stocks.length, 'assets');
+  }
+  return changed;
+}
+
 /* Durable market-feed config: the Finnhub key lives in Postgres (not in the
    synced app state), so a redeploy cannot silently drop Hybrid mode. */
 async function ensureMarketConfigTable() {
@@ -329,6 +356,7 @@ async function api(req, res, pathname, query) {
     const body = await readBody(req);
     if (!body || !body.db || !Array.isArray(body.db.users)) return json(res, 400, { ok: false, error: 'invalid_db' });
     store.db = body.db; store.rev = Math.max(1, Number(body.rev) || 1); store.updatedAt = Date.now();
+    ensureTradingAssets();
     persistNow(); console.log('[db] initialised · users:', store.db.users.length);
     return json(res, 200, { ok: true, rev: store.rev });
   }
@@ -337,6 +365,9 @@ async function api(req, res, pathname, query) {
     const body = await readBody(req);
     const result = applyOps(store.db, Array.isArray(body.ops) ? body.ops : []);
     const pushes = result.pushes;
+    if (Array.isArray(body.ops) && body.ops.some((o) => o && o.col === 'stocks')) {
+      setImmediate(() => { try { market.onAssetsChanged(); } catch (e) { console.error('[market] asset refresh:', e.message); } });
+    }
     store.rev += 1; store.updatedAt = Date.now(); persist();
     broadcast('change', { rev: store.rev, source: body.clientId || null, at: store.updatedAt });
     if (pushes.length) setImmediate(() => dispatchPushes(pushes, store.db).catch(() => {}));
@@ -387,6 +418,24 @@ async function api(req, res, pathname, query) {
     saveMarketConfig(market.rawConfig()).then((ok) => { if (ok) console.log('[market] config persisted to Postgres'); });
     console.log('[market] config saved by @' + admin.username + ' · mode', saved.mode, '· refresh', saved.refreshSec + 's', '· key', saved.hasKey ? 'set' : 'cleared');
     return json(res, 200, saved);
+  }
+  if (pathname === '/api/market/search' && req.method === 'GET') {
+    const adminId = query.get('adminId') || '';
+    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === adminId && u.role === 'admin') : null;
+    if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
+    try {
+      const results = await market.searchAssets(query.get('q') || '', query.get('class') || 'us');
+      return json(res, 200, { ok: true, results });
+    } catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+  if (pathname === '/api/market/assets/add' && req.method === 'POST') {
+    const body = await readBody(req);
+    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === body.adminId && u.role === 'admin') : null;
+    if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
+    try {
+      const out = await market.addAsset(body.class || body.assetClass, body.symbol);
+      return json(res, 200, Object.assign({ ok: true }, out));
+    } catch (e) { return json(res, 400, { ok: false, error: e.message }); }
   }
   if (pathname === '/api/market/dividends/sync' && req.method === 'POST') {
     const body = await readBody(req);
@@ -591,6 +640,7 @@ server.keepAliveTimeout = 65000;
 server.headersTimeout = 70000;
 (async () => {
   await initStorage();
+  ensureTradingAssets();
   const durableMarket = await loadMarketConfig();
   if (durableMarket) {
     market.hydrateConfig(durableMarket);
