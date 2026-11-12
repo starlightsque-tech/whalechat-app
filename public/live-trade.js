@@ -14,11 +14,44 @@ const LT = {
     { label: '5 min', m: 5 }, { label: '15 min', m: 15 }, { label: '1 hour', m: 60 },
     { label: '4 hours', m: 240 }, { label: '1 day', m: 1440 }
   ],
+  DIV_FALLBACK: {
+    AAPL: 0.45, TSLA: 0, NVDA: 0.03, COIN: 0, MSTR: 0, MARA: 0, KO: 3.00, JPM: 2.20,
+    NKE: 1.80, UNH: 1.50, AVGO: 1.20, WMT: 1.00, DIS: 0.80, V: 0.75, UBER: 0, AMZN: 0,
+    MSFT: 0.70, GOOGL: 0.45, META: 0.35, NFLX: 0, AMD: 0, PEP: 3.40, PLTR: 0, ARM: 0,
+    SHOP: 0, HOOD: 0, LLY: 0.70, XOM: 3.30, SMCI: 0, RIVN: 0
+  },
+  dividendYield(ticker) {
+    const inv = this.cfg();
+    const t = String(ticker || '').toUpperCase();
+    const ov = inv.dividendOverrides && inv.dividendOverrides[t];
+    if (ov != null && ov !== '' && Number.isFinite(Number(ov))) return Math.max(0, Math.min(100, Number(ov)));
+    const auto = inv.dividendYields && inv.dividendYields[t];
+    if (auto != null && Number.isFinite(Number(auto))) return Math.max(0, Math.min(100, Number(auto)));
+    return Number(this.DIV_FALLBACK[t]) || 0;
+  },
+  dividendBonusFor(ticker, stakeWC, minutes) {
+    const y = this.dividendYield(ticker);
+    const stake = Number(stakeWC) || 0, mins = Number(minutes) || 0;
+    if (!(y > 0) || !(stake > 0) || !(mins > 0)) return 0;
+    const mult = Math.max(0, Number(this.cfg().dividendMultiplier) || 1);
+    let bonus = stake * (y / 100 / 365) * mult * (mins / 1440);
+    if (bonus > 0 && bonus < 0.01) bonus = 0.01;
+    return Math.round(bonus * 100) / 100;
+  },
+  dividendBadge(ticker) {
+    const y = this.dividendYield(ticker);
+    if (!(y > 0)) return '';
+    return `<span class="div-badge">Div ${y.toFixed(2)}%</span>`;
+  },
 
   cfg() {
     if (!DB) return { leverage: 5 };
     if (!DB.invest) DB.invest = { feePct: 0.5, paused: {}, seededAt: Date.now() };
     if (!DB.invest.leverage) DB.invest.leverage = 5;
+    if (!(Number(DB.invest.dividendMultiplier) > 0)) DB.invest.dividendMultiplier = 1;
+    if (!DB.invest.dividendPayoutMode) DB.invest.dividendPayoutMode = 'all';
+    if (!DB.invest.dividendYields || typeof DB.invest.dividendYields !== 'object') DB.invest.dividendYields = {};
+    if (!DB.invest.dividendOverrides || typeof DB.invest.dividendOverrides !== 'object') DB.invest.dividendOverrides = {};
     return DB.invest;
   },
   leverage() { return Math.min(20, Math.max(1, Number(this.cfg().leverage) || 1)); },
@@ -134,6 +167,10 @@ const LT = {
 
     const fee = Math.round(capital * this.feePct() / 100 * 100) / 100;
     const minutes = Math.max(1, Math.min(7 * 24 * 60, Number(o.minutes) || 60));
+    const durationMeta = this.DURATIONS.find(d => d.m === minutes);
+    const durationText = durationMeta ? durationMeta.label : minutes + ' min';
+    const divYield = this.dividendYield(ticker);
+    const divBonus = this.dividendBonusFor(ticker, capital, minutes);
     const direction = side === 'short' ? 'FALL' : 'RISE';
     const tpPrice = Math.max(0, Number(o.tpPrice) || 0);
     const slPrice = Math.max(0, Number(o.slPrice) || 0);
@@ -158,6 +195,8 @@ const LT = {
       trailingStopPrice: trailPct > 0 ? trailStop : null,
       tpPct: Math.max(0, Math.min(500, Number(o.tpPct) || 0)),
       slPct: Math.max(0, Math.min(100, Number(o.slPct) || 0)),
+      durationMinutes: minutes, durationLabel: durationText,
+      dividendYield: divYield, dividendBonus: divBonus, dividendPaid: false,
       expiresAt: Date.now() + minutes * 60000,
       status: 'Open', createdAt: Date.now(), feeCoins: fee
     };
@@ -166,7 +205,7 @@ const LT = {
     tx(u.id, 'trade-open', `${direction === 'FALL' ? 'Fall' : 'Rise'} ${ticker} · ${coins(capital)} WC`, -capital - fee,
       { tradeId: trade.id, leverage: trade.leverage, entry: q.price, direction });
     notify(u.id, 'Trade opened',
-      `${direction === 'FALL' ? 'Fall' : 'Rise'} ${ticker} with ${coins(capital)} WC at ${usd(q.price)}${tpPrice ? ' · TP ' + usd(tpPrice) : ''}${trailPct ? ' · trailing ' + trailPct + '%' : (slPrice ? ' · SL ' + usd(slPrice) : '')} — closes in ${minutes} min.`,
+      `${direction === 'FALL' ? 'Fall' : 'Rise'} ${ticker} with ${coins(capital)} WC at ${usd(q.price)}${tpPrice ? ' · TP ' + usd(tpPrice) : ''}${trailPct ? ' · trailing ' + trailPct + '%' : (slPrice ? ' · SL ' + usd(slPrice) : '')} — closes in ${minutes} min.${divBonus > 0 ? ' Dividend on timer: +' + coins(divBonus) + ' WC.' : ''}`,
       '#/invest/orders', 'trend');
     persist(); toast('Trade started — tracking live', 'ok'); render();
     try { window.dispatchEvent(new CustomEvent('wc:trade-opened', { detail: { ticker, id: trade.id } })); } catch (e) {}
@@ -181,6 +220,29 @@ const LT = {
     const p = this.calc(t);
     const payout = p.totalLoss ? 0 : p.payoutCoins;
     u.balance = Math.round((u.balance + payout) * 100) / 100;
+
+    let dividendCoins = 0;
+    if (reason === 'Time limit reached' && !t.dividendPaid) {
+      const mode = this.cfg().dividendPayoutMode || 'all';
+      const minutes = Number(t.durationMinutes) || 0;
+      let bonus = Number(t.dividendBonus);
+      if (!(bonus > 0)) bonus = this.dividendBonusFor(t.ticker, t.capitalCoins, minutes);
+      if (mode === 'wins' && p.pnlCoins <= 0) bonus = 0;
+      if (bonus > 0) {
+        dividendCoins = Math.round(bonus * 100) / 100;
+        u.balance = Math.round((u.balance + dividendCoins) * 100) / 100;
+        t.dividendPaid = true;
+        t.dividendCoins = dividendCoins;
+        t.dividendPaidAt = Date.now();
+        const dlabel = t.durationLabel || (this.DURATIONS.find(d => d.m === minutes) || {}).label || minutes + ' min';
+        tx(u.id, 'dividend', `Dividend Bonus - ${t.ticker} (${dlabel})`, dividendCoins,
+          { tradeId: t.id, annualYield: t.dividendYield, multiplier: this.cfg().dividendMultiplier });
+        notify(u.id, 'Dividend bonus credited',
+          `+${coins(dividendCoins)} WC dividend for ${t.ticker} (${dlabel}).`, '#/invest/orders', 'gift');
+      }
+    }
+    t.totalPayoutCoins = Math.round((payout + dividendCoins) * 100) / 100;
+
     t.status = 'Completed';
     t.closedAt = Date.now();
     t.closeReason = reason;
@@ -292,6 +354,7 @@ const LT = {
           ${ic('down', 13)} Take loss ${p.pnlCoins < 0 ? '(−' + coins(Math.abs(p.pnlCoins)) + ')' : ''}</button>
       </div>
       <div class="tiny muted center" style="margin-top:6px">Returns ${coins(p.payoutCoins)} WC if closed now</div>
+      ${Number(t.dividendBonus) > 0 ? `<div class="tiny center lt-div-line">+${coins(t.dividendBonus)} WC dividend at timer</div>` : ''}
     </div>`;
   },
 
@@ -309,6 +372,7 @@ const LT = {
         <div class="tiny ${win ? 'up' : lost ? 'down' : 'muted'}">
           ${lost ? 'Total loss — nothing returned' : (win ? '+' : '') + coins(pnl) + ' WC P/L'} ·
           returned ${coins(t.payoutCoins || 0)} WC</div>
+        ${Number(t.dividendCoins) > 0 ? `<div class="tiny up">+${coins(t.dividendCoins)} WC dividend credited</div>` : ''}
       </div>
       <span class="badge ${win ? 'badge-success' : lost ? 'badge-danger' : 'badge-warn'}">
         ${lost ? 'Lost' : win ? 'Profit' : 'Flat'}</span></div>`;
@@ -471,6 +535,7 @@ const LT = {
       <div class="tiny muted" id="ltTpslHint" style="margin:-2px 0 10px;line-height:1.55">Rise: TP above entry, SL below. Fall: TP below entry, SL above. WC mode targets a Whale Coin profit/loss amount. Leave blank to trade to duration only.</div>
       <div class="field"><label class="label">Trade duration</label>
         <select class="input" id="ltDuration">${this.DURATIONS.map(d => `<option value="${d.m}" ${d.m === 60 ? 'selected' : ''}>${d.label}</option>`).join('')}</select></div>
+      <div class="lt-div-est" id="ltDivEst">Dividend bonus · calculating…</div>
       <button class="btn btn-primary" data-act="lt-start" data-t="${esc(ticker)}" style="width:100%">
         ${ic('play', 15)} Buy</button>
       <div class="tiny muted center mt6">${ic('lock', 11)} Capital is held while the trade runs · ${this.feePct()}% fee · it closes by itself at your limit or when time is up</div>
@@ -535,6 +600,13 @@ const LT = {
   .lt-lvl.tp i{background:#22c55e} .lt-lvl.sl i{background:#ef4444}
   .lt-lvl b{color:var(--text);font-variant-numeric:tabular-nums}
   .lt-lvl small{font-size:9px;color:var(--muted-2);font-weight:600}
+  .div-badge{display:inline-flex;align-items:center;font-size:9px;font-weight:700;color:#ffc861;
+    border:1px solid rgba(255,200,97,.28);background:rgba(255,200,97,.08);border-radius:99px;padding:1px 5px;white-space:nowrap}
+  .lt-div-est{margin:-2px 0 10px;padding:8px 10px;border-radius:9px;font-size:11px;line-height:1.5;
+    color:var(--success);background:rgba(34,197,94,.06);border:1px solid rgba(34,197,94,.18)}
+  .lt-div-est.off{color:var(--muted);background:var(--surface-2);border-color:var(--border)}
+  .lt-div-line{color:var(--gold);margin-top:3px}
+  .lt-hist-levels .div{color:var(--gold)}
   .lt-edit{margin-left:auto;border:1px solid var(--border);background:var(--surface);
     color:var(--accent);border-radius:8px;font-size:10px;font-weight:700;padding:3px 6px;cursor:pointer}
   .lt-lvl-head{display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:13px}
@@ -1144,7 +1216,8 @@ LT.stockHistory = function (ticker) {
           <div class="tiny muted">${coins(t.capitalCoins)} WC · ${usd(t.entryPrice)} → ${usd(t.exitPrice || 0)} · ${dateLabel(t.closedAt)}</div>
           <div class="lt-hist-levels">${Number(t.takeProfitPrice) > 0 ? `<span class="tp">TP ${usd(t.takeProfitPrice)}${Number(t.takeProfitWc) > 0 ? ' · ' + Number(t.takeProfitWc) + ' WC' : ''}</span>` : '<span>TP —</span>'}
             ${Number(t.stopLossPrice) > 0 ? `<span class="sl">${t.trailingActive ? 'TSL' : 'SL'} ${usd(t.stopLossPrice)}${Number(t.stopLossWc) > 0 ? ' · ' + Number(t.stopLossWc) + ' WC' : ''}</span>` : '<span>SL —</span>'}
-            ${t.trailingActive ? `<span class="trail">trail ${Number(t.trailingStopPct).toFixed(1)}%</span>` : ''}</div>
+            ${t.trailingActive ? `<span class="trail">trail ${Number(t.trailingStopPct).toFixed(1)}%</span>` : ''}
+            ${Number(t.dividendCoins) > 0 ? `<span class="div">+${Number(t.dividendCoins)} WC div</span>` : ''}</div>
         </div>
         <span class="tiny ${(t.pnlCoins || 0) >= 0 ? 'up' : 'down'}">${(t.pnlCoins || 0) >= 0 ? '+' : '−'}${coins(Math.abs(t.pnlCoins || 0))} WC</span>
       </div>`).join('')}
@@ -1599,6 +1672,10 @@ App.ltSide = function (id, ds) {
   document.querySelectorAll('.lt-side-btn').forEach(b => b.dataset.side && b.classList.toggle('on', b.getAttribute('data-side') === ds.side));
   LT.previewTargets();
 };
+if (typeof INV !== 'undefined') {
+  INV.dividendBadge = (t) => LT.dividendBadge(t);
+  INV.dividendYield = (t) => LT.dividendYield(t);
+}
 LT.levels = { tp: 'pct', sl: 'pct' };
 
 LT.previewTargets = function () {
@@ -1625,6 +1702,26 @@ LT.previewTargets = function () {
   if (slEl) slEl.textContent = trailOn
     ? (trailStop > 0 ? 'Starts ' + usd(trailStop) + ' · trails ' + trailPct + '%' : 'Trailing stop —')
     : (sl > 0 ? 'Target ' + usd(sl) + (LT.levels.sl === 'wc' ? ' · -' + Math.abs(slRaw) + ' WC' : '') : 'Target —');
+};
+
+LT.updateDividendEstimate = function () {
+  const el = document.getElementById('ltDivEst');
+  if (!el) return;
+  const m = (location.hash || '').match(/^#\/invest\/stock\/([A-Z0-9.]+)/i);
+  if (!m) return;
+  const ticker = m[1].toUpperCase();
+  const y = LT.dividendYield(ticker);
+  const cap = Number((document.getElementById('ltCapital') || {}).value) || 0;
+  const minutes = Number((document.getElementById('ltDuration') || {}).value) || 60;
+  const label = (LT.DURATIONS.find(d => d.m === minutes) || {}).label || minutes + ' min';
+  if (!(y > 0)) { el.innerHTML = 'No dividend on this stock'; el.classList.add('off'); return; }
+  el.classList.remove('off');
+  if (!(cap > 0)) {
+    el.innerHTML = `Yield <b>${y.toFixed(2)}%</b> · enter a stake to estimate the ${label} bonus`;
+    return;
+  }
+  const bonus = LT.dividendBonusFor(ticker, cap, minutes);
+  el.innerHTML = `<b>+${coins(bonus)} WC</b> dividend bonus · yield ${y.toFixed(2)}% · ${label} · paid when the timer completes`;
 };
 
 App.ltMode = function (id, ds) {
@@ -1901,7 +1998,11 @@ function ltMountStock() {
   });
   const trail = document.getElementById('ltTrail');
   if (trail) trail.addEventListener('change', LT.previewTargets);
+  const dur = document.getElementById('ltDuration');
+  if (dur) dur.addEventListener('change', LT.updateDividendEstimate);
+  if (cap) cap.addEventListener('input', LT.updateDividendEstimate);
   LT.previewTargets();
+  LT.updateDividendEstimate();
 }
 
 /* charts on every holding row (market page already charts every stock) */
