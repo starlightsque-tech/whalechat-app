@@ -1,6 +1,6 @@
 {
   "name": "whalechat",
-  "version": "3.16.0",
+  "version": "3.17.0",
   "private": true,
   "description": "WhaleChat \u2014 chat, marketplace and wallet. Web app + sync server + Android/iOS shells.",
   "main": "server.js",
@@ -17,6 +17,7 @@
   "dependencies": {
     "web-push": "^3.6.7",
     "nodemailer": "^6.9.14",
-    "pg": "^8.11.5"
+    "pg": "^8.11.5",
+    "ws": "^8.18.0"
   }
 }
