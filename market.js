@@ -441,6 +441,7 @@ class MarketService {
       wsConnected: this.wsConnected,
       wsTicks: this.wsTicks,
       lastRealAt: this.lastRealAt || null,
+      realTickers: Object.keys(this.lastReal).length,
       lastTickAt: this.lastTickAt || null,
       lastWsTickAt: this.lastWsTickAt || null,
       rateLimitedUntil: this.rateLimitedUntil > Date.now() ? this.rateLimitedUntil : null,
