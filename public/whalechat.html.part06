@@ -1,411 +1,4 @@
-eady sold — refund unavailable', 'err');
-  DB.refunds = DB.refunds || [];
-  DB.refunds.unshift({
-    id: uid('rfd'), purchaseId: b.id, vendorId: v.id, companyProductId: b.companyProductId,
-    inventoryId: b.inventoryId, name: b.name, qty: b.qty, coins: b.totalCoins, usd: b.totalUsd,
-    reason: String(reason).slice(0, 400), status: 'pending', createdAt: Date.now()
-  });
-  notify('usr_admin', 'Refund request', `@${v.username} requested a refund for ${b.qty} × ${b.name} (${coins(b.totalCoins)} WC).`, '#/admin/refunds', 'refresh');
-  notify(u.id, 'Refund requested', 'Your request is pending admin review.', '#/vendor/history', 'refresh');
-  sync(); closeModal(); toast('Refund request submitted', 'ok'); render();
-};
-App.cancelRefund = async function (refundId) {
-  const r = (DB.refunds || []).find(x => x.id === refundId);
-  if (!r) return;
-  if (!await confirmDialog({ title: 'Cancel refund request?', body: 'You can submit a new request later.', danger: true, ok: 'Cancel request' })) return;
-  DB.refunds = DB.refunds.filter(x => x.id !== refundId);
-  sync(); toast('Refund request cancelled', 'ok'); render();
-};
-/* =========================================================================
-   Wallet, deposits, withdrawals, referrals, profile, settings, notifications
-   ========================================================================= */
-
-/* ---------------- bonuses / tasks ---------------- */
-async function bonusCodeHash(code) {
-  const raw = 'bonus::v1::' + String(code || '').trim().toUpperCase();
-  try {
-    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(raw));
-    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
-  } catch (e) { return 'fb' + fnv(raw); }
-}
-
-VIEWS.bonuses = function () {
-  const u = me();
-  const list = (DB.bonuses || []).filter(b => b.active !== false);
-  const claims = DB.bonusClaims || [];
-  const claimed = new Set(claims.filter(c => c.userId === u.id && c.status === 'claimed').map(c => c.bonusId));
-  return `<div class="page-head"><div><button class="btn btn-ghost btn-sm mb10" data-nav="#/profile">${ic('back', 14)} Account</button>
-      <h1>Check Bonuses</h1><p>Complete a task, get your code from support, and redeem your reward.</p></div></div>
-    ${list.length ? `<div class="col gap12">${list.map(b => {
-      const done = claimed.has(b.id);
-      const coinsValue = Math.round((Number(b.rewardUsd) || 0) / COIN_USD * 100) / 100;
-      return `<div class="card bonus-card">
-        <div class="between gap10 wrap" style="align-items:flex-start">
-          <div class="grow" style="min-width:0">
-            <div class="row gap8" style="align-items:center;flex-wrap:wrap">
-              <h3 style="font-size:16px">${esc(b.title)}</h3>
-              <span class="badge ${done ? 'badge-success' : 'badge-accent'}">${done ? 'Claimed' : 'Available'}</span>
-            </div>
-            <p class="small muted mt8" style="line-height:1.65">${esc(b.description || '')}</p>
-            ${b.taskUrl ? `<a class="btn btn-ghost btn-sm mt12" href="${esc(b.taskUrl)}" target="_blank" rel="noopener">${ic('link', 14)} ${esc(b.taskLabel || 'Do the task')}</a>` : ''}
-          </div>
-          <div style="text-align:right;flex:none">
-            <div style="font-size:24px;font-weight:800;letter-spacing:-.02em;color:var(--accent)">${usd(b.rewardUsd)}</div>
-            <div class="tiny muted">${coins(coinsValue)} WC</div>
-          </div>
-        </div>
-        <div class="row gap8 mt14 wrap">
-          ${done
-            ? `<span class="badge badge-success">${ic('check', 12)} Reward credited</span>`
-            : `<button class="btn btn-primary btn-sm" data-act="claim-bonus" data-id="${b.id}">${ic('gift', 14)} Claim</button>`}
-          ${b.taskUrl ? `<span class="tiny muted" style="align-self:center">Complete the task first, then contact support for your code.</span>` : ''}
-        </div>
-      </div>`;
-    }).join('')}</div>` : `<div class="empty"><div class="ic">${ic('gift', 26)}</div><h3>No bonuses right now</h3><p>New tasks will appear here. Check back soon.</p></div>`}
-    <div class="panel mt16" style="padding:12px 14px"><div class="tiny muted" style="line-height:1.7">
-      <b style="color:var(--text)">How it works:</b> complete the task → contact support → receive a one-time code → enter it under Claim. Codes are single-use and tied to your account.
-    </div></div>`;
-};
-
-App.claimBonus = function (id) {
-  const b = (DB.bonuses || []).find(x => x.id === id);
-  if (!b) return;
-  openModal(modalShell('Claim “' + b.title + '”', `
-    <div class="panel" style="padding:13px">
-      <div class="between"><span class="tiny muted">Reward</span><span class="small" style="font-weight:700;color:var(--accent)">${usd(b.rewardUsd)}</span></div>
-    </div>
-    <div class="field mt16"><label class="label">Redeem code</label>
-      <input class="input" id="bonCode" placeholder="Enter your code" autocomplete="off" style="text-transform:uppercase;letter-spacing:.08em;font-weight:700"/>
-      <div class="help">To get your code, please complete the task and contact Support.</div></div>
-    <div class="tiny muted" style="line-height:1.6">Each code can be used once and only on the account it was issued to.</div>`,
-    `<button class="btn btn-ghost" data-close>Cancel</button>
-     <button class="btn btn-primary" data-act="claim-bonus-submit" data-id="${b.id}">${ic('check', 15)} Submit</button>`), { width: '460px' });
-  setTimeout(() => { const i = document.getElementById('bonCode'); if (i) i.focus(); }, 90);
-};
-
-App.claimBonusSubmit = async function (id) {
-  const el = document.getElementById('bonCode');
-  const code = ((el && el.value) || '').trim().toUpperCase();
-  if (!code) return toast('Enter your redeem code', 'err');
-  const btn = document.querySelector('[data-act="claim-bonus-submit"]');
-  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Checking…'; }
-  if (Remote.enabled) {
-    try {
-      const res = await fetch(Remote.url('/api/bonus/claim'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ userId: me().id, bonusId: id, code }) });
-      const d = await res.json().catch(() => null);
-      if (res.ok && d && d.ok) {
-        closeModal();
-        toast('Bonus Credited Successfully! 🎁', 'ok');
-        await Remote.refresh(true);
-        render();
-        return;
-      }
-      if (btn) { btn.disabled = false; btn.innerHTML = 'Submit'; }
-      return toast((d && (d.message || d.error)) || 'Invalid or already used code', 'err');
-    } catch (e) {}
-  }
-  // local / offline fallback
-  const hash = await bonusCodeHash(code);
-  const u = me();
-  const claim = (DB.bonusClaims || []).find(c => c.codeHash === hash && c.userId === u.id && c.bonusId === id && c.status !== 'claimed');
-  if (!claim) { if (btn) { btn.disabled = false; btn.innerHTML = 'Submit'; } return toast('Invalid or already used code', 'err'); }
-  const b = (DB.bonuses || []).find(x => x.id === id);
-  if (!b) return toast('This bonus no longer exists', 'err');
-  claim.status = 'claimed'; claim.claimedAt = Date.now();
-  const coinsAmt = Math.round((Number(b.rewardUsd) || 0) / COIN_USD * 100) / 100;
-  u.balance = Math.round((Number(u.balance || 0) + coinsAmt) * 100) / 100;
-  u.totalEarnings = Math.round((Number(u.totalEarnings || 0) + coinsAmt) * 100) / 100;
-  tx(u.id, 'bonus', 'Task bonus · ' + b.title, coinsAmt, { bonusId: b.id, claimId: claim.id });
-  notify(u.id, 'Bonus credited 🎁', b.title + ' · ' + coins(coinsAmt) + ' WC added to your balance.', '#/bonuses', 'gift');
-  sync(); closeModal(); toast('Bonus Credited Successfully! 🎁', 'ok'); render();
-};
-
-VIEWS.wallet = function () {
-  const u = me();
-  const txs = DB.txs.filter(t => t.userId === u.id);
-  const pendingDep = DB.deposits.filter(d => d.userId === u.id && d.status === 'pending');
-  const pendingWd = DB.withdrawals.filter(w => w.userId === u.id && w.status === 'pending');
-  return `<div class="page-head"><div><h1>Wallet</h1><p>Your Whale Coin balance, deposits and withdrawals.</p></div>
-      <a href="#/referrals" class="btn btn-ghost btn-sm">${ic('gift', 15)} Invite & earn</a></div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px" class="wallet-grid">
-      <div class="wallet-card">
-        <div class="between"><div class="tiny" style="opacity:.8;letter-spacing:.08em;font-weight:700">WHALE COIN BALANCE</div>${ic('wallet', 20)}</div>
-        <div class="row" style="gap:8px;align-items:baseline;margin-top:8px"><span class="wallet-bal">${coins(u.balance)}</span><span class="small" style="opacity:.8">WC</span></div>
-        <div class="small" style="opacity:.8;margin-top:4px">≈ ${usd(coinsToUsd(u.balance))} USD <span style="opacity:.6">· 1 WC = $0.50</span></div>
-        <div class="wallet-actions">
-          <a href="#/deposit" class="btn">${ic('plus', 14)} Deposit</a>
-          <a href="#/withdraw" class="btn">${ic('download', 14)} Withdraw</a>
-          <a href="#/referrals" class="btn">${ic('gift', 14)} Invite</a>
-        </div>
-      </div>
-      <div class="grid-kpi" style="grid-template-columns:1fr 1fr">
-        ${[['Total deposits', coins(u.totalDeposits || 0) + ' WC', 'wallet'], ['Total withdrawals', coins(u.totalWithdrawals || 0) + ' WC', 'download'],
-           ['Total earnings', coins(u.totalEarnings || 0) + ' WC', 'trend'], ['Referral code', u.referralCode, 'gift']]
-          .map(([k, v, i]) => `<div class="kpi"><div class="ic">${ic(i, 15)}</div><div class="v" style="font-size:17px">${v}</div><div class="k">${k}</div></div>`).join('')}
-      </div>
-    </div>
-    ${pendingDep.length || pendingWd.length ? `<div class="card mt16">
-      <div class="section-title"><h3>Pending requests</h3><span class="badge badge-warn">${pendingDep.length + pendingWd.length}</span></div>
-      ${pendingDep.map(d => `<div class="between" style="padding:9px 0;border-bottom:1px dashed var(--border)"><div><div class="small" style="font-weight:600">Deposit · ${coins(d.coins)} WC</div><div class="tiny muted">${esc(d.methodName || d.method)} · ${timeAgo(d.createdAt)} ago</div></div>${statusBadge('pending')}</div>`).join('')}
-      ${pendingWd.map(w => `<div class="between" style="padding:9px 0;border-bottom:1px dashed var(--border)"><div><div class="small" style="font-weight:600">Withdrawal · ${coins(w.coins)} WC</div><div class="tiny muted">${esc(w.network)} · ${esc(w.address.slice(0, 10))}… · ${timeAgo(w.createdAt)} ago</div></div>${statusBadge('pending')}</div>`).join('')}
-    </div>` : ''}
-    <div class="card mt16">
-      <div class="section-title"><h3>Activity</h3><span class="tiny muted">${txs.length} transactions</span></div>
-      ${txs.length ? `<div class="list">${txs.slice(0, 40).map(t => {
-        const pos = t.coins >= 0;
-        const iconMap = { deposit: 'wallet', withdrawal: 'download', purchase: 'bag', sale: 'trend', stock: 'box', referral: 'gift', refund: 'refresh' };
-        return `<div class="list-item">
-          <div style="width:34px;height:34px;border-radius:10px;background:${pos ? 'rgba(47,214,166,.12)' : 'rgba(255,95,116,.1)'};color:${pos ? 'var(--success)' : 'var(--danger)'};display:flex;align-items:center;justify-content:center;flex:none">${ic(iconMap[t.type] || 'wallet', 15)}</div>
-          <div class="grow" style="min-width:0"><div class="small" style="font-weight:600">${esc(t.label)}</div><div class="tiny muted">${timeAgo(t.createdAt)} ago · ${dateLabel(t.createdAt)}</div></div>
-          <div style="text-align:right"><div class="small" style="font-weight:700;color:${pos ? 'var(--success)' : 'var(--text)'}">${pos ? '+' : ''}${coins(t.coins)}</div><div class="tiny muted">WC</div></div>
-        </div>`;
-      }).join('')}</div>` : `<div class="empty" style="padding:26px"><p>No wallet activity yet. Deposit Whale Coin to get started.</p><a href="#/deposit" class="btn btn-primary">Deposit now</a></div>`}
-    </div>
-    <style>@media(max-width:860px){.wallet-grid{grid-template-columns:1fr!important}}</style>`;
-};
-
-/* ---------------- deposit ---------------- */
-let DEP_METHOD = null;
-VIEWS.deposit = function () {
-  const u = me();
-  const s = DB.settings;
-  const crypto = s.crypto || [], banks = s.banks || [];
-  return `<div class="page-head"><div><button class="btn btn-ghost btn-sm mb10" data-nav="#/wallet">${ic('back', 14)} Wallet</button>
-      <h1>Deposit Whale Coin</h1><p>Fund your wallet by crypto or bank transfer. Our team reviews each deposit.</p></div></div>
-    <div style="display:grid;grid-template-columns:1fr 360px;gap:20px" class="cart-grid">
-      <div class="card">
-        <div class="field"><label class="label">Amount in USD</label>
-          <div class="input-wrap"><span class="ic">$</span><input class="input" id="depUsd" type="number" min="1" step="1" placeholder="5.00" inputmode="decimal"/></div>
-          <div class="help">Minimum $1. You will receive <b id="depCoins" style="color:var(--accent)">0 WC</b> at 1 WC = $0.50.</div></div>
-        <div class="chip-row mb16">${[5, 10, 25, 50, 100].map(v => `<button class="chip" data-act="dep-quick" data-id="${v}">$${v} → ${v / COIN_USD} WC</button>`).join('')}</div>
-        <div class="label mb10">Payment method</div>
-        <div class="tabs mb16"><button class="tab on" data-depmode="crypto">${ic('wallet', 13)} Crypto</button><button class="tab" data-depmode="bank">${ic('store', 13)} Bank transfer</button></div>
-        <div id="depCrypto">
-          ${crypto.length ? `<div class="col gap8">${crypto.map((m, i) => `<label class="list-item" style="cursor:pointer;align-items:flex-start">
-            <input type="radio" name="depm" value="${m.id}" ${i === 0 ? 'checked' : ''} style="margin-top:3px;accent-color:var(--accent)"/>
-            <div class="grow"><div class="small" style="font-weight:650">${esc(m.name)}</div>
-              <div class="tiny muted" style="word-break:break-all;margin-top:3px">${esc(m.address)}</div>
-              ${m.note ? `<div class="tiny" style="color:var(--warn);margin-top:4px">${esc(m.note)}</div>` : ''}
-              ${m.qr ? `<div class="mt10"><img class="qr-thumb" src="${m.qr}" alt="Payment QR" data-act="view-qr" data-kind="crypto" data-id="${m.id}"/><div class="tiny muted mt6">${ic('grid', 11)} Scan with your exchange wallet</div></div>` : ''}</div>
-            <button type="button" class="btn-icon" data-act="copy" data-id="${esc(m.address)}" style="width:30px;height:30px">${ic('copy', 13)}</button></label>`).join('')}</div>`
-            : `<div class="empty" style="padding:18px"><p>No crypto methods configured yet. Contact support.</p></div>`}
-        </div>
-        <div id="depBank" class="hidden">
-          ${banks.length ? banks.map((b, i) => `<div class="panel" style="padding:13px;margin-bottom:8px">
-            <div class="between mb10"><div class="small" style="font-weight:650">${esc(b.bankName)}</div>${i === 0 ? '<span class="badge badge-accent">Recommended</span>' : ''}</div>
-            <div class="kv"><span class="k">Account name</span><span class="v">${esc(b.accountName)}</span></div>
-            <div class="kv"><span class="k">Account number</span><span class="v">${esc(b.accountNumber)} <button class="btn-icon" data-act="copy" data-id="${esc(b.accountNumber)}" style="width:24px;height:24px;vertical-align:middle">${ic('copy', 11)}</button></span></div>
-            <div class="kv"><span class="k">SWIFT / BIC</span><span class="v">${esc(b.swift || '—')}</span></div>
-            <div class="kv"><span class="k">Routing</span><span class="v">${esc(b.routing || '—')}</span></div>
-            <div class="kv"><span class="k">Country</span><span class="v">${esc(b.country || '—')}</span></div>
-            ${b.note ? `<div class="tiny mt6" style="color:var(--warn)">${esc(b.note)}</div>` : ''}
-            ${b.qr ? `<div class="mt10"><img class="qr-thumb" src="${b.qr}" alt="Payment QR" data-act="view-qr" data-kind="bank" data-id="${b.id}"/><div class="tiny muted mt6">${ic('grid', 11)} Scan with your banking app</div></div>` : ''}
-          </div>`).join('') : `<div class="empty" style="padding:18px"><p>No bank details configured yet. Contact support.</p></div>`}
-          <div class="field mt16"><label class="label">Payment reference (optional)</label><input class="input" id="depRef" placeholder="Bank transfer reference / sender name"/></div>
-        </div>
-        <div class="panel mt16" style="padding:12px"><div class="row gap6 tiny" style="font-weight:600;color:var(--accent)">${ic('shield', 13)} Reviewed by our team</div>
-          <div class="tiny muted mt6" style="line-height:1.6">${esc(s.depositNote || '')}</div></div>
-        <button class="btn btn-primary btn-block btn-lg mt16" id="depSubmit">${ic('check', 16)} I have sent the payment</button>
-      </div>
-      <div>
-        <div class="card">
-          <h3 style="font-size:15px">Conversion</h3>
-          <div class="mt16"><div class="kv"><span class="k">USD amount</span><span class="v" id="sumUsd">$0.00</span></div>
-            <div class="kv"><span class="k">Rate</span><span class="v">1 WC = $0.50</span></div>
-            <div class="kv"><span class="k">Whale Coin received</span><span class="v" id="sumCoins" style="color:var(--accent)">0 WC</span></div>
-            <div class="kv"><span class="k">Method</span><span class="v" id="sumMethod">Crypto</span></div></div>
-          <div class="divider"></div>
-          <div class="tiny muted" style="line-height:1.65">Deposits usually confirm within 30 minutes after payment. You'll receive a notification the moment your balance is credited.</div>
-        </div>
-        <div class="card mt14">
-          <div class="row gap8">${ic('help', 16)}<span class="small" style="font-weight:600">Need help?</span></div>
-          <p class="tiny muted mt6" style="line-height:1.6">Chat with our team if a deposit has not appeared after 1 hour.</p>
-          <button class="btn btn-ghost btn-sm mt10" data-act="support-chat" style="width:100%">${ic('chat', 14)} Contact support</button>
-        </div>
-      </div>
-    </div>
-    <style>@media(max-width:860px){.cart-grid{grid-template-columns:1fr!important}}</style>`;
-};
-AFTER.deposit = function () {
-  const amt = document.getElementById('depUsd');
-  const upd = () => {
-    const v = Number(amt.value) || 0;
-    document.getElementById('depCoins').textContent = coins(usdToCoins(v)) + ' WC';
-    const a = document.getElementById('sumUsd'), b = document.getElementById('sumCoins');
-    if (a) a.textContent = usd(v);
-    if (b) b.textContent = coins(usdToCoins(v)) + ' WC';
-  };
-  amt.addEventListener('input', upd);
-  let mode = 'crypto';
-  $$('[data-depmode]').forEach(t => t.onclick = () => {
-    $$('[data-depmode]').forEach(x => x.classList.remove('on')); t.classList.add('on');
-    mode = t.getAttribute('data-depmode');
-    document.getElementById('depCrypto').classList.toggle('hidden', mode !== 'crypto');
-    document.getElementById('depBank').classList.toggle('hidden', mode !== 'bank');
-    document.getElementById('sumMethod').textContent = mode === 'crypto' ? 'Crypto' : 'Bank transfer';
-  });
-  document.getElementById('depSubmit').onclick = () => App.submitDeposit(mode);
-};
-App.depQuick = function (v) {
-  const i = document.getElementById('depUsd');
-  i.value = v; i.dispatchEvent(new Event('input'));
-};
-App.submitDeposit = function (mode) {
-  const u = me(); clearErrors();
-  const usdAmt = Math.round(Number(document.getElementById('depUsd').value) * 100) / 100;
-  if (!(usdAmt >= 1)) return formError('depUsd', 'Enter at least $1');
-  let methodName = '', detail = '';
-  if (mode === 'crypto') {
-    const sel = document.querySelector('input[name="depm"]:checked');
-    if (!sel) return toast('Select a crypto payment method', 'err');
-    const m = (DB.settings.crypto || []).find(x => x.id === sel.value);
-    methodName = m ? m.name : 'Crypto';
-    detail = m ? m.address : '';
-  } else {
-    methodName = 'Bank transfer';
-    detail = (document.getElementById('depRef') || {}).value || '';
-    if (!(DB.settings.banks || []).length) return toast('No bank details configured', 'err');
-  }
-  DB.deposits.unshift({
-    id: uid('dep'), userId: u.id, usd: usdAmt, coins: usdToCoins(usdAmt),
-    method: mode, methodName, detail, status: 'pending', createdAt: Date.now(), note: ''
-  });
-  notify('usr_admin', 'New deposit request', `${u.fullName} (@${u.username}) submitted ${usd(usdAmt)} via ${methodName}.`, '#/admin/deposits', 'wallet');
-  notify(u.id, 'Deposit submitted', `Your ${usd(usdAmt)} deposit is pending review. You'll be credited ${coins(usdToCoins(usdAmt))} WC once approved.`, '#/wallet', 'wallet');
-  sync();
-  openModal(modalShell('Deposit submitted', `
-    <div class="center">
-      <div style="width:58px;height:58px;border-radius:50%;background:rgba(255,176,32,.14);color:var(--warn);display:flex;align-items:center;justify-content:center;margin:0 auto">${ic('clock', 26)}</div>
-      <h3 class="mt16" style="font-size:17px">Awaiting confirmation</h3>
-      <p class="small muted mt10" style="line-height:1.7">We've received your ${usd(usdAmt)} request via ${esc(methodName)}. Our team will verify and credit <b style="color:var(--accent)">${coins(usdToCoins(usdAmt))} WC</b> to your wallet.</p>
-    </div>`,
-    `<a href="#/wallet" class="btn btn-primary" data-close style="width:100%">Back to wallet</a>`));
-  setTimeout(() => render(), 60);
-};
-
-/* ---------------- withdraw ---------------- */
-VIEWS.withdraw = function () {
-  const u = me();
-  const nets = DB.settings.networks || [];
-  if (!u.pin) {
-    return `<div class="page-head"><div><button class="btn btn-ghost btn-sm mb10" data-nav="#/wallet">${ic('back', 14)} Wallet</button><h1>Withdraw</h1></div></div>
-      <div class="card empty"><div class="ic">${ic('lock', 26)}</div><h3>Set your withdrawal PIN first</h3>
-      <p>For your security, withdrawals require a 4–6 digit PIN.</p><button class="btn btn-primary" data-act="set-pin-now">Create withdrawal PIN</button></div>`;
-  }
-  return `<div class="page-head"><div><button class="btn btn-ghost btn-sm mb10" data-nav="#/wallet">${ic('back', 14)} Wallet</button>
-      <h1>Withdraw USDT</h1><p>Withdrawals are processed on the network you choose and reviewed by our team.</p></div></div>
-    <div style="display:grid;grid-template-columns:1fr 360px;gap:20px" class="cart-grid">
-      <div class="card">
-        <div class="field"><label class="label">Network</label>
-          <select class="input" id="wdNet">${nets.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('')}</select>
-          <div class="help">USDT only. Make sure the network matches your wallet.</div></div>
-        ${field('USDT wallet address', 'wdAddr', { ph: 'Paste your USDT address', icon: 'wallet' })}
-        <div class="field"><label class="label">Amount in Whale Coin</label>
-          <div class="input-wrap"><span class="ic">${ic('wallet', 16)}</span><input class="input" id="wdCoins" type="number" min="1" step="1" placeholder="0" inputmode="decimal"/></div>
-          <div class="row between"><span class="help">Available: ${coins(u.balance)} WC</span><button class="link tiny" data-act="wd-max">Use max</button></div></div>
-        <div class="panel" style="padding:12px;margin-bottom:14px">
-          <div class="between"><span class="tiny muted">You receive</span><span id="wdUsd" style="font-weight:700">$0.00</span></div>
-          <div class="between mt6"><span class="tiny muted">Network fee</span><span class="tiny">Paid by WhaleChat</span></div>
-          <div class="between mt6"><span class="tiny muted">Rate</span><span class="tiny">1 WC = $0.50</span></div>
-        </div>
-        ${field('Withdrawal PIN', 'wdPin', { type: 'password', ph: '4–6 digit PIN', icon: 'lock', inputmode: 'numeric', maxlength: '6' })}
-        <label class="checkline" style="margin-bottom:14px"><input type="checkbox" id="wdConfirm"/>
-          <span>I confirm this USDT address is correct. Blockchain transfers cannot be reversed.</span></label>
-        <button class="btn btn-primary btn-block btn-lg" id="wdSubmit">${ic('lock', 16)} Request withdrawal</button>
-        <div class="tiny muted center mt10">Withdrawals are reviewed and usually paid within 24 hours.</div>
-      </div>
-      <div class="card" style="height:fit-content">
-        <h3 style="font-size:15px">Withdrawal policy</h3>
-        <div class="mt10">
-          <div class="kv"><span class="k">Minimum</span><span class="v">5 WC</span></div>
-          <div class="kv"><span class="k">Currency</span><span class="v">USDT</span></div>
-          <div class="kv"><span class="k">Networks</span><span class="v">${nets.length} available</span></div>
-          <div class="kv"><span class="k">Review time</span><span class="v">≤ 24 hours</span></div>
-        </div>
-        <div class="panel mt14" style="padding:11px 12px"><div class="row gap6 tiny" style="font-weight:600;color:var(--warn)">${ic('shield', 13)} Double-check the network</div>
-          <div class="tiny muted mt6" style="line-height:1.6">Sending USDT on the wrong network can result in permanent loss.</div></div>
-      </div>
-    </div>
-    <style>@media(max-width:860px){.cart-grid{grid-template-columns:1fr!important}}</style>`;
-};
-AFTER.withdraw = function () {
-  const i = document.getElementById('wdCoins');
-  if (!i) return;
-  const upd = () => {
-    const v = Number(i.value) || 0;
-    const el = document.getElementById('wdUsd');
-    if (el) el.textContent = usd(coinsToUsd(v));
-  };
-  i.addEventListener('input', upd);
-  document.getElementById('wdSubmit').onclick = () => App.submitWithdraw();
-};
-App.wdMax = function () {
-  const i = document.getElementById('wdCoins'); i.value = Math.floor(me().balance);
-  i.dispatchEvent(new Event('input'));
-};
-App.submitWithdraw = async function () {
-  const u = me(); clearErrors();
-  const net = document.getElementById('wdNet').value;
-  const addr = document.getElementById('wdAddr').value.trim();
-  const amt = Math.round((Number(document.getElementById('wdCoins').value) || 0) * 100) / 100;
-  const pin = document.getElementById('wdPin').value;
-  if (!addr || addr.length < 12) return formError('wdAddr', 'Enter a valid USDT wallet address');
-  if (!(amt >= 5)) return formError('wdCoins', 'Minimum withdrawal is 5 WC');
-  if (amt > u.balance) return formError('wdCoins', 'Amount exceeds your available balance');
-  if (!/^\d{4,6}$/.test(pin)) return formError('wdPin', 'Enter your 4–6 digit PIN');
-  if (!document.getElementById('wdConfirm').checked) return toast('Please confirm the wallet address', 'err');
-  if (await hash('pin::' + pin) !== u.pin) return formError('wdPin', 'Incorrect PIN');
-  u.balance = Math.round((u.balance - amt) * 100) / 100;
-  const wdId = uid('wd');
-  const activity = tx(u.id, 'withdrawal', 'Withdrawal request · ' + net, -amt, { withdrawalId: wdId });
-  DB.withdrawals.unshift({
-    id: wdId, userId: u.id, network: net, address: addr, coins: amt,
-    usd: coinsToUsd(amt), status: 'pending', createdAt: Date.now(), note: '',
-    txId: activity.id
-  });
-  notify('usr_admin', 'New withdrawal request', `${u.fullName} requested ${coins(amt)} WC (${usd(coinsToUsd(amt))}) via ${net}.`, '#/admin/withdrawals', 'download');
-  notify(u.id, 'Withdrawal submitted', `Your request for ${coins(amt)} WC is pending review.`, '#/wallet', 'download');
-  sync();
-  openModal(modalShell('Withdrawal requested', `
-    <div class="center"><div style="width:58px;height:58px;border-radius:50%;background:rgba(46,230,201,.14);color:var(--accent);display:flex;align-items:center;justify-content:center;margin:0 auto">${ic('check', 26)}</div>
-    <h3 class="mt16" style="font-size:17px">Request received</h3>
-    <p class="small muted mt10" style="line-height:1.7">${coins(amt)} WC (${usd(coinsToUsd(amt))}) via ${esc(net)}. Our team will review and send USDT to your address.</p></div>`,
-    `<a href="#/wallet" class="btn btn-primary" data-close style="width:100%">Done</a>`));
-  setTimeout(() => render(), 60);
-};
-App.setPinNow = async function () { await App.startSetPin(); render(); };
-
-/* ---------------- referrals ---------------- */
-VIEWS.referrals = function () {
-  const u = me();
-  const invited = DB.users.filter(x => x.referredBy === u.id && x.id !== u.id);
-  const paid = invited.filter(x => x.referralPaid);
-  const pending = invited.filter(x => !x.referralPaid);
-  const earned = DB.txs.filter(t => t.userId === u.id && t.type === 'referral').length * 10;
-  const inviter = u.referredBy ? findUser(u.referredBy) : null;
-  const link = referralLink(u.referralCode);
-
-  return `<div class="page-head"><div><button class="btn btn-ghost btn-sm mb10" data-nav="#/profile">${ic('back', 14)} Profile</button>
-      <h1>Invite friends to earn</h1><p>Earn 10 Whale Coins for every friend who signs up and makes their first deposit.</p></div></div>
-
-    ${u.pendingReferralCode ? `<div class="card mb16" style="border-color:rgba(255,176,32,.35);background:linear-gradient(120deg,rgba(255,176,32,.10),rgba(46,230,201,.05))">
-      <div class="row gap10" style="align-items:flex-start"><span style="width:32px;height:32px;border-radius:9px;background:rgba(255,176,32,.15);color:var(--warn);display:flex;align-items:center;justify-content:center;flex:none">${ic('clock', 16)}</span>
-      <div><div class="small" style="font-weight:650">Referral pending · ${esc(u.pendingReferralCode)}</div>
-      <div class="tiny muted mt6" style="line-height:1.6">Your code is saved. It links to your inviter automatically as soon as their account is on this server.</div></div></div>
-    </div>` : ''}
-
-    ${inviter ? `<div class="card mb16" style="padding:13px 14px">
-      <div class="between gap10 wrap">
-        <div class="row gap10">${avatarHTML(inviter, 'sm')}
-          <div><div class="tiny muted">You were invited by</div>
-          <div class="small" style="font-weight:650">${esc(inviter.fullName)} <span class="muted">@${esc(inviter.username)}</span></div></div></div>
-        ${u.referralPaid ? `<span class="badge badge-success">${ic('check', 11)} Bonus credited</span>` : (DB.deposits.some(d => d.userId === u.id && d.status === 'approved') ? `<span class="badge badge-success">Deposit approved</span>` : `<span class="badge badge-warn">First deposit pending</span>`)}
-      </div>
-    </div>` : ''}
-
-    <div class="wallet-card mb16">
-      <div class="between"><div class="tiny" style="opacity:.85;letter-spacing:.08em;font-weight:700">REFERRAL EARNINGS</div>${ic('gift', 18)}</div>
-      <div class="row" style="gap:8px;align-items:baseline;margin-top:6px"><span class="wallet-bal" style="font-size:34px">${coins(earned)}</span><span class="small" style="opacity:.8">WC earned</span></div>
+;align-items:baseline;margin-top:6px"><span class="wallet-bal" style="font-size:34px">${coins(earned)}</span><span class="small" style="opacity:.8">WC earned</span></div>
       <div class="small" style="opacity:.8;margin-top:2px">≈ ${usd(coinsToUsd(earned))} · 10 WC per qualified friend</div>
       <div class="row" style="gap:22px;margin-top:14px;flex-wrap:wrap">
         <div><div class="tiny" style="opacity:.7">Friends invited</div><div style="font-weight:800;font-size:20px">${invited.length}</div></div>
@@ -795,4 +388,498 @@ App.savePassword = async function () {
 App.changePin = async function () {
   const u = me();
   if (u.pin) {
-    const old = await askPin({ titl
+    const old = await askPin({ title: 'Current PIN', sub: 'Confirm your existing withdrawal PIN' });
+    if (!old) return;
+    if (await hash('pin::' + old) !== u.pin) return toast('Incorrect PIN', 'err');
+  }
+  const np = await askPin({ title: 'New withdrawal PIN', sub: 'Choose 4–6 digits', confirm: true });
+  if (!np) return;
+  u.pin = await hash('pin::' + np);
+  sync(); toast('Withdrawal PIN updated', 'ok'); render();
+};
+App.supportChat = function () {
+  const admin = DB.users.find(x => x.role === 'admin');
+  if (!admin) return toast('Support unavailable', 'err');
+  const u = me();
+  if (!isContact(u.id, admin.id)) DB.contacts.push({ id: uid('ct'), ownerId: u.id, userId: admin.id, createdAt: Date.now() });
+  if (!isContact(admin.id, u.id)) DB.contacts.push({ id: uid('ct'), ownerId: admin.id, userId: u.id, createdAt: Date.now() });
+  sync(); go('chat/' + admin.id);
+};
+/* =========================================================================
+   Admin console
+   ========================================================================= */
+VIEWS.admin = function (parts, params) {
+  const u = me();
+  if (!u || u.role !== 'admin') {
+    return `<div class="card empty"><div class="ic">${ic('lock', 26)}</div><h3>Admin access only</h3><p>This area is restricted to WhaleChat administrators.</p><a href="#/home" class="btn btn-primary">Back to app</a></div>`;
+  }
+  const sub = parts[1] || '';
+  const tabs = `<div class="admin-nav">
+    ${ADMIN_NAV.map(n => {
+      const key = n.href.replace('#/admin', '') || '';
+      const on = (sub === '' && key === '') || (key && sub === key.replace('/', ''));
+      return `<a href="${n.href}" class="${on ? 'on' : ''}">${n.label}</a>`;
+    }).join('')}
+  </div>`;
+  let body = '';
+  if (!sub) body = adminOverview();
+  else if (sub === 'users') body = adminUsers(params);
+  else if (sub === 'vendors') body = adminVendors();
+  else if (sub === 'vendor-requests') body = adminVendorRequests();
+  else if (sub === 'products') body = adminProducts();
+  else if (sub === 'orders') body = adminOrders();
+  else if (sub === 'refunds') body = adminRefunds();
+  else if (sub === 'deposits') body = adminDeposits();
+  else if (sub === 'withdrawals') body = adminWithdrawals();
+  else if (sub === 'notifications') body = adminNotifications();
+  else if (sub === 'release') body = adminRelease();
+  else if (sub === 'bonuses') body = adminBonuses();
+  else if (sub === 'email') body = adminEmail();
+  else if (sub === 'settings') body = adminSettings();
+  else if (sub === 'chat') body = adminChat();
+  else body = adminOverview();
+  return `<div class="page-head"><div><span class="badge badge-accent mb10">${ic('shield', 12)} Admin console</span>
+      <h1 style="font-size:24px">${esc(ADMIN_NAV.find(n => (n.href === '#/admin' + (sub ? '/' + sub : '')))?.label || 'Overview')}</h1>
+      <p>Manage users, vendors, orders, products and payments.</p></div>
+      <div class="row gap8"><a href="#/home" class="btn btn-ghost btn-sm">${ic('chat', 14)} Open chats</a>
+      <a href="#/admin/notifications" class="btn btn-primary btn-sm">${ic('bell', 14)} Send notice</a></div></div>
+    ${tabs}${body}`;
+};
+let ADMIN_MAINT_TIMER = null;
+AFTER.admin = function (parts) {
+  const sub = parts[1] || '';
+  clearInterval(ADMIN_MAINT_TIMER);
+  if (sub === 'settings') {
+    ADMIN_MAINT_TIMER = setInterval(() => {
+      const el = document.getElementById('adminMaintRemaining');
+      if (!el) { clearInterval(ADMIN_MAINT_TIMER); return; }
+      const mi = maintenanceInfo();
+      if (!mi.active) { clearInterval(ADMIN_MAINT_TIMER); render(); return; }
+      const c = fmtCountdown(mi.until - Date.now());
+      el.textContent = (c.d ? c.d + 'd ' : '') + c.h + ':' + c.m + ':' + c.s;
+    }, 1000);
+  }
+  if (sub === 'products') bindProductForm();
+  if (sub === 'users') {
+    const s = document.getElementById('adminUserSearch');
+    if (s) s.oninput = () => { ADMIN_USER_Q = s.value.toLowerCase(); render(); const n = document.getElementById('adminUserSearch'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } };
+  }
+  if (sub === 'settings') bindSettings();
+  if (sub === 'release') loadReleasePanel();
+};
+
+/* ---------------- release / version panel ---------------- */
+function adminRelease() {
+  const notes = DB.settings.releaseNotes || {};
+  return `<div class="grid-kpi k4 mb16">
+      <div class="kpi"><div class="ic">${ic('tag', 15)}</div><div class="v" style="font-size:17px">${esc(APP_VERSION)}</div><div class="k">App version</div></div>
+      <div class="kpi"><div class="ic">${ic('refresh', 15)}</div><div class="v" style="font-size:13px;letter-spacing:0" id="relServerBuild">Checking…</div><div class="k">Published build</div></div>
+      <div class="kpi"><div class="ic">${ic('clock', 15)}</div><div class="v" style="font-size:17px" id="relUptime">—</div><div class="k">Server uptime</div></div>
+      <div class="kpi"><div class="ic">${ic('users', 15)}</div><div class="v" style="font-size:17px" id="relClients">—</div><div class="k">Live tabs connected</div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1.1fr .9fr;gap:16px" class="dash2">
+      <div class="card">
+        <div class="between wrap gap10">
+          <div><h3 style="font-size:15px">Release status</h3>
+            <p class="tiny muted mt6">This device runs one self-contained build. Update checks and forced refreshes keep every user on the latest release.</p></div>
+          <span id="relBadge" class="badge">Checking…</span>
+        </div>
+        <div class="mt16">
+          <div class="kv"><span class="k">This device build</span><span class="v mono" style="font-size:12px">${esc(APP_BUILD)}</span></div>
+          <div class="kv"><span class="k">Published build</span><span class="v mono" style="font-size:12px" id="relServerBuildRow">—</span></div>
+          <div class="kv"><span class="k">Database revision</span><span class="v" id="relRev">—</span></div>
+          <div class="kv"><span class="k">Push devices registered</span><span class="v" id="relDevices">—</span></div>
+          <div class="kv"><span class="k">Sync mode</span><span class="v">${Remote.enabled ? 'Cross-device' : 'Local only'}</span></div>
+          <div class="kv"><span class="k">App URL</span><span class="v"><a href="${esc(appLink())}" class="link">${esc(appLink())}</a></span></div>
+          <div class="kv"><span class="k">Public URL</span><span class="v" id="relPublicUrl">${esc((DB.settings && DB.settings.publicUrl) || 'not set')}</span></div>
+        </div>
+        <div class="field mt14"><label class="label">Public app URL</label>
+          <input class="input" id="publicAppUrl" placeholder="https://chat.yourdomain.com" value="${esc((DB.settings && DB.settings.publicUrl) || '')}"/>
+          <div class="help">Your permanent HTTPS domain. Stored on the server and shown in release/health data.</div>
+        </div>
+        <div class="row gap8 wrap mt6">
+          <button class="btn btn-primary btn-sm" data-act="save-public-url">${ic('check', 14)} Save public URL</button>
+          <button class="btn btn-ghost btn-sm" data-act="admin-check-updates">${ic('refresh', 14)} Check for updates</button>
+          <button class="btn btn-ghost btn-sm" data-act="admin-reload-all">${ic('send', 14)} Force refresh all devices</button>
+          <button class="btn btn-ghost btn-sm" data-act="admin-copy-release">${ic('copy', 14)} Copy version.json</button>
+        </div>
+        <div class="tiny muted mt10" style="line-height:1.6">“Force refresh” asks every open app to clear its cache and reload the newest build. Closed or offline apps update automatically the next time they open.</div>
+      </div>
+      <div class="card">
+        <div class="between"><h3 style="font-size:15px">Release notes</h3>
+          <span class="tiny muted">${notes.updatedAt ? 'updated ' + timeAgo(notes.updatedAt) + ' ago' : 'not published yet'}</span></div>
+        <p class="tiny muted mt6">Shown here and in the update prompt so users know what changed.</p>
+        <div class="field mt14"><label class="label">Version label</label>
+          <input class="input" id="relVersion" value="${esc(notes.version || APP_VERSION)}" placeholder="e.g. 3.2.0"/></div>
+        <div class="field"><label class="label">What's new</label>
+          <textarea class="input" id="relNotes" style="min-height:120px" placeholder="Short summary of this release…">${esc(notes.notes || '')}</textarea></div>
+        <button class="btn btn-primary btn-sm" data-act="save-release-notes">${ic('check', 14)} Publish release notes</button>
+      </div>
+    </div>
+    <div class="card mt16">
+      <div class="between wrap gap10">
+        <div><h3 style="font-size:15px">Data safety</h3>
+          <p class="tiny muted mt6">Every release replaces only the app files. Accounts, wallets, orders and chats live in the database directory and are backed up automatically.</p></div>
+        <span id="relDataBadge" class="badge">Checking…</span>
+      </div>
+      <div class="mt14" id="relDataInfo">
+        <div class="kv"><span class="k">Registered accounts</span><span class="v" id="relDataUsers">—</span></div>
+        <div class="kv"><span class="k">Automatic backups</span><span class="v" id="relDataBackups">—</span></div>
+        <div class="kv"><span class="k">Last backup</span><span class="v" id="relDataLast">—</span></div>
+        <div class="kv"><span class="k">Storage</span><span class="v" id="relDataStore">—</span></div>
+      </div>
+      <div class="row gap8 wrap mt14">
+        <button class="btn btn-primary btn-sm" data-act="admin-backup-now">${ic('download', 14)} Backup now</button>
+        <button class="btn btn-ghost btn-sm" data-act="admin-backup-download">${ic('link', 14)} Download backup</button>
+        <button class="btn btn-ghost btn-sm" data-act="admin-backup-restore">${ic('refresh', 14)} Restore from file</button>
+      </div>
+      <div class="tiny muted mt10" style="line-height:1.6">Restoring is manual and confirmed — publishing a build never deletes or replaces user accounts.</div>
+    </div>
+    <div class="card mt16">
+      <h3 style="font-size:15px">Deployment</h3>
+      <p class="tiny muted mt6">The whole product is one <b>whalechat.html</b> plus <b>server.js</b>. A new release means replacing those files — every installed app updates itself.</p>
+      <div class="grid2 mt16" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="panel" style="padding:12px">
+          <div class="tiny" style="font-weight:700;color:var(--accent)">This deployment</div>
+          <div class="kv mt6"><span class="k">Origin</span><span class="v">${esc(location.origin)}</span></div>
+          <div class="kv"><span class="k">Sync server</span><span class="v">${Remote.enabled ? 'connected' : 'local mode'}</span></div>
+          <div class="kv"><span class="k">Build file</span><span class="v">whalechat.html</span></div>
+        </div>
+        <div class="panel" style="padding:12px">
+          <div class="tiny" style="font-weight:700;color:var(--accent)">Publish a new version</div>
+          <div class="tiny muted mt6" style="line-height:1.8">1. Replace <b>whalechat.html</b> + <b>version.json</b><br/>2. Restart <b>server.js</b><br/>3. Users update automatically (or use “Force refresh”)</div>
+        </div>
+      </div>
+    </div>
+    <style>@media(max-width:860px){.dash2{grid-template-columns:1fr!important}}</style>`;
+}
+
+async function loadReleasePanel() {
+  const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
+  try {
+    const r = await fetch('/api/release?t=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) throw new Error('no-server');
+    const d = await r.json();
+    const same = d.build && d.build === APP_BUILD;
+    set('relServerBuild', d.build ? d.build.replace('T', ' ').replace('Z', '') : 'unknown');
+    set('relServerBuildRow', d.build || 'unknown');
+    set('relUptime', Math.floor((d.uptimeSec || 0) / 3600) + 'h ' + Math.floor(((d.uptimeSec || 0) % 3600) / 60) + 'm');
+    set('relClients', String(d.clients || 0));
+    set('relRev', String(d.rev || 0));
+    set('relDevices', String(d.devices || 0));
+    const badge = document.getElementById('relBadge');
+    if (badge) {
+      badge.className = 'badge ' + (same ? 'badge-success' : 'badge-warn');
+      badge.textContent = same ? 'Up to date' : 'Update available';
+    }
+    try {
+      const bk = await fetch('/api/backup', { cache: 'no-store' }).then(x => x.json());
+      const du = document.getElementById('relDataUsers'); if (du) du.textContent = String(bk.users || 0);
+      const db = document.getElementById('relDataBackups'); if (db) db.textContent = (bk.count || 0) + ' snapshot' + ((bk.count || 0) === 1 ? '' : 's');
+      const dl = document.getElementById('relDataLast'); if (dl) dl.textContent = bk.last ? new Date(bk.last).toLocaleString() : 'none yet';
+      const ds = document.getElementById('relDataStore'); if (ds) ds.textContent = bk.persistent ? 'Persistent disk' : (bk.recoverable ? 'Ephemeral storage + persistent backups' : 'Ephemeral — set DATA_DIR to a disk');
+      const dgb = document.getElementById('relDataBadge');
+      if (dgb) {
+        if (bk.persistent) { dgb.className = 'badge badge-success'; dgb.textContent = 'Protected'; }
+        else if (bk.recoverable) { dgb.className = 'badge badge-success'; dgb.textContent = 'Protected via backups'; }
+        else { dgb.className = 'badge badge-danger'; dgb.textContent = 'At risk'; }
+      }
+    } catch (e2) {}
+  } catch (e) {
+    set('relServerBuild', 'local mode');
+    set('relServerBuildRow', 'unavailable');
+    set('relRev', '—'); set('relDevices', '—'); set('relUptime', '—'); set('relClients', '—');
+    const badge = document.getElementById('relBadge');
+    if (badge) { badge.className = 'badge badge-warn'; badge.textContent = 'No sync server'; }
+  }
+}
+
+App.saveReleaseNotes = function () {
+  const v = document.getElementById('relVersion');
+  const n = document.getElementById('relNotes');
+  DB.settings.releaseNotes = {
+    version: (v && v.value.trim()) || APP_VERSION,
+    notes: (n && n.value.trim()) || '',
+    updatedAt: Date.now(),
+    by: me().username
+  };
+  sync();
+  toast('Release notes published', 'ok');
+  render();
+};
+
+App.adminReloadAll = async function () {
+  if (!Remote.enabled) return toast('Connect the sync server to refresh remote devices', 'err');
+  if (!await confirmDialog({ title: 'Force refresh all devices?', body: 'Every app that is open right now will clear its cache and reload the latest build. Users may lose an unsent draft.', ok: 'Refresh everyone', danger: true })) return;
+  try {
+    const r = await fetch('/api/reload', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ build: APP_BUILD, version: APP_VERSION })
+    }).then(x => x.json());
+    toast('Refresh signal sent to ' + (r.clients || 0) + ' connected device(s)', 'ok');
+  } catch (e) { toast('Could not reach the server', 'err'); }
+};
+
+App.adminCheckUpdates = function () {
+  checkForUpdates(true);
+  setTimeout(loadReleasePanel, 1500);
+};
+
+App.adminCopyRelease = function () {
+  copyText(JSON.stringify({ version: APP_VERSION, build: APP_BUILD, file: 'whalechat.html' }, null, 2));
+};
+
+function adminOverview() {
+  const users = DB.users.filter(u => u.role !== 'admin');
+  const vendors = DB.vendors;
+  const orders = DB.orders;
+  const revenueUsd = orders.reduce((s, o) => s + o.totalUsd, 0);
+  const pendingW = DB.withdrawals.filter(w => w.status === 'pending');
+  const pendingD = DB.deposits.filter(d => d.status === 'pending');
+  const pendingO = orders.filter(o => o.status === 'processing');
+  const totalDeposits = DB.deposits.filter(d => d.status === 'approved').reduce((s, d) => s + d.usd, 0);
+  return `<div class="grid-kpi k4 mb16">
+      ${[['Total users', fmtNum(users.length), 'users'], ['Total vendors', fmtNum(vendors.length), 'store'],
+         ['Total orders', fmtNum(orders.length), 'truck'], ['Total revenue', usd(revenueUsd), 'trend'],
+         ['Pending withdrawals', fmtNum(pendingW.length), 'download'], ['Pending deposits', fmtNum(pendingD.length), 'wallet'],
+         ['Pending orders', fmtNum(pendingO.length), 'clock'], ['Pending refunds', fmtNum((DB.refunds || []).filter(r => r.status === 'pending').length), 'refresh']]
+        .map(([k, v, i]) => `<div class="kpi"><div class="ic">${ic(i, 15)}</div><div class="v">${v}</div><div class="k">${k}</div><span class="spark">${ic(i, 54)}</span></div>`).join('')}
+    </div>
+    <div class="card mb16">
+      <div class="between wrap gap10">
+        <div><h3 style="font-size:15px">Access controls</h3>
+          <p class="tiny muted mt6">Password-free sign-in and site-wide maintenance, one tap away.</p></div>
+        <a href="#/admin/settings" class="btn btn-ghost btn-xs">${ic('settings', 12)} Open settings</a>
+      </div>
+      <div class="row wrap gap14 mt14">
+        <div class="panel grow" style="padding:11px 13px;min-width:220px">
+          <div class="between gap10"><div><div class="small" style="font-weight:600">Password-free login</div>
+            <div class="tiny muted mt6">Any password opens a known account</div></div>
+            <div class="switch ${DB.settings.allowAnyPassword ? 'on' : ''}" data-act="toggle-anypass"></div></div>
+        </div>
+        <div class="panel grow" style="padding:11px 13px;min-width:220px">
+          <div class="between gap10"><div><div class="small" style="font-weight:600">Maintenance mode</div>
+            <div class="tiny muted mt6">${maintenanceInfo().active ? 'Active · ends ' + new Date(maintenanceInfo().until).toLocaleTimeString() : 'Site is live for everyone'}</div></div>
+            <div class="switch ${maintenanceInfo().active ? 'on' : ''}" data-act="${maintenanceInfo().active ? 'maint-end' : 'maint-quick'}"></div></div>
+        </div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1.1fr .9fr;gap:16px" class="dash2">
+      <div class="card">
+        <div class="section-title"><h3>Latest orders</h3><a href="#/admin/orders" class="link tiny">View all</a></div>
+        ${orders.slice(0, 5).length ? orders.slice(0, 5).map(o => {
+          const b = findUser(o.buyerId);
+          return `<div class="between" style="padding:9px 0;border-bottom:1px dashed var(--border);gap:10px">
+            <div class="grow" style="min-width:0"><div class="small" style="font-weight:600">${esc(o.ref)} · ${coins(o.totalCoins)} WC</div>
+            <div class="tiny muted ellipsis">${esc(b ? b.fullName : 'Unknown')} · ${o.items.map(i => esc(i.name)).join(', ')}</div></div>
+            <div class="row gap6" style="flex:none">${statusBadge(o.status)}<button class="btn btn-xs btn-ghost" data-act="admin-order" data-id="${o.id}">Open</button></div></div>`;
+        }).join('') : `<div class="empty" style="padding:18px"><p>No orders yet.</p></div>`}
+      </div>
+      <div class="card">
+        <div class="section-title"><h3>Pending withdrawals</h3><a href="#/admin/withdrawals" class="link tiny">Manage</a></div>
+        ${pendingW.slice(0, 4).length ? pendingW.slice(0, 4).map(w => {
+          const b = findUser(w.userId);
+          return `<div class="between" style="padding:9px 0;border-bottom:1px dashed var(--border)">
+            <div><div class="small" style="font-weight:600">${coins(w.coins)} WC · ${esc(w.network)}</div>
+            <div class="tiny muted">${esc(b ? b.username : '')} · ${usd(w.usd)}</div></div>
+            <div class="row gap6"><button class="btn btn-xs btn-primary" data-act="wd-approve" data-id="${w.id}">Approve</button>
+            <button class="btn btn-xs btn-danger" data-act="wd-reject" data-id="${w.id}">Reject</button></div></div>`;
+        }).join('') : `<div class="empty" style="padding:18px"><p>No pending withdrawals.</p></div>`}
+        <div class="divider"></div>
+        <div class="section-title"><h3>Pending deposits</h3><a href="#/admin/deposits" class="link tiny">Manage</a></div>
+        ${pendingD.slice(0, 3).length ? pendingD.slice(0, 3).map(d => {
+          const b = findUser(d.userId);
+          return `<div class="between" style="padding:9px 0;border-bottom:1px dashed var(--border)">
+            <div><div class="small" style="font-weight:600">${usd(d.usd)} · ${coins(d.coins)} WC</div>
+            <div class="tiny muted">${esc(b ? b.username : '')} · ${esc(d.methodName)}</div></div>
+            <div class="row gap6"><button class="btn btn-xs btn-primary" data-act="dep-approve" data-id="${d.id}">Approve</button></div></div>`;
+        }).join('') : `<div class="empty" style="padding:18px"><p>No pending deposits.</p></div>`}
+      </div>
+    </div>
+    <div class="card mt16">
+      <div class="section-title"><h3>Newest users</h3><a href="#/admin/users" class="link tiny">All users</a></div>
+      ${users.slice().sort((a, b) => b.createdAt - a.createdAt).slice(0, 5).map(x => `<div class="between" style="padding:9px 0;border-bottom:1px dashed var(--border)">
+        <div class="row gap10">${avatarHTML(x, 'sm')}<div><div class="small" style="font-weight:600">${esc(x.fullName)}</div><div class="tiny muted">@${esc(x.username)} · ${dateLabel(x.createdAt)}</div></div></div>
+        <div class="row gap8"><span class="small" style="font-weight:600">${coins(x.balance)} WC</span><button class="btn btn-xs btn-ghost" data-act="admin-user" data-id="${x.id}">Manage</button></div></div>`).join('') || '<p class="muted small">No users yet.</p>'}
+    </div>
+    <style>@media(max-width:860px){.dash2{grid-template-columns:1fr!important}}</style>`;
+}
+
+let ADMIN_USER_Q = '';
+function adminUsers(params) {
+  const q = (params.q || ADMIN_USER_Q || '').toLowerCase();
+  const users = DB.users.filter(u => u.role !== 'admin' && (!q || u.fullName.toLowerCase().includes(q) || u.username.toLowerCase().includes(q) || u.email.toLowerCase().includes(q)));
+  return `<div class="card">
+    <div class="between wrap gap10 mb16">
+      <div class="searchbar" style="width:min(100%,320px)">${ic('search', 16)}<input id="adminUserSearch" placeholder="Search users…" value="${esc(q)}"/></div>
+      <div class="row gap8"><span class="badge">${users.length} users</span><button class="btn btn-sm btn-ghost" data-act="admin-export" data-id="users">${ic('download', 14)} Export</button></div>
+    </div>
+    <div class="table-wrap"><table class="tbl"><thead><tr><th>User</th><th>Balance</th><th>Trust</th><th>Status</th><th>Joined</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+      ${users.length ? users.map(x => `<tr>
+        <td><div class="row gap8">${avatarHTML(x, 'sm')}<div><div style="font-weight:600">${esc(x.fullName)} ${vendorOf(x.id) ? '<span class="badge" style="font-size:9px">Vendor</span>' : ''}</div><div class="tiny muted">@${esc(x.username)} · ${esc(x.email)}</div></div></div></td>
+        <td style="font-weight:600">${coins(x.balance)} <span class="tiny muted">WC</span></td>
+        <td>${x.trustScore}/100</td>
+        <td>${x.banned ? '<span class="badge badge-danger">Banned</span>' : '<span class="badge badge-success">Active</span>'}</td>
+        <td class="muted">${dateLabel(x.createdAt)}</td>
+        <td><div class="row gap6" style="justify-content:flex-end">
+          <button class="btn btn-xs btn-ghost" data-act="admin-user" data-id="${x.id}">Manage</button>
+          <button class="btn btn-xs btn-ghost" data-act="admin-msg-user" data-id="${x.id}" title="Support chat">${ic('chat', 12)}</button>
+          <button class="btn btn-xs btn-ghost" data-act="admin-login-as" data-id="${x.id}" title="Log in as user">${ic('key', 12)}</button>
+          <button class="btn btn-xs ${x.banned ? 'btn-soft' : 'btn-danger'}" data-act="admin-ban" data-id="${x.id}">${x.banned ? 'Unban' : 'Ban'}</button>
+          <button class="btn btn-xs btn-danger" data-act="admin-del-user" data-id="${x.id}">${ic('trash', 12)}</button>
+        </div></td></tr>`).join('') : `<tr><td colspan="6" class="center muted" style="padding:30px">No users found</td></tr>`}
+    </tbody></table></div>
+  </div>`;
+}
+App.adminUser = function (id) {
+  const x = findUser(id); if (!x) return;
+  const v = vendorOf(id);
+  openModal(modalShell('Manage user', `
+    <div class="row gap12 mb16">${avatarHTML(x, 'lg')}
+      <div><div style="font-weight:650">${esc(x.fullName)}</div><div class="small muted">@${esc(x.username)}</div>
+      <div class="row gap6 mt6">${v ? `<span class="badge badge-accent">Vendor @${esc(v.username)}</span>` : ''}<span class="badge">${x.banned ? 'Banned' : 'Active'}</span></div></div></div>
+    <div class="grid2" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      ${field('Whale Coin balance', 'auBal', { type: 'number', value: x.balance, inputmode: 'decimal' })}
+      ${field('Trust score (0–100)', 'auTrust', { type: 'number', value: x.trustScore })}
+      ${field('Completed sales', 'auSales', { type: 'number', value: x.completedSales || 0 })}
+      ${field('Total earnings (WC)', 'auEarn', { type: 'number', value: x.totalEarnings || 0 })}
+    </div>
+    <div class="kv"><span class="k">Email</span><span class="v">${esc(x.email)}</span></div>
+    <div class="kv"><span class="k">Phone</span><span class="v">${esc(x.phone || '—')}</span></div>
+    <div class="kv"><span class="k">Total deposits</span><span class="v">${coins(x.totalDeposits || 0)} WC</span></div>
+    <div class="kv"><span class="k">Total withdrawals</span><span class="v">${coins(x.totalWithdrawals || 0)} WC</span></div>
+    <div class="kv"><span class="k">Withdrawal PIN</span><span class="v">${x.pin ? 'Set' : 'Not set'}</span></div>
+    <div class="mt16 col gap8">
+      <button class="btn btn-ghost btn-block" data-act="admin-credit" data-id="${x.id}">${ic('wallet', 15)} Add Whale Coin</button>
+      <button class="btn btn-ghost btn-block" data-act="admin-notify-user" data-id="${x.id}">${ic('bell', 15)} Send notification</button>
+      <button class="btn btn-ghost btn-block" data-act="admin-msg-user" data-id="${x.id}" data-close>${ic('chat', 15)} Open support chat</button>
+      <button class="btn btn-soft btn-block" data-act="admin-login-as" data-id="${x.id}">${ic('key', 15)} Log in as this user (no password)</button>
+      <button class="btn ${x.banned ? 'btn-soft' : 'btn-danger'} btn-block" data-act="admin-ban" data-id="${x.id}">${x.banned ? 'Unban account' : 'Ban account'}</button>
+    </div>`,
+    `<button class="btn btn-ghost" data-close style="flex:1">Close</button><button class="btn btn-primary" data-act="admin-save-user" data-id="${x.id}" style="flex:1">Save changes</button>`), { width: '520px' });
+};
+App.adminSaveUser = function (id) {
+  const x = findUser(id); if (!x) return;
+  const bal = Number(document.getElementById('auBal').value);
+  const trust = Number(document.getElementById('auTrust').value);
+  const sales = Number(document.getElementById('auSales').value);
+  const earn = Number(document.getElementById('auEarn').value);
+  if (isNaN(bal) || bal < 0) return toast('Invalid balance', 'err');
+  const diff = Math.round((bal - x.balance) * 100) / 100;
+  x.balance = Math.round(bal * 100) / 100;
+  x.trustScore = Math.max(0, Math.min(100, trust || 0));
+  x.completedSales = Math.max(0, sales || 0);
+  x.totalEarnings = Math.round((earn || 0) * 100) / 100;
+  if (diff) tx(x.id, diff > 0 ? 'deposit' : 'withdrawal', 'Admin balance adjustment', diff);
+  notify(x.id, 'Account updated', 'Your account settings were updated by the WhaleChat team.', '#/profile', 'settings');
+  sync(); closeModal(); toast('User updated', 'ok'); render();
+};
+App.adminCredit = async function (id) {
+  const v = await promptDialog({ title: 'Add Whale Coin', label: 'Amount in WC (negative to deduct)', type: 'number', placeholder: '10' });
+  if (!v) return;
+  const amt = Number(v);
+  if (!isFinite(amt) || amt === 0) return toast('Enter a valid amount', 'err');
+  const x = findUser(id); if (!x) return;
+  x.balance = Math.round((x.balance + amt) * 100) / 100;
+  tx(x.id, amt > 0 ? 'deposit' : 'withdrawal', 'Admin credit', amt);
+  notify(x.id, amt > 0 ? 'Wallet credited' : 'Wallet adjusted', `${coins(Math.abs(amt))} WC ${amt > 0 ? 'added to' : 'deducted from'} your balance by the WhaleChat team.`, '#/wallet', 'wallet');
+  sync(); closeModal(); toast('Balance updated', 'ok'); render();
+};
+App.adminBan = async function (id) {
+  const x = findUser(id); if (!x) return;
+  if (!x.banned) {
+    if (!await confirmDialog({ title: 'Ban this user?', body: 'They will not be able to sign in.', danger: true, ok: 'Ban' })) return;
+    x.banned = true;
+    notify(x.id, 'Account suspended', 'Your account has been suspended. Contact support for assistance.', null, 'ban');
+  } else x.banned = false;
+  sync(); closeModal(); toast(x.banned ? 'User banned' : 'User unbanned', 'ok'); render();
+};
+App.adminDeleteUser = async function (id) {
+  const x = findUser(id); if (!x) return;
+  if (!await confirmDialog({ title: 'Delete user?', body: 'This permanently removes the account, its vendor profile and notifications. Orders are kept for records.', danger: true, ok: 'Delete' })) return;
+  DB.users = DB.users.filter(u => u.id !== id);
+  DB.vendors = DB.vendors.filter(v => v.userId !== id);
+  DB.contacts = DB.contacts.filter(c => c.ownerId !== id && c.userId !== id);
+  DB.notifications = DB.notifications.filter(n => n.userId !== id);
+  sync(); toast('User deleted', 'ok'); render();
+};
+App.adminMsgUser = function (id) {
+  const admin = me();
+  if (!isContact(admin.id, id)) DB.contacts.push({ id: uid('ct'), ownerId: admin.id, userId: id, createdAt: Date.now() });
+  sync(); closeModal(); go('chat/' + id);
+};
+
+function adminVendorRequests() {
+  const list = (DB.vendorApplications || []).slice().sort((a, b) => (a.status === 'pending' ? -1 : 1) - (b.status === 'pending' ? -1 : 1) || b.createdAt - a.createdAt);
+  const pending = list.filter(a => a.status === 'pending');
+  return `<div class="card mb16" style="background:linear-gradient(120deg,rgba(46,230,201,.08),rgba(58,160,255,.05))">
+      <div class="between wrap gap10">
+        <div><h3 style="font-size:15px">Vendor activation payments</h3>
+          <p class="tiny muted mt6">Review the uploaded payment slip, then approve to unlock the applicant's vendor dashboard.</p></div>
+        <div class="row gap8"><span class="badge badge-warn">${pending.length} pending</span>
+          <a href="#/admin/settings" class="btn btn-xs btn-ghost">${ic('settings', 12)} Fee & payment accounts</a></div>
+      </div>
+      <div class="grid-kpi k4 mt14">
+        ${[['Fee', usd(DB.settings.vendorFeeUsd || 0), 'tag'], ['Applications', list.length, 'users'], ['Pending', pending.length, 'clock'], ['Approved', list.filter(a => a.status === 'approved').length, 'check']]
+          .map(([k, v, i]) => `<div class="kpi"><div class="ic">${ic(i, 15)}</div><div class="v" style="font-size:17px">${v}</div><div class="k">${k}</div></div>`).join('')}
+      </div>
+    </div>
+    <div class="card">
+      <div class="table-wrap"><table class="tbl"><thead><tr><th>Applicant</th><th>Vendor name</th><th>Plan</th><th>Fee</th><th>Payment account</th><th>Slip</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+      ${list.length ? list.map(a => {
+        const u = findUser(a.userId);
+        return `<tr>
+          <td><div class="row gap8">${avatarHTML(u || {}, 'sm')}<div><div style="font-weight:600">${esc(u ? u.fullName : a.userName || '—')}</div><div class="tiny muted">@${esc(u ? u.username : a.username || '')} · ${dateLabel(a.createdAt)}</div></div></div></td>
+          <td style="font-weight:600">@${esc(a.vendorUsername)}</td>
+          <td><div style="font-weight:600">${a.months || 1} month${(a.months || 1) > 1 ? 's' : ''}</div><div class="tiny muted">${a.kind === 'renewal' ? 'Renewal' : 'New vendor'}</div></td>
+          <td>${usd(a.feeUsd)}</td>
+          <td class="tiny muted" style="max-width:180px"><div>${esc(a.methodLabel || '—')}</div><div style="word-break:break-all">${esc(a.address || '')}</div></td>
+          <td>${a.proof ? `<img src="${a.proof}" style="width:46px;height:46px;object-fit:cover;border-radius:8px;border:1px solid var(--border);cursor:pointer" data-act="vendor-view-proof" data-id="${a.id}"/>` : '<span class="tiny muted">none</span>'}</td>
+          <td>${statusBadge(a.status)}</td>
+          <td><div class="row gap6" style="justify-content:flex-end">
+            ${a.status === 'pending' ? `<button class="btn btn-xs btn-primary" data-act="vendor-app-approve" data-id="${a.id}">Approve</button>
+              <button class="btn btn-xs btn-danger" data-act="vendor-app-reject" data-id="${a.id}">Reject</button>` : ''}
+            ${a.status !== 'pending' ? `<button class="btn btn-xs btn-ghost" data-act="vendor-app-del" data-id="${a.id}">${ic('trash', 12)}</button>` : ''}
+          </div></td></tr>`;
+      }).join('') : `<tr><td colspan="7" class="center muted" style="padding:30px">No vendor applications yet</td></tr>`}
+      </tbody></table></div>
+    </div>`;
+}
+
+function adminVendors() {
+  return `<div class="card">
+    <div class="between mb16"><h3 style="font-size:15px">Vendors</h3><span class="badge">${DB.vendors.length} total</span></div>
+    <div class="table-wrap"><table class="tbl"><thead><tr><th>Vendor</th><th>Owner</th><th>Products</th><th>Sales</th><th>Expiry</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+    ${DB.vendors.length ? DB.vendors.map(v => {
+      const owner = findUser(v.userId);
+      const prods = DB.products.filter(p => p.vendorId === v.id);
+      const rev = DB.orders.filter(o => o.vendorId === v.id).reduce((s, o) => s + o.usd || 0, 0);
+      return `<tr><td><div style="font-weight:600">@${esc(v.username)}</div><div class="tiny muted">Since ${dateLabel(v.createdAt)}</div></td>
+        <td><div class="row gap6">${owner ? avatarHTML(owner, 'sm') : ''}<div><div class="small">${esc(owner ? owner.fullName : '—')}</div><div class="tiny muted">${esc(owner ? owner.username : '')}</div></div></div></td>
+        <td>${prods.length}</td><td>${v.sales || 0}</td><td>${coins(DB.orders.filter(o => o.vendorId === v.id).reduce((s, o) => s + o.totalUsd, 0) / COIN_USD)} WC</td>
+        <td>${v.rating.toFixed(1)} ★</td>
+        <td><div class="row gap6" style="justify-content:flex-end">
+          <button class="btn btn-xs btn-ghost" data-act="admin-vendor" data-id="${v.id}">View</button>
+          <button class="btn btn-xs btn-ghost" data-act="admin-edit-vendor" data-id="${v.id}">Edit</button>
+          <button class="btn btn-xs btn-ghost" data-act="vendor-extend" data-id="${v.id}" title="Add 30 days">+30d</button>
+          ${owner ? `<button class="btn btn-xs btn-ghost" data-act="admin-msg-user" data-id="${owner.id}">${ic('chat', 12)}</button>` : ''}
+        </div></td></tr>`;
+    }).join('') : `<tr><td colspan="7" class="center muted" style="padding:30px">No vendors yet</td></tr>`}
+    </tbody></table></div></div>`;
+}
+App.adminVendor = function (id) {
+  const v = vendorById(id); if (!v) return;
+  const owner = findUser(v.userId);
+  const prods = DB.products.filter(p => p.vendorId === id);
+  openModal(modalShell('Vendor @' + v.username, `
+    <div class="row gap12 mb16">${avatarHTML(owner || {}, 'lg')}<div><div style="font-weight:650">${esc(v.name)}</div>
+      <div class="small muted">${esc(owner ? owner.fullName : '')}</div><div class="row gap6 mt6"><span class="badge badge-accent">${v.rating.toFixed(1)} ★</span><span class="badge">Trust ${v.trustScore}</span><span class="badge">${v.sales || 0} sales</span></div></div></div>
+    <div class="kv"><span class="k">Wallet balance</span><span class="v">${coins(owner ? owner.balance : 0)} WC</span></div>
+    <div class="kv"><span class="k">Products in inventory</span><span class="v">${prods.length}</span></div>
+    <div class="kv"><span class="k">Created</span><span class="v">${dateLabel(v.createdAt)}</span></div>
+    <div class="divider"></div>
+    <div class="label mb10">Inventory</div>
+    ${prods.length ? `<div class="list">${prods.slice(0, 8).map(p => `<div class="list-item" style="padding:8px 10px">
+      <div style="width:32px;height:32px;border-radius:8px;background:var(--surface-3);display:flex;align-items:center;justify-content:center;font-size:15px">${p.emoji || '📦'}</div>
+      <div class="grow"><div class="tiny" style="font-weight:600">${esc(p.name)}</div><div class="tiny muted">Stock ${p.stock} · ${p.active ? 'Listed' : 'Hidden'}</div></div>
+      <span class="tiny">${p.priceUsd ? coins(p.priceUsd / COIN_USD) + ' WC' : '—'}</span
