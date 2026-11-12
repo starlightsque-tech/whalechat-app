@@ -445,6 +445,7 @@ function render() {
   }
   let active = routeKey;
   if (parts[0] === 'product') active = 'market';
+  if (parts[0] === 'store') active = 'market';
   if (parts[0] === 'vendor') active = parts[1] ? (parts[1] === 'company' ? 'company' : parts[1] === 'products' ? 'vproducts' : parts[1] === 'orders' ? 'vorders' : 'vendor') : 'vendor';
   if (parts[0] === 'orders' || parts[0] === 'order') active = 'profile';
   if (parts[0] === 'notifications') active = 'profile';
