@@ -1,8 +1,8 @@
 {
-  "version": "3.27.0",
-  "build": "2026-11-12T23:55:00Z",
+  "version": "3.27.1",
+  "build": "2026-11-13T00:10:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.27.0 - Alpaca API key + secret connection panel with endpoint display, live Alpaca health widget (credentials, REST, IEX stream, rate budget, scheduled sync, price coverage) and a durable override & data-sync audit log with filters and CSV export.",
-  "releasedAt": "2026-11-12T23:55:00Z",
+  "notes": "WhaleChat 3.27.1 - Alpaca corporate-actions fix (types=cash_dividend / cash_dividends) so dividend yields sync again, plus health widget accuracy for stale REST failures.",
+  "releasedAt": "2026-11-13T00:10:00Z",
   "minimum": "3.0.0"
 }
