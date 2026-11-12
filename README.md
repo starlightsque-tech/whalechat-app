@@ -161,6 +161,20 @@ return %, live toggle). API: `GET /api/shares/state?userId=`, `POST /api/shares/
 `GET /api/shares/admin?adminId=`, `POST /api/shares/admin/plans`. UI: `public/whalechat-shares.js`
 (module `wc-whalechat-shares`).
 
+
+**Plan performance chart (Lightweight Charts v5).** `#/invest/shares` renders a
+**Plan performance · ROI progress** card from `public/whalechat-shares.js` using
+`WC_PRO_CHART.mountEquity()`:
+
+- one cyan area series of the plan value = **principal + linear accrued profit**, sampled from the plan's start
+  to *now* and extended every second, so the ROI counter moves continuously between server polls;
+- a dashed blue **INVESTED** price line and a dotted cyan **TARGET** line (payout at maturity);
+- a glassmorphic HUD with current value, ROI %, accrued earnings and the next maturity date;
+- **All plans** / per-plan pills to switch between the aggregate portfolio curve and a single plan's ROI progress.
+
+Plan returns are fixed by the plan terms and accrued by `shares.js`; Finnhub continues to power the live
+WhaleChat share-price and stock charts, not the plan accrual itself.
+
 ### Finnhub sync resilience
 
 Finnhub's free tier allows 60 calls/minute. `market.js` now keeps one shared rolling call budget
