@@ -558,6 +558,8 @@ class MarketService {
     this.seedBaseQuotes();
     const simMs = Math.max(2000, Math.min(5000, Math.round(this.config.refreshSec * 1000 / 3)));
     this.timers.push(setInterval(() => { try { this.simTick(); } catch (e) { this.lastError = e.message; } }, simMs));
+    /* TP/SL checks run every second so a level hit is settled immediately */
+    this.timers.push(setInterval(() => { try { this.settleTrades(); } catch (e) { this.lastError = e.message; } }, 1000));
     this.timers.push(setInterval(() => {
       try {
         if (this.config.mode === 'hybrid' && this.config.apiKey && usMarketOpen()) this.pollCycle();
