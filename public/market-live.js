@@ -458,8 +458,8 @@
   function updateChart() {
     const c = MK.chart;
     if (!c) return;
+    if (!document.body.contains(c.host)) { destroyChart(); return; }
     if (c.mode === 'portfolio') {
-      if (!document.body.contains(c.host)) { destroyChart(); return; }
       let s = null;
       try { s = LT.summary(me().id); } catch (e) { return; }
       if (!s) return;
