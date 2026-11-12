@@ -12,6 +12,7 @@ Usage:
 Expected input layout:
   <src>/products/<slug>.png   (1024px renders, any square-ish size)
   <src>/sellers/<slug>.png
+  <src>/banners/<slug>.png    (wide storefront renders)
 """
 import argparse
 import os
@@ -24,9 +25,9 @@ except ImportError:
     sys.exit("Pillow is required for image encoding: pip install pillow")
 
 
-def encode(src_file: Path, out_file: Path, size: int, quality: int) -> None:
+def encode(src_file: Path, out_file: Path, width: int, height: int, quality: int) -> None:
     im = Image.open(src_file).convert("RGB")
-    im = ImageOps.fit(im, (size, size), Image.LANCZOS, centering=(0.5, 0.45))
+    im = ImageOps.fit(im, (width, height), Image.LANCZOS, centering=(0.5, 0.45))
     tmp = out_file.with_suffix(".jpg")
     im.save(tmp, "JPEG", quality=quality, optimize=True, progressive=True)
     data = tmp.read_bytes()
@@ -42,9 +43,9 @@ def main() -> None:
     args = ap.parse_args()
 
     src, out = Path(args.src), Path(args.out)
-    jobs = [("products", 560, 82), ("sellers", 320, 85)]
+    jobs = [("products", 560, 560, 82), ("sellers", 320, 320, 85), ("banners", 1200, 400, 82)]
     missing = 0
-    for folder, size, quality in jobs:
+    for folder, width, height, quality in jobs:
         src_dir, out_dir = src / folder, out / folder
         out_dir.mkdir(parents=True, exist_ok=True)
         if not src_dir.is_dir():
@@ -52,7 +53,7 @@ def main() -> None:
             continue
         files = sorted(p for p in src_dir.iterdir() if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"))
         for f in files:
-            encode(f, out_dir / (f.stem + ".jpg.b64"), size, quality)
+            encode(f, out_dir / (f.stem + ".jpg.b64"), width, height, quality)
         missing += 0
         print(f"  {folder}: {len(files)} image(s)")
     if missing:
