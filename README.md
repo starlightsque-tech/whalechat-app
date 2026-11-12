@@ -313,6 +313,25 @@ storage budget it rolls back completely and tells the admin to try a smaller num
 partially written. Scheduled shoppers (the 8 named personas) keep their weekly cadence; bulk users
 only order when the admin asks them to.
 
+### Sales performance reports
+
+**Admin → Sales** (`#/admin/sales`) tracks sales across the whole app, every seller and every product.
+
+- **Totals:** revenue, units sold, paid orders, average order value, stock remaining, storefront views and
+  view-to-sale conversion, with a 14/30-day revenue chart (units shown above each bar).
+- **Per seller:** orders, units, revenue, remaining stock, storefront views and conversion, with a revenue
+  share bar and a link to the shop.
+- **Per product:** units, revenue, remaining stock, product-page views, conversion and revenue share,
+  ranked by revenue (top 60).
+- **Sales records:** the newest 150 orders with buyer, seller, items, units, total, status and demo flag;
+  exportable to CSV.
+- **Filters:** last 7 / 14 / 30 / 90 days and **All orders / Real sales only / Demo only**, so simulated
+  demo activity is never mixed into real revenue.
+
+Views are counted once per session per day for signed-in shoppers (admins and bots excluded), on both
+storefront pages (`vendor.storeViews`) and product pages (`product.views`). Daily totals are kept in the
+synced `traffic` collection (60-day retention), which feeds the chart and the activity dashboard.
+
 ### Demo activity dashboard
 
 **Admin → Demo activity** (`#/admin/demo-activity`) is the demo fleet's analytics page: seller /
