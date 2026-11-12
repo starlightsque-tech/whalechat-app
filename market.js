@@ -15,6 +15,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { FinnhubClient } = require('./finnhub');
 
 const DEFAULT_ASSETS = [
   { ticker: 'AAPL', displayTicker: 'AAPL', alpacaSymbol: 'AAPL', assetClass: 'us', name: 'Apple Inc.', exchange: 'NASDAQ', currency: 'USD', sector: 'Technology', color: '#2ee6c9' },
@@ -115,7 +116,8 @@ class MarketService {
     this.persist = opts.persist || (() => {});
     this.broadcast = opts.broadcast || (() => {});
     this.configFile = path.join(this.dataDir, 'market-config.json');
-    this.config = { mode: 'paper', keyId: '', secret: '', refreshSec: 15, feed: ALPACA_FEED, syncEnabled: true, syncIntervalMin: 60 };
+    this.config = { mode: 'paper', keyId: '', secret: '', refreshSec: 15, feed: ALPACA_FEED, syncEnabled: true, syncIntervalMin: 60, finnhubKey: '' };
+    this.finnhub = new FinnhubClient({ getKey: () => this.config.finnhubKey });
     this.quotes = {};
     this.assets = [];
     this.bySymbol = new Map();
@@ -174,7 +176,8 @@ class MarketService {
     return {
       mode: this.config.mode, keyId: this.config.keyId, secret: this.config.secret,
       refreshSec: this.config.refreshSec, feed: this.config.feed,
-      syncEnabled: this.config.syncEnabled, syncIntervalMin: this.config.syncIntervalMin
+      syncEnabled: this.config.syncEnabled, syncIntervalMin: this.config.syncIntervalMin,
+      finnhubKey: this.config.finnhubKey
     };
   }
 
@@ -195,6 +198,7 @@ class MarketService {
     if (cfg.feed) this.config.feed = String(cfg.feed).toLowerCase() === 'sip' ? 'sip' : 'iex';
     if (cfg.syncEnabled != null) this.config.syncEnabled = !!cfg.syncEnabled;
     if (cfg.syncIntervalMin != null) this.config.syncIntervalMin = Math.min(10080, Math.max(5, Math.round(Number(cfg.syncIntervalMin) || 60)));
+    if (typeof cfg.finnhubKey === 'string') this.config.finnhubKey = cfg.finnhubKey.trim();
     this.writeConfigFile();
     return true;
   }
@@ -210,12 +214,14 @@ class MarketService {
         this.config.feed = String(raw.feed || ALPACA_FEED).toLowerCase() === 'sip' ? 'sip' : 'iex';
         if (raw.syncEnabled != null) this.config.syncEnabled = !!raw.syncEnabled;
         if (raw.syncIntervalMin != null) this.config.syncIntervalMin = Math.min(10080, Math.max(5, Number(raw.syncIntervalMin) || 60));
+        this.config.finnhubKey = typeof raw.finnhubKey === 'string' ? raw.finnhubKey.trim() : '';
       }
     } catch (e) { /* first run */ }
     if (!this.config.keyId && process.env.ALPACA_KEY_ID) this.config.keyId = String(process.env.ALPACA_KEY_ID).trim();
     if (!this.config.secret && process.env.ALPACA_SECRET_KEY) this.config.secret = String(process.env.ALPACA_SECRET_KEY).trim();
     if (process.env.ALPACA_MODE === 'live') this.config.mode = 'live';
     if (process.env.ALPACA_SYNC_INTERVAL_MIN) this.config.syncIntervalMin = Math.min(10080, Math.max(5, Number(process.env.ALPACA_SYNC_INTERVAL_MIN) || 60));
+    if (!this.config.finnhubKey && process.env.FINNHUB_API_KEY) this.config.finnhubKey = String(process.env.FINNHUB_API_KEY).trim();
   }
 
   saveConfig(next) {
@@ -228,6 +234,8 @@ class MarketService {
     if (next.feed) cfg.feed = String(next.feed).toLowerCase() === 'sip' ? 'sip' : 'iex';
     if (next.syncEnabled != null) cfg.syncEnabled = !!next.syncEnabled;
     if (next.syncIntervalMin != null) cfg.syncIntervalMin = Math.min(10080, Math.max(5, Math.round(Number(next.syncIntervalMin) || 60)));
+    if (typeof next.finnhubKey === 'string' && next.finnhubKey.trim()) cfg.finnhubKey = next.finnhubKey.trim();
+    if (next.clearFinnhub === true) cfg.finnhubKey = '';
     this.config = cfg;
     this.assetsCache = null;
     this.assetsCacheAt = 0;
@@ -254,6 +262,7 @@ class MarketService {
       hasKeys: this.configured(),
       hasKey: this.configured(),
       keyIdMasked: key ? (key.slice(0, 4) + '…' + key.slice(-4)) : '',
+      finnhub: this.finnhub.status(),
       status: this.status()
     };
   }
@@ -844,12 +853,74 @@ class MarketService {
       sync: { enabled: this.config.syncEnabled, intervalMin: this.config.syncIntervalMin, lastSyncAt: this.lastSyncAt || null, running: this.syncRunning, lastError: this.lastSyncError || '' },
       apiCallsLastMin: (this.apiCalls || []).filter((t) => Date.now() - t < 60000).length,
       apiBudgetPerMin: this.maxCallsPerMin,
+      chart: this.finnhub.status(),
       startedAt: this.startedAt
     };
   }
 
   snapshot() {
     return { ok: true, at: Date.now(), source: this.source(), marketOpen: usMarketOpen(), notice: this.notice(), status: this.status(), quotes: this.quotes };
+  }
+
+  /* --------------------------- chart data ------------------------------
+     Finnhub is the chart provider: real candles per timeframe, with the
+     admin Override % applied exactly like live quotes. If Finnhub is not
+     configured (or the plan blocks candles) the chart falls back to the
+     server's own real tick history, never to a random walk. */
+  async chartFor(ticker, tfRaw) {
+    const tf = ['1D', '1W', '1M', '3M', '1Y', 'ALL'].includes(tfRaw) ? tfRaw : '1D';
+    const key = String(ticker || '').toUpperCase();
+    const asset = this.assetList().find((a) => a.ticker === key || String(a.alpacaSymbol).toUpperCase() === key);
+    const symbol = asset ? String(asset.alpacaSymbol || asset.ticker) : key;
+    const override = asset ? Number(asset.overridePct) || 0 : 0;
+    const apply = (p) => round(this.effectivePrice(p, override), 4);
+    let points = [];
+    let source = 'none';
+    let resolution = '';
+    let chartError = '';
+
+    if (this.finnhub.configured()) {
+      try {
+        const c = await this.finnhub.candles(symbol, tf);
+        points = c.points.map((p) => ({ t: p.t, p: apply(p.p) }));
+        resolution = c.resolution;
+        source = 'finnhub';
+      } catch (e) { chartError = e.message || 'Finnhub chart unavailable'; }
+    }
+
+    if (!points.length) {
+      /* real fallback: Alpaca 1-minute bars (already carry the override) */
+      try {
+        const bars = await this.fetchBars(symbol, 900, '1Min');
+        if (Array.isArray(bars) && bars.length) {
+          const windows = { '1D': 2 * 864e5, '1W': 7 * 864e5, '1M': 30 * 864e5, '3M': 92 * 864e5, '1Y': 366 * 864e5, 'ALL': 1e15 };
+          const win = windows[tf] || windows['1D'];
+          const cutoff = Date.now() - win;
+          points = bars.filter((b) => b.t >= cutoff).map((b) => ({ t: b.t, p: b.c }));
+          if (points.length < 2) points = bars.map((b) => ({ t: b.t, p: b.c }));
+          resolution = '1Min';
+          source = 'live';
+        }
+      } catch (e) { if (!chartError) chartError = e.message; }
+    }
+
+    if (points.length > 2000) points = points.slice(points.length - 2000);
+    const q = this.quotes[key] || null;
+    return {
+      ok: true,
+      at: Date.now(),
+      ticker: key,
+      symbol,
+      tf,
+      source,
+      resolution,
+      chartError,
+      overridePct: override,
+      points,
+      latest: q && Number(q.price) > 0
+        ? { price: Number(q.price), rawPrice: Number(q.rawPrice) || Number(q.price), at: Number(q.updatedAt) || Date.now() }
+        : null
+    };
   }
 
   /* --------------------- market audit trail -----------------------------
@@ -928,6 +999,13 @@ class MarketService {
     const priced = st.tickers ? (st.tickers - (st.unpriced || 0)) / st.tickers : 0;
     const priceState = !st.tickers ? 'warn' : priced >= 0.95 ? 'ok' : priced >= 0.6 ? 'warn' : 'error';
     add('pricing', 'Price coverage', priceState, (st.tickers - (st.unpriced || 0)) + ' / ' + st.tickers + ' symbols priced');
+
+    const fh = this.finnhub.status();
+    const fhFailing = !!fh.lastError && (fh.lastErrorAt || 0) > (fh.lastOkAt || 0) && (now - (fh.lastErrorAt || 0)) < 180000;
+    add('chart', 'Chart · Finnhub', !fh.configured ? 'warn' : fhFailing ? 'warn' : 'ok',
+      !fh.configured ? 'No Finnhub API key — chart uses the live tick feed'
+        : fhFailing ? ('Finnhub: ' + fh.lastError)
+        : ('Real-time candles' + (fh.latencyMs ? ' · ' + fh.latencyMs + ' ms' : '') + (fh.callsLastMin ? ' · ' + fh.callsLastMin + '/' + fh.budgetPerMin + ' calls' : '')));
 
     add('session', 'Trading session', 'info', st.marketOpen ? 'US market open' : 'US market closed');
 
