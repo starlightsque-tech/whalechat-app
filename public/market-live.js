@@ -704,7 +704,13 @@
         <div class="tiny muted mt6" id="alpKeyHint">Stored only on the server (file mode 0600 + Postgres), never in the synced app database.</div></div>
       <div class="field"><label class="label">Alpaca Secret Key</label>
         <input class="input" id="alpSecret" type="password" autocomplete="new-password" placeholder="Paste the secret key"/>
-        <div class="tiny muted mt6">Leave blank to keep the saved secret.</div></div>
+        <div class="tiny muted mt6">Leave blank to keep the saved secret. Get both keys at
+          <a href="https://app.alpaca.markets/paper/dashboard/overview" target="_blank" rel="noopener" style="color:var(--accent)">app.alpaca.markets → API Keys</a>.</div></div>
+      <div class="mkt-endpoint">
+        <div><span class="tiny muted">API endpoint</span>
+          <code id="alpEndpoint">https://paper-api.alpaca.markets/v2</code></div>
+        <div class="tiny muted">Set automatically from the environment — paper keys use the paper host, live keys use <code>api.alpaca.markets</code>. Data is always read from <code>data.alpaca.markets</code>.</div>
+      </div>
       <div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end">
         <div class="field grow" style="margin:0;min-width:180px"><label class="label">Environment</label>
           <select class="input" id="alpMode">
@@ -815,6 +821,7 @@
       if (keyId) keyId.placeholder = r.data.hasKeys ? 'Saved key ' + r.data.keyIdMasked + ' — leave blank to keep' : 'AK…';
       if (secret) secret.placeholder = r.data.hasKeys ? 'Saved secret — leave blank to keep' : 'Paste the secret key';
       if (mode) mode.value = r.data.mode;
+      paintEndpoint(r.data.mode);
       if (feed) feed.value = r.data.feed;
       if (refresh) refresh.value = r.data.refreshSec;
       if (syncOn) syncOn.checked = r.data.syncEnabled !== false;
@@ -825,6 +832,14 @@
       paintAdminStatus();
     } catch (e) { /* keep static card */ }
     finally { MK.adminLoading = false; }
+  }
+
+  function paintEndpoint(mode) {
+    const el = document.getElementById('alpEndpoint');
+    if (!el) return;
+    el.textContent = String(mode || (document.getElementById('alpMode') || {}).value || 'paper') === 'live'
+      ? 'https://api.alpaca.markets/v2'
+      : 'https://paper-api.alpaca.markets/v2';
   }
 
   function adminToast(msg, type) { if (typeof toast === 'function') toast(msg, type || 'ok'); }
@@ -898,6 +913,8 @@
         } catch (e) { adminToast('Settings saved — connection test unavailable', 'err'); }
         try { await poll(); } catch (e) {}
         loadStockOverrides(true);
+        loadAudit(true);
+        loadHealth();
         if (typeof render === 'function') render();
       } catch (e) {
         adminToast('Save failed: ' + e.message, 'err');
@@ -915,8 +932,8 @@
         const r = await getJSON('/api/market/sync-all', { method: 'POST', body: JSON.stringify({ adminId: meId }) }, 20000);
         if (!r.res || !r.res.ok || !r.data || !r.data.ok) return adminToast((r.data && r.data.error) || 'Sync could not start', 'err');
         adminToast('Alpaca sync started — assets, prices and dividends', 'ok');
-        setTimeout(() => { try { poll(); paintAdminStatus(); loadStockOverrides(true); } catch (e) {} }, 5000);
-        setTimeout(() => { try { poll(); paintAdminStatus(); loadStockOverrides(true); } catch (e) {} }, 15000);
+        setTimeout(() => { try { poll(); paintAdminStatus(); loadStockOverrides(true); loadAudit(true); loadHealth(); } catch (e) {} }, 5000);
+        setTimeout(() => { try { poll(); paintAdminStatus(); loadStockOverrides(true); loadAudit(true); loadHealth(); } catch (e) {} }, 15000);
       } catch (e) {
         adminToast('Sync failed: ' + e.message, 'err');
       } finally {
@@ -945,6 +962,8 @@
         try { await Remote.refresh(true); } catch (e) {}
         try { await poll(); } catch (e) {}
         adminToast('Price overrides saved and applied to live ticks', 'ok');
+        loadAudit(true);
+        loadHealth();
       } catch (e) { adminToast('Save failed: ' + e.message, 'err'); }
     };
 
@@ -955,6 +974,8 @@
         const r = await getJSON('/api/market/test', { method: 'POST', body: JSON.stringify({ adminId: meId }) }, 20000);
         const d = r.data || {};
         adminToast(d.ok ? `Alpaca OK · AAPL $${Number(d.price).toFixed(2)}` : (d.message || 'Alpaca test failed'), d.ok ? 'ok' : 'err');
+        loadHealth();
+        loadAudit(true);
       } catch (e) { adminToast('Test failed: ' + e.message, 'err'); }
     };
   }
@@ -1005,6 +1026,8 @@
         try { await Remote.refresh(true); } catch (e) {}
         try { await poll(); } catch (e) {}
         adminToast('Dividends synced from Alpaca', 'ok');
+        loadAudit(true);
+        loadHealth();
         render();
       } catch (e) {
         adminToast('Dividend sync failed: ' + e.message, 'err');
@@ -1012,6 +1035,251 @@
         if (btn) { btn.disabled = false; btn.textContent = 'Sync dividends now'; }
       }
     };
+  }
+
+  /* ---------------------- Alpaca health + audit log ----------------------- */
+  MK.health = null;
+  MK.healthLoading = false;
+  MK.audit = [];
+  MK.auditTotal = 0;
+  MK.auditLoaded = false;
+  MK.auditLoading = false;
+  MK.auditCategory = 'all';
+  MK.auditLimit = 100;
+
+  const AUDIT_LABELS = {
+    'connection.saved': 'Connection saved',
+    'connection.test': 'Connection test',
+    'sync.completed': 'Full data sync',
+    'sync.failed': 'Sync failed',
+    'sync.dividends': 'Dividend sync',
+    'overrides.saved': 'Overrides saved'
+  };
+
+  function healthHTML() {
+    return `<div class="card" id="mktHealthCard">
+      <div class="between" style="align-items:flex-start;gap:10px">
+        <div><div class="card-title" style="margin:0">Alpaca health</div>
+          <div class="tiny muted" style="margin-top:3px">Credentials, REST, IEX stream, rate budget, scheduled sync and price coverage.</div></div>
+        <span class="mkt-health-pill" id="mktHealthPill"><i></i><b>Checking…</b></span>
+      </div>
+      <div class="mkt-health-top">
+        <div class="mkt-health-ring" id="mktHealthRing"><span><b id="mktHealthScore">—</b><i>score</i></span></div>
+        <div class="mkt-health-meta" id="mktHealthMeta"><div class="mkt-stat"><span>Status</span><b>Reading Alpaca health…</b></div></div>
+      </div>
+      <div class="mkt-health-list" id="mktHealthList"><div class="tiny muted">Loading checks…</div></div>
+      <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
+        <button class="btn btn-xs btn-soft" data-act="mkt-health-refresh">Refresh health</button>
+        <button class="btn btn-xs btn-ghost" data-act="mkt-test">Test Alpaca</button>
+        <span class="tiny muted" style="margin-left:auto" id="mktHealthStamp"></span>
+      </div>
+    </div>`;
+  }
+
+  function auditHTML() {
+    const cats = [['all', 'All'], ['override', 'Overrides'], ['sync', 'Data sync'], ['connection', 'Connection']];
+    return `<div class="card" id="mktAuditCard">
+      <div class="between" style="align-items:flex-start;gap:10px">
+        <div><div class="card-title" style="margin:0">Override &amp; data sync audit log</div>
+          <div class="tiny muted" style="margin-top:3px">Durable server-side trail of every override change, sync run and connection update.</div></div>
+        <span class="badge badge-accent" id="mktAuditCount">0 entries</span>
+      </div>
+      <div class="row mkt-audit-tabs" style="gap:6px;margin-top:10px;flex-wrap:wrap">
+        ${cats.map((c) => `<button class="btn btn-xs ${MK.auditCategory === c[0] ? 'btn-primary' : 'btn-ghost'}" data-act="mkt-audit-filter" data-cat="${c[0]}">${c[1]}</button>`).join('')}
+        <button class="btn btn-xs btn-ghost" data-act="mkt-audit-refresh" style="margin-left:auto">Refresh</button>
+        <button class="btn btn-xs btn-ghost" data-act="mkt-audit-csv">CSV</button>
+      </div>
+      <div id="mktAuditList" class="mkt-audit-list"><div class="tiny muted" style="margin-top:10px">Loading audit trail…</div></div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn btn-xs btn-soft" data-act="mkt-audit-more" id="mktAuditMore" style="display:none">Load more</button>
+      </div>
+    </div>`;
+  }
+
+  function adminStackHTML() {
+    return healthHTML() + adminCardHTML() + stockOverridesHTML() + auditHTML() + tradingGuideHTML();
+  }
+
+  function healthStateClass(state) {
+    return state === 'ok' ? 'ok' : state === 'warn' ? 'warn' : state === 'error' ? 'err' : 'info';
+  }
+
+  function paintHealth(data) {
+    const card = document.getElementById('mktHealthCard');
+    if (!card || !data) return;
+    MK.health = data;
+    const score = Math.max(0, Math.min(100, Number(data.score) || 0));
+    const grade = String(data.grade || 'unknown');
+    const pill = document.getElementById('mktHealthPill');
+    if (pill) {
+      pill.className = 'mkt-health-pill ' + healthStateClass(score >= 90 ? 'ok' : score >= 70 ? 'warn' : 'error');
+      pill.innerHTML = '<i></i><b>' + escMarket(grade) + '</b>';
+    }
+    const ring = document.getElementById('mktHealthRing');
+    if (ring) {
+      const color = score >= 90 ? '#22c55e' : score >= 70 ? '#ffb020' : '#ef4444';
+      ring.style.background = 'conic-gradient(' + color + ' ' + (score * 3.6) + 'deg, rgba(255,255,255,.07) 0deg)';
+    }
+    const scoreEl = document.getElementById('mktHealthScore');
+    if (scoreEl) scoreEl.textContent = String(score);
+
+    const st = data.status || {};
+    const meta = document.getElementById('mktHealthMeta');
+    if (meta) {
+      const when = (ms) => ms ? new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
+      const latency = data.latencyMs != null ? data.latencyMs + ' ms' : '—';
+      meta.innerHTML = `
+        <div class="mkt-stat"><span>Environment</span><b>${escMarket(st.environment || '—')} · ${escMarket(String(st.feed || '').toUpperCase())}</b></div>
+        <div class="mkt-stat"><span>REST latency</span><b class="${data.latencyMs != null && data.latencyMs < 1200 ? 'up' : 'down'}">${escMarket(latency)}</b></div>
+        <div class="mkt-stat"><span>Last real tick</span><b>${when(st.lastRealAt)}</b></div>
+        <div class="mkt-stat"><span>Stream ticks</span><b>${Number(st.wsTicks) || 0}</b></div>
+        <div class="mkt-stat"><span>Last connection test</span><b class="${data.lastTestOk === true ? 'up' : data.lastTestOk === false ? 'down' : ''}">${data.lastTestAt ? when(data.lastTestAt) + (data.lastTestOk === true ? ' · OK' : data.lastTestOk === false ? ' · failed' : '') : 'never'}</b></div>
+        <div class="mkt-stat"><span>Server uptime</span><b>${Math.floor((Number(data.uptimeSec) || 0) / 60)} min</b></div>`;
+    }
+
+    const list = document.getElementById('mktHealthList');
+    if (list) {
+      list.innerHTML = (data.checks || []).map((c) => `<div class="mkt-health-row">
+        <i class="mkt-dot ${healthStateClass(c.state)}"></i>
+        <span class="mkt-health-name">${escMarket(c.label)}</span>
+        <span class="mkt-health-detail">${escMarket(c.detail)}</span>
+      </div>`).join('') || '<div class="tiny muted">No checks returned.</div>';
+    }
+    const stamp = document.getElementById('mktHealthStamp');
+    if (stamp) stamp.textContent = 'Updated ' + new Date(data.at || Date.now()).toLocaleTimeString();
+  }
+
+  async function loadHealth() {
+    const card = document.getElementById('mktHealthCard');
+    if (!card || MK.healthLoading) return;
+    MK.healthLoading = true;
+    try {
+      const r = await getJSON('/api/market/health', {}, 9000);
+      if (r.data && r.data.ok) paintHealth(r.data);
+      else throw new Error((r.data && r.data.error) || 'Health endpoint unavailable');
+    } catch (e) {
+      paintHealth({ at: Date.now(), score: 0, grade: 'offline', checks: [{ key: 'api', label: 'Health check', state: 'error', detail: e.message }], status: {} });
+    } finally { MK.healthLoading = false; }
+  }
+
+  function fmtChange(c) {
+    const field = String(c.field || '');
+    const f = c.from, t = c.to;
+    if (field === 'overridePct') return escMarket(c.ticker || '') + ' ' + (Number(f) || 0).toFixed(2) + '% → ' + (Number(t) || 0).toFixed(2) + '%';
+    if (field === 'active') return escMarket(c.ticker || '') + ' ' + (f ? 'active' : 'paused') + ' → ' + (t ? 'active' : 'paused');
+    if (field === 'apiKeys') return 'API keys ' + escMarket(f) + ' → ' + escMarket(t);
+    if (f == null && t != null) return field + ' ' + escMarket(t);
+    return field + ' ' + escMarket(f) + ' → ' + escMarket(t);
+  }
+
+  function paintAudit() {
+    const box = document.getElementById('mktAuditList');
+    if (!box) return;
+    const count = document.getElementById('mktAuditCount');
+    if (count) count.textContent = (MK.auditTotal || MK.audit.length) + ' entr' + ((MK.auditTotal || MK.audit.length) === 1 ? 'y' : 'ies');
+    if (!MK.audit.length) {
+      box.innerHTML = '<div class="mkt-audit-empty">No entries yet. Save an override, run a sync or update the connection.</div>';
+    } else {
+      box.innerHTML = MK.audit.map((e) => {
+        const label = AUDIT_LABELS[e.action] || e.action || 'Event';
+        const ok = e.result !== 'error';
+        const cats = e.category || 'system';
+        const changes = (e.changes || []).slice(0, 6).map((c) => `<span class="mkt-audit-chip">${fmtChange(c)}</span>`).join('');
+        const more = (e.changes || []).length > 6 ? `<span class="tiny muted">+${e.changes.length - 6} more</span>` : '';
+        const dur = e.durationMs != null ? ` · ${(e.durationMs / 1000).toFixed(2)}s` : '';
+        return `<div class="mkt-audit-row">
+          <div class="mkt-audit-main">
+            <div class="mkt-audit-head">
+              <b>${escMarket(label)}</b>
+              <span class="badge ${ok ? 'badge-success' : 'badge-warn'}">${ok ? 'ok' : 'error'}</span>
+              <span class="badge" style="text-transform:uppercase;font-size:9px">${escMarket(cats)}</span>
+            </div>
+            <div class="tiny muted">${escMarket(e.actor || 'system')} · ${new Date(e.at).toLocaleString()}${dur}</div>
+            ${e.summary ? `<div class="small" style="margin-top:3px">${escMarket(e.summary)}</div>` : ''}
+            ${changes ? `<div class="mkt-audit-changes">${changes}${more}</div>` : ''}
+          </div>
+          <div class="mkt-audit-target tiny muted">${escMarket(e.target || '')}</div>
+        </div>`;
+      }).join('');
+    }
+    const more = document.getElementById('mktAuditMore');
+    if (more) more.style.display = MK.audit.length < (MK.auditTotal || 0) && MK.audit.length >= MK.auditLimit ? '' : 'none';
+  }
+
+  async function loadAudit(force) {
+    const box = document.getElementById('mktAuditList');
+    if (!box || MK.auditLoading) return;
+    if (MK.auditLoaded && !force) { paintAudit(); return; }
+    if (typeof Remote === 'undefined' || !Remote.enabled) {
+      box.innerHTML = '<div class="tiny muted">Connect the sync server to read the server-side audit trail.</div>';
+      return;
+    }
+    MK.auditLoading = true;
+    try {
+      const meId = (typeof me === 'function' && me()) ? me().id : '';
+      const r = await getJSON('/api/market/audit?adminId=' + encodeURIComponent(meId) + '&limit=' + MK.auditLimit + '&category=' + encodeURIComponent(MK.auditCategory), {}, 15000);
+      if (!r.res || !r.res.ok || !r.data || !r.data.ok) throw new Error((r.data && (r.data.message || r.data.error)) || 'Could not load audit log');
+      MK.audit = Array.isArray(r.data.entries) ? r.data.entries : [];
+      MK.auditTotal = Number(r.data.total) || MK.audit.length;
+      MK.auditLoaded = true;
+      paintAudit();
+    } catch (e) {
+      box.innerHTML = '<div class="tiny muted">' + escMarket(e.message) + '</div>';
+    } finally { MK.auditLoading = false; }
+  }
+
+  if (typeof App !== 'undefined') {
+    App.mktHealthRefresh = function () { loadHealth(); };
+    App.mktAuditRefresh = function () { loadAudit(true); };
+    App.mktAuditFilter = function (id, ds) {
+      MK.auditCategory = (ds && ds.cat) || 'all';
+      MK.auditLimit = 100;
+      MK.auditLoaded = false;
+      document.querySelectorAll('.mkt-audit-tabs [data-act="mkt-audit-filter"]').forEach((b) => {
+        b.className = 'btn btn-xs ' + (b.getAttribute('data-cat') === MK.auditCategory ? 'btn-primary' : 'btn-ghost');
+      });
+      loadAudit(true);
+    };
+    App.mktAuditMore = function () {
+      MK.auditLimit = Math.min(500, MK.auditLimit + 100);
+      loadAudit(true);
+    };
+    App.mktAuditCsv = function () {
+      if (!MK.audit.length) return adminToast('Nothing to export yet', 'err');
+      const rows = [['time', 'action', 'category', 'actor', 'target', 'summary', 'result', 'duration_ms', 'changes']];
+      MK.audit.forEach((e) => rows.push([
+        new Date(e.at).toISOString(), e.action || '', e.category || '', e.actor || '', e.target || '', e.summary || '', e.result || '',
+        e.durationMs != null ? e.durationMs : '',
+        (e.changes || []).map((c) => c.field + ':' + c.from + '->' + c.to).join(' | ')
+      ]));
+      const csv = rows.map((r) => r.map((v) => '"' + String(v).replace(/"/g, '""') + '"').join(',')).join('\r\n');
+      try {
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'whalechat-market-audit-' + new Date().toISOString().slice(0, 10) + '.csv';
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+        adminToast('Audit log exported', 'ok');
+      } catch (err) { adminToast('Export failed', 'err'); }
+    };
+  }
+
+  function mountAdminStack() {
+    if (!/^#\/admin\/stocks/.test(location.hash || '')) return;
+    if (document.getElementById('mktHealthCard')) return;
+    const nav = document.querySelector('.admin-nav');
+    if (!nav || !nav.parentNode) return;
+    const wrap = document.createElement('div');
+    wrap.id = 'mktAdminStack';
+    wrap.innerHTML = adminStackHTML();
+    const firstCard = nav.parentNode.querySelector('.card');
+    if (firstCard && firstCard !== wrap) nav.parentNode.insertBefore(wrap, firstCard);
+    else nav.parentNode.appendChild(wrap);
+    const modeSel = document.getElementById('alpMode');
+    if (modeSel) modeSel.addEventListener('change', () => paintEndpoint(modeSel.value));
+    paintEndpoint();
+    loadHealth();
   }
 
   /* ------------------------------- mounting -------------------------------- */
@@ -1040,8 +1308,12 @@
       try { if (baseAfterAdmin) baseAfterAdmin(parts, params); } catch (e) {}
       if ((parts[1] || '') === 'stocks') {
         MK.adminLoaded = false;
-        setTimeout(() => { paintAdminStatus(); loadAdminConfig(); }, 60);
+        setTimeout(() => { mountAdminStack(); paintAdminStatus(); loadAdminConfig(); loadHealth(); loadAudit(); }, 60);
       }
+    };
+  } else if (typeof AFTER === 'object') {
+    AFTER.admin = function (parts) {
+      if ((parts[1] || '') === 'stocks') setTimeout(() => { mountAdminStack(); paintAdminStatus(); loadAdminConfig(); loadHealth(); loadAudit(); }, 60);
     };
   }
 
@@ -1162,6 +1434,52 @@
       color:var(--success);border:1px solid rgba(34,197,94,.30);background:rgba(34,197,94,.10);border-radius:99px;padding:2px 7px}
     .lt-live-badge i{width:6px;height:6px;border-radius:50%;background:#22c55e;animation:ltPulse 1.2s ease-in-out infinite}
     @keyframes ltPulse{0%,100%{opacity:.35;transform:scale(.8)}50%{opacity:1;transform:scale(1.15)}}
+    .mkt-health-pill{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:99px;
+      border:1px solid var(--border);background:var(--surface-2);font-size:10px;font-weight:800;
+      text-transform:uppercase;letter-spacing:.06em;white-space:nowrap}
+    .mkt-health-pill i{width:7px;height:7px;border-radius:50%;background:#8ba4b6}
+    .mkt-health-pill.ok{color:var(--success);border-color:rgba(34,197,94,.28)}
+    .mkt-health-pill.ok i{background:#22c55e;box-shadow:0 0 0 3px rgba(34,197,94,.15)}
+    .mkt-health-pill.warn{color:#ffb020;border-color:rgba(255,176,32,.3)}
+    .mkt-health-pill.warn i{background:#ffb020;box-shadow:0 0 0 3px rgba(255,176,32,.14)}
+    .mkt-health-pill.err{color:var(--danger);border-color:rgba(239,68,68,.3)}
+    .mkt-health-pill.err i{background:#ef4444;box-shadow:0 0 0 3px rgba(239,68,68,.14)}
+    .mkt-health-top{display:flex;gap:14px;align-items:center;margin-top:12px;flex-wrap:wrap}
+    .mkt-health-ring{width:86px;height:86px;border-radius:50%;flex:0 0 auto;display:grid;place-items:center;
+      background:conic-gradient(#22c55e 360deg,rgba(255,255,255,.07) 0);position:relative;transition:background .4s}
+    .mkt-health-ring:after{content:'';position:absolute;inset:7px;border-radius:50%;background:var(--surface-2)}
+    .mkt-health-ring span{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;line-height:1}
+    .mkt-health-ring b{font-size:21px;font-variant-numeric:tabular-nums}
+    .mkt-health-ring i{font-style:normal;font-size:8.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-top:3px}
+    .mkt-health-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:8px;flex:1;min-width:200px}
+    .mkt-health-list{margin-top:12px;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--surface-2)}
+    .mkt-health-row{display:flex;align-items:center;gap:8px;padding:8px 10px;border-top:1px solid var(--border);min-width:0}
+    .mkt-health-row:first-child{border-top:none}
+    .mkt-dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto}
+    .mkt-dot.ok{background:#22c55e} .mkt-dot.warn{background:#ffb020} .mkt-dot.err{background:#ef4444} .mkt-dot.info{background:#3aa0ff}
+    .mkt-health-name{font-size:11.5px;font-weight:650;flex:0 0 136px}
+    .mkt-health-detail{font-size:10.5px;color:var(--muted);line-height:1.45;flex:1;min-width:0;overflow-wrap:anywhere}
+    .mkt-audit-tabs .btn{min-height:26px}
+    .mkt-audit-list{border:1px solid var(--border);border-radius:12px;background:var(--surface-2);margin-top:10px;max-height:460px;overflow:auto}
+    .mkt-audit-row{display:flex;gap:10px;justify-content:space-between;padding:9px 11px;border-top:1px solid var(--border)}
+    .mkt-audit-row:first-child{border-top:none}
+    .mkt-audit-main{min-width:0;flex:1}
+    .mkt-audit-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+    .mkt-audit-head b{font-size:12px}
+    .mkt-audit-changes{display:flex;gap:5px;flex-wrap:wrap;margin-top:4px}
+    .mkt-audit-chip{font-size:10px;padding:2px 6px;border-radius:6px;background:rgba(46,230,201,.08);
+      border:1px solid rgba(46,230,201,.18);color:var(--text);font-variant-numeric:tabular-nums}
+    .mkt-audit-target{text-align:right;max-width:130px;flex:0 0 auto}
+    .mkt-audit-empty{padding:16px;font-size:11.5px;color:var(--muted);text-align:center;line-height:1.6}
+    .mkt-endpoint{margin:2px 0 10px;padding:9px 10px;border:1px solid var(--border);border-radius:10px;
+      background:var(--surface-2);display:flex;flex-direction:column;gap:4px}
+    .mkt-endpoint code{font-size:11px;color:var(--text);background:rgba(255,255,255,.05);border-radius:5px;padding:1px 5px;overflow-wrap:anywhere}
+    .mkt-endpoint>div:first-child{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+    @media(max-width:560px){
+      .mkt-health-name{flex-basis:106px;font-size:11px}
+      .mkt-audit-target{display:none}
+      .mkt-health-top{gap:10px}
+    }
     `;
     document.head.appendChild(st);
   })();
@@ -1173,6 +1491,7 @@
     poll();
     setInterval(poll, 1200);
     setInterval(() => { try { paintNotice(); paintAdminStatus(); } catch (e) {} }, 3000);
+    setInterval(() => { try { if (document.getElementById('mktHealthCard')) loadHealth(); } catch (e) {} }, 10000);
     setInterval(() => { try { if (MK.chart && MK.chart.mode === 'portfolio') updateChart(); } catch (e) {} }, 1000);
     setInterval(() => { try { if (MK.chart) updateChart(); checkSettledToasts(); } catch (e) {} }, 2000);
   }
