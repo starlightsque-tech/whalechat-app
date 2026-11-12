@@ -464,6 +464,8 @@
   }
 
   async function mountChart() {
+    /* v5 Pro Chart owns the stock trading view (lightweight-charts 5.x) */
+    if (window.WC_PRO_CHART && WC_PRO_CHART.mountStock) { WC_PRO_CHART.mountStock(); return; }
     const host = document.querySelector('.inv-chart[data-lt-live-chart], .inv-chart[data-chart]');
     if (!host) { destroyChart(); return; }
     const ticker = (host.getAttribute('data-lt-live-chart') || (host.getAttribute('data-chart') || '').split('|')[0] || currentTicker()).toUpperCase();
@@ -509,6 +511,7 @@
   async function mountPortfolioChart(force) {
     const host = document.getElementById('ltDashChart');
     if (!host || typeof LT === 'undefined' || !LT.seriesWithTrades) return;
+    if (window.WC_PRO_CHART && WC_PRO_CHART.mountPortfolio) { WC_PRO_CHART.mountPortfolio(host); return; }
     const sig = portfolioSig();
     if (!force && MK.chart && MK.chart.mode === 'portfolio' && MK.chart.host === host && MK.chart.portfolioSig === sig) { updateChart(); return; }
     let vals = [];
