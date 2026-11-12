@@ -405,7 +405,7 @@
       </div>
       <div class="field" style="margin-top:12px"><label class="label">Finnhub API Key</label>
         <input class="input" id="mktKey" type="password" autocomplete="new-password" placeholder="Paste a key from finnhub.io/register"/>
-        <div class="tiny muted mt6" id="mktKeyHint">Stored encrypted-at-rest on the server data volume, never in the app database.</div></div>
+        <div class="tiny muted mt6" id="mktKeyHint">Stored only on the server data volume (file mode 0600), never in the synced app database.</div></div>
       <div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end">
         <div class="field grow" style="margin:0;min-width:200px"><label class="label">Data mode</label>
           <select class="input" id="mktMode">
