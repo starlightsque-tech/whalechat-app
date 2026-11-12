@@ -243,6 +243,179 @@ App.demoSellersPublish = async function () {
   toast(res.addedProducts + ' new · ' + res.updatedProducts + ' refreshed listings', 'ok');
 };
 
+/* ---------------- demo user fleet: up to 10,000 generated shoppers ----------------
+   Bulk personas for load/volume testing. Records are deliberately compact so a
+   large fleet still fits in browser storage; avatars cycle through the real
+   portrait set. Orders are one per selected user, marked simulated. */
+const DEMO_FIRST = ['Amelia','Noah','Sofia','Liam','Mia','Ethan','Isabella','Lucas','Ava','Mateo','Chloe','Arjun',
+  'Priya','Kenji','Yuki','Aisha','Omar','Zara','Tunde','Nia','Elena','Marco','Hannah','Jonas','Clara','Felix',
+  'Leila','Ravi','Mei','Diego','Fatima','Samuel','Grace','Hugo','Ines','Kofi'];
+const DEMO_LAST = ['Johnson','Müller','Silva','Okafor','Tanaka','Patel','Kim','Garcia','Nowak','Dubois','Rossi',
+  'Hughes','Weber','Sato','Nair','Mensah','Alvarez','Kowalski','Andersen','Costa','Yilmaz','Novak','Fischer',
+  'Moreno','Santos','Park','Bianchi','Jensen','Haddad','Mwangi','Reyes','Kaur','Schmidt','Lopez','Adeyemi','Osei'];
+const DEMO_PLACES = [
+  { country:'United States', city:'Austin', postal:'78704', prefix:'+1 512', street:'South Congress Avenue' },
+  { country:'United States', city:'Chicago', postal:'60605', prefix:'+1 312', street:'North State Street' },
+  { country:'United Kingdom', city:'Manchester', postal:'M1 2EF', prefix:'+44 161', street:'Hilton Street' },
+  { country:'Germany', city:'Berlin', postal:'10243', prefix:'+49 30', street:'Warschauer Straße' },
+  { country:'France', city:'Lyon', postal:'69002', prefix:'+33 4', street:'Rue de la République' },
+  { country:'Spain', city:'Valencia', postal:'46004', prefix:'+34 963', street:'Calle de Colón' },
+  { country:'Nigeria', city:'Lagos', postal:'101241', prefix:'+234 802', street:'Adeola Odeku Street' },
+  { country:'Kenya', city:'Nairobi', postal:'00100', prefix:'+254 20', street:'Kimathi Street' },
+  { country:'India', city:'Pune', postal:'411001', prefix:'+91 20', street:'Koregaon Park Lane' },
+  { country:'Japan', city:'Osaka', postal:'530-0001', prefix:'+81 6', street:'Umeda, Kita-ku' },
+  { country:'Philippines', city:'Cebu City', postal:'6000', prefix:'+63 32', street:'Osmeña Boulevard' },
+  { country:'United Arab Emirates', city:'Dubai', postal:'00000', prefix:'+971 4', street:'Al Fahidi Street' },
+  { country:'Brazil', city:'São Paulo', postal:'01310-100', prefix:'+55 11', street:'Avenida Paulista' },
+  { country:'South Africa', city:'Cape Town', postal:'8001', prefix:'+27 21', street:'Long Street' }
+];
+const DEMO_AVATARS = ['./bots/lena-hoffmann.jpg','./bots/mathieu-leroy.jpg','./bots/carla-moreno.jpg',
+  './bots/oliver-hughes.jpg','./bots/aiko-tanaka.jpg','./bots/miguel-santos.jpg','./bots/arjun-mehta.jpg','./bots/zofia-nowak.jpg'];
+const DB_STORAGE_BUDGET = 4400000;   /* chars — leave headroom under a 5 MB localStorage */
+
+LT.demoUsersCfg = function () {
+  const cfg = LT.sellersCfg();
+  if (!cfg.demoUsers || typeof cfg.demoUsers !== 'object') cfg.demoUsers = { generated: 0, lastAt: null, ordering: 0, orderAt: null };
+  return cfg.demoUsers;
+};
+LT.demoShoppers = function () {
+  return (DB.users || []).filter(u => u.isBot && !u.isDemoSeller);
+};
+
+LT.generateDemoUsers = function (count) {
+  const n = Math.round(Number(count) || 0);
+  if (n < 1 || n > 10000) return { ok: false, error: 'Choose between 1 and 10,000 demo users' };
+  if (!DB || !DB_READY) return { ok: false, error: 'App is still loading — try again' };
+  const cfg = LT.demoUsersCfg();
+  const shoppers = LT.demoShoppers();
+  const existingGenerated = shoppers.filter(u => u.isDemoUser).length;
+  const usernames = new Set((DB.users || []).map(u => String(u.username || '').toLowerCase()));
+  const maxId = shoppers.filter(u => u.isDemoUser)
+    .reduce((m, u) => Math.max(m, Number(String(u.id).replace('dbu_', '')) || 0), 0);
+  const start = Math.max(existingGenerated, maxId) + 1;
+  const slug = (s) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
+  const before = DB.users.length;
+  const created = [];
+
+  for (let i = 0; i < n; i++) {
+    const idx = start + i;
+    const first = DEMO_FIRST[idx % DEMO_FIRST.length];
+    const last = DEMO_LAST[Math.floor(idx / DEMO_FIRST.length) % DEMO_LAST.length];
+    const middle = String.fromCharCode(65 + (idx % 26));
+    const place = DEMO_PLACES[idx % DEMO_PLACES.length];
+    let username = 'demo.' + slug(first) + '.' + slug(last) + '.' + idx;
+    let bump = 1;
+    while (usernames.has(username)) username = 'demo.' + slug(first) + '.' + slug(last) + '.' + idx + '_' + (bump++);
+    usernames.add(username);
+    created.push({
+      id: 'dbu_' + idx,
+      username,
+      fullName: first + ' ' + middle + '. ' + last,
+      avatar: DEMO_AVATARS[idx % DEMO_AVATARS.length],
+      isBot: true, isDemoUser: true,
+      country: place.country, city: place.city,
+      createdAt: Date.now() - (idx % 365) * 864e5
+    });
+  }
+
+  DB.users.push(...created);
+  const size = JSON.stringify(DB).length;
+  if (size > DB_STORAGE_BUDGET) {
+    DB.users.length = before;
+    return { ok: false, error: 'That many users would exceed this device\'s storage. Try a smaller number (about ' + Math.max(100, Math.floor(n * DB_STORAGE_BUDGET / size)) + ').' };
+  }
+  cfg.generated = (cfg.generated || 0) + created.length;
+  cfg.lastAt = Date.now();
+  try { AUDIT.log('Demo users generated', created.length + ' accounts · ' + (existingGenerated + created.length) + ' generated total'); } catch (e) {}
+  try { sync(); } catch (e) {}
+  persist();
+  return { ok: true, added: created.length, total: LT.demoShoppers().length, generated: cfg.generated, bytes: size };
+};
+
+LT.generateDemoUserOrders = function (count) {
+  const n = Math.round(Number(count) || 0);
+  if (n < 1) return { ok: false, error: 'Choose at least 1 demo user' };
+  const shoppers = LT.demoShoppers();
+  if (!shoppers.length) return { ok: false, error: 'Generate demo users first' };
+  if (n > shoppers.length) return { ok: false, error: 'Only ' + shoppers.length + ' demo users exist' };
+  const products = (DB.products || []).filter(p => p.demo && p.active && p.stock > 0);
+  if (!products.length) return { ok: false, error: 'Publish the demo storefronts first' };
+  const vendors = (DB.vendors || []).filter(v => v.demo);
+  if (!vendors.length) return { ok: false, error: 'Publish the demo storefronts first' };
+
+  const batch = Date.now().toString(36);
+  const beforeOrders = DB.orders.length;
+  const beforeSize = JSON.stringify(DB).length;
+  const step = Math.max(1, Math.floor(shoppers.length / n));
+  let made = 0, gmv = 0;
+
+  for (let i = 0; i < n; i++) {
+    const buyer = shoppers[Math.min(shoppers.length - 1, Math.floor(i * step))];
+    const seller = vendors[i % vendors.length];
+    const pool = products.filter(p => p.vendorId === seller.id);
+    if (!pool.length) continue;
+    const p = pool[i % pool.length];
+    const daysAgo = Math.floor(Math.pow(Math.random(), 1.4) * 21);
+    const at = Date.now() - daysAgo * 864e5 - Math.floor(Math.random() * 18) * 36e5;
+    const qty = Math.random() < 0.8 ? 1 : 2;
+    const totalUsd = Math.round(p.priceUsd * qty * 100) / 100;
+    const status = daysAgo <= 1 ? (Math.random() < 0.5 ? 'pending' : 'processing')
+      : daysAgo <= 4 ? (Math.random() < 0.6 ? 'processing' : 'shipped')
+      : (Math.random() < 0.93 ? 'delivered' : 'cancelled');
+    DB.orders.push({
+      id: 'ord_du_' + batch + '_' + (i + 1),
+      ref: 'WC-' + Math.random().toString(36).slice(2, 7).toUpperCase(),
+      buyerId: buyer.id, vendorId: seller.id,
+      items: [{ productId: p.id, name: p.name, qty, priceUsd: p.priceUsd, image: p.image, category: p.category }],
+      totalUsd, totalCoins: Math.round(totalUsd / LT_COIN * 100) / 100,
+      delivery: {
+        fullName: buyer.fullName,
+        phone: buyer.phone || '+1 555 01' + String(10 + (i % 89)),
+        email: buyer.email || (buyer.username || 'demo.user') + '@example.com',
+        country: buyer.country, city: buyer.city,
+        address: buyer.address || ((i % 240) + 1) + ' Market Street',
+        postal: buyer.postal || '00000'
+      },
+      status, payment: 'whale_coin', createdAt: at,
+      simulated: true, isBot: true, demo: true,
+      timeline: [{ status: 'processing', at, note: 'Order placed' }]
+    });
+    made++;
+    if (!['cancelled', 'refunded'].includes(status)) gmv += totalUsd;
+  }
+
+  const size = JSON.stringify(DB).length;
+  if (size > DB_STORAGE_BUDGET) {
+    DB.orders.length = beforeOrders;
+    return { ok: false, error: 'Those orders would exceed this device\'s storage (currently ' + Math.round(beforeSize / 1024) + ' KB). Try fewer users.' };
+  }
+
+  const cfg = LT.demoUsersCfg();
+  cfg.ordering = made;
+  cfg.orderAt = Date.now();
+  cfg.ordersTotal = (cfg.ordersTotal || 0) + made;
+  try { AUDIT.log('Demo user orders created', made + ' users ordered · $' + Math.round(gmv) + ' simulated'); } catch (e) {}
+  try { sync(); } catch (e) {}
+  persist();
+  return { ok: true, orders: made, users: made, gmv, total: DB.orders.filter(o => o.simulated).length };
+};
+
+App.demoUsersGenerate = function () {
+  const el = document.getElementById('demoUserCount');
+  const res = LT.generateDemoUsers(el ? el.value : 0);
+  if (!res.ok) return toast(res.error, 'err');
+  toast(res.added + ' demo users created · ' + res.total + ' demo users total', 'ok', 3600);
+  render();
+};
+
+App.demoUsersOrders = function () {
+  const el = document.getElementById('demoOrderUsers');
+  const res = LT.generateDemoUserOrders(el ? el.value : 0);
+  if (!res.ok) return toast(res.error, 'err');
+  toast(res.orders + ' demo users placed an order · $' + Math.round(res.gmv) + ' simulated', 'ok', 3600);
+  render();
+};
+
 /* ---------------- admin: generate company-market (wholesale) products ----------------
    Targets DB.companyProducts — the stock vendors buy from. Each run appends the
    requested 50–100 distinct SKUs across electronics, sound systems, phones,
@@ -625,7 +798,14 @@ LT.seedDemoActivity = function (extra) {
       buyerId: buyer.id, vendorId: seller.id,
       items: [{ productId: p.id, name: p.name, qty, priceUsd: p.priceUsd, image: p.image, emoji: null, category: p.category }],
       totalUsd, totalCoins,
-      delivery: { fullName: buyer.fullName, phone: buyer.phone, email: buyer.email, country: buyer.country, city: buyer.city, address: buyer.address, postal: buyer.postal },
+      delivery: {
+        fullName: buyer.fullName,
+        phone: buyer.phone || '+1 555 0100',
+        email: buyer.email || (buyer.username || 'demo.user') + '@example.com',
+        country: buyer.country, city: buyer.city,
+        address: buyer.address || '12 Market Street',
+        postal: buyer.postal || '00000'
+      },
       status, payment: 'whale_coin', createdAt, simulated: true, isBot: true, demo: true,
       timeline: [{ status: 'Order placed', at: createdAt, note: 'Order placed' }]
     });
@@ -692,21 +872,29 @@ LT.demoActivityStats = function () {
   }));
   const byCategory = Object.keys(catMap).map(k => ({ category: k, units: catMap[k] })).sort((a, b) => b.units - a.units);
 
+  const ordersByBuyer = new Map();
+  demoOrders.forEach(o => {
+    if (!ordersByBuyer.has(o.buyerId)) ordersByBuyer.set(o.buyerId, []);
+    ordersByBuyer.get(o.buyerId).push(o);
+  });
+  const botByUser = new Map((DB.bots || []).map(b => [b.botId, b]));
   const byBuyer = shoppers.map(u => {
-    const list = demoOrders.filter(o => o.buyerId === u.id);
+    const list = ordersByBuyer.get(u.id) || [];
+    if (!list.length) return null;
     const paid = list.filter(o => !['cancelled', 'refunded'].includes(o.status));
     return {
       user: u,
       orders: list.length,
       spend: paid.reduce((n, o) => n + (Number(o.totalUsd) || 0), 0),
       lastAt: list.reduce((m, o) => Math.max(m, o.createdAt || 0), 0),
-      nextAt: ((DB.bots || []).find(b => b.botId === u.id) || {}).nextAt || 0
+      nextAt: (botByUser.get(u.id) || {}).nextAt || 0
     };
-  }).sort((a, b) => b.spend - a.spend);
+  }).filter(Boolean).sort((a, b) => b.spend - a.spend).slice(0, 25);
 
   const recent = demoOrders.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 10);
 
-  return { shoppers, demoVendors, demoProducts, orders, demoOrders, gmv, days, week, prevWeek, bySeller, byCategory, byBuyer, recent };
+  return { shoppers, demoVendors, demoProducts, orders, demoOrders, gmv, days, week, prevWeek,
+           bySeller, byCategory, byBuyer, recent, shopperTotal: shoppers.length };
 };
 
 function ltDemoActivityView() {
@@ -808,7 +996,9 @@ function ltDemoActivityView() {
   </div>
 
   <div class="card mt14">
-    <div class="card-title">Shopper activity</div>
+    <div class="between"><div class="card-title" style="margin:0">Shopper activity</div>
+      <span class="badge">${st.byBuyer.length} of ${st.shopperTotal} users</span></div>
+    <div class="tiny muted" style="margin-bottom:6px">Top spenders among demo users who have ordered.</div>
     <div class="inv-list">
       ${st.byBuyer.length ? st.byBuyer.map(b => `<div class="inv-row">
         <span class="avatar sm" style="overflow:hidden;flex:0 0 auto;width:34px;height:34px">${b.user.avatar ? `<img src="${b.user.avatar}" style="width:100%;height:100%;object-fit:cover"/>` : ''}</span>
