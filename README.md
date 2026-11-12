@@ -313,6 +313,24 @@ storage budget it rolls back completely and tells the admin to try a smaller num
 partially written. Scheduled shoppers (the 8 named personas) keep their weekly cadence; bulk users
 only order when the admin asks them to.
 
+### Company support & vendor refunds
+
+- **No vendor↔shopper chat.** Direct conversations between a store account and a shopper are blocked in
+  both directions, including existing conversations and hash links. Any attempt redirects to company
+  support; vendors can still talk to admin, and shoppers keep normal chats with each other.
+- **Live support everywhere.** The order sheet's circled vendor action is now **Support** and opens the
+  company live chat (Tawk widget) with the order reference attached. If the widget is slow to load it
+  falls back to the in-app support conversation with the admin — never to the vendor.
+- **Stock refunds for vendors.** The vendor hub has **Stock returns & refunds → Request refund**. The
+  modal lists every eligible company purchase with its unsold quantity, lets the vendor tick several
+  products, and requires a reason. Submitting creates one pending refund request; admin reviews it in
+  **Admin → Refunds**.
+- **Approval is atomic.** Every line is re-checked for remaining stock; then the units are removed from
+  the vendor's inventory (the listing disappears when the last unit goes), added back to the Company
+  Marketplace stock, the purchases are marked refunded, and the exact amount paid is credited to the
+  vendor's Whale Coin balance with a transaction record and notifications. Rejection leaves everything
+  untouched and sends the reason to the vendor.
+
 ### Sales performance reports
 
 **Admin → Sales** (`#/admin/sales`) tracks sales across the whole app, every seller and every product.
