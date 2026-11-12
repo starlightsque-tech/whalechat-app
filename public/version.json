@@ -1,8 +1,8 @@
 {
-  "version": "3.21.2",
-  "build": "2026-11-12T15:20:00Z",
+  "version": "3.22.0",
+  "build": "2026-11-12T16:10:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.21.2 - dividend yield badges and duration bonus estimates on watchlist and portfolio rows.",
-  "releasedAt": "2026-11-12T15:20:00Z",
+  "notes": "WhaleChat 3.22.0 - multi-asset Finnhub markets (US/global stocks, forex, crypto), real-only prices, category tabs and admin asset search.",
+  "releasedAt": "2026-11-12T16:10:00Z",
   "minimum": "3.0.0"
 }
