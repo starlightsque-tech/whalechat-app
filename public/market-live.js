@@ -93,6 +93,7 @@
     const refresh = (MK.feed.status && Number(MK.feed.status.refreshSec)) || 15;
     return Date.now() - MK.lastPollAt < Math.max(10000, refresh * 2500);
   }
+  MK.feedFresh = feedFresh;
 
   /* Keep the client simulation from fighting the authoritative server cache. */
   function patchTick() {
