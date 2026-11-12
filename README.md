@@ -276,6 +276,26 @@ category and **how many products to generate (1–50)**. Each run adds brand-new
 - every generated product gets a committed photo (`public/demo/products/*.jpg.b64`) — extra models can
   declare `deriveFrom` + `derive` in the source so the encoder creates a distinct shot from a base render.
 
+### Company Marketplace product generator
+
+**Admin → Products → Generate products** builds wholesale stock for the Company Marketplace that vendors
+buy from. The admin enters **50–100** and each run appends that many *new* SKUs across electronics,
+sound systems, phones, watches, bags, chargers, power banks and solar systems (plus laptops, tablets,
+gaming, cases and accessories). Existing company products are never removed or overwritten — a second
+run simply adds another batch.
+
+- Pool: the 57 demo catalogue models + `public/company-catalog.json` (bags, solar systems and
+  electronics wholesale lines) — 70 distinct models across 17 categories.
+- Each run assigns a different model per category in rotation, then edition variants when a model is
+  reused, so names and ids stay unique across batches.
+- Wholesale prices are about 55–60% of retail, with stock of 30–180 units per SKU.
+- Existing rows with no photo are back-filled with a matching category photo (no other field touched).
+- Generated rows carry `generated: true` and a `batch` id; the card shows totals, category spread and
+  the last run. Vendors see them immediately in **Vendor Hub → Company Market**.
+
+Company-only assets live in `public/company/products/*.jpg.b64` and are decoded by the build, so every
+generated product has a real photo.
+
 ### Demo activity dashboard
 
 **Admin → Demo activity** (`#/admin/demo-activity`) is the demo fleet's analytics page: seller /
