@@ -722,7 +722,8 @@
       <div class="mkt-stat"><span>WebSocket</span><b class="${st.wsConnected ? 'up' : 'down'}">${st.wsConnected ? 'connected' : 'offline'}</b></div>
       <div class="mkt-stat"><span>Last real tick</span><b>${when(st.lastRealAt)}</b></div>
       <div class="mkt-stat"><span>Server price tick</span><b>${when(st.lastTickAt)}</b></div>
-      <div class="mkt-stat"><span>Rate limit</span><b class="${st.rateLimitedUntil ? 'down' : 'up'}">${st.rateLimitedUntil ? '429 · fallback active' : 'clear'}</b></div>
+      <div class="mkt-stat"><span>Rate limit</span><b class="${st.rateLimitedUntil ? 'down' : 'up'}">${st.rateLimitedUntil ? '429 · cooling down' : 'clear'}</b></div>
+      <div class="mkt-stat"><span>Unpriced assets</span><b class="${(st.unpriced || 0) ? 'down' : 'up'}">${st.unpriced || 0}</b></div>
       ${st.lastError ? `<div class="mkt-stat"><span>Last error</span><b class="down">${escMarket(st.lastError)}</b></div>` : ''}`;
   }
 
