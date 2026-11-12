@@ -888,6 +888,7 @@ INV.paint = function () {
     el.innerHTML = INV.spark(t);
   });
   $$('[data-chart]').forEach(el => {
+    if (el.__wcLwc) return;
     const spec = (el.getAttribute('data-chart') || '').split('|');
     const t = spec[0], tf = spec[1] || '1D', mode = spec[2] || 'line';
     if (!t) return;
