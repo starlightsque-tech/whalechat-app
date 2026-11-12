@@ -2,19 +2,6 @@
 <html lang="en" data-theme="dark">
 <head>
 <script>window.__WC_SERVER__ = true; window.__WC_PUBLIC_URL__ = "https://whalechat-qkgd.onrender.com";</script>
-<!--Start of Tawk.to Script-->
-<script type="text/javascript">
-var Tawk_API=Tawk_API||{}, Tawk_LoadStart=new Date();
-(function(){
-var s1=document.createElement("script"),s0=document.getElementsByTagName("script")[0];
-s1.async=true;
-s1.src='https://embed.tawk.to/6af412c51859cf3c3d81d341/1k74milq6';
-s1.charset='UTF-8';
-s1.setAttribute('crossorigin','*');
-s0.parentNode.insertBefore(s1,s0);
-})();
-</script>
-<!--End of Tawk.to Script-->
 <script async src="https://www.googletagmanager.com/gtm.js?id=GTM-5WNCBL8N"></script><script>window.dataLayer = window.dataLayer || [];function gtag(){dataLayer.push(arguments);}gtag('js', new Date());</script>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
@@ -628,10 +615,10 @@ html[data-theme="light"] .profile-banner>img{opacity:.10}
 'use strict';
 
 const COIN_USD = 0.5;                 // 1 Whale Coin = $0.50
-const APP_VERSION = '3.9.1';
+const APP_VERSION = '3.9.10';
 // Set to your permanent sync server to auto-connect from any static host, e.g. 'https://sync.yourdomain.com'
 const DEFAULT_SYNC_SERVER = '';
-const APP_BUILD = '2026-11-11T16:20:00Z';    // replaced at build time
+const APP_BUILD = '2026-11-12T05:57:54Z';    // replaced at build time
 const LS_DB = 'whalechat.db.v1';
 const LS_SESSION = 'whalechat.session.v1';
 const LS_THEME = 'whalechat.theme';
@@ -763,4 +750,130 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 async function hash(str) {
   const salt = 'whalechat::v1::';
   try {
-    if (window.crypto && cr
+    if (window.crypto && crypto.subtle) {
+      const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(salt + str));
+      return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+  } catch (e) { /* fall through */ }
+  return 'fb' + fnv(salt + str) + fnv(str + salt);
+}
+function fnv(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+  return h.toString(16);
+}
+function copyText(text) {
+  const done = () => toast('Copied to clipboard', 'ok');
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
+  } else fallbackCopy(text, done);
+}
+function fallbackCopy(text, done) {
+  const ta = document.createElement('textarea');
+  ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand('copy'); done(); } catch (e) { toast('Copy failed', 'err'); }
+  ta.remove();
+}
+
+/* ---------------- persistence ---------------- */
+let DB = null;
+let SESSION = null;
+let SAVE_TIMER = null;
+
+function blankDB() {
+  return {
+    version: 1,
+    users: [], vendors: [], companyProducts: [], products: [], orders: [],
+    deposits: [], withdrawals: [], messages: [], statuses: [], chatsMeta: {}, referrals: [], purchases: [],
+    contacts: [], blocks: [], notifications: [], txs: [], reports: [], refunds: [], vendorApplications: [], bonuses: [], bonusClaims: [], emailCampaigns: [],
+    settings: {
+      crypto: [
+        { id: 'cr_1', name: 'USDT (TRC20)', address: 'TQn9Y2khEsLJW1ChVWFMSMeRDow5KcbLSE', network: 'TRC20', note: 'Send only USDT on TRC20. Minimum $5.' },
+        { id: 'cr_2', name: 'Bitcoin (BTC)', address: 'bc1qwhalechat9d2f7k4m8s3v6x1p5n0r2t4y7u', network: 'Bitcoin', note: 'Minimum $10.' }
+      ],
+      banks: [
+        { id: 'bk_1', bankName: 'WhaleChat Trust Bank', accountName: 'WhaleChat Ltd', accountNumber: '4102 8890 7712', swift: 'WCTRUS33', routing: '021000021', country: 'United States', note: 'Use your username as reference.' }
+      ],
+      networks: ['TRC20', 'ERC20', 'BEP20', 'Polygon', 'Solana', 'Avalanche'],
+      depositNote: 'Deposits are reviewed by our team and credited to your Whale Coin balance.',
+      supportEmail: 'support@whalechat.app',
+      appLink: '',
+      appLinkDestination: '',
+      inviteMessage: '',
+      gaMeasurementId: '',
+      allowAnyPassword: false,
+      vendorFeeUsd: 50,
+      vendorPlans: [
+        { id: 'vpl_1', months: 1, priceUsd: 50 },
+        { id: 'vpl_2', months: 2, priceUsd: 200 },
+        { id: 'vpl_3', months: 3, priceUsd: 400 }
+      ],
+      vendorPayments: {
+        note: 'Pay the exact vendor activation fee, then upload your payment receipt for review.',
+        methods: [
+          { id: 'vpm_1', label: 'USDT (TRC20)', network: 'TRC20', address: 'TQn9Y2khEsLJW1ChVWFMSMeRDow5KcbLSE' }
+        ]
+      },
+      maintenance: { enabled: false, until: 0, startedAt: 0, message: 'WhaleChat is being upgraded to serve you better. We will be back very soon.' }
+    },
+    meta: { createdAt: Date.now(), adminSeeded: false }
+  };
+}
+
+async function seedDB() {
+  const db = blankDB();
+  const admin = {
+    id: 'usr_admin', role: 'admin', fullName: 'WhaleChat Admin', username: 'Admin',
+    email: 'admin@whalechat.app', phone: '+10000000000',
+    pass: await hash('Admin@12345'), pin: null, avatar: null, balance: 0,
+    totalDeposits: 0, totalWithdrawals: 0, totalEarnings: 0,
+    referralCode: 'WHALEADMIN', referredBy: null, referralPaid: true,
+    trustScore: 100, completedSales: 0, rating: 5, verified: true, banned: false,
+    vendorId: null, cart: [], stars: [], settings: { notifications: true },
+    createdAt: Date.now(), isAdmin: true
+  };
+  db.users.push(admin);
+  // Company catalog so vendors have something to buy on day one (admin-editable)
+  const catalog = [
+    { name: 'Whale X1 Pro 5G', category: 'Phones', priceUsd: 620, stock: 40, emoji: '📱', desc: '6.7" AMOLED, 256GB, triple camera, 5000mAh.' },
+    { name: 'OrcaBook Air 14"', category: 'Laptops', priceUsd: 940, stock: 22, emoji: '💻', desc: 'M2-class chip, 16GB RAM, 512GB SSD.' },
+    { name: 'DeepBlue Pad 11', category: 'Tablets', priceUsd: 380, stock: 30, emoji: '📲', desc: '11" 120Hz display with stylus support.' },
+    { name: 'EchoBuds Pro ANC', category: 'Headphones', priceUsd: 128, stock: 80, emoji: '🎧', desc: 'Hybrid ANC, 38h battery, spatial audio.' },
+    { name: 'TidalCharge 65W GaN', category: 'Chargers', priceUsd: 34, stock: 180, emoji: '🔌', desc: '65W dual USB-C fast charger, travel ready.' },
+    { name: 'WaveConsole X', category: 'Video Games', priceUsd: 480, stock: 26, emoji: '🎮', desc: '4K gaming console with wireless controller.' },
+    { name: 'HarborShield Case', category: 'Phone Pouches', priceUsd: 19, stock: 240, emoji: '🛡️', desc: 'Military-grade drop protection, slim profile.' },
+    { name: 'Nautilus Watch S2', category: 'Accessories', priceUsd: 210, stock: 45, emoji: '⌚', desc: 'AMOLED smartwatch, 14-day battery, GPS.' }
+  ];
+  db.companyProducts = catalog.map((c, i) => ({
+    id: 'cp_' + (i + 1), name: c.name, category: c.category, priceUsd: c.priceUsd,
+    stock: c.stock, emoji: c.emoji, image: null, description: c.desc, createdAt: Date.now() - i * 86400000
+  }));
+  db.meta.adminSeeded = true;
+  return db;
+}
+
+function loadDB() {
+  try {
+    const raw = localStorage.getItem(LS_DB);
+    if (!raw) return null;
+    const db = JSON.parse(raw);
+    if (!db || !Array.isArray(db.users)) return null;
+    const merged = Object.assign(blankDB(), db);
+    merged.settings = withSettingsDefaults(Object.assign({}, blankDB().settings, db.settings || {}));
+    migrateVendorExpiry(merged);
+    return merged;
+  } catch (e) { return null; }
+}
+
+let DB_READY = false;
+async function initDB() {
+  DB = loadDB();
+  if (!DB) { DB = await seedDB(); persist(true); }
+  else if (!DB.users.some(u => u.role === 'admin')) {
+    const admin = {
+      id: 'usr_admin', role: 'admin', fullName: 'WhaleChat Admin', username: 'Admin',
+      email: 'admin@whalechat.app', phone: '+10000000000', pass: await hash('Admin@12345'),
+      pin: null, avatar: null, balance: 0, totalDeposits: 0, totalWithdrawals: 0, totalEarnings: 0,
+      referralCode: 'WHALEADMIN', referredBy: null, referralPaid: true, trustScore: 100,
+      completedSales: 0, rating: 5, verified: true, banned:
