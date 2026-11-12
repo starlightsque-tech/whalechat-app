@@ -156,6 +156,31 @@ class MarketService {
     this.dividendFetched = 0;
     this.timers = [];
     this.settleLock = false;
+    /* Finnhub free tier is 60 calls/minute. Keep a rolling window so seeding,
+       dividend sync and polling share one budget instead of tripping 429s. */
+    this.apiCalls = [];
+    this.maxCallsPerMin = Math.max(20, Math.min(59, Number(process.env.FINNHUB_MAX_CALLS_PER_MIN) || 55));
+    this.seedOk = 0;
+    this.seedFailed = [];
+    this.dividendFailed = [];
+    this.dividendAttempted = 0;
+    this.dividendRetryTimer = null;
+  }
+
+  /* --------------------------- Finnhub call budget ----------------------- */
+  async reserveApiCall() {
+    for (let guard = 0; guard < 30; guard++) {
+      const now = Date.now();
+      this.apiCalls = this.apiCalls.filter((t) => now - t < 60000);
+      if (this.apiCalls.length < this.maxCallsPerMin) { this.apiCalls.push(now); return; }
+      const wait = Math.max(250, 60000 - (now - this.apiCalls[0]) + 120);
+      await sleep(wait);
+    }
+  }
+
+  async waitForCooldown() {
+    const left = this.rateLimitedUntil - Date.now();
+    if (left > 0) await sleep(Math.min(90000, left + 400));
   }
 
   /* ------------------------------- config ------------------------------- */
@@ -334,7 +359,8 @@ class MarketService {
   }
 
   /* --------------------------- Finnhub REST ----------------------------- */
-  getJSON(url, timeoutMs) {
+  async getJSON(url, timeoutMs) {
+    await this.reserveApiCall();
     return new Promise((resolve, reject) => {
       const client = /^http:\/\//i.test(url) ? http : https;
       const req = client.get(url, {
@@ -394,19 +420,29 @@ class MarketService {
   async seedFromFinnhub() {
     if (this.seeding || !this.config.apiKey) return;
     this.seeding = true;
+    this.seedOk = 0;
+    this.seedFailed = [];
     try {
       const assets = this.assetList();
       for (const a of assets) {
         if (this.stopped) break;
-        if (Date.now() < this.rateLimitedUntil) break;
+        /* never abort the whole catalogue because one symbol failed */
+        await this.waitForCooldown();
+        const existing = this.quotes[a.ticker];
+        const realAt = this.lastRealTime[a.ticker] || 0;
+        if (existing && existing.real && Date.now() - realAt < 120000) { this.seedOk++; continue; }
         const q = await this.fetchQuote(a.finnhubSymbol);
         if (q) {
           this.writeQuote(a.ticker, q.price, { prevClose: q.prevClose, open: q.open, dayHigh: q.dayHigh, dayLow: q.dayLow, vol: 0, source: 'live', real: true });
+          this.seedOk++;
+        } else {
+          this.seedFailed.push(a.ticker);
+          if (Date.now() < this.rateLimitedUntil) await this.waitForCooldown();
         }
-        await sleep(SEED_DELAY_MS);                            // default 1.2s < 60 requests / minute
+        await sleep(SEED_DELAY_MS);                            // shared limiter still caps the minute
       }
-      this.lastError = '';
-      console.log('[market] Finnhub seed complete ·', assets.length, 'assets ·', usMarketOpen() ? 'market open' : 'market closed');
+      if (!this.seedFailed.length) this.lastError = '';
+      console.log('[market] Finnhub seed complete ·', this.seedOk + '/' + assets.length, 'assets live ·', usMarketOpen() ? 'market open' : 'market closed', this.seedFailed.length ? '· failed: ' + this.seedFailed.join(',') : '');
     } finally {
       this.seeding = false;
     }
@@ -418,8 +454,10 @@ class MarketService {
     this.polling = true;
     try {
       for (const a of this.assetList()) {
+        if (this.stopped) break;
         const wsFresh = this.wsConnected && this.lastWsTickAt && Date.now() - this.lastWsTickAt < 45000;
-        if (this.stopped || wsFresh) break;
+        if (wsFresh) break;                                  // websocket is already streaming every symbol
+        await this.waitForCooldown();
         const t = a.ticker;
         const q = this.quotes[t];
         const realAt = this.lastRealTime[t] || 0;
@@ -427,8 +465,9 @@ class MarketService {
         if (stale) {
           const fresh = await this.fetchQuote(a.finnhubSymbol);
           if (fresh) this.writeQuote(t, fresh.price, { prevClose: fresh.prevClose, open: fresh.open, dayHigh: fresh.dayHigh, dayLow: fresh.dayLow, vol: q ? q.vol : 0, source: 'live', real: true });
+          else if (Date.now() < this.rateLimitedUntil) await this.waitForCooldown();
         }
-        await sleep(1200);
+        await sleep(SEED_DELAY_MS);
       }
     } finally {
       this.polling = false;
@@ -628,6 +667,9 @@ class MarketService {
       assetCounts: this.assetClasses(),
       unpriced: this.assetList().filter((a) => !(this.quotes[a.ticker] && this.quotes[a.ticker].price > 0)).length,
       dividends: this.dividendStatus(),
+      seed: { live: this.seedOk || 0, failed: (this.seedFailed || []).length, failedTickers: (this.seedFailed || []).slice(0, 20), running: !!this.seeding },
+      apiCallsLastMin: (this.apiCalls || []).filter((t) => Date.now() - t < 60000).length,
+      apiBudgetPerMin: this.maxCallsPerMin,
       startedAt: this.startedAt
     };
   }
@@ -700,28 +742,56 @@ class MarketService {
   async syncDividends(manual) {
     if (this.syncingDividends) return this.dividendStatus();
     this.syncingDividends = true;
+    const db = this.getDb && this.getDb();
+    const prior = (db && db.invest && db.invest.dividendYields) || {};
     const fallback = this.fallbackDividendMap();
-    const map = Object.assign({}, fallback);
-    let source = 'fallback';
+    /* start from what we already know, so a failed fetch never downgrades a
+       previously synced live yield to a fallback value */
+    const map = Object.assign({}, fallback, prior);
+    const previousSource = this.dividendSource || (db && db.invest && db.invest.dividendSource) || '';
+    let source = previousSource === 'finnhub' ? 'finnhub' : 'fallback';
     let fetched = 0;
+    let failed = 0;
+    this.dividendFailed = [];
+    this.dividendAttempted = 0;
     try {
       const stockAssets = this.assetList().filter((a) => a.assetClass === 'us' || a.assetClass === 'global');
+      this.dividendAttempted = stockAssets.length;
       if (this.config.mode === 'hybrid' && this.config.apiKey) {
         for (const a of stockAssets) {
-          if (this.stopped || Date.now() < this.rateLimitedUntil) break;
+          if (this.stopped) break;
+          /* wait out a cooldown instead of aborting the remaining symbols */
+          await this.waitForCooldown();
           const v = await this.fetchDividendYield(a.finnhubSymbol);
-          if (v != null) { map[a.ticker] = v; fetched++; } else { map[a.ticker] = fallback[a.ticker] || 0; }
-          await sleep(SEED_DELAY_MS);                       // default 1.2s spacing
+          if (v != null) { map[a.ticker] = v; fetched++; }
+          else {
+            failed++;
+            this.dividendFailed.push(a.ticker);
+            if (Date.now() < this.rateLimitedUntil) await this.waitForCooldown();
+          }
+          await sleep(Math.max(SEED_DELAY_MS, 1600));
         }
-        source = fetched ? 'finnhub' : 'fallback';
+        if (fetched > 0) source = 'finnhub';
       }
       this.assetList().filter((a) => a.assetClass === 'forex' || a.assetClass === 'crypto').forEach((a) => { map[a.ticker] = 0; });
       this.applyDividendMap(map, source, fetched);
-      console.log('[market] dividends synced ·', source, '·', fetched, 'live /', stockAssets.length, 'stock assets');
+      console.log('[market] dividends synced ·', source, '·', fetched + '/' + stockAssets.length, 'live', failed ? '· retrying ' + failed + ' later' : '');
+      if (failed && !this.stopped) this.scheduleDividendRetry();
     } finally {
       this.syncingDividends = false;
     }
     return this.dividendStatus();
+  }
+
+  scheduleDividendRetry() {
+    if (this.dividendRetryTimer) return;
+    const wait = Math.max(120000, this.rateLimitedUntil - Date.now() + 5000);
+    this.dividendRetryTimer = setTimeout(() => {
+      this.dividendRetryTimer = null;
+      if (this.stopped) return;
+      this.syncDividends(true).catch((e) => { this.lastError = 'Dividend retry failed: ' + e.message; });
+    }, wait);
+    if (this.dividendRetryTimer.unref) this.dividendRetryTimer.unref();
   }
 
   dividendStatus() {
@@ -729,6 +799,9 @@ class MarketService {
       syncedAt: this.dividendSyncedAt || null,
       source: this.dividendSource || 'fallback',
       live: this.dividendFetched || 0,
+      attempted: this.dividendAttempted || 0,
+      failed: (this.dividendFailed || []).length,
+      failedTickers: (this.dividendFailed || []).slice(0, 20),
       tickers: this.assetList().filter((a) => a.assetClass === 'us' || a.assetClass === 'global').length,
       syncing: this.syncingDividends
     };
@@ -752,10 +825,14 @@ class MarketService {
     const stock = (db.stocks || []).find((s) => s.ticker === ticker);
     if ((db.invest && db.invest.paused && db.invest.paused[ticker]) || (stock && stock.paused)) throw new Error('Trading is paused for this asset');
     let qty = Number(opts.shares) || 0;
+    /* USD amount is the primary input: USD / live price = shares, and
+       WC cost is always USD / 0.50 (1 WC = $0.50). */
+    if (!(qty > 0) && Number(opts.amountUsd) > 0) qty = Number(opts.amountUsd) / q.price;
     if (!(qty > 0) && Number(opts.amountCoins) > 0) qty = (Number(opts.amountCoins) * 0.5) / q.price;
     qty = Math.round(qty * 1e8) / 1e8;
     if (!(qty > 0)) throw new Error('Enter an investment amount or quantity');
-    const cost = Math.round((qty * q.price / 0.5) * 100) / 100;
+    const costUsd = Math.round(qty * q.price * 100) / 100;
+    const cost = Math.round((costUsd / 0.5) * 100) / 100;
     if (!(cost > 0)) throw new Error('Order value is too small');
     if ((Number(u.balance) || 0) < cost) throw new Error('Not enough WC — top up your wallet');
     const tp = Number(opts.tpPrice) || 0;
@@ -771,20 +848,25 @@ class MarketService {
       holding.avgPrice = Math.round(((oldShares * (Number(holding.avgPrice) || q.price)) + qty * q.price) / newShares * 10000) / 10000;
       holding.shares = newShares;
       holding.investedCoins = Math.round(((Number(holding.investedCoins) || 0) + cost) * 100) / 100;
+      holding.investedUsd = Math.round(((Number(holding.investedUsd) || ((oldShares * (Number(holding.avgPrice) || q.price)))) + costUsd) * 100) / 100;
+      holding.entryPriceUsd = round(holding.avgPrice, 4);
+      holding.wcRate = 0.5;
       if (tp > 0) holding.takeProfitPrice = round(tp, 4);
       if (sl > 0) holding.stopLossPrice = round(sl, 4);
       holding.updatedAt = Date.now();
     } else {
       holding = {
         id: id('hd'), userId, ticker, shares: qty, avgPrice: round(q.price, 4),
-        investedCoins: cost, takeProfitPrice: tp > 0 ? round(tp, 4) : null,
+        entryPriceUsd: round(q.price, 4), investedCoins: cost, investedUsd: costUsd, wcRate: 0.5,
+        takeProfitPrice: tp > 0 ? round(tp, 4) : null,
         stopLossPrice: sl > 0 ? round(sl, 4) : null, createdAt: Date.now(), updatedAt: Date.now()
       };
       db.holdings.push(holding);
     }
     const order = {
       id: id('tr'), userId, ticker, name: (db.stocks || []).find((s) => s.ticker === ticker)?.name || ticker,
-      side: 'buy', shares: qty, priceUsd: round(q.price, 4), coins: cost, feeCoins: 0,
+      side: 'buy', shares: qty, priceUsd: round(q.price, 4), entryPriceUsd: round(q.price, 4),
+      coins: cost, investedUsd: costUsd, wcRate: 0.5, feeCoins: 0,
       type: 'market', status: 'Completed', plUsd: 0, reason: 'Market buy', createdAt: Date.now()
     };
     db.trades = db.trades || []; db.trades.unshift(order);
@@ -808,21 +890,24 @@ class MarketService {
     const u = (db.users || []).find((x) => x.id === holding.userId);
     if (!u) { holding.closing = false; return null; }
     const shares = Number(holding.shares);
-    const payoutUsd = shares * Number(price);
+    const payoutUsd = Math.round(shares * Number(price) * 100) / 100;
     const payout = Math.round((payoutUsd / 0.5) * 100) / 100;
     u.balance = Math.round((Number(u.balance) + payout) * 100) / 100;
-    const plUsd = Math.round((Number(price) - Number(holding.avgPrice)) * shares * 100) / 100;
+    const entryPriceUsd = Number(holding.avgPrice) || Number(price);
+    const plUsd = Math.round((Number(price) - entryPriceUsd) * shares * 100) / 100;
+    const plCoins = Math.round((plUsd / 0.5) * 100) / 100;
     db.holdings = (db.holdings || []).filter((h) => h.id !== holding.id);
     const order = {
       id: id('tr'), userId: holding.userId, ticker: holding.ticker, name: (db.stocks || []).find((s) => s.ticker === holding.ticker)?.name || holding.ticker,
-      side: 'sell', shares, priceUsd: round(price, 4), coins: payout, feeCoins: 0,
+      side: 'sell', shares, priceUsd: round(price, 4), entryPriceUsd: round(entryPriceUsd, 4), exitPriceUsd: round(price, 4),
+      coins: payout, payoutUsd, plCoins, wcRate: 0.5, feeCoins: 0,
       type: 'market', status: 'Completed', plUsd, reason, createdAt: Date.now()
     };
     db.trades = db.trades || []; db.trades.unshift(order);
     db.txs = db.txs || [];
-    db.txs.unshift({ id: id('tx_'), userId: u.id, type: 'stock-sell', label: `Sold ${shares} ${holding.ticker} @ $${round(price, 4)} · ${reason}`, coins: payout, meta: { ticker: holding.ticker, shares, priceUsd: price, spot: true, reason }, createdAt: Date.now() });
+    db.txs.unshift({ id: id('tx_'), userId: u.id, type: 'stock-sell', label: `Sold ${shares} ${holding.ticker} @ $${round(price, 4)} · ${reason}`, coins: payout, meta: { ticker: holding.ticker, shares, priceUsd: price, entryPriceUsd, plUsd, plCoins, payoutUsd, spot: true, reason }, createdAt: Date.now() });
     db.notifications = db.notifications || [];
-    db.notifications.unshift({ id: id('nt_'), userId: u.id, title: reason, body: `Sold ${shares} ${holding.ticker} @ $${round(price, 4)} · ${payout} WC credited.`, link: '#/invest/orders', icon: reason === 'Take Profit Hit' ? 'trend' : 'ban', read: false, createdAt: Date.now() });
+    db.notifications.unshift({ id: id('nt_'), userId: u.id, title: reason, body: `Sold ${shares} ${holding.ticker} @ $${round(price, 4)} · ${payout} WC credited (${plUsd >= 0 ? '+' : '−'}$${Math.abs(plUsd).toFixed(2)} / ${plCoins >= 0 ? '+' : '−'}${Math.abs(plCoins).toFixed(2)} WC).`, link: '#/invest/orders', icon: reason === 'Take Profit Hit' ? 'trend' : 'ban', read: false, createdAt: Date.now() });
     return { order, payout, plUsd };
   }
 
@@ -1086,6 +1171,7 @@ class MarketService {
   stopTimers() {
     this.timers.forEach((t) => clearInterval(t));
     this.timers = [];
+    if (this.dividendRetryTimer) { clearTimeout(this.dividendRetryTimer); this.dividendRetryTimer = null; }
   }
 
   start() {
