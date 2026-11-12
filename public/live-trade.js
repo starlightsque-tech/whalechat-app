@@ -18,7 +18,8 @@ const LT = {
     AAPL: 0.45, TSLA: 0, NVDA: 0.03, COIN: 0, MSTR: 0, MARA: 0, KO: 3.00, JPM: 2.20,
     NKE: 1.80, UNH: 1.50, AVGO: 1.20, WMT: 1.00, DIS: 0.80, V: 0.75, UBER: 0, AMZN: 0,
     MSFT: 0.70, GOOGL: 0.45, META: 0.35, NFLX: 0, AMD: 0, PEP: 3.40, PLTR: 0, ARM: 0,
-    SHOP: 0, HOOD: 0, LLY: 0.70, XOM: 3.30, SMCI: 0, RIVN: 0
+    SHOP: 0, HOOD: 0, LLY: 0.70, XOM: 3.30, SMCI: 0, RIVN: 0,
+  VOD_L: 7.0, SAP_DE: 1.3, '7203_T': 2.5, SHOP_TO: 0
   },
   dividendYield(ticker) {
     const inv = this.cfg();
@@ -38,6 +39,8 @@ const LT = {
     if (bonus > 0 && bonus < 0.01) bonus = 0.01;
     return Math.round(bonus * 100) / 100;
   },
+  px(ticker, value) { return (typeof INV !== 'undefined' && INV.priceText) ? INV.priceText(ticker, value) : usd(value); },
+  label(ticker) { return (typeof INV !== 'undefined' && INV.assetTicker) ? INV.assetTicker(ticker) : String(ticker || ''); },
   dividendBadge(ticker) {
     const y = this.dividendYield(ticker);
     if (!(y > 0)) return '';
@@ -210,10 +213,10 @@ const LT = {
     };
     u.balance = Math.round((u.balance - capital - fee) * 100) / 100;
     DB.trades.unshift(trade);
-    tx(u.id, 'trade-open', `${direction === 'FALL' ? 'Fall' : 'Rise'} ${ticker} · ${coins(capital)} WC`, -capital - fee,
+    tx(u.id, 'trade-open', `${direction === 'FALL' ? 'Fall' : 'Rise'} ${this.label(ticker)} · ${coins(capital)} WC`, -capital - fee,
       { tradeId: trade.id, leverage: trade.leverage, entry: q.price, direction });
     notify(u.id, 'Trade opened',
-      `${direction === 'FALL' ? 'Fall' : 'Rise'} ${ticker} with ${coins(capital)} WC at ${usd(q.price)}${tpPrice ? ' · TP ' + usd(tpPrice) : ''}${trailPct ? ' · trailing ' + trailPct + '%' : (slPrice ? ' · SL ' + usd(slPrice) : '')} — closes in ${minutes} min.${divBonus > 0 ? ' Dividend on timer: +' + coins(divBonus) + ' WC.' : ''}`,
+      `${direction === 'FALL' ? 'Fall' : 'Rise'} ${this.label(ticker)} with ${coins(capital)} WC at ${this.px(ticker, q.price)}${tpPrice ? ' · TP ' + usd(tpPrice) : ''}${trailPct ? ' · trailing ' + trailPct + '%' : (slPrice ? ' · SL ' + usd(slPrice) : '')} — closes in ${minutes} min.${divBonus > 0 ? ' Dividend on timer: +' + coins(divBonus) + ' WC.' : ''}`,
       '#/invest/orders', 'trend');
     persist(); toast('Trade started — tracking live', 'ok'); render();
     try { window.dispatchEvent(new CustomEvent('wc:trade-opened', { detail: { ticker, id: trade.id } })); } catch (e) {}
@@ -330,9 +333,9 @@ const LT = {
       <div class="row" style="gap:9px;align-items:center">
         ${INV.logoHTML(s, 32)}
         <div class="grow" style="min-width:0">
-          <div class="small" style="font-weight:700">${esc(t.ticker)}
+          <div class="small" style="font-weight:700">${esc(this.label(t.ticker))}
             <span class="lt-side ${t.side}">${dirLabel} ${t.leverage}×</span></div>
-          <div class="tiny muted">${coins(t.capitalCoins)} WC · entry ${usd(t.entryPrice)}</div>
+          <div class="tiny muted">${coins(t.capitalCoins)} WC · entry ${this.px(t.ticker, t.entryPrice)}</div>
         </div>
         <span class="lt-mini">${INV.spark(t.ticker)}</span>
         <div style="text-align:right">
@@ -343,7 +346,7 @@ const LT = {
         </div>
       </div>
       <div class="lt-row">
-        <span class="tiny muted">Price <b data-lt-price="${t.id}">${usd(p.price)}</b>
+        <span class="tiny muted">Price <b data-lt-price="${t.id}">${this.px(t.ticker, p.price)}</b>
           <span data-lt-move="${t.id}" class="${p.movePct >= 0 ? 'up' : 'down'}">${p.movePct >= 0 ? '▲' : '▼'} ${Math.abs(p.movePct).toFixed(2)}%</span></span>
         <span class="tiny muted" data-lt-left="${t.id}">⏱ ${this.clock(p.left)}</span>
       </div>
@@ -371,9 +374,9 @@ const LT = {
     const win = pnl > 0, lost = t.result === 'loss';
     return `<div class="inv-row" style="align-items:flex-start">
       <div class="grow" style="min-width:0">
-        <div class="small" style="font-weight:650">${esc(t.ticker)} ${t.side === 'short' ? 'Fall' : 'Rise'}
+        <div class="small" style="font-weight:650">${esc(this.label(t.ticker))} ${t.side === 'short' ? 'Fall' : 'Rise'}
           <span class="tiny muted">· ${t.leverage}× · ${esc(t.closeReason || 'closed')}</span></div>
-        <div class="tiny muted">${coins(t.capitalCoins)} WC @ ${usd(t.entryPrice)} → ${usd(t.exitPrice || 0)} · ${dateLabel(t.closedAt)} ${clockTime(t.closedAt)}</div>
+        <div class="tiny muted">${coins(t.capitalCoins)} WC @ ${this.px(t.ticker, t.entryPrice)} → ${this.px(t.ticker, t.exitPrice || 0)} · ${dateLabel(t.closedAt)} ${clockTime(t.closedAt)}</div>
         <div class="lt-hist-levels">${Number(t.takeProfitPrice) > 0 ? `<span class="tp">TP ${usd(t.takeProfitPrice)}</span>` : '<span>TP —</span>'}
           ${Number(t.stopLossPrice) > 0 ? `<span class="sl">${t.trailingActive ? 'TSL' : 'SL'} ${usd(t.stopLossPrice)}</span>` : '<span>SL —</span>'}
           ${t.trailingActive ? `<span class="trail">trail ${Number(t.trailingStopPct).toFixed(1)}%</span>` : ''}</div>
@@ -393,7 +396,7 @@ const LT = {
       const set = (sel, txt) => { const el = document.querySelector(sel); if (el) el.textContent = txt; };
       set('[data-lt-pnl="' + t.id + '"]', (p.pnlCoins >= 0 ? '+' : '−') + coins(Math.abs(p.pnlCoins)) + ' WC');
       set('[data-lt-pct="' + t.id + '"]', (p.pnlPct >= 0 ? '+' : '−') + Math.abs(p.pnlPct).toFixed(2) + '%');
-      set('[data-lt-price="' + t.id + '"]', usd(p.price));
+      set('[data-lt-price="' + t.id + '"]', this.px(t.ticker, p.price));
       set('[data-lt-move="' + t.id + '"]', (p.movePct >= 0 ? '▲ ' : '▼ ') + Math.abs(p.movePct).toFixed(2) + '%');
       set('[data-lt-left="' + t.id + '"]', '⏱ ' + this.clock(p.left));
       document.querySelectorAll('[data-lt-pnl="' + t.id + '"], [data-lt-pct="' + t.id + '"]').forEach(el => {
@@ -457,7 +460,7 @@ const LT = {
     const s = INV.stock(ticker); if (!s) return '';
     const lev = this.leverage();
     const pos = this.open().filter(t => t.ticker === ticker)[0];
-    const head = `<div class="between"><div class="card-title" style="margin:0">Trade · ${esc(ticker)}</div>
+    const head = `<div class="between"><div class="card-title" style="margin:0">Trade · ${esc(INV.assetTicker ? INV.assetTicker(ticker) : ticker)}</div>
         <span class="badge">${lev}×</span></div>`;
 
     if (pos) {
@@ -890,7 +893,7 @@ LT.dash = function (params) {
     </div>
   </div>
 
-  <div class="card inv-note">${ic('shield', 14)} <span class="tiny">Prices are simulated and move every 5 seconds. Values here include your live trades and stock holdings, at 1 WC = $0.50.</span></div>`;
+  <div class="card inv-note">${ic('shield', 14)} <span class="tiny">Prices stream from Finnhub. Crypto trades 24/7, Forex 24/5, and closed stock exchanges hold their last real print. Values include live trades and holdings at 1 WC = $0.50.</span></div>`;
 };
 
 function usd_LT(n) { return '$' + (Math.round((Number(n) || 0) * 100) / 100).toFixed(2); }
@@ -913,7 +916,7 @@ LT.positionsHTML = function (userId) {
       </div>
       <span class="lt-mini">${INV.spark(p.ticker)}</span>
       <div style="text-align:right">
-        <div class="small" style="font-weight:650">${usd(p.price)}</div>
+        <div class="small" style="font-weight:650">${LT.px(p.ticker, p.price)}</div>
         <div class="tiny ${up ? 'up' : down ? 'down' : 'muted'}">${p.pnlCoins >= 0 ? '+' : '−'}${coins(Math.abs(p.pnlCoins))} WC (${p.pnlPct >= 0 ? '+' : '−'}${Math.abs(p.pnlPct).toFixed(2)}%)</div>
       </div></a>`;
   }).join('')}</div>`;
@@ -1213,7 +1216,7 @@ LT.stockHistory = function (ticker) {
   const worst = rows.reduce((m, t) => Math.min(m, Number(t.pnlCoins) || 0), 0);
   const total = rows.length + spot.length;
   return `<div class="card mt14">
-    <div class="between"><div class="card-title" style="margin:0">Your ${esc(ticker)} history</div>
+    <div class="between"><div class="card-title" style="margin:0">Your ${esc(INV.assetTicker ? INV.assetTicker(ticker) : ticker)} history</div>
       <span class="badge ${realized >= 0 ? 'badge-success' : 'badge-danger'}">
         ${realized >= 0 ? '+' : '−'}${coins(Math.abs(realized))} WC realised</span></div>
     <div class="inv-hero-grid" style="border-top:none;padding-top:2px;margin-top:6px">
@@ -1227,7 +1230,7 @@ LT.stockHistory = function (ticker) {
         <div class="grow" style="min-width:0">
           <div class="small" style="font-weight:650">${t.side === 'short' ? 'Fall' : 'Rise'} ${t.leverage}×
             <span class="tiny muted">· ${esc(t.closeReason || 'closed')}</span></div>
-          <div class="tiny muted">${coins(t.capitalCoins)} WC · ${usd(t.entryPrice)} → ${usd(t.exitPrice || 0)} · ${dateLabel(t.closedAt)}</div>
+          <div class="tiny muted">${coins(t.capitalCoins)} WC · ${this.px(t.ticker, t.entryPrice)} → ${this.px(t.ticker, t.exitPrice || 0)} · ${dateLabel(t.closedAt)}</div>
           <div class="lt-hist-levels">${Number(t.takeProfitPrice) > 0 ? `<span class="tp">TP ${usd(t.takeProfitPrice)}${Number(t.takeProfitWc) > 0 ? ' · ' + Number(t.takeProfitWc) + ' WC' : ''}</span>` : '<span>TP —</span>'}
             ${Number(t.stopLossPrice) > 0 ? `<span class="sl">${t.trailingActive ? 'TSL' : 'SL'} ${usd(t.stopLossPrice)}${Number(t.stopLossWc) > 0 ? ' · ' + Number(t.stopLossWc) + ' WC' : ''}</span>` : '<span>SL —</span>'}
             ${t.trailingActive ? `<span class="trail">trail ${Number(t.trailingStopPct).toFixed(1)}%</span>` : ''}
@@ -1713,10 +1716,11 @@ LT.previewTargets = function () {
     ? q.price * (direction === 'FALL' ? (1 + trailPct / 100) : (1 - trailPct / 100)) : 0;
   const tpEl = document.getElementById('ltTpPreview');
   const slEl = document.getElementById('ltSlPreview');
-  if (tpEl) tpEl.textContent = tp > 0 ? 'Target ' + usd(tp) + (LT.levels.tp === 'wc' ? ' · +' + Math.abs(tpRaw) + ' WC' : '') : 'Target —';
+  const fmt = (v) => (INV.priceText ? INV.priceText(m[1], v) : usd(v));
+  if (tpEl) tpEl.textContent = tp > 0 ? 'Target ' + fmt(tp) + (LT.levels.tp === 'wc' ? ' · +' + Math.abs(tpRaw) + ' WC' : '') : 'Target —';
   if (slEl) slEl.textContent = trailOn
-    ? (trailStop > 0 ? 'Starts ' + usd(trailStop) + ' · trails ' + trailPct + '%' : 'Trailing stop —')
-    : (sl > 0 ? 'Target ' + usd(sl) + (LT.levels.sl === 'wc' ? ' · -' + Math.abs(slRaw) + ' WC' : '') : 'Target —');
+    ? (trailStop > 0 ? 'Starts ' + fmt(trailStop) + ' · trails ' + trailPct + '%' : 'Trailing stop —')
+    : (sl > 0 ? 'Target ' + fmt(sl) + (LT.levels.sl === 'wc' ? ' · -' + Math.abs(slRaw) + ' WC' : '') : 'Target —');
 };
 
 LT.updateDividendEstimate = function () {
@@ -1806,7 +1810,7 @@ App.ltEditTpsl = function (id, ds) {
   const body = `
     <div class="lt-lvl-head">
       <span class="lt-side ${t.side}">${dir === 'RISE' ? 'Rise' : 'Fall'} ${t.leverage}×</span>
-      <b>${esc(t.ticker)}</b><span class="tiny muted">Entry ${usd(entry)}</span>
+      <b>${esc(LT.label(t.ticker))}</b><span class="tiny muted">Entry ${LT.px(t.ticker, entry)}</span>
     </div>
     <div class="field"><label class="label">Take Profit price (USD)</label>
       <input class="input" id="ltEditTp" type="number" step="0.01" min="0" value="${tp || ''}" placeholder="optional"/>
