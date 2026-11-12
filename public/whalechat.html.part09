@@ -1,873 +1,4 @@
-.rev > Remote.rev) Remote.refresh(); } catch (err) {}
-    });
-    es.addEventListener('reload', (e) => {
-      // admin pressed “Force refresh all devices”
-      let d = {};
-      try { d = JSON.parse(e.data || '{}'); } catch (err) {}
-      try {
-        if (typeof showUpdatePrompt === 'function') showUpdatePrompt({ version: d.version || APP_VERSION, build: d.build || APP_BUILD }, { auto: true });
-        else if (typeof applyUpdate === 'function') applyUpdate();
-      } catch (err) { try { location.reload(); } catch (e2) {} }
-    });
-    es.addEventListener('change', (e) => {
-      let d = {};
-      try { d = JSON.parse(e.data); } catch (err) {}
-      if (d.source === Remote.clientId) { if (d.rev) Remote.rev = d.rev; return; }
-      Remote.refresh();
-    });
-    es.onerror = () => {
-      Remote.status = 'offline';
-      // EventSource reconnects automatically; refresh once it is back
-      setTimeout(() => { if (Remote.enabled) Remote.refresh(); }, 4000);
-    };
-  } catch (e) {}
-}
-function stopEventStream() {
-  if (Remote.es) { try { Remote.es.close(); } catch (e) {} }
-  Remote.es = null;
-}
-
-/* ---------------- Web Push ---------------- */
-const Push = {
-  publicKey: null,
-  async ensure(interactive) {
-    if (!Remote.enabled) return { ok: false, reason: 'no-server' };
-    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return { ok: false, reason: 'unsupported' };
-    const u = me();
-    if (!u) return { ok: false, reason: 'no-user' };
-    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return { ok: false, reason: 'permission' };
-    try {
-      const reg = await withTimeout(navigator.serviceWorker.ready, 8000, 'service-worker-timeout');
-      const keyRes = await withTimeout(fetch(Remote.url('/api/push/key')).then(r => r.json()), 8000, 'key-timeout').catch(() => null);
-      if (!keyRes || !keyRes.publicKey) return { ok: false, reason: 'no-key' };
-      this.publicKey = keyRes.publicKey;
-      let sub = await withTimeout(reg.pushManager.getSubscription(), 8000, 'subscription-timeout');
-      if (!sub) {
-        sub = await withTimeout(reg.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: urlB64ToUint8Array(keyRes.publicKey)
-        }), 12000, 'push-subscribe-timeout');
-      }
-      const res = await fetch(Remote.url('/api/push/subscribe'), {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ userId: u.id, subscription: sub, device: navigator.userAgent })
-      }).then(r => r.json()).catch(() => null);
-      if (res && res.ok) {
-        try { localStorage.setItem(LS_PUSH, JSON.stringify({ at: Date.now(), userId: u.id })); } catch (e) {}
-        return { ok: true, devices: res.devices };
-      }
-      return { ok: false, reason: 'register-failed' };
-    } catch (e) {
-      return { ok: false, reason: e.message || 'subscribe-failed' };
-    }
-  },
-  async test() {
-    const u = me();
-    if (!Remote.enabled) return toast('Connect a sync server first', 'err');
-    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
-      toast('Allow notifications in your browser first', 'err'); return;
-    }
-    const sub = await this.ensure(true);
-    if (!sub.ok) { toast('Push unavailable: ' + sub.reason, 'err'); return; }
-    const r = await fetch(Remote.url('/api/push/test'), {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ userId: u.id, title: 'WhaleChat', body: 'Push notifications are working on this device 🐋', link: '#/notifications' })
-    }).then(x => x.json()).catch(() => null);
-    if (r && r.ok && r.sent > 0) toast('Test notification sent to ' + r.sent + ' device(s)', 'ok');
-    else toast('No push device registered yet — check browser permission', 'err');
-  }
-};
-
-function withTimeout(promise, ms, label) {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => setTimeout(() => reject(new Error(label || 'timeout')), ms))
-  ]);
-}
-
-function urlB64ToUint8Array(base64String) {
-  const padding = '='.repeat((4 - base64String.length % 4) % 4);
-  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
-  const raw = atob(base64);
-  const out = new Uint8Array(raw.length);
-  for (let i = 0; i < raw.length; ++i) out[i] = raw.charCodeAt(i);
-  return out;
-}
-
-/* ---------------- settings UI ---------------- */
-function syncBadge() {
-  const map = {
-    local: ['Local device only', 'var(--muted)'],
-    connecting: ['Connecting…', 'var(--warn)'],
-    online: ['Connected · realtime', 'var(--success)'],
-    syncing: ['Syncing…', 'var(--accent)'],
-    offline: ['Reconnecting…', 'var(--warn)'],
-    error: ['Connection error', 'var(--danger)']
-  };
-  const m = map[Remote.status] || map.local;
-  return `<span class="badge" style="color:${m[1]};border-color:${m[1]}33"><span class="dot" style="background:${m[1]}"></span> ${m[0]}</span>`;
-}
-
-App.serverDialog = function () {
-  const base = Remote.base || '';
-  openModal(modalShell('Cross-device sync', `
-    <p class="small muted" style="line-height:1.7">Connect this app to your WhaleChat sync server to share chats, orders and wallet data across phones, tablets and computers — with live updates and closed-app push notifications.</p>
-    <div class="field mt16"><label class="label">Server URL</label>
-      <input class="input" id="srvUrl" placeholder="https://your-whalechat-server.com" value="${esc(base)}"/>
-      <div class="help">Leave empty to use the same origin that served this app. The server must run <code>server.js</code>.</div></div>
-    <div class="panel" style="padding:12px;margin-bottom:14px">
-      <div class="between"><span class="tiny muted">Status</span>${syncBadge()}</div>
-      ${Remote.lastError ? `<div class="tiny mt6" style="color:var(--danger)">${esc(Remote.lastError)}</div>` : ''}
-      ${Remote.enabled ? `<div class="tiny muted mt6">Revision ${Remote.rev} · device <b>${esc(Remote.clientId)}</b></div>` : ''}
-    </div>
-    <div class="panel" style="padding:12px">
-      <div class="tiny" style="font-weight:600;color:var(--accent)">Push notifications</div>
-      <div class="tiny muted mt6" style="line-height:1.6">After connecting, enable browser alerts and send a test. Messages and order updates then arrive even when the app is closed.</div>
-      <div class="row gap8 mt10"><button class="btn btn-ghost btn-sm" data-act="push-test">${ic('bell', 14)} Send test</button>
-      <button class="btn btn-ghost btn-sm" data-act="push-enable">${ic('shield', 14)} Enable alerts</button></div>
-    </div>`,
-    `<button class="btn btn-ghost" data-close>Close</button>
-     ${Remote.enabled ? `<button class="btn btn-danger" data-act="server-disconnect">Disconnect</button>` : ''}
-     <button class="btn btn-primary" data-act="server-connect">${ic('refresh', 15)} Connect</button>`), { width: '500px' });
-  setTimeout(() => { const i = document.getElementById('srvUrl'); if (i) i.focus(); }, 80);
-};
-
-App.serverConnect = async function () {
-  const input = document.getElementById('srvUrl');
-  let url = input ? input.value.trim() : '';
-  if (url && !/^https?:\/\//i.test(url)) url = 'https://' + url;
-  url = url.replace(/\/+$/, '');
-  closeModal();
-  toast('Connecting to sync server…');
-  const ok = await Remote.connect(url || '', { initFromLocal: true });
-  if (ok) {
-    await Push.ensure(false);
-    toast('Cross-device sync enabled', 'ok');
-    render();
-    setTimeout(() => App.serverDialog(), 250);
-  } else { render(); setTimeout(() => App.serverDialog(), 250); }
-};
-App.serverDisconnect = async function () {
-  if (!await confirmDialog({ title: 'Disconnect sync?', body: 'This device keeps a local copy and stops receiving updates. Other devices stay connected.', danger: true, ok: 'Disconnect' })) return;
-  Remote.disconnect();
-  closeModal(); toast('Disconnected from sync server', 'ok'); render();
-};
-App.pushEnable = async function () {
-  await requestNotifyPermission(false);
-  const r = await Push.ensure(true);
-  if (r.ok) toast('Push notifications enabled (' + (r.devices || 1) + ' device)', 'ok');
-  else if (r.reason === 'permission') toast('Notifications blocked in browser settings', 'err');
-  else if (r.reason === 'no-server') toast('Connect a sync server first', 'err');
-  else toast('Push unavailable: ' + r.reason, 'err');
-  render();
-};
-App.pushTest = function () { Push.test(); };
-
-/* Send pending changes before the tab/app is closed (keeps messages + pushes reliable). */
-window.addEventListener('pagehide', () => {
-  try {
-    if (!Remote.enabled || !Remote.dirty) return;
-    const ops = diffDB(Remote.last || blankDB(), DB);
-    if (!ops.length) return;
-    const body = JSON.stringify({ ops, clientId: Remote.clientId });
-    if (navigator.sendBeacon) {
-      navigator.sendBeacon(Remote.url('/api/ops'), new Blob([body], { type: 'application/json' }));
-    } else {
-      fetch(Remote.url('/api/ops'), { method: 'POST', headers: { 'content-type': 'application/json' }, body, keepalive: true }).catch(() => {});
-    }
-  } catch (e) {}
-});
-setInterval(() => {
-  try {
-    if (Remote.enabled && me() && typeof Notification !== 'undefined' && Notification.permission === 'granted') Push.ensure(false);
-  } catch (e) {}
-}, 5 * 60 * 1000);
-/* =========================================================================
-   Boot, global action dispatch, PWA wiring
-   ========================================================================= */
-function camel(act) {
-  return act.replace(/-([a-z])/g, (m, c) => c.toUpperCase());
-}
-const ACTION_ALIASES = {
-  'admin-del-user': 'adminDeleteUser',
-  'admin-notif-edit': 'adminNotifEdit',
-  'admin-notif-del': 'adminNotifDel',
-  'admin-notif-save': 'adminNotifSave',
-  'admin-product-del': 'adminProductDel',
-  'admin-send-notif': 'adminSendNotif',
-  'admin-test-notif': 'adminTestNotif',
-  'admin-user': 'adminUser',
-  'admin-order-del': 'adminOrderDel',
-  'admin-order-save': 'adminOrderSave',
-  'admin-export': 'adminExport',
-  'admin-notify-user': 'adminNotifyUser',
-  'edit-msg': 'editMessage',
-  'copy-msg': 'copyMessage',
-  'delete-msg': 'deleteMessage',
-  'forward-msg': 'forwardMessage',
-  'avatar-camera': 'avatarCamera',
-  'live-chat': 'openLiveChat',
-  'search-people': 'mobileSearch',
-  'toggle-anypass': 'toggleAnyPass'
-};
-
-App.openChat = function (id) {
-  if (!id) return;
-  closeModal();            // a search sheet must not stay on top of the chat
-  go('chat/' + id);
-  const focusComposer = () => {
-    const i = document.getElementById('msgInput');
-    if (!i) return false;
-    i.focus({ preventScroll: true });
-    const b = document.getElementById('chatBody');
-    if (b) b.scrollTop = b.scrollHeight;
-    try { i.setSelectionRange(i.value.length, i.value.length); } catch (e) {}
-    return true;
-  };
-  setTimeout(focusComposer, 60);
-  setTimeout(focusComposer, 260);
-  setTimeout(focusComposer, 600);
-};
-App.openProduct = function (id) { if (id) go('product/' + id); };
-App.back = function () { back(); };
-App.copy = function (v) { if (v) copyText(v); };
-App.copyMessageText = function (id) { App.copyMessage(id); };
-
-document.addEventListener('click', function (ev) {
-  const nav = ev.target.closest('[data-nav]');
-  if (nav) {
-    ev.preventDefault();
-    const h = nav.getAttribute('data-nav');
-    go(h.replace(/^#\/?/, ''));
-    return;
-  }
-  const el = ev.target.closest('[data-act]');
-  if (!el) return;
-  const act = el.getAttribute('data-act');
-  if (!act) return;
-  const ds = Object.assign({}, el.dataset);
-  ev.preventDefault();
-  // special multi-arg handlers
-  if (act === 'cart-qty') return App.cartQty(ds.id, ds.d);
-  if (act === 'remove-media') return App.removeMedia(Number(ds.idx));
-  if (act === 'do-forward') return App.doForward(ds.id, ds.msg);
-  if (act === 'send-status-reply') return;
-  if (act === 'back') return App.back();
-  if (act === 'toggle-theme') return App.toggleTheme();
-  if (act === 'set-pin-now') return App.setPinNow();
-  if (act === 'status-step') return App.statusStep(Number(ds.d));
-  const name = ACTION_ALIASES[act] || camel(act);
-  const fn = App[name];
-  if (typeof fn === 'function') {
-    try { fn(ds.id, ds, ev); }
-    catch (err) { console.error('Action failed', act, err); toast('Something went wrong. Please try again.', 'err'); }
-  } else {
-    console.warn('No handler for action:', act, name);
-  }
-}, false);
-
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') { closeModal(); closeViewer(); }
-  if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
-    e.preventDefault();
-    const s = document.getElementById('globalSearch');
-    if (s) s.focus();
-  }
-});
-
-App.avatarCamera = function () { App.avatarUpload(true); };
-
-App.mobileSearch = function () {
-  openModal(modalShell('Search WhaleChat', `
-    <div class="searchbar" style="height:46px">${ic('search', 17)}<input id="msInput" placeholder="People, chats, products…" autocomplete="off"/></div>
-    <div class="mt16" id="msResults"><p class="small muted">Type to search people, contacts and products.</p></div>`,
-    `<button class="btn btn-ghost" data-close style="width:100%">Close</button>`));
-  const i = document.getElementById('msInput');
-  setTimeout(() => i.focus(), 80);
-  i.addEventListener('keydown', (e) => { if (e.key === 'Enter' && i.value.trim()) { closeModal(); App.openSearch(i.value.trim()); } });
-};
-
-App.adminNotifyUser = async function (id) {
-  const u = findUser(id); if (!u) return;
-  const title = await promptDialog({ title: 'Send notification', label: 'Title', placeholder: 'Account update' });
-  if (!title) return;
-  const body = await promptDialog({ title: 'Send notification', label: 'Message', placeholder: 'Write the message…' });
-  if (!body) return;
-  notify(id, title, body, null, 'bell');
-  sync(); toast('Notification sent to ' + u.fullName, 'ok'); render();
-};
-
-App.adminExport = function (type) {
-  if (type !== 'users') return;
-  const rows = [['Full name', 'Username', 'Email', 'Phone', 'Balance (WC)', 'Trust', 'Vendor', 'Banned', 'Joined']];
-  DB.users.filter(u => u.role !== 'admin').forEach(u => rows.push([u.fullName, u.username, u.email, u.phone || '', u.balance, u.trustScore, vendorOf(u.id) ? 'yes' : 'no', u.banned ? 'yes' : 'no', new Date(u.createdAt).toISOString()]));
-  const csv = rows.map(r => r.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(',')).join('\n');
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'whalechat-users.csv';
-  document.body.appendChild(a); a.click(); a.remove();
-  toast('Export downloaded', 'ok');
-};
-
-/* Vendor sub-route dispatch */
-const __vendorBase = VIEWS.vendor;
-VIEWS.vendor = function (parts, params) {
-  const u = me();
-  const myVendor = u ? vendorOf(u.id) : null;
-  // applicants/renewals only see their application or renewal page, never vendor tools
-  if (u && u.role !== 'admin' && (!myVendor || !vendorIsActive(myVendor))) return __vendorBase(parts, params);
-  const sub = parts[1];
-  if (sub === 'company') return VIEWS.vendor_company(parts, params);
-  if (sub === 'products') return VIEWS.vendorProducts(parts, params);
-  if (sub === 'orders') return VIEWS.vendorOrders(parts, params);
-  if (sub === 'history') return VIEWS.vendorHistory(parts, params);
-  return __vendorBase(parts, params);
-};
-
-/* boot */
-async function boot() {
-  await initDB();
-  try { if (maybeBrandedRedirect()) return; } catch (e) {}
-  try { if (gaLoad()) gaTrack(location.hash || '/'); } catch (e) {}
-  try { await Remote.init(); } catch (e) { console.warn('sync init failed', e); }
-  try { resolvePendingReferrals(); reconcileReferralBonuses(); } catch (e) {}
-  if (SESSION) {
-    const u = me();
-    if (!u) { SESSION = null; localStorage.removeItem(LS_SESSION); }
-    else if (u.pin) Presence.touch();
-  }
-  initTheme();
-  // referral short links: /ref/CODE, ?ref=CODE, #/ref=CODE
-  let refCode = null;
-  try { refCode = referralFromURL(); } catch (e) {}
-  if (refCode) { try { sessionStorage.setItem('wc_ref', refCode); } catch (e) {} }
-
-  if (!me() && refCode) go('signup?ref=' + encodeURIComponent(refCode));
-
-  const hasHash = !!location.hash;
-  if (!hasHash) {
-    renderSplash();
-    setTimeout(() => {
-      const u = me();
-      if (u) go(u.role === 'admin' ? 'admin' : 'home');
-      else go('welcome');
-    }, 1200);
-  } else {
-    render();
-  }
-  // Global safety net: never leave the user on a dead screen
-  let lastErrToast = 0;
-  window.addEventListener('error', (ev) => {
-    if (ev.target && ev.target.tagName === 'SCRIPT') return;
-    if (Date.now() - lastErrToast < 4000) return;
-    lastErrToast = Date.now();
-    try { toast('Something went wrong — please try that again.', 'err'); } catch (e) {}
-  });
-  window.addEventListener('unhandledrejection', (ev) => {
-    console.warn('Unhandled promise rejection:', ev.reason);
-    if (Date.now() - lastErrToast < 4000) return;
-    lastErrToast = Date.now();
-    try { toast('A request failed — check your connection and retry.', 'err'); } catch (e) {}
-  });
-
-  // Service worker (offline shell + push). If the host forbids sw.js, drop any
-  // stale worker so a cached error page can never be served again.
-  if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
-    window.addEventListener('load', async () => {
-      try {
-        const reg = await navigator.serviceWorker.register('sw.js');
-        if (reg && reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
-      } catch (e) {
-        try {
-          const regs = await navigator.serviceWorker.getRegistrations();
-          await Promise.all(regs.map(r => r.unregister()));
-        } catch (e2) {}
-        try {
-          const keys = await caches.keys();
-          await Promise.all(keys.map(k => caches.delete(k)));
-        } catch (e3) {}
-      }
-    });
-  }
-  // keep this device in sync when it becomes visible / regains network
-  document.addEventListener('visibilitychange', () => { if (!document.hidden && Remote.enabled) Remote.refresh(); });
-  window.addEventListener('online', () => { if (Remote.enabled) { Remote.refresh(); Remote.flush(); } });
-  window.addEventListener('focus', () => { if (Remote.enabled) Remote.refresh(); });
-  if (Remote.enabled && SESSION) setTimeout(() => { Push.ensure(false); }, 1400);
-
-  // periodic maintenance (status expiry, delivery ack, unread badge)
-  setInterval(() => {
-    if (!me()) return;
-    if (DB.statuses.some(s => s.createdAt + 86400000 < Date.now())) {
-      DB.statuses = DB.statuses.filter(s => s.createdAt + 86400000 > Date.now());
-      persist(); render();
-    }
-    if ('setAppBadge' in navigator) {
-      const n = totalUnread() + unreadNotifs();
-      try { n ? navigator.setAppBadge(n) : navigator.clearAppBadge(); } catch (e) {}
-    }
-  }, 30000);
-}
-
-window.addEventListener('DOMContentLoaded', boot);
-
-/* Manual recovery: open #/reset-cache (or run A.repair() in the console) to drop a
-   stale service worker/cache that a host may have poisoned with an error page. */
-App.repair = async function () {
-  try {
-    if ('serviceWorker' in navigator) {
-      const regs = await navigator.serviceWorker.getRegistrations();
-      await Promise.all(regs.map(r => r.unregister()));
-    }
-    if (window.caches) {
-      const keys = await caches.keys();
-      await Promise.all(keys.map(k => caches.delete(k)));
-    }
-    toast('App cache cleared — reloading…', 'ok');
-    setTimeout(() => location.replace(location.pathname + location.search + '#/home'), 700);
-  } catch (e) { toast('Could not clear the cache automatically', 'err'); }
-};
-</script>
-
-<script>
-/* PWA bootstrap — registered independently of the async app boot so install prompts work reliably. */
-if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
-  var __regSW = function () {
-    navigator.serviceWorker.register('sw.js', { scope: './' }).then(function (reg) {
-      if (reg && reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
-    }).catch(function () {});
-  };
-  if (document.readyState === 'complete') __regSW();
-  else window.addEventListener('load', __regSW);
-}
-</script>
-
-<style>
-/* ================= WhaleChat Invest (appended) ================= */
-.inv-hero{position:relative;overflow:hidden;border-radius:22px;padding:18px;background:
-  radial-gradient(120% 120% at 0% 0%,rgba(46,230,201,.16),transparent 55%),
-  radial-gradient(120% 130% at 100% 0%,rgba(58,160,255,.14),transparent 60%),
-  linear-gradient(150deg,var(--surface),var(--bg-soft));
-  border:1px solid var(--border-strong);box-shadow:var(--shadow)}
-.inv-hero:after{content:"";position:absolute;right:-40px;bottom:-60px;width:170px;height:170px;border-radius:50%;
-  background:radial-gradient(circle,rgba(46,230,201,.20),transparent 65%)}
-.inv-big{font-family:var(--display);font-size:34px;font-weight:800;letter-spacing:-.02em;line-height:1.15;margin:2px 0}
-.inv-unit{font-size:14px;font-weight:600;opacity:.65}
-.inv-day{display:inline-flex;align-items:center;gap:6px;margin-top:10px;padding:6px 11px;border-radius:99px;
-  font-size:12px;background:rgba(255,255,255,.06);border:1px solid var(--border)}
-.inv-day.up{color:var(--success);background:rgba(47,214,166,.10);border-color:rgba(47,214,166,.25)}
-.inv-day.down{color:var(--danger);background:rgba(255,95,116,.10);border-color:rgba(255,95,116,.25)}
-.inv-hero-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px;
-  border-top:1px solid var(--border);padding-top:12px}
-.inv-hero-grid>div{display:flex;flex-direction:column;gap:2px;min-width:0}
-.inv-hero-grid b{font-size:13px;font-family:var(--display);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.inv-actions{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:12px 0}
-.inv-act{display:flex;flex-direction:column;align-items:center;gap:6px;padding:11px 4px;border-radius:14px;
-  background:var(--surface);border:1px solid var(--border);font-size:10.5px;font-weight:600;color:var(--text);
-  text-decoration:none;transition:transform .15s ease,border-color .15s ease}
-.inv-act:hover{transform:translateY(-1px);border-color:rgba(46,230,201,.4)}
-.inv-act-ic{display:flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:10px;
-  background:linear-gradient(135deg,rgba(46,230,201,.16),rgba(58,160,255,.16));color:var(--accent)}
-.inv-chart{margin:8px -4px 0;height:150px;position:relative}
-.inv-chart svg{display:block;width:100%;height:100%}
-.inv-svg{overflow:visible}
-.inv-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;
-  min-height:120px;text-align:center;color:var(--muted)}
-.inv-seg{display:inline-flex;gap:2px;padding:3px;border-radius:11px;background:var(--surface-2);border:1px solid var(--border)}
-.inv-segbtn{padding:5px 9px;border-radius:8px;font-size:11px;font-weight:600;color:var(--muted);text-decoration:none;white-space:nowrap}
-.inv-segbtn.on{background:var(--surface-3);color:var(--text);box-shadow:0 1px 0 rgba(255,255,255,.06) inset}
-.inv-two{display:grid;grid-template-columns:1fr;gap:12px;margin-top:12px}
-@media(min-width:900px){.inv-two{grid-template-columns:1fr 1fr}}
-.inv-list{display:flex;flex-direction:column}
-.inv-row{display:flex;gap:10px;align-items:center;padding:10px 2px;border-bottom:1px solid var(--border);
-  text-decoration:none;color:inherit}
-.inv-row:last-child{border-bottom:none}
-.inv-row:hover{background:rgba(255,255,255,.02)}
-.inv-logo{display:inline-flex;align-items:center;justify-content:center;border-radius:11px;flex:0 0 auto;
-  color:#fff;font-family:var(--display);letter-spacing:-.03em;box-shadow:0 6px 16px -8px rgba(0,0,0,.8)}
-.inv-logo b{font-weight:800;opacity:.95}
-.inv-chg{font-size:12px;font-weight:700;font-variant-numeric:tabular-nums}
-.inv-chg.up,.up{color:var(--success)}
-.inv-chg.down,.down{color:var(--danger)}
-.flash-up{animation:invFlashUp .65s ease}
-.flash-down{animation:invFlashDown .65s ease}
-@keyframes invFlashUp{0%{background:rgba(47,214,166,.26)}100%{background:transparent}}
-@keyframes invFlashDown{0%{background:rgba(255,95,116,.26)}100%{background:transparent}}
-.inv-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
-@media(min-width:760px){.inv-grid{grid-template-columns:repeat(3,1fr)}}
-@media(min-width:1120px){.inv-grid{grid-template-columns:repeat(4,1fr)}}
-.inv-mcard{display:flex;flex-direction:column;gap:7px;padding:12px;border-radius:16px;background:var(--surface);
-  border:1px solid var(--border);text-decoration:none;color:inherit;transition:transform .15s ease,border-color .15s ease}
-.inv-mcard:hover{transform:translateY(-2px);border-color:rgba(46,230,201,.35)}
-.inv-sparkwrap{height:30px;margin:2px 0}
-.inv-spark{width:100%;height:100%;display:block}
-.inv-price{font-family:var(--display);font-size:30px;font-weight:800;letter-spacing:-.02em}
-.inv-pricecard{padding:16px}
-.inv-paused{margin-top:10px;padding:8px 10px;border-radius:10px;background:rgba(255,176,32,.10);
-  border:1px solid rgba(255,176,32,.25);color:var(--warn);font-size:11.5px;display:flex;gap:6px;align-items:center}
-.inv-statgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px 14px}
-@media(min-width:520px){.inv-statgrid{grid-template-columns:repeat(3,1fr)}}
-.inv-statgrid>div{display:flex;flex-direction:column;gap:1px;padding-bottom:7px;border-bottom:1px dashed var(--border)}
-.inv-statgrid b{font-size:13px;font-family:var(--display);font-weight:700}
-.inv-mode{display:flex;gap:4px;padding:3px;border-radius:11px;background:var(--surface-2);margin-bottom:10px}
-.inv-modebtn{flex:1;padding:7px;border-radius:8px;font-size:12px;font-weight:650;color:var(--muted);background:none;border:none;cursor:pointer}
-.inv-modebtn.on{background:var(--surface-3);color:var(--text)}
-.inv-prefix{position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:11px;font-weight:700;color:var(--muted)}
-.input-wrap{position:relative}
-.input-wrap .input{padding-left:40px}
-.inv-sum{margin-top:10px;padding:11px 12px;border-radius:12px;background:var(--surface-2);border:1px solid var(--border);
-  display:flex;flex-direction:column;gap:6px}
-.inv-news{padding:9px 0;border-bottom:1px solid var(--border)}
-.inv-news:last-of-type{border-bottom:none}
-.inv-alloc{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
-.inv-donut{width:120px;height:120px;flex:0 0 auto}
-.inv-legend{display:flex;flex-direction:column;gap:6px;min-width:120px;flex:1}
-.inv-cats{flex-wrap:nowrap;overflow-x:auto;padding-bottom:2px;-webkit-overflow-scrolling:touch}
-.inv-cats::-webkit-scrollbar{display:none}
-.inv-table{width:100%;border-collapse:collapse;font-size:12px}
-.inv-table th{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);
-  padding:8px 8px;border-bottom:1px solid var(--border);white-space:nowrap}
-.inv-table td{padding:9px 8px;border-bottom:1px solid var(--border);vertical-align:top}
-.inv-table .num{text-align:right;font-variant-numeric:tabular-nums}
-.inv-table tr:last-child td{border-bottom:none}
-.inv-note{display:flex;gap:8px;align-items:flex-start;margin-top:12px;color:var(--muted)}
-@media(max-width:520px){
-  .inv-big{font-size:29px}
-  .inv-actions{grid-template-columns:repeat(5,1fr);gap:6px}
-  .inv-act{font-size:9.5px;padding:9px 2px}
-  .inv-act-ic{width:29px;height:29px}
-}
-
-/* ---- polish pass ---- */
-.inv-chart svg{animation:invFade .35s ease}
-@keyframes invFade{from{opacity:.35}to{opacity:1}}
-.inv-price,.inv-big,.inv-hero-grid b,.inv-table .num{font-variant-numeric:tabular-nums}
-.inv-mcard,.inv-row,.inv-act{transition:background .18s ease,border-color .18s ease,transform .18s ease}
-.inv-modebtn,.inv-segbtn{cursor:pointer;user-select:none}
-.inv-sum b{font-variant-numeric:tabular-nums}
-@media(max-width:520px){
-  .bottomnav .bnav{padding:0 2px}
-  .bottomnav .bnav span{font-size:9px;letter-spacing:-.02em}
-}
-
-</style>
-<script>
-/* =====================================================================
-   WhaleChat Invest — stocks, portfolio, market, orders, admin
-   Plugs into the existing app: DB, SESSION, me(), u.balance (Whale Coin),
-   askPin/hash (transaction PIN), notify(), tx(), go(), render(), persist().
-   Market data is SIMULATED — clearly labelled in the UI.
-   ===================================================================== */
-'use strict';
-
-const INV = {};
-INV.TICK_MS = 5000;
-
-/* ------------------------------ stock universe ------------------------------ */
-INV.SEED = [
-  { t:'AAPL', name:'Apple Inc.', sector:'Technology', price:231.42, pe:34.2, mcap:3500, div:0.44, vol:52.4, ceo:'Tim Cook', web:'apple.com', color:'#a2aaad',
-    about:'Apple designs and sells iPhone, Mac, iPad and wearables, and runs one of the largest services businesses in the world.' },
-  { t:'MSFT', name:'Microsoft Corp.', sector:'Technology', price:428.93, pe:36.5, mcap:3190, div:0.72, vol:21.8, ceo:'Satya Nadella', web:'microsoft.com', color:'#2f6fd0',
-    about:'Microsoft builds Azure cloud infrastructure, Windows, Office 365 and Copilot AI products for consumers and enterprises.' },
-  { t:'NVDA', name:'NVIDIA Corp.', sector:'Semiconductors', price:141.28, pe:62.1, mcap:3460, div:0.03, vol:310.5, ceo:'Jensen Huang', web:'nvidia.com', color:'#76b900',
-    about:'NVIDIA designs the GPUs and networking systems powering AI training, data centres and gaming.' },
-  { t:'AMZN', name:'Amazon.com Inc.', sector:'Consumer', price:206.74, pe:43.8, mcap:2170, div:0, vol:38.2, ceo:'Andy Jassy', web:'amazon.com', color:'#ff9900',
-    about:'Amazon operates the largest online marketplace and AWS, the leading public cloud platform.' },
-  { t:'TSLA', name:'Tesla Inc.', sector:'Automotive', price:352.41, pe:92.4, mcap:1120, div:0, vol:96.7, ceo:'Elon Musk', web:'tesla.com', color:'#e82127',
-    about:'Tesla builds electric vehicles, energy storage and an autonomy software stack.' },
-  { t:'GOOGL', name:'Alphabet Inc.', sector:'Communication', price:178.32, pe:24.1, mcap:2180, div:0.45, vol:27.6, ceo:'Sundar Pichai', web:'abc.xyz', color:'#4285f4',
-    about:'Alphabet owns Google Search, YouTube, Android, Google Cloud and DeepMind.' },
-  { t:'META', name:'Meta Platforms', sector:'Communication', price:585.19, pe:27.9, mcap:1480, div:0.35, vol:14.3, ceo:'Mark Zuckerberg', web:'meta.com', color:'#0866ff',
-    about:'Meta operates Facebook, Instagram, WhatsApp and Threads, and invests heavily in AI and AR hardware.' },
-  { t:'NFLX', name:'Netflix Inc.', sector:'Media', price:812.55, pe:45.2, mcap:350, div:0, vol:3.9, ceo:'Ted Sarandos', web:'netflix.com', color:'#e50914',
-    about:'Netflix is the largest subscription streaming service, now with ad-supported tiers and live events.' },
-  { t:'AMD', name:'Advanced Micro Devices', sector:'Semiconductors', price:142.83, pe:120.4, mcap:231, div:0, vol:44.1, ceo:'Lisa Su', web:'amd.com', color:'#ed1c24',
-    about:'AMD makes CPUs and GPUs for data centre, client PC and embedded markets.' },
-  { t:'AVGO', name:'Broadcom Inc.', sector:'Semiconductors', price:172.44, pe:38.2, mcap:805, div:1.2, vol:22.5, ceo:'Hock Tan', web:'broadcom.com', color:'#cc0000',
-    about:'Broadcom supplies networking silicon, custom AI accelerators and enterprise software.' },
-  { t:'JPM', name:'JPMorgan Chase', sector:'Financials', price:242.61, pe:12.8, mcap:690, div:2.1, vol:9.8, ceo:'Jamie Dimon', web:'jpmorganchase.com', color:'#1c4b8b',
-    about:'JPMorgan Chase is the largest US bank by assets, spanning consumer, investment and commercial banking.' },
-  { t:'V', name:'Visa Inc.', sector:'Financials', price:309.51, pe:30.1, mcap:610, div:0.75, vol:6.4, ceo:'Ryan McInerney', web:'visa.com', color:'#1a1f71',
-    about:'Visa runs the world\'s largest card payment network, processing billions of transactions each year.' },
-  { t:'DIS', name:'Walt Disney Co.', sector:'Media', price:112.44, pe:38.5, mcap:205, div:0.9, vol:11.2, ceo:'Bob Iger', web:'disney.com', color:'#113ccf',
-    about:'Disney operates theme parks, film studios, and the Disney+ streaming platform.' },
-  { t:'KO', name:'Coca-Cola Co.', sector:'Consumer Defensive', price:63.21, pe:24.6, mcap:272, div:3.05, vol:14.7, ceo:'James Quincey', web:'coca-colacompany.com', color:'#f40009',
-    about:'Coca-Cola sells sparkling soft drinks, water, sports drinks and juice across 200+ countries.' },
-  { t:'PEP', name:'PepsiCo Inc.', sector:'Consumer Defensive', price:158.72, pe:22.4, mcap:218, div:3.4, vol:5.9, ceo:'Ramon Laguarta', web:'pepsico.com', color:'#004b93',
-    about:'PepsiCo owns Pepsi, Lay\'s, Gatorade and Quaker across beverages and convenient foods.' },
-  { t:'WMT', name:'Walmart Inc.', sector:'Retail', price:89.64, pe:38.9, mcap:720, div:1.0, vol:18.3, ceo:'Doug McMillon', web:'walmart.com', color:'#0071ce',
-    about:'Walmart is the largest retailer globally, blending 10,000+ stores with a fast-growing eCommerce and marketplace business.' },
-  { t:'COIN', name:'Coinbase Global', sector:'Crypto', price:298.41, pe:48.2, mcap:74, div:0, vol:12.6, ceo:'Brian Armstrong', web:'coinbase.com', color:'#0052ff', crypto:true,
-    about:'Coinbase is the largest US-listed crypto exchange, earning from trading fees, custody and stablecoin revenue.' },
-  { t:'MSTR', name:'MicroStrategy', sector:'Crypto', price:412.88, pe:0, mcap:92, div:0, vol:18.9, ceo:'Phong Le', web:'microstrategy.com', color:'#d9232e', crypto:true,
-    about:'MicroStrategy is a software company best known for holding a very large corporate Bitcoin treasury.' },
-  { t:'MARA', name:'MARA Holdings', sector:'Crypto', price:21.64, pe:0, mcap:6.8, div:0, vol:22.1, ceo:'Fred Thiel', web:'maraholdings.com', color:'#f7931a', crypto:true,
-    about:'MARA is one of the largest publicly traded Bitcoin mining companies, powered by a growing energy portfolio.' },
-  { t:'PLTR', name:'Palantir Technologies', sector:'Technology', price:68.42, pe:210.5, mcap:156, div:0, vol:58.4, ceo:'Alex Karp', web:'palantir.com', color:'#101113',
-    about:'Palantir sells AI and data-integration platforms (Foundry, Gotham, AIP) to governments and enterprises.' },
-  { t:'ARM', name:'Arm Holdings', sector:'Semiconductors', price:134.92, pe:190.2, mcap:141, div:0, vol:9.7, ceo:'Rene Haas', web:'arm.com', color:'#0091bd',
-    about:'Arm licenses CPU architecture and designs used in most of the world\'s smartphones and a growing share of servers.' },
-  { t:'SHOP', name:'Shopify Inc.', sector:'Technology', price:108.71, pe:78.4, mcap:140, div:0, vol:8.1, ceo:'Tobi Lutke', web:'shopify.com', color:'#96bf48',
-    about:'Shopify provides commerce infrastructure for millions of merchants, from storefronts to payments and fulfilment.' },
-  { t:'UBER', name:'Uber Technologies', sector:'Technology', price:74.21, pe:32.6, mcap:155, div:0, vol:16.4, ceo:'Dara Khosrowshahi', web:'uber.com', color:'#000000',
-    about:'Uber runs rideshare, food delivery (Uber Eats) and freight marketplaces in 70+ countries.' },
-  { t:'HOOD', name:'Robinhood Markets', sector:'Financials', price:38.63, pe:58.3, mcap:34, div:0, vol:13.2, ceo:'Vlad Tenev', web:'robinhood.com', color:'#00c805',
-    about:'Robinhood offers commission-free equities, options and crypto trading to retail investors.' },
-  { t:'LLY', name:'Eli Lilly & Co.', sector:'Healthcare', price:792.44, pe:88.1, mcap:752, div:0.7, vol:3.1, ceo:'David Ricks', web:'lilly.com', color:'#d52b1e',
-    about:'Eli Lilly develops diabetes, obesity and oncology drugs, including the GLP-1 franchise.' },
-  { t:'UNH', name:'UnitedHealth Group', sector:'Healthcare', price:562.31, pe:18.4, mcap:518, div:1.5, vol:4.2, ceo:'Andrew Witty', web:'unitedhealthgroup.com', color:'#002677',
-    about:'UnitedHealth is the largest US health insurer, also owning Optum health services.' },
-  { t:'XOM', name:'Exxon Mobil', sector:'Energy', price:118.94, pe:14.2, mcap:523, div:3.3, vol:15.8, ceo:'Darren Woods', web:'corporate.exxonmobil.com', color:'#e1251b',
-    about:'ExxonMobil explores, produces and refines oil and gas, with growing low-carbon investments.' },
-  { t:'NKE', name:'Nike Inc.', sector:'Consumer', price:78.42, pe:21.9, mcap:118, div:1.9, vol:7.6, ceo:'Elliott Hill', web:'nike.com', color:'#111111',
-    about:'Nike designs and sells athletic footwear and apparel worldwide, both direct and through wholesale.' },
-  { t:'SMCI', name:'Super Micro Computer', sector:'Technology', price:38.94, pe:22.1, mcap:22, div:0, vol:26.2, ceo:'Charles Liang', web:'supermicro.com', color:'#e31837',
-    about:'Super Micro builds high-density AI and cloud server systems and rack-scale solutions.' },
-  { t:'RIVN', name:'Rivian Automotive', sector:'Automotive', price:13.41, pe:0, mcap:13, div:0, vol:19.4, ceo:'RJ Scaringe', web:'rivian.com', color:'#0d3b66', isNew:true,
-    about:'Rivian makes electric adventure vehicles and commercial delivery vans.' }
-];
-
-/* ------------------------------ persistence helpers ------------------------------ */
-INV.db = function () {
-  if (!DB.invest) DB.invest = { feePct: 0.5, paused: {}, seededAt: null };
-  if (!DB.invest.paused) DB.invest.paused = {};
-  if (typeof DB.invest.feePct !== 'number') DB.invest.feePct = 0.5;
-  ['stocks', 'holdings', 'trades', 'watchlist', 'alerts'].forEach(k => { if (!Array.isArray(DB[k])) DB[k] = []; });
-  if (!DB.invest.seededAt) {
-    // seed the catalogue once per database, never overwriting admin edits
-    DB.invest.seededAt = Date.now();
-    INV.SEED.forEach(s => {
-      if (!DB.stocks.some(x => x.ticker === s.t)) {
-        DB.stocks.push({
-          id: 'st_' + s.t.toLowerCase(), ticker: s.t, name: s.name, sector: s.sector,
-          price: s.price, prevClose: Math.round(s.price * (1 - (Math.random() * 0.02 - 0.008)) * 100) / 100,
-          pe: s.pe, mcap: s.mcap, div: s.div, vol: s.vol, ceo: s.ceo, website: s.web,
-          color: s.color, about: s.about, crypto: !!s.crypto, isNew: !!s.isNew,
-          paused: false, custom: false, createdAt: Date.now()
-        });
-      }
-    });
-  }
-  return DB.invest;
-};
-INV.fee = function () { return Math.max(0, Number(INV.db().feePct) || 0); };
-INV.stock = function (t) { return (DB.stocks || []).find(s => s.ticker === String(t).toUpperCase()) || null; };
-INV.stocks = function () { INV.db(); return DB.stocks.slice(); };
-INV.paused = function (t) { const i = INV.db(); return !!(i.paused[t] || (INV.stock(t) || {}).paused); };
-
-INV.holdings = function (userId) {
-  INV.db();
-  return DB.holdings.filter(h => h.userId === (userId || me().id) && h.shares > 0.0000001);
-};
-INV.holding = function (t, userId) {
-  return INV.holdings(userId).find(h => h.ticker === t) || null;
-};
-INV.trades = function (userId) {
-  INV.db();
-  return DB.trades.filter(t => t.userId === (userId || me().id)).sort((a, b) => b.createdAt - a.createdAt);
-};
-INV.watching = function (t) {
-  INV.db();
-  return DB.watchlist.some(w => w.userId === me().id && w.ticker === t);
-};
-INV.alerts = function () { INV.db(); return DB.alerts.filter(a => a.userId === me().id); };
-
-/* ------------------------------ price engine (simulated) ------------------------------ */
-function mulberry32(a) {
-  return function () {
-    a |= 0; a = a + 0x6D2B79F5 | 0;
-    let t = Math.imul(a ^ a >>> 15, 1 | a);
-    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
-    return ((t ^ t >>> 14) >>> 0) / 4294967296;
-  };
-}
-function seedOf(str) {
-  let h = 2166136261;
-  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
-  return h >>> 0;
-}
-INV.volatility = function (s) {
-  if (s.crypto) return 0.055;
-  if (s.sector === 'Semiconductors') return 0.032;
-  if (s.sector === 'Consumer Defensive' || s.sector === 'Healthcare') return 0.012;
-  if (s.sector === 'Technology') return 0.024;
-  return 0.019;
-};
-INV.live = {};   // ticker -> { price, prevClose, open, dayHigh, dayLow, changePct, vol, dir, updatedAt }
-INV.seriesCache = {};
-
-INV.series = function (t, tf) {
-  const key = t + '::' + tf;
-  if (INV.seriesCache[key]) return INV.seriesCache[key];
-  const s = INV.stock(t); if (!s) return [];
-  const q = INV.quote(t);
-  const anchors = { '1D': 1, '1W': 5, '1M': 22, '3M': 63, '1Y': 252, 'ALL': 504 };
-  const n = anchors[tf] || 63;
-  const rnd = mulberry32(seedOf(t + tf));
-  const vol = INV.volatility(s) * (tf === '1D' ? 0.35 : 1);
-  const out = [];
-  let p = q.price;
-  // walk backwards from today's price, then reverse — keeps the tail exact
-  for (let i = 0; i < n; i++) {
-    out.push(p);
-    const shock = (rnd() - 0.5) * 2 * vol;
-    const drift = 0.0007;
-    p = p / (1 + shock + drift);
-  }
-  out.reverse();
-  out[out.length - 1] = q.price;
-  INV.seriesCache[key] = out;
-  return out;
-};
-INV.quote = function (t) {
-  INV.db();
-  const l = INV.live[t];
-  const s = INV.stock(t);
-  if (!s) return null;
-  if (l) return l;
-  const price = s.price;
-  const prevClose = s.prevClose || price;
-  const q = {
-    price, prevClose, open: prevClose,
-    dayHigh: Math.max(price, prevClose) * 1.006,
-    dayLow: Math.min(price, prevClose) * 0.994,
-    changePct: prevClose ? ((price - prevClose) / prevClose) * 100 : 0,
-    changeUsd: price - prevClose,
-    vol: (s.vol || 10) * 1e6, dir: 0, updatedAt: Date.now()
-  };
-  INV.live[t] = q;
-  return q;
-};
-INV.tick = function () {
-  INV.db();
-  const now = Date.now();
-  INV.stocks().forEach(s => {
-    const q = INV.quote(s.ticker);
-    if (!q) return;
-    const vol = INV.volatility(s) / 14;      // per-5s step
-    const shock = (Math.random() - 0.5) * 2 * vol;
-    const next = Math.max(0.5, q.price * (1 + shock));
-    q.dir = next > q.price ? 1 : next < q.price ? -1 : 0;
-    q.price = Math.round(next * 100) / 100;
-    q.dayHigh = Math.max(q.dayHigh, q.price);
-    q.dayLow = Math.min(q.dayLow, q.price);
-    q.changePct = q.prevClose ? ((q.price - q.prevClose) / q.prevClose) * 100 : 0;
-    q.changeUsd = q.price - q.prevClose;
-    q.vol += Math.round(Math.random() * 24000);
-    q.updatedAt = now;
-    s.price = q.price;                       // keep catalogue in sync for trades
-    // keep the live series tail honest
-    const key = s.ticker + '::1D';
-    if (INV.seriesCache[key]) INV.seriesCache[key][INV.seriesCache[key].length - 1] = q.price;
-  });
-  INV.checkAlerts();
-  INV.runLimitOrders();
-  INV.paint();
-  if (!INV._lastPersist || now - INV._lastPersist > 45000) { INV._lastPersist = now; try { persist(); } catch (e) {} }
-};
-INV.checkAlerts = function () {
-  const u = me(); if (!u) return;
-  INV.alerts().forEach(a => {
-    if (!a.active) return;
-    const q = INV.quote(a.ticker); if (!q) return;
-    const hit = a.dir === 'above' ? q.price >= a.target : q.price <= a.target;
-    if (!hit) return;
-    a.active = false; a.triggeredAt = Date.now(); a.triggerPrice = q.price;
-    notify(u.id, `${a.ticker} alert hit`,
-      `${a.ticker} is now ${usd(q.price)} — your ${a.dir} ${usd(a.target)} target was reached.`,
-      '#/invest/stock/' + a.ticker, 'trend');
-    toast(`${a.ticker} price alert: ${usd(q.price)}`, 'ok');
-  });
-};
-INV.runLimitOrders = function () {
-  const u = me(); if (!u) return;
-  DB.trades.filter(t => t.userId === u.id && t.status === 'Pending').forEach(o => {
-    const q = INV.quote(o.ticker); if (!q) return;
-    const hit = o.side === 'buy' ? q.price <= o.limitUsd : q.price >= o.limitUsd;
-    if (!hit) return;
-    INV.execute(o.side, o.ticker, o.shares, { limit: true, orderId: o.id, fillPrice: q.price });
-  });
-};
-
-/* ------------------------------ chart primitives ------------------------------ */
-INV.smooth = function (vals, w, h, pad) {
-  if (!vals.length) return { line: '', area: '' };
-  const min = Math.min(...vals), max = Math.max(...vals);
-  const span = max - min || 1;
-  const px = i => pad + (i / Math.max(1, vals.length - 1)) * (w - pad * 2);
-  const py = v => h - pad - ((v - min) / span) * (h - pad * 2);
-  let d = '';
-  for (let i = 0; i < vals.length; i++) {
-    const x = px(i), y = py(vals[i]);
-    if (i === 0) { d += `M${x.toFixed(2)},${y.toFixed(2)}`; continue; }
-    const x0 = px(i - 1), y0 = py(vals[i - 1]);
-    const cx = (x0 + x) / 2;
-    d += ` C${cx.toFixed(2)},${y0.toFixed(2)} ${cx.toFixed(2)},${y.toFixed(2)} ${x.toFixed(2)},${y.toFixed(2)}`;
-  }
-  return { line: d, area: `${d} L${px(vals.length - 1).toFixed(2)},${h} L${px(0).toFixed(2)},${h} Z` };
-};
-INV.lineChart = function (vals, opts) {
-  const o = Object.assign({ w: 320, h: 130, pad: 10, id: '' }, opts || {});
-  if (!vals || vals.length < 2) return `<div class="inv-empty tiny muted">No chart data</div>`;
-  const up = vals[vals.length - 1] >= vals[0];
-  const color = up ? 'var(--success)' : 'var(--danger)';
-  const { line, area } = INV.smooth(vals, o.w, o.h, o.pad);
-  const gid = 'g' + Math.random().toString(36).slice(2, 8);
-  return `<svg viewBox="0 0 ${o.w} ${o.h}" preserveAspectRatio="none" class="inv-svg" aria-hidden="true">
-    <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="${color}" stop-opacity=".34"/>
-      <stop offset="100%" stop-color="${color}" stop-opacity="0"/>
-    </linearGradient></defs>
-    <path d="${area}" fill="url(#${gid})"/>
-    <path d="${line}" fill="none" stroke="${color}" stroke-width="2.1" stroke-linecap="round"
-      vector-effect="non-scaling-stroke"/>
-  </svg>`;
-};
-INV.candleChart = function (vals, opts) {
-  const o = Object.assign({ w: 320, h: 130, pad: 10 }, opts || {});
-  if (!vals || vals.length < 2) return `<div class="inv-empty tiny muted">No chart data</div>`;
-  const n = Math.min(vals.length, 70);
-  const slice = vals.slice(-n);
-  const min = Math.min(...slice), max = Math.max(...slice);
-  const span = max - min || 1;
-  const bw = (o.w - o.pad * 2) / n;
-  const py = v => o.h - o.pad - ((v - min) / span) * (o.h - o.pad * 2);
-  let out = '';
-  for (let i = 0; i < n; i++) {
-    const close = slice[i];
-    const open = i === 0 ? close : slice[i - 1];
-    const hi = Math.max(open, close) * (1 + Math.random() * 0.004);
-    const lo = Math.min(open, close) * (1 - Math.random() * 0.004);
-    const up = close >= open;
-    const col = up ? 'var(--success)' : 'var(--danger)';
-    const x = o.pad + i * bw + bw / 2;
-    const bodyTop = py(Math.max(open, close)), bodyBot = py(Math.min(open, close));
-    out += `<line x1="${x.toFixed(1)}" y1="${py(hi).toFixed(1)}" x2="${x.toFixed(1)}" y2="${py(lo).toFixed(1)}" stroke="${col}" stroke-width="1"/>
-      <rect x="${(x - Math.max(1, bw * 0.3)).toFixed(1)}" y="${bodyTop.toFixed(1)}" width="${Math.max(1.4, bw * 0.6).toFixed(1)}"
-        height="${ Math.max(1, bodyBot - bodyTop).toFixed(1)}" fill="${col}" rx=".6"/>`;
-  }
-  return `<svg viewBox="0 0 ${o.w} ${o.h}" preserveAspectRatio="none" class="inv-svg" aria-hidden="true">${out}</svg>`;
-};
-INV.spark = function (t) {
-  const vals = INV.series(t, '1D');
-  if (vals.length < 2) return '';
-  const up = vals[vals.length - 1] >= vals[0];
-  const { line } = INV.smooth(vals, 90, 30, 2);
-  return `<svg viewBox="0 0 90 30" preserveAspectRatio="none" class="inv-spark">
-    <path d="${line}" fill="none" stroke="${up ? 'var(--success)' : 'var(--danger)'}" stroke-width="1.7"
-      vector-effect="non-scaling-stroke" stroke-linecap="round"/></svg>`;
-};
-INV.donut = function (slices) {
-  const total = slices.reduce((s, x) => s + x.value, 0);
-  const R = 54, C = 2 * Math.PI * R;
-  let off = 0, out = '';
-  const cols = ['#2ee6c9', '#3aa0ff', '#8b7bff', '#ffc861', '#2fd6a6', '#ff7bb0', '#5ad1ff', '#ff9f5a'];
-  slices.forEach((s, i) => {
-    const frac = total ? s.value / total : 0;
-    const len = Math.max(0, frac * C - 2);
-    out += `<circle cx="60" cy="60" r="${R}" fill="none" stroke="${cols[i % cols.length]}" stroke-width="14"
-      stroke-dasharray="${len.toFixed(2)} ${(C - len).toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}"
+dashoffset="${(-off).toFixed(2)}"
       transform="rotate(-90 60 60)" stroke-linecap="butt"/>`;
     off += frac * C;
   });
@@ -936,7 +67,8 @@ INV.logoHTML = function (s, size) {
 INV.chgClass = function (v) { return v > 0 ? 'up' : v < 0 ? 'down' : ''; };
 INV.chgHTML = function (q, cls) {
   const c = INV.chgClass(q.changePct);
-  return `<span class="inv-chg ${c} ${cls || ''}" data-lv="pct:${q.ticker || ''}">${q.changePct >= 0 ? '+' : ''}${q.changePct.toFixed(2)}%</span>`;
+  const chg = Number(q && q.changePct) || 0;
+  return `<span class="inv-chg ${c} ${cls || ''}" data-lv="pct:${q.ticker || ''}">${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%</span>`;
 };
 INV.feeLine = function () { return INV.fee() ? `Includes ${INV.fee()}% trading fee` : 'No trading fee'; };
 
@@ -1565,7 +697,7 @@ INV.viewAdminStocks = function () {
           <td class="ellipsis" style="max-width:150px">${esc(s.name)}</td>
           <td class="muted">${esc(s.sector || '—')}</td>
           <td class="num"><span data-lv="price:${s.ticker}">${usd(q.price)}</span></td>
-          <td class="num ${INV.chgClass(q.changePct)}">${q.changePct >= 0 ? '+' : ''}${q.changePct.toFixed(2)}%</td>
+          <td class="num ${INV.chgClass(Number(q.changePct) || 0)}">${(Number(q.changePct) || 0) >= 0 ? '+' : ''}${(Number(q.changePct) || 0).toFixed(2)}%</td>
           <td><span class="badge ${paused ? 'badge-warn' : 'badge-success'}">${paused ? 'Paused' : 'Live'}</span></td>
           <td class="row" style="gap:4px;justify-content:flex-end">
             <button class="btn btn-xs btn-ghost" data-act="inv-admin-pause" data-t="${s.ticker}">${paused ? 'Resume' : 'Pause'}</button>
@@ -1595,7 +727,7 @@ INV.viewAdminStocks = function () {
       const usr = findUser(t.userId);
       return `<div class="inv-row"><div class="grow" style="min-width:0">
         <div class="small" style="font-weight:650">${t.side === 'buy' ? 'Buy' : 'Sell'} ${esc(t.ticker)} <span class="tiny muted">@${esc(usr ? usr.username : 'unknown')}</span></div>
-        <div class="tiny muted">${t.shares.toFixed(4)} sh @ ${usd(t.priceUsd)} · ${dateLabel(t.createdAt)}</div></div>
+        <div class="tiny muted">${(Number(t.shares) || 0).toFixed(4)} sh @ ${usd(Number(t.priceUsd) || 0)} · ${dateLabel(t.createdAt)}</div></div>
         <span class="badge ${t.status === 'Completed' ? 'badge-success' : 'badge-warn'}">${t.status}</span></div>`;
     }).join('')}</div>` : `<div class="tiny muted">No trades yet.</div>`}
   </div>`;
@@ -1608,4 +740,1100 @@ INV.stockFormHTML = function (s) {
   <div class="field"><label class="label">Company name</label><input class="input" id="sfName" value="${esc(x.name || '')}"/></div>
   <div class="field"><label class="label">Sector</label><input class="input" id="sfSector" value="${esc(x.sector || 'Technology')}" placeholder="Technology / Crypto / Financials"/></div>
   <div class="row" style="gap:8px">
-    <div class="field g
+    <div class="field grow"><label class="label">Price (USD)</label><input class="input" id="sfPrice" type="number" step="0.01" value="${x.price != null ? x.price : ''}"/></div>
+    <div class="field grow"><label class="label">P/E</label><input class="input" id="sfPe" type="number" step="0.1" value="${x.pe != null ? x.pe : 0}"/></div>
+  </div>
+  <div class="row" style="gap:8px">
+    <div class="field grow"><label class="label">Market cap ($B)</label><input class="input" id="sfMcap" type="number" step="1" value="${x.mcap != null ? x.mcap : 0}"/></div>
+    <div class="field grow"><label class="label">Dividend (%)</label><input class="input" id="sfDiv" type="number" step="0.01" value="${x.div != null ? x.div : 0}"/></div>
+  </div>
+  <div class="row" style="gap:8px">
+    <div class="field grow"><label class="label">CEO</label><input class="input" id="sfCeo" value="${esc(x.ceo || '')}"/></div>
+    <div class="field grow"><label class="label">Website</label><input class="input" id="sfWeb" value="${esc(x.website || '')}" placeholder="example.com"/></div>
+  </div>
+  <div class="field"><label class="label">About</label><textarea class="input" id="sfAbout" rows="3">${esc(x.about || '')}</textarea></div>
+  <div class="row" style="gap:14px;flex-wrap:wrap">
+    <label class="checkline"><input type="checkbox" id="sfCrypto" ${x.crypto ? 'checked' : ''}/> <span class="small">Crypto stock</span></label>
+    <label class="checkline"><input type="checkbox" id="sfNew" ${x.isNew ? 'checked' : ''}/> <span class="small">New listing</span></label>
+  </div>`;
+};
+App.invAdminAdd = function () {
+  openModal(modalShell('Add stock', INV.stockFormHTML(null),
+    `<button class="btn btn-ghost" data-close style="flex:1">Cancel</button>
+     <button class="btn btn-primary" id="sfSave" style="flex:1">Add stock</button>`), { locked: false });
+  document.getElementById('sfSave').onclick = () => {
+    const ticker = (document.getElementById('sfTicker').value || '').trim().toUpperCase().replace(/[^A-Z.]/g, '');
+    const name = document.getElementById('sfName').value.trim();
+    const price = Number(document.getElementById('sfPrice').value);
+    if (!ticker || !name || !(price > 0)) return toast('Ticker, name and a price are required', 'err');
+    if (INV.stock(ticker)) return toast('That ticker already exists', 'err');
+    DB.stocks.push({
+      id: 'st_' + ticker.toLowerCase(), ticker, name, sector: document.getElementById('sfSector').value.trim() || 'Other',
+      price, prevClose: price, pe: Number(document.getElementById('sfPe').value) || 0,
+      mcap: Number(document.getElementById('sfMcap').value) || 0, div: Number(document.getElementById('sfDiv').value) || 0,
+      ceo: document.getElementById('sfCeo').value.trim(), website: document.getElementById('sfWeb').value.trim(),
+      about: document.getElementById('sfAbout').value.trim(), color: '#3aa0ff',
+      crypto: document.getElementById('sfCrypto').checked, isNew: document.getElementById('sfNew').checked,
+      paused: false, custom: true, createdAt: Date.now()
+    });
+    INV.live[ticker] = null; INV.seriesCache = {};
+    closeModal(); persist(); toast(`${ticker} listed`, 'ok'); render();
+  };
+};
+App.invAdminEdit = function (id, ds) {
+  const s = INV.stock(ds.t); if (!s) return;
+  openModal(modalShell(`Edit ${s.ticker}`, INV.stockFormHTML(s),
+    `<button class="btn btn-ghost" data-close style="flex:1">Cancel</button>
+     <button class="btn btn-primary" id="sfSave" style="flex:1">Save changes</button>`), { locked: false });
+  document.getElementById('sfSave').onclick = () => {
+    const price = Number(document.getElementById('sfPrice').value);
+    s.name = document.getElementById('sfName').value.trim() || s.name;
+    s.sector = document.getElementById('sfSector').value.trim() || s.sector;
+    if (price > 0) { const old = s.price; s.price = price; s.prevClose = old || price; INV.live[s.ticker] = null; }
+    s.pe = Number(document.getElementById('sfPe').value) || 0;
+    s.mcap = Number(document.getElementById('sfMcap').value) || 0;
+    s.div = Number(document.getElementById('sfDiv').value) || 0;
+    s.ceo = document.getElementById('sfCeo').value.trim();
+    s.website = document.getElementById('sfWeb').value.trim();
+    s.about = document.getElementById('sfAbout').value.trim();
+    s.crypto = document.getElementById('sfCrypto').checked;
+    s.isNew = document.getElementById('sfNew').checked;
+    INV.seriesCache = {};
+    closeModal(); persist(); toast('Stock updated', 'ok'); render();
+  };
+};
+App.invAdminDel = function (id, ds) {
+  const s = INV.stock(ds.t); if (!s) return;
+  const held = DB.holdings.filter(h => h.ticker === s.ticker).length;
+  openModal(modalShell('Delete stock', `<p class="small">Remove <b>${esc(s.ticker)}</b> from the catalogue?${held ? ` <span style="color:var(--danger)">${held} user position(s) still hold this symbol.</span>` : ''}</p>`,
+    `<button class="btn btn-ghost" data-close style="flex:1">Cancel</button>
+     <button class="btn btn-danger" id="delYes" style="flex:1">Delete</button>`), { locked: false });
+  document.getElementById('delYes').onclick = () => {
+    DB.stocks = DB.stocks.filter(x => x.ticker !== s.ticker);
+    delete INV.live[s.ticker];
+    closeModal(); persist(); toast(`${s.ticker} removed`, 'ok'); render();
+  };
+};
+App.invAdminPause = function (id, ds) {
+  const s = INV.stock(ds.t); if (!s) return;
+  const inv = INV.db();
+  inv.paused[s.ticker] = !INV.paused(s.ticker);
+  persist(); render();
+  toast(`${s.ticker} trading ${INV.paused(s.ticker) ? 'paused' : 'resumed'}`, 'ok');
+};
+App.invAdminFee = function () {
+  const v = Number((document.getElementById('ivFeeInput') || {}).value);
+  if (!(v >= 0 && v <= 5)) return toast('Enter a fee between 0 and 5%', 'err');
+  INV.db().feePct = v; persist(); toast(`Trading fee set to ${v}%`, 'ok'); render();
+};
+App.invAdminBal = function (id, ds) {
+  const usr = findUser(ds.id); if (!usr) return;
+  openModal(modalShell(`Edit balance · @${usr.username}`, `
+    <div class="field"><label class="label">Whale Coin balance</label>
+      <input class="input" id="balIn" type="number" step="0.01" value="${usr.balance}"/></div>
+    <div class="tiny muted">≈ ${usd(coinsToUsd(usr.balance))} USD at 1 WC = $0.50</div>`,
+    `<button class="btn btn-ghost" data-close style="flex:1">Cancel</button>
+     <button class="btn btn-primary" id="balSave" style="flex:1">Save</button>`), { locked: false });
+  document.getElementById('balSave').onclick = () => {
+    const v = Number(document.getElementById('balIn').value);
+    if (!isFinite(v) || v < 0) return toast('Invalid amount', 'err');
+    usr.balance = Math.round(v * 100) / 100;
+    tx(usr.id, 'admin-adjust', 'Balance adjusted by admin', v - (usr.balance || 0), { by: me().id });
+    notify(usr.id, 'Balance updated', `An administrator updated your Whale Coin balance to ${coins(v)} WC.`, '#/wallet', 'wallet');
+    closeModal(); persist(); toast('Balance updated', 'ok'); render();
+  };
+};
+
+/* ------------------------------ live paint ------------------------------ */
+INV.setText = function (el, txt) { if (el && el.textContent !== txt) el.textContent = txt; };
+
+INV.paint = function () {
+  const u = me(); if (!u) return;
+  const dashNode = document.querySelector('[data-lv="pv-coins"]');
+  let port = null;
+  if (dashNode) port = INV.portfolio(u.id);
+
+  $$('[data-lv]').forEach(el => {
+    const spec = el.getAttribute('data-lv') || '';
+    const idx = spec.indexOf(':');
+    const kind = idx < 0 ? spec : spec.slice(0, idx);
+    const t = idx < 0 ? '' : spec.slice(idx + 1);
+    if (kind === 'pv-coins' && port) return INV.setText(el, coins(port.valueCoins));
+    if (kind === 'pv-usd' && port) return INV.setText(el, '≈ ' + usd(port.valueUsd) + ' USD');
+    if (kind === 'pv-cost' && port) return INV.setText(el, coins(usdToCoins(port.costUsd)) + ' WC');
+    if (kind === 'pv-earn' && port) return INV.setText(el, (port.earningsUsd >= 0 ? '+' : '−') + coins(usdToCoins(Math.abs(port.earningsUsd))) + ' WC');
+    if (kind === 'cash') return INV.setText(el, coins(u.balance) + ' WC');
+    if (!t) return;
+    const q = INV.quote(t); if (!q) return;
+    if (kind === 'price') INV.setText(el, usd(q.price));
+    if (kind === 'wc') INV.setText(el, coins(usdToCoins(q.price)) + ' WC');
+    if (kind === 'pct') {
+      INV.setText(el, (q.changePct >= 0 ? '+' : '') + q.changePct.toFixed(2) + '%');
+      el.classList.remove('up', 'down', 'flash-up', 'flash-down');
+      el.classList.add(INV.chgClass(q.changePct));
+      if (q.dir) { el.classList.add(q.dir > 0 ? 'flash-up' : 'flash-down'); setTimeout(() => el.classList.remove('flash-up', 'flash-down'), 700); }
+    }
+  });
+
+  const dayNode = document.querySelector('.inv-day');
+  if (dayNode && port) {
+    dayNode.classList.remove('up', 'down');
+    dayNode.classList.add(INV.chgClass(port.dayUsd));
+    dayNode.innerHTML = `${ic(port.dayUsd >= 0 ? 'trend' : 'down', 14)}<b>${port.dayUsd >= 0 ? '+' : '−'}${usd(Math.abs(port.dayUsd))}</b>
+      <span>(${port.dayUsd >= 0 ? '+' : '−'}${Math.abs(port.dayPct).toFixed(2)}%) today</span>`;
+  }
+
+  $$('[data-spark]').forEach(el => {
+    const t = el.getAttribute('data-spark');
+    el.innerHTML = INV.spark(t);
+  });
+  $$('[data-chart]').forEach(el => {
+    const spec = (el.getAttribute('data-chart') || '').split('|');
+    const t = spec[0], tf = spec[1] || '1D', mode = spec[2] || 'line';
+    if (!t) return;
+    if (t === '__portfolio__') {
+      const ser = INV.portfolioSeries(tf, u.id);
+      el.innerHTML = ser.length ? INV.lineChart(ser, { h: 150 })
+        : `<div class="inv-empty">${ic('trend', 26)}<p class="small muted">No positions yet.</p></div>`;
+    } else {
+      const ser = INV.series(t, tf);
+      el.innerHTML = mode === 'candle' ? INV.candleChart(ser) : INV.lineChart(ser, { h: 150 });
+    }
+  });
+
+  const priceEl = document.querySelector('.inv-price');
+  if (priceEl) { priceEl.classList.remove('flash-up', 'flash-down'); }
+};
+
+/* ------------------------------ nav + boot ------------------------------ */
+(function injectInvestNav() {
+  const tab = { key: 'invest', label: 'Invest', icon: 'trend', href: '#/invest' };
+  const add = (arr, at) => { if (arr && !arr.some(n => n.key === 'invest')) arr.splice(at, 0, tab); };
+  add(BOTTOM_NAV, 3);
+  add(USER_NAV, 3);
+  add(VENDOR_NAV, 4);
+  if (!ADMIN_NAV.some(n => n.key === 'admin-stocks')) {
+    ADMIN_NAV.splice(Math.max(0, ADMIN_NAV.length - 2), 0,
+      { key: 'admin-stocks', label: 'Stocks', icon: 'trend', href: '#/admin/stocks' });
+  }
+})();
+
+const _adminViewOriginal = VIEWS.admin;
+VIEWS.admin = function (parts, params) {
+  if ((parts[1] || '') === 'stocks') return INV.viewAdminStocks();
+  return _adminViewOriginal.apply(this, arguments);
+};
+
+window.addEventListener('hashchange', () => {
+  const h = location.hash || '';
+  if (!h.startsWith('#/invest')) { INV.marketQuery = ''; }
+});
+
+setInterval(() => {
+  try {
+    if (typeof DB === 'undefined' || !DB || !me() || document.hidden) return;
+    INV.tick();
+  } catch (e) { console.error('invest tick failed', e); }
+}, INV.TICK_MS);
+
+</script>
+
+<script>
+
+/* =========================================================================
+   WhaleChat extras — cart fix, save-contact-to-phone (.vcf), email CTA
+   ========================================================================= */
+'use strict';
+
+/* 1. The marketplace button emits data-act="add-cart", but the handler was
+      only ever defined as App.addToCart — so every "Add to cart" click was a
+      no-op. Alias it, and give instant feedback. */
+App.addCart = function (id, qty) {
+  const u = me();
+  const p = DB.products.find(x => x.id === id);
+  if (!p) return;
+  if (!p.active || p.stock < 1) return toast('This product is sold out', 'err');
+  u.cart = u.cart || [];
+  const want = Math.max(1, Number(qty) || 1);
+  const line = u.cart.find(c => c.productId === id);
+  if (line) {
+    if (line.qty + want > p.stock) return toast('Only ' + p.stock + ' available', 'err');
+    line.qty += want;
+  } else {
+    if (want > p.stock) return toast('Only ' + p.stock + ' available', 'err');
+    u.cart.push({ productId: id, qty: want });
+  }
+  try { sync(); } catch (e) {}
+  const n = (u.cart.find(c => c.productId === id) || {}).qty || want;
+  toast(`${p.name} added to cart 🛒  (${n} in cart)`, 'ok');
+  try { render(); } catch (e) {}
+};
+
+/* 2. Save a WhaleChat contact to the device as a vCard (.vcf) with any
+      preferred display name — the way WhatsApp does it. */
+App.contactSave = function (id) {
+  const u = me();
+  const c = findUser(id);
+  if (!c) return;
+  const suggest = (c.fullName || c.username || '').trim();
+  openModal(modalShell('Save to phone', `
+    <p class="small muted" style="line-height:1.65;margin-bottom:12px">Choose the name this contact is saved as in your phone's address book. We build a standard <b>.vcf</b> card — Android, iPhone, Google Contacts and Outlook all import it.</p>
+    <div class="field"><label class="label">Save as</label>
+      <input class="input" id="vcName" value="${esc(suggest)}" placeholder="Any name you prefer"/></div>
+    <div class="field"><label class="label">Phone</label>
+      <input class="input" id="vcPhone" value="${esc(c.phone || '')}" placeholder="+1 555 010 2030"/></div>
+    <div class="field"><label class="label">Email</label>
+      <input class="input" id="vcEmail" value="${esc(c.email || '')}" placeholder="name@email.com"/></div>
+    <div class="inv-note tiny">${ic('shield', 13)} Only what you see here is written into the card. WhaleChat never uploads your address book.</div>`,
+    `<button class="btn btn-ghost" data-close style="flex:1">Cancel</button>
+     <button class="btn btn-soft" id="vcCopy" style="flex:1">Copy</button>
+     <button class="btn btn-primary" id="vcGo" style="flex:1">Save .vcf</button>`), { locked: false });
+
+  const build = () => {
+    const name = ($('#vcName') || {}).value || suggest || 'WhaleChat contact';
+    const phone = ($('#vcPhone') || {}).value || '';
+    const email = ($('#vcEmail') || {}).value || '';
+    const parts = String(name).trim().split(/\s+/);
+    const first = parts.shift() || '';
+    const last = parts.join(' ');
+    const origin = location.origin;
+    const lines = [
+      'BEGIN:VCARD', 'VERSION:3.0',
+      `N:${last};${first};;;`,
+      `FN:${name}`,
+      `ORG:WhaleChat`,
+      phone ? `TEL;TYPE=CELL:${phone}` : '',
+      email ? `EMAIL;TYPE=INTERNET:${email}` : '',
+      `URL:${origin}/whalechat.html#/chat/${c.id}`,
+      `NOTE:WhaleChat contact @${c.username}${phone ? '' : ''} — chat at ${origin}/whalechat.html`,
+      `X-WHALECHAT-ID:${c.id}`,
+      'END:VCARD'
+    ].filter(Boolean);
+    return { text: lines.join('\r\n'), name: String(name).replace(/[^\w \-.]/g, '').trim() || 'contact' };
+  };
+
+  const done = () => { try { closeModal(); } catch (e) {} };
+
+  const share = async () => {
+    const { text, name } = build();
+    const file = new File([text], name + '.vcf', { type: 'text/vcard' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: name, text: 'WhaleChat contact' });
+        toast('Contact shared — choose Contacts to save it', 'ok');
+        return done();
+      } catch (e) { /* user cancelled or share blocked — fall back */ }
+    }
+    const blob = new Blob([text], { type: 'text/vcard;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name + '.vcf';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast('Contact card downloaded — open it to add to your address book', 'ok');
+    done();
+  };
+
+  const go = document.getElementById('vcGo');
+  if (go) go.onclick = share;
+  const copy = document.getElementById('vcCopy');
+  if (copy) copy.onclick = () => {
+    const { text } = build();
+    copyText(text); done();
+  };
+};
+
+/* keep the original menu, add the save option in front of it */
+const _contactMenu = App.contactMenu;
+App.contactMenu = function (id) {
+  const c = findUser(id);
+  const u = me();
+  if (!c) return;
+  openModal(modalShell(c.fullName, `
+    <div class="list">
+      <button class="list-item" data-act="open-chat" data-id="${id}" style="width:100%;text-align:left">${ic('chat', 17)} <span class="grow">Open chat</span></button>
+      <button class="list-item" data-act="contact-save" data-id="${id}" style="width:100%;text-align:left">${ic('download', 17)} <span class="grow">Save to phone<span class="tiny muted" style="display:block">Download a .vcf contact card with any name</span></span></button>
+      <button class="list-item" data-act="copy" data-id="${c.phone || '@' + c.username}" style="width:100%;text-align:left">${ic('copy', 17)} <span class="grow">Copy ${c.phone ? 'phone number' : 'username'}</span></button>
+      <button class="list-item" data-act="delete-contact" data-id="${id}" style="width:100%;text-align:left;color:var(--danger)">${ic('trash', 17)} <span class="grow">Remove contact</span></button>
+    </div>`, `<button class="btn btn-ghost" data-close style="width:100%">Close</button>`, '@' + c.username));
+};
+
+</script>
+<script>
+/* wc-tawk-control */
+
+/* =========================================================================
+   Live chat (Tawk.to) — admin on/off switch + placement that never covers
+   the bottom navigation, the profile button or any other control.
+   The embed is stripped at build time; this module loads it only when on.
+   ========================================================================= */
+'use strict';
+
+const WC_TAWK = {
+  DEFAULTS: { enabled: true, propertyId: '6af412c51859cf3c3d81d341', widgetId: '1k74milq6' },
+  loaded: false,
+  styleId: 'wc-tawk-style',
+
+  cfg() {
+    if (!DB || !DB.settings) return Object.assign({}, this.DEFAULTS);
+    if (!DB.settings.liveChat) DB.settings.liveChat = Object.assign({}, this.DEFAULTS);
+    return Object.assign(this.DEFAULTS, DB.settings.liveChat);
+  },
+  enabled() { return !!this.cfg().enabled; },
+
+  css() {
+    if (document.getElementById(this.styleId)) return;
+    const st = document.createElement('style');
+    st.id = this.styleId;
+    /* Tawk places its bubble 20px from the bottom edge, which sits on top of the
+       app's 70px bottom bar. Lift it clear of the nav and of any sticky action
+       bar, and keep it under the app's modals (z-index 1000) so dialogs win. */
+    st.textContent = `
+      #tawk-bubble-container{
+        bottom:calc(env(safe-area-inset-bottom,0px) + 86px) !important;
+        right:14px !important; z-index:900 !important;
+      }
+      #tawkchat-container,#tawkchat-minified-container{
+        bottom:calc(env(safe-area-inset-bottom,0px) + 86px) !important;
+        right:12px !important; z-index:901 !important;
+        height:min(68vh,560px) !important; max-height:calc(100vh - 190px) !important;
+      }
+      @media(min-width:1024px){
+        #tawk-bubble-container{bottom:24px !important;right:24px !important;}
+        #tawkchat-container,#tawkchat-minified-container{bottom:24px !important;right:24px !important;height:min(72vh,640px) !important;}
+      }
+      html.wc-tawk-off #tawk-bubble-container,
+      html.wc-tawk-off #tawkchat-container,
+      html.wc-tawk-off #tawkchat-minified-container{display:none !important;}
+      /* never let the widget sit over the mobile nav / chat composer */
+      body.chat-open #tawk-bubble-container{bottom:calc(env(safe-area-inset-bottom,0px) + 86px) !important;}
+      /* hide entirely where a floating bubble could cover an action button */
+      body.modal-open #tawk-bubble-container,
+      body.modal-open #tawkchat-container,
+      body.modal-open #tawkchat-minified-container,
+      body[data-route="deposit"] #tawk-bubble-container,
+      body[data-route="withdraw"] #tawk-bubble-container,
+      body[data-route="cart"] #tawk-bubble-container,
+      body[data-route="checkout"] #tawk-bubble-container{display:none !important;}
+      html.wc-tawk-off #tawk-bubble-container,
+      html.wc-tawk-off #tawkchat-container,
+      html.wc-tawk-off #tawkchat-minified-container{display:none !important;}
+    `;
+    document.head.appendChild(st);
+  },
+
+  load() {
+    if (this.loaded) return;
+    this.loaded = true;
+    const c = this.cfg();
+    window.Tawk_API = window.Tawk_API || {};
+    window.Tawk_LoadStart = new Date();
+    /* positioning must be declared before the widget boots */
+    try {
+      window.Tawk_API.customStyle = {
+        zIndex: 900,
+        visibility: {
+          desktop: { position: 'br', xOffset: 24, yOffset: 24 },
+          mobile: { position: 'br', xOffset: 14, yOffset: 90 }
+        }
+      };
+    } catch (e) {}
+    const s = document.createElement('script');
+    s.async = true;
+    s.src = 'https://embed.tawk.to/' + c.propertyId + '/' + c.widgetId;
+    s.charset = 'UTF-8';
+    s.setAttribute('crossorigin', '*');
+    s.id = 'wc-tawk-embed';
+    document.head.appendChild(s);
+  },
+
+  apply() {
+    this.css();
+    const on = this.enabled();
+    document.documentElement.classList.toggle('wc-tawk-off', !on);
+    if (on) {
+      this.load();
+      try { window.Tawk_API && window.Tawk_API.showWidget && window.Tawk_API.showWidget(); } catch (e) {}
+    } else {
+      try { window.Tawk_API && window.Tawk_API.hideWidget && window.Tawk_API.hideWidget(); } catch (e) {}
+      const host = document.getElementById('wc-tawk-embed');
+      if (host) { /* stop re-injection after a reload while off */ host.remove(); this.loaded = false; }
+    }
+  },
+
+  watch() {
+    if (this._watching) return;
+    this._watching = true;
+    let last = this.enabled();
+    /* an admin can flip this from another device: follow the setting live */
+    setInterval(() => {
+      let now = last;
+      try { now = this.enabled(); } catch (e) { return; }
+      if (now !== last) { last = now; this.apply(); }
+    }, 4000);
+  },
+
+  boot() {
+    if (!DB) return false;
+    this.apply();
+    this.watch();
+    const u = me();
+    if (u && window.Tawk_API) {
+      try { window.Tawk_API.visitor = { name: u.fullName || u.username, email: u.email }; } catch (e) {}
+    }
+    return true;
+  }
+};
+
+/* keep the existing in-app "Live chat" entry point honest */
+const _openLiveChat = App.openLiveChat;
+App.openLiveChat = function () {
+  if (!WC_TAWK.enabled() || !WC_TAWK.loaded) {
+    toast('Live chat is currently switched off', 'err');
+    return App.liveChatHelp ? App.liveChatHelp(true) : undefined;
+  }
+  return _openLiveChat.apply(this, arguments);
+};
+
+/* ---------------- admin screen ---------------- */
+App.tawkToggle = function () {
+  const c = WC_TAWK.cfg();
+  c.enabled = !c.enabled;
+  if (DB.settings) DB.settings.liveChat = c;
+  try { sync(); } catch (e) {}
+  try { persist(); } catch (e) {}
+  WC_TAWK.apply();
+  toast('Live chat ' + (c.enabled ? 'enabled — the chat bubble is now visible' : 'disabled — the chat bubble is hidden'), 'ok');
+  render();
+};
+
+App.tawkSave = function () {
+  const p = (document.getElementById('twProperty') || {}).value || '';
+  const w = (document.getElementById('twWidget') || {}).value || '';
+  if (!/^[a-z0-9]{10,}$/i.test(p) || !/^[a-z0-9]{6,}$/i.test(w)) return toast('Enter a valid Tawk property and widget id', 'err');
+  const c = WC_TAWK.cfg();
+  c.propertyId = p.trim(); c.widgetId = w.trim();
+  DB.settings.liveChat = c;
+  try { sync(); } catch (e) {}
+  try { persist(); } catch (e) {}
+  /* reload the widget with the new ids */
+  const host = document.getElementById('wc-tawk-embed');
+  if (host) { host.remove(); WC_TAWK.loaded = false; }
+  WC_TAWK.apply();
+  toast('Widget details saved', 'ok');
+  render();
+};
+
+function tawkAdminView() {
+  const c = WC_TAWK.cfg();
+  const on = !!c.enabled;
+  const live = !!document.getElementById('wc-tawk-embed');
+  const tabs = `<div class="admin-nav">${ADMIN_NAV.map(n => {
+    const key = n.href.replace('#/admin', '') || '';
+    return `<a href="${n.href}" class="${key === '/livechat' ? 'on' : ''}">${n.label}</a>`;
+  }).join('')}</div>`;
+  return `${tabs}
+  <div class="page-head"><div><div class="section-title" style="margin:0">Live chat</div>
+    <div class="tiny muted">Control the Tawk.to chat bubble for every user</div></div></div>
+
+  <div class="card">
+    <div class="between" style="align-items:center;gap:12px;flex-wrap:wrap">
+      <div style="min-width:0">
+        <div class="card-title" style="margin:0 0 4px">Chat bubble</div>
+        <div class="small muted" style="line-height:1.6">
+          ${on ? 'Visible on the app for all users. It floats above the bottom navigation and never covers the profile or action buttons.'
+               : 'Hidden everywhere. Users see no chat bubble and the widget is not downloaded at all.'}
+        </div>
+      </div>
+      <button class="btn ${on ? 'btn-danger' : 'btn-primary'}" data-act="tawk-toggle" style="min-width:130px">
+        ${ic(on ? 'pause' : 'play', 15)} ${on ? 'Turn off' : 'Turn on'}
+      </button>
+    </div>
+    <div class="row" style="gap:8px;margin-top:14px;flex-wrap:wrap">
+      <span class="badge ${on ? 'badge-success' : 'badge-warn'}">${on ? 'Enabled' : 'Disabled'}</span>
+      <span class="badge">${live ? 'Widget loaded on this device' : (on ? 'Loading…' : 'Not loaded')}</span>
+      <span class="badge">Everyone syncs this setting</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Widget placement</div>
+    <div class="tiny muted" style="line-height:1.7">
+      The bubble is offset <b>86px</b> from the bottom on phones, so it clears the 70px bottom navigation and any sticky action bar.
+      On desktop it sits 24px from the corner. It always stays below app dialogs (z-index 900 vs 1000), so PIN and checkout modals are never blocked.
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Widget details</div>
+    <div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end">
+      <div class="field grow" style="margin:0;min-width:170px"><label class="label">Property ID</label>
+        <input class="input" id="twProperty" value="${esc(c.propertyId)}"/></div>
+      <div class="field grow" style="margin:0;min-width:130px"><label class="label">Widget ID</label>
+        <input class="input" id="twWidget" value="${esc(c.widgetId)}"/></div>
+      <button class="btn btn-soft" data-act="tawk-save">Save</button>
+    </div>
+    <div class="tiny muted mt6">Change these only if you move to a different Tawk property.</div>
+  </div>`;
+}
+
+const _adminViewTawk = VIEWS.admin;
+VIEWS.admin = function (parts, params) {
+  if ((parts[1] || '') === 'livechat') {
+    const u = me();
+    if (!u || u.role !== 'admin') return `<div class="card empty"><div class="ic">${ic('lock', 26)}</div><h3>Admin access only</h3></div>`;
+    return tawkAdminView();
+  }
+  return _adminViewTawk.apply(this, arguments);
+};
+
+if (!ADMIN_NAV.some(n => n.key === 'admin-livechat')) {
+  ADMIN_NAV.splice(Math.max(0, ADMIN_NAV.length - 2), 0,
+    { key: 'admin-livechat', label: 'Live chat', icon: 'chat', href: '#/admin/livechat' });
+}
+
+/* boot: after the database is ready, and again after login/logout */
+(function tawkBoot() {
+  let tries = 0;
+  const t = setInterval(() => {
+    tries += 1;
+    let ok = false;
+    try { ok = WC_TAWK.boot(); } catch (e) { ok = false; }
+    if (ok || tries > 40) clearInterval(t);
+  }, 250);
+  window.addEventListener('hashchange', () => { try { WC_TAWK.apply(); } catch (e) {} });
+})();
+
+</script>
+<script>
+/* wc-live-trade */
+
+/* =========================================================================
+   WhaleChat live trades — capital-backed positions with real-time P&L,
+   take-profit / stop-loss, duration auto-close and manual exit.
+   Open positions live in DB.trades (status 'Open') so they sync everywhere.
+   ========================================================================= */
+'use strict';
+
+const LT_COIN = (typeof COIN_USD === 'number') ? COIN_USD : 0.5;
+
+const LT = {
+  MIN_CAPITAL: 5,
+  DURATIONS: [
+    { label: '5 min', m: 5 }, { label: '15 min', m: 15 }, { label: '1 hour', m: 60 },
+    { label: '4 hours', m: 240 }, { label: '1 day', m: 1440 }
+  ],
+
+  cfg() {
+    if (!DB) return { leverage: 5 };
+    if (!DB.invest) DB.invest = { feePct: 0.5, paused: {}, seededAt: Date.now() };
+    if (!DB.invest.leverage) DB.invest.leverage = 5;
+    return DB.invest;
+  },
+  leverage() { return Math.min(20, Math.max(1, Number(this.cfg().leverage) || 1)); },
+  feePct() { return Math.max(0, Number(this.cfg().feePct) || 0); },
+  all(userId) {
+    if (!Array.isArray(DB.trades)) DB.trades = [];
+    return DB.trades.filter(t => t.userId === (userId || me().id) && t.type === 'live');
+  },
+  open(userId) { return this.all(userId).filter(t => t.status === 'Open'); },
+  closed(userId) { return this.all(userId).filter(t => t.status !== 'Open').sort((a, b) => b.closedAt - a.closedAt); },
+
+  /* live numbers for a position */
+  calc(t) {
+    const q = INV.quote(t.ticker) || { price: t.entryPrice };
+    const dir = t.side === 'short' ? -1 : 1;
+    const move = t.entryPrice ? (q.price - t.entryPrice) / t.entryPrice : 0;
+    let pnlCoins = t.capitalCoins * (t.leverage || 1) * move * dir;
+    pnlCoins = Math.max(-t.capitalCoins, pnlCoins);          /* never lose more than the stake */
+    const payout = Math.max(0, t.capitalCoins + pnlCoins);
+    return {
+      price: q.price,
+      prev: q.prevClose,
+      movePct: move * 100 * dir,
+      pnlCoins: Math.round(pnlCoins * 100) / 100,
+      pnlUsd: coinsToUsd(pnlCoins),
+      pnlPct: t.capitalCoins ? (pnlCoins / t.capitalCoins) * 100 : 0,
+      payoutCoins: Math.round(payout * 100) / 100,
+      totalLoss: payout <= 0,
+      left: Math.max(0, (t.expiresAt || 0) - Date.now())
+    };
+  },
+
+  /* ---------------- open a position ---------------- */
+  start(side, ticker, capitalCoins, opts) {
+    const u = me();
+    const s = INV.stock(ticker);
+    if (!u || !s) return false;
+    const o = opts || {};
+    const capital = Math.round((Number(capitalCoins) || 0) * 100) / 100;
+    if (capital < this.MIN_CAPITAL) { toast('Minimum trade is ' + this.MIN_CAPITAL + ' WC', 'err'); return false; }
+    if (capital > u.balance) { toast('Not enough Whale Coin — top up your wallet', 'err'); return false; }
+    if (INV.paused && INV.paused(ticker)) { toast(ticker + ' trading is paused', 'err'); return false; }
+    const q = INV.quote(ticker);
+    if (!q) return false;
+
+    const fee = Math.round(capital * this.feePct() / 100 * 100) / 100;
+    const minutes = Math.max(1, Math.min(7 * 24 * 60, Number(o.minutes) || 60));
+    const trade = {
+      id: uid('lt'), userId: u.id, type: 'live', ticker, name: s.name, side: side === 'short' ? 'short' : 'long',
+      capitalCoins: capital, entryPrice: q.price, leverage: this.leverage(),
+      tpPct: Math.max(0, Math.min(500, Number(o.tpPct) || 0)),
+      slPct: Math.max(0, Math.min(100, Number(o.slPct) || 0)),
+      expiresAt: Date.now() + minutes * 60000,
+      status: 'Open', createdAt: Date.now(), feeCoins: fee
+    };
+    u.balance = Math.round((u.balance - capital - fee) * 100) / 100;
+    DB.trades.unshift(trade);
+    tx(u.id, 'trade-open', `${side === 'short' ? 'Short' : 'Long'} ${ticker} · ${coins(capital)} WC`, -capital - fee,
+      { tradeId: trade.id, leverage: trade.leverage, entry: q.price });
+    notify(u.id, 'Trade opened',
+      `${side === 'short' ? 'Short' : 'Long'} ${ticker} with ${coins(capital)} WC at ${usd(q.price)} — closes in ${minutes} min.`,
+      '#/invest/orders', 'trend');
+    persist(); toast('Trade started — tracking live', 'ok'); render();
+    return true;
+  },
+
+  /* ---------------- settle ---------------- */
+  settle(t, reason) {
+    if (!t || t.status !== 'Open') return false;
+    const u = findUser(t.userId);
+    if (!u) return false;
+    const p = this.calc(t);
+    const payout = p.totalLoss ? 0 : p.payoutCoins;
+    u.balance = Math.round((u.balance + payout) * 100) / 100;
+    t.status = 'Completed';
+    t.closedAt = Date.now();
+    t.closeReason = reason;
+    t.exitPrice = p.price;
+    t.pnlCoins = p.pnlCoins;
+    t.pnlUsd = p.pnlUsd;
+    t.payoutCoins = payout;
+    t.result = p.totalLoss ? 'loss' : p.pnlCoins > 0 ? 'profit' : 'flat';
+
+    tx(u.id, 'trade-close', `${t.ticker} trade ${reason} · ${payout ? '+' + coins(payout) + ' WC returned' : 'total loss'}`,
+      payout, { tradeId: t.id, pnlCoins: p.pnlCoins, reason });
+
+    if (p.totalLoss) {
+      notify(u.id, 'Trade closed — total loss',
+        `${t.ticker} moved against your position and the stake was lost. Nothing was returned.`,
+        '#/invest/orders', 'ban');
+      toast(`${t.ticker} closed at a total loss`, 'err');
+    } else if (p.pnlCoins >= 0) {
+      notify(u.id, 'Take profit — trade closed',
+        `${t.ticker} closed with +${coins(p.pnlCoins)} WC profit. ${coins(payout)} WC (capital + profit) was credited.`,
+        '#/invest/orders', 'trend');
+      toast(`Profit taken — ${coins(payout)} WC credited`, 'ok');
+    } else {
+      notify(u.id, 'Trade closed at a loss',
+        `${t.ticker} closed with −${coins(Math.abs(p.pnlCoins))} WC. ${coins(payout)} WC of capital was returned.`,
+        '#/invest/orders', 'down');
+      toast(`Trade stopped — ${coins(payout)} WC returned`, 'ok');
+    }
+    try { sync(); } catch (e) {}
+    persist();
+    render();
+    return true;
+  },
+
+  /* auto close on target / stop / expiry */
+  auto() {
+    if (!DB || !DB.trades) return;
+    this.open().forEach(t => {
+      const p = this.calc(t);
+      if (t.tpPct > 0 && p.pnlPct >= t.tpPct) return void this.settle(t, 'Take profit target hit');
+      if (t.slPct > 0 && p.pnlPct <= -t.slPct) return void this.settle(t, 'Stop loss hit');
+      if (t.expiresAt && Date.now() >= t.expiresAt) return void this.settle(t, 'Time limit reached');
+    });
+  },
+
+  /* ---------------- view helpers ---------------- */
+  clock(ms) {
+    const total = Math.max(0, Math.floor(ms / 1000));
+    const d = Math.floor(total / 86400), h = Math.floor((total % 86400) / 3600);
+    const m = Math.floor((total % 3600) / 60), s = total % 60;
+    if (d) return d + 'd ' + h + 'h';
+    if (h) return h + 'h ' + String(m).padStart(2, '0') + 'm';
+    return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+  },
+
+  cardHTML(t) {
+    const p = this.calc(t);
+    const s = INV.stock(t.ticker) || { ticker: t.ticker, color: '#3aa0ff' };
+    const up = p.pnlCoins > 0, down = p.pnlCoins < 0;
+    const dirLabel = t.side === 'short' ? 'Short' : 'Long';
+    return `<div class="lt-card" data-lt="${t.id}">
+      <div class="row" style="gap:9px;align-items:center">
+        ${INV.logoHTML(s, 32)}
+        <div class="grow" style="min-width:0">
+          <div class="small" style="font-weight:700">${esc(t.ticker)}
+            <span class="lt-side ${t.side}">${dirLabel} ${t.leverage}×</span></div>
+          <div class="tiny muted">${coins(t.capitalCoins)} WC · entry ${usd(t.entryPrice)}</div>
+        </div>
+        <span class="lt-mini">${INV.spark(t.ticker)}</span>
+        <div style="text-align:right">
+          <div class="lt-pnl ${up ? 'up' : down ? 'down' : ''}" data-lt-pnl="${t.id}">
+            ${p.pnlCoins >= 0 ? '+' : '−'}${coins(Math.abs(p.pnlCoins))} WC</div>
+          <div class="tiny ${up ? 'up' : down ? 'down' : 'muted'}" data-lt-pct="${t.id}">
+            ${p.pnlPct >= 0 ? '+' : '−'}${Math.abs(p.pnlPct).toFixed(2)}%</div>
+        </div>
+      </div>
+      <div class="lt-row">
+        <span class="tiny muted">Price <b data-lt-price="${t.id}">${usd(p.price)}</b>
+          <span data-lt-move="${t.id}" class="${p.movePct >= 0 ? 'up' : 'down'}">${p.movePct >= 0 ? '▲' : '▼'} ${Math.abs(p.movePct).toFixed(2)}%</span></span>
+        <span class="tiny muted" data-lt-left="${t.id}">⏱ ${this.clock(p.left)}</span>
+      </div>
+      <div class="lt-bar"><i style="width:${Math.min(100, Math.max(0, 50 + p.pnlPct))}%"
+        class="${up ? 'up' : down ? 'down' : ''}"></i></div>
+      <div class="row" style="gap:7px;margin-top:9px">
+        <button class="btn btn-sm btn-primary grow" data-act="lt-tp" data-id="${t.id}">
+          ${ic('trend', 13)} Take profit ${p.pnlCoins > 0 ? '(+' + coins(p.pnlCoins) + ')' : ''}</button>
+        <button class="btn btn-sm btn-ghost grow" data-act="lt-sl" data-id="${t.id}">
+          ${ic('down', 13)} Take loss ${p.pnlCoins < 0 ? '(−' + coins(Math.abs(p.pnlCoins)) + ')' : ''}</button>
+      </div>
+      <div class="tiny muted center" style="margin-top:6px">Returns ${coins(p.payoutCoins)} WC if closed now</div>
+    </div>`;
+  },
+
+  closedRow(t) {
+    const pnl = Number(t.pnlCoins) || 0;
+    const win = pnl > 0, lost = t.result === 'loss';
+    return `<div class="inv-row" style="align-items:flex-start">
+      <div class="grow" style="min-width:0">
+        <div class="small" style="font-weight:650">${esc(t.ticker)} ${t.side === 'short' ? 'Short' : 'Long'}
+          <span class="tiny muted">· ${t.leverage}× · ${esc(t.closeReason || 'closed')}</span></div>
+        <div class="tiny muted">${coins(t.capitalCoins)} WC @ ${usd(t.entryPrice)} → ${usd(t.exitPrice || 0)} · ${dateLabel(t.closedAt)} ${clockTime(t.closedAt)}</div>
+        <div class="tiny ${win ? 'up' : lost ? 'down' : 'muted'}">
+          ${lost ? 'Total loss — nothing returned' : (win ? '+' : '') + coins(pnl) + ' WC P/L'} ·
+          returned ${coins(t.payoutCoins || 0)} WC</div>
+      </div>
+      <span class="badge ${win ? 'badge-success' : lost ? 'badge-danger' : 'badge-warn'}">
+        ${lost ? 'Lost' : win ? 'Profit' : 'Flat'}</span></div>`;
+  },
+
+  /* ---------------- live paint ---------------- */
+  paint() {
+    this.open().forEach(t => {
+      const p = this.calc(t);
+      const set = (sel, txt) => { const el = document.querySelector(sel); if (el) el.textContent = txt; };
+      set('[data-lt-pnl="' + t.id + '"]', (p.pnlCoins >= 0 ? '+' : '−') + coins(Math.abs(p.pnlCoins)) + ' WC');
+      set('[data-lt-pct="' + t.id + '"]', (p.pnlPct >= 0 ? '+' : '−') + Math.abs(p.pnlPct).toFixed(2) + '%');
+      set('[data-lt-price="' + t.id + '"]', usd(p.price));
+      set('[data-lt-move="' + t.id + '"]', (p.movePct >= 0 ? '▲ ' : '▼ ') + Math.abs(p.movePct).toFixed(2) + '%');
+      set('[data-lt-left="' + t.id + '"]', '⏱ ' + this.clock(p.left));
+      document.querySelectorAll('[data-lt-pnl="' + t.id + '"], [data-lt-pct="' + t.id + '"]').forEach(el => {
+        el.classList.toggle('up', p.pnlCoins > 0);
+        el.classList.toggle('down', p.pnlCoins < 0);
+      });
+      document.querySelectorAll('[data-lt-move="' + t.id + '"]').forEach(el => {
+        el.classList.toggle('up', p.movePct >= 0);
+        el.classList.toggle('down', p.movePct < 0);
+      });
+      const bar = document.querySelector('[data-lt="' + t.id + '"] .lt-bar i');
+      if (bar) {
+        bar.style.width = Math.min(100, Math.max(0, 50 + p.pnlPct)) + '%';
+        bar.className = p.pnlCoins >= 0 ? 'up' : 'down';
+      }
+      const ret = document.querySelector('[data-lt="' + t.id + '"] .tiny.muted.center');
+      if (ret) ret.textContent = 'Returns ' + coins(p.payoutCoins) + ' WC if closed now';
+    });
+    this.paintEarnings();
+  },
+
+  /* the hero "Earnings" figure follows the live trades, not old holdings */
+  paintEarnings() {
+    const el = document.querySelector('[data-lv="pv-earn"]');
+    if (!el) return;
+    const pos = this.open();
+    const pnl = pos.reduce((sum, t) => sum + this.calc(t).pnlCoins, 0);
+    el.textContent = (pnl >= 0 ? '+' : '\u2212') + coins(Math.abs(pnl)) + ' WC';
+    el.classList.remove('up', 'down');
+    if (pnl > 0) el.classList.add('up');
+    else if (pnl < 0) el.classList.add('down');
+    const cell = el.parentElement;
+    const label = cell && cell.querySelector('.tiny.muted');
+    if (label) label.textContent = pos.length ? 'Active trade earnings' : 'Earnings';
+  },
+
+  /* ---------------- mounts ---------------- */
+  activeBlock() {
+    const list = this.open();
+    if (!list.length) return '';
+    return `<div class="card lt-panel" id="ltActive">
+      <div class="between"><div class="card-title" style="margin:0">Active trades
+        <span class="badge badge-accent" style="margin-left:6px">${list.length} live</span></div>
+        <span class="tiny muted">updates every 2s</span></div>
+      ${list.map(t => this.cardHTML(t)).join('')}
+    </div>`;
+  },
+
+  closedBlock() {
+    const list = this.closed().slice(0, 8);
+    if (!list.length) return '';
+    return `<div class="card"><div class="card-title">Closed trades</div>
+      <div class="inv-list">${list.map(t => this.closedRow(t)).join('')}</div></div>`;
+  },
+
+  /* the stock-page panel: buy to open, then take profit / take loss */
+  ticketHTML(ticker) {
+    const s = INV.stock(ticker); if (!s) return '';
+    const lev = this.leverage();
+    const pos = this.open().filter(t => t.ticker === ticker)[0];
+    const head = `<div class="between"><div class="card-title" style="margin:0">Trade · ${esc(ticker)}</div>
+        <span class="badge">${lev}×</span></div>`;
+
+    if (pos) {
+      return `<div class="card" id="ltTicket">
+        ${head}
+        <div class="tiny muted" style="margin:4px 0 10px">Your position is live and counting now — it is not waiting for the market.</div>
+        ${this.cardHTML(pos)}
+        <div class="row" style="gap:8px;margin-top:10px">
+          <button class="btn btn-primary grow" data-act="lt-tp" data-id="${pos.id}">
+            ${ic('trend', 15)} Take profit</button>
+          <button class="btn btn-ghost grow" data-act="lt-sl" data-id="${pos.id}">
+            ${ic('down', 15)} Take loss</button>
+        </div>
+        <div class="tiny muted center mt6">Profit: capital + gain · Loss: remaining capital · Total loss: nothing returned</div>
+      </div>`;
+    }
+
+    return `<div class="card" id="ltTicket">
+      ${head}
+      <div class="tiny muted" style="margin:4px 0 10px;line-height:1.6">
+        Enter your limit and how long the trade runs, then press <b>Buy</b>. The trade starts immediately and earns or loses in real time.</div>
+      <div class="lt-side-pick">
+        <button class="lt-side-btn on" data-act="lt-side" data-side="long">▲ Long (price rises)</button>
+        <button class="lt-side-btn" data-act="lt-side" data-side="short">▼ Short (price falls)</button>
+      </div>
+      <div class="field"><label class="label">Capital (Whale Coin)</label>
+        <div class="input-wrap"><span class="inv-prefix">WC</span>
+          <input class="input" id="ltCapital" type="number" step="1" min="${this.MIN_CAPITAL}" placeholder="0"/></div>
+        <div class="tiny muted" id="ltCapitalUsd">≈ $0.00 · balance ${coins(me().balance)} WC</div></div>
+      <div class="row" style="gap:8px">
+        <div class="field grow"><label class="label">Take profit %</label>
+          <input class="input" id="ltTp" type="number" step="1" min="0" placeholder="limit"/></div>
+        <div class="field grow"><label class="label">Take loss %</label>
+          <input class="input" id="ltSl" type="number" step="1" min="0" placeholder="limit"/></div>
+      </div>
+      <div class="field"><label class="label">Trade duration</label>
+        <select class="input" id="ltDuration">${this.DURATIONS.map(d => `<option value="${d.m}" ${d.m === 60 ? 'selected' : ''}>${d.label}</option>`).join('')}</select></div>
+      <button class="btn btn-primary" data-act="lt-start" data-t="${esc(ticker)}" style="width:100%">
+        ${ic('play', 15)} Buy</button>
+      <div class="tiny muted center mt6">${ic('lock', 11)} Capital is held while the trade runs · ${this.feePct()}% fee · it closes by itself at your limit or when time is up</div>
+    </div>`;
+  }
+};
+
+
+/* ---------------- styles ---------------- */
+(function () {
+  if (document.getElementById('lt-style')) return;
+  const st = document.createElement('style');
+  st.id = 'lt-style';
+  st.textContent = `
+  .lt-panel .card-title{display:flex;align-items:center}
+  .lt-card{border:1px solid var(--border);border-radius:14px;padding:11px;margin-top:10px;
+    background:linear-gradient(160deg,var(--surface-2),var(--surface));position:relative;overflow:hidden}
+  .lt-card:first-of-type{margin-top:6px}
+  .lt-side{font-size:9.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;padding:2px 6px;border-radius:6px;margin-left:5px}
+  .lt-side.long{background:rgba(47,214,166,.16);color:var(--success)}
+  .lt-side.short{background:rgba(255,95,116,.16);color:var(--danger)}
+  .lt-pnl{font-family:var(--display);font-weight:800;font-size:15px;font-variant-numeric:tabular-nums}
+  .lt-row{display:flex;justify-content:space-between;gap:8px;margin-top:8px;align-items:center}
+  .lt-bar{height:5px;border-radius:99px;background:var(--surface-3);overflow:hidden;margin-top:8px}
+  .lt-bar i{display:block;height:100%;border-radius:99px;transition:width .35s ease}
+  .lt-bar i.up{background:linear-gradient(90deg,#2fd6a6,#2ee6c9)}
+  .lt-bar i.down{background:linear-gradient(90deg,#ff5f74,#ff8a5b)}
+  .lt-side-pick{display:flex;gap:6px;margin-bottom:10px}
+  .lt-side-btn{flex:1;padding:9px 6px;border-radius:11px;border:1px solid var(--border);background:var(--surface-2);
+    color:var(--muted);font-size:11.5px;font-weight:700;cursor:pointer;transition:all .15s ease}
+  .lt-side-btn.on{border-color:rgba(46,230,201,.55);color:var(--text);background:linear-gradient(135deg,rgba(46,230,201,.16),rgba(58,160,255,.12))}
+  .lt-day{display:inline-flex;align-items:center;gap:6px;margin-top:10px;padding:6px 11px;border-radius:99px;
+    font-size:12px;background:rgba(255,255,255,.06);border:1px solid var(--border);font-variant-numeric:tabular-nums}
+  .lt-day.up{color:var(--success);background:rgba(47,214,166,.10);border-color:rgba(47,214,166,.25)}
+  .lt-day.down{color:var(--danger);background:rgba(255,95,116,.10);border-color:rgba(255,95,116,.25)}
+  .lt-up{color:var(--success) !important;transition:color .2s ease}
+  .lt-down{color:var(--danger) !important;transition:color .2s ease}
+  .lt-push-banner{position:fixed;left:10px;right:10px;bottom:calc(env(safe-area-inset-bottom,0px) + 86px);z-index:940;
+    display:flex;gap:9px;align-items:center;padding:10px 12px;border-radius:14px;
+    background:var(--surface);border:1px solid var(--border-strong);box-shadow:var(--shadow)}
+  .lt-push-ic{width:32px;height:32px;border-radius:10px;display:flex;align-items:center;justify-content:center;
+    background:linear-gradient(135deg,rgba(46,230,201,.18),rgba(58,160,255,.18));color:var(--accent);flex:0 0 auto}
+  @media(min-width:760px){.lt-push-banner{left:auto;right:20px;bottom:20px;max-width:400px}}
+  .lt-mini{display:inline-block;width:46px;height:22px;margin:0 6px;vertical-align:middle;opacity:.9;flex:0 0 auto}
+  .lt-mini svg{width:100%;height:100%;display:block}
+  `;
+  document.head.appendChild(st);
+})();
+
+/* keep spot orders and live positions apart: the spot Orders view expects shares */
+(function () {
+  if (typeof INV === 'undefined' || INV.__ltPatched) return;
+  const base = INV.trades;
+  INV.trades = function (userId) {
+    return base.call(INV, userId).filter(t => t.type !== 'live');
+  };
+  INV.__ltPatched = true;
+})();
+
+/* ============================ 1D intraday data ============================
+   The base engine generated a single point for 1D, so every 1D chart and every
+   market sparkline rendered empty. Build a real intraday series instead. */
+(function () {
+  if (typeof INV === 'undefined' || INV.__lt1d) return;
+  const baseSeries = INV.series;
+  INV.series = function (ticker, tf) {
+    if (tf !== '1D') return baseSeries.call(INV, ticker, tf);
+    const s = INV.stock(ticker);
+    if (!s) return [];
+    const q = INV.quote(ticker);
+    const key = ticker + '::1D';
+    const cached = INV.seriesCache && INV.seriesCache[key];
+    if (cached && cached.length > 20) { cached[cached.length - 1] = q.price; return cached; }
+    const n = 78;                                  /* 5-minute bars across a session */
+    const rnd = mulberry32(seedOf(ticker + '::1d'));
+    const open = q.prevClose || q.price;
+    const drift = (q.price - open) / n;
+    const out = [];
+    let v = open;
+    for (let i = 0; i < n; i++) {
+      v = v + drift + (rnd() - 0.5) * open * 0.0045;
+      out.push(Math.max(0.01, v));
+    }
+    out[0] = open;
+    out[n - 1] = q.price;
+    INV.seriesCache = INV.seriesCache || {};
+    INV.seriesCache[key] = out;
+    return out;
+  };
+  INV.seriesCache = INV.seriesCache || {};
+  INV.__lt1d = true;
+})();
+
+/* ======================= 2-second market ticker ==========================
+   Every stock card shows live price, direction and a redrawn sparkline so a
+   user can see whether it is rising or falling before opening a trade. */
+LT.paintMarket = function () {
+  if (!DB) return;
+  const nodes = document.querySelectorAll('[data-lv]');
+  if (!nodes.length) return;
+  nodes.forEach(el => {
+    const spec = el.getAttribute('data-lv') || '';
+    const i = spec.indexOf(':');
+    if (i < 0) return;
+    const kind = spec.slice(0, i), ticker = spec.slice(i + 1);
+    const q = INV.quote(ticker);
+    if (!q) return;
+    if (kind === 'price') {
+      const txt = '$' + q.price.toFixed(2);
+      if (el.textContent !== txt) {
+        el.textContent = txt;
+        el.classList.remove('lt-up', 'lt-down');
+        el.classList.add(q.dir > 0 ? 'lt-up' : q.dir < 0 ? 'lt-down' : '');
+        setTimeout(() => el.classList.remove('lt-up', 'lt-down'), 800);
+      }
+    } else if (kind === 'wc') {
+      const txt = coins(usdToCoins(q.price)) + ' WC';
+      if (el.textContent !== txt) el.textContent = txt;
+    } else if (kind === 'pct') {
+      const p = q.changePct;
+      const txt = (p >= 0 ? '▲ +' : '▼ ') + Math.abs(p).toFixed(2) + '%';
+      if (el.textContent !== txt) el.textContent = txt;
+      el.classList.toggle('up', p > 0);
+      el.classList.toggle('down', p < 0);
+    }
+  });
+  /* redraw the mini charts on the market cards */
+  document.querySelectorAll('[data-spark]').forEach(el => {
+    const t = el.getAttribute('data-spark');
+    const svg = INV.spark(t);
+    if (svg && el.innerHTML !== svg) el.innerHTML = svg;
+  });
+  /* a live trade page chart should breathe too */
+  const chart = document.querySelector('[data-lt-live-chart]');
+  if (chart) {
+    const t = chart.getAttribute('data-lt-live-chart');
+    const tf = chart.getAttribute('data-lt-tf') || '1D';
+    const mode = chart.getAttribute('data-lt-mode') || 'line';
+    const vals = INV.series(t, tf);
+    chart.innerHTML = mode === 'candle' ? INV.candleChart(vals) : INV.lineChart(vals, { h: 150 });
+  }
+};
+
+/* =========================== dashboard (trade aware) ====================== */
+const LT_WINDOW = { '1D': 864e5, '1W': 7 * 864e5, '1M': 30 * 864e5, '3M': 90 * 864e5, '1Y': 365 * 864e5, 'ALL': 730 * 864e5 };
+
+LT.positions = function (userId) {
+  const trades = LT.open(userId).map(t => {
+    const p = LT.calc(t);
+    return {
+      kind: 'trade', trade: t, ticker: t.ticker, side: t.side, lev: t.leverage,
+      capital: t.capitalCoins, entry: t.entryPrice, pnlCoins: p.pnlCoins,
+      valueCoins: Math.max(0, t.capitalCoins + p.pnlCoins), pnlPct: p.pnlPct, price: p.price
+    };
+  });
+  const spots = INV.holdings(userId).map(h => {
+    const q = INV.quote(h.ticker) || { price: h.avgPrice, prevClose: h.avgPrice };
+    const valueUsd = h.shares * q.price;
+    return {
+      kind: 'spot', holding: h, ticker: h.ticker, side: 'long', lev: 1,
+      capital: usdToCoins(h.shares * h.avgPrice), entry: h.avgPrice,
+      pnlCoins: usdToCoins(valueUsd - h.shares * h.avgPrice),
+      valueCoins: usdToCoins(valueUsd),
+      pnlPct: h.avgPrice ? (q.price / h.avgPrice - 1) * 100 : 0, price: q.price
+    };
+  });
+  return trades.concat(spots);
+};
+
+LT.summary = function (userId) {
+  const pos = LT.positions(userId);
+  const valueCoins = pos.reduce((s, p) => s + p.valueCoins, 0);
+  const capital = pos.reduce((s, p) => s + p.capital, 0);
+  const pnl = pos.reduce((s, p) => s + p.pnlCoins, 0);
+  const u = me();
+  return {
+    pos, valueCoins, capital, pnl,
+    valueUsd: coinsToUsd(valueCoins),
+    capitalUsd: coinsToUsd(capital),
+    pnlUsd: coinsToUsd(pnl),
+    pnlPct: capital ? (pnl / capital) * 100 : 0,
+    cash: (u && u.balance) || 0,
+    live: pos.filter(p => p.kind === 'trade').length
+  };
+};
+
+/* series for the performance chart: spot holdings + live trades */
+LT.seriesWithTrades = function (tf, userId) {
+  const pos = LT.positions(userId);
+  if (!pos.length) return [];
+  const win = LT_WINDOW[tf] || LT_WINDOW['1M'];
+  const now = Date.now();
+  const series = pos.map(p => ({ p, data: INV.series(p.ticker, tf) }));
+  const len = Math.max(...series.map(s => s.data.length));
+  const out = [];
+  for (let i = 0; i < len; i++) {
+    let v = 0;
+    series.forEach(({ p, data }) => {
+      if (!data.length) { v += p.capital; return; }
+      const price = data[Math.min(i, data.length - 1)];
+      if (p.kind === 'spot') { v += (p.holding.shares * price) * (1 / COIN_USD); return; }
+      const t = p.trade;
+      const idx = Math.min(data.length - 1, i);
+      const msAgo = (1 - idx / Math.max(1, data.length - 1)) * win;
+      const started = now - (t.createdAt || now);
+      if (msAgo > started) { v += p.capital; return; }           /* before entry: flat capital */
+      const dir = t.side === 'short' ? -1 : 1;
+      const move = t.entryPrice ? (price - t.entryPrice) / t.entryPrice : 0;
+      const pnl = Math.max(-p.capital, p.capital * (t.leverage || 1) * move * dir);
+      v += Math.max(0, p.capital + pnl);
+    });
+    out.push(v);
+  }
+  return out;
+};
+
+LT.allocSlices = function (userId) {
+  const map = {};
+  LT.positions(userId).forEach(p => { map[p.ticker] = (map[p.ticker] || 0) + p.valueCoins; });
+  return Object.keys(map).map(t => ({ ticker: t, val
