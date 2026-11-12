@@ -1,8 +1,8 @@
 {
-  "version": "3.9.1",
-  "build": "2026-11-11T16:20:00Z",
+  "version": "3.9.10",
+  "build": "2026-11-12T05:57:54Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.9.1 — stock investing dashboard, live chat switch, in-app update prompt, self-contained builds.",
-  "releasedAt": "2026-11-11T16:20:00Z",
+  "notes": "WhaleChat 3.9.10 - admin Stocks page fixed, email button tool, Tawk bubble kept clear of controls.",
+  "releasedAt": "2026-11-12T05:57:54Z",
   "minimum": "3.0.0"
 }
