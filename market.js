@@ -77,6 +77,7 @@ class MarketService {
     this.config = { mode: 'simulated', apiKey: '', refreshSec: 15 };
     this.quotes = {};
     this.lastReal = {};
+    this.lastRealTime = {};
     this.lastRealAt = 0;
     this.lastTickAt = 0;
     this.ws = null;
@@ -175,7 +176,7 @@ class MarketService {
     q.changePct = q.prevClose ? round((q.changeUsd / q.prevClose) * 100, 4) : 0;
     this.quotes[ticker] = q;
     this.lastTickAt = now;
-    if (q.real) { this.lastReal[ticker] = q.price; this.lastRealAt = now; }
+    if (q.real) { this.lastReal[ticker] = q.price; this.lastRealTime[ticker] = now; this.lastRealAt = now; }
     return q;
   }
 
@@ -260,7 +261,7 @@ class MarketService {
     try {
       for (const t of TICKERS) {
         if (this.stopped) break;
-        if (!usMarketOpen() || Date.now() < this.rateLimitedUntil) break;
+        if (Date.now() < this.rateLimitedUntil) break;
         const q = await this.fetchQuote(t);
         if (q) {
           this.writeQuote(t, q.price, { prevClose: q.prevClose, open: q.open, vol: this.quotes[t] ? this.quotes[t].vol : 1000000, source: 'live', real: true });
@@ -269,7 +270,7 @@ class MarketService {
         await sleep(1200);                                     // < 60 requests / minute
       }
       this.lastError = '';
-      console.log('[market] Finnhub seed complete ·', TICKERS.length, 'tickers');
+      console.log('[market] Finnhub seed complete ·', TICKERS.length, 'tickers ·', usMarketOpen() ? 'market open' : 'market closed (using last close)');
     } finally {
       this.seeding = false;
     }
@@ -281,9 +282,11 @@ class MarketService {
     this.polling = true;
     try {
       for (const t of TICKERS) {
-        if (this.stopped || !usMarketOpen() || this.wsConnected) break;
+        const wsFresh = this.wsConnected && this.lastWsTickAt && Date.now() - this.lastWsTickAt < 45000;
+        if (this.stopped || !usMarketOpen() || wsFresh) break;
         const q = this.quotes[t];
-        const stale = !q || !q.real || Date.now() - q.updatedAt > Math.max(30000, this.config.refreshSec * 2000);
+        const realAt = this.lastRealTime[t] || 0;
+        const stale = !q || !realAt || Date.now() - realAt > Math.max(30000, this.config.refreshSec * 2000);
         if (stale) {
           const fresh = await this.fetchQuote(t);
           if (fresh) this.writeQuote(t, fresh.price, { prevClose: fresh.prevClose, open: fresh.open, vol: q ? q.vol : 1000000, source: 'live', real: true });
@@ -320,6 +323,7 @@ class MarketService {
     };
     ws.onopen = () => {
       this.wsConnected = true;
+      this.lastWsTickAt = Date.now();
       this.lastError = '';
       TICKERS.forEach((t) => {
         try { ws.send(JSON.stringify({ type: 'subscribe', symbol: t })); } catch (e) {}
@@ -365,7 +369,7 @@ class MarketService {
     if (!usMarketOpen()) return 'closed';
     if (Date.now() < this.rateLimitedUntil) return 'rate-limit';
     const staleWs = !this.wsConnected || (this.lastWsTickAt && Date.now() - this.lastWsTickAt > Math.max(45000, this.config.refreshSec * 3000));
-    const anyReal = TICKERS.some((t) => this.quotes[t] && this.quotes[t].real);
+    const anyReal = TICKERS.some((t) => !!this.lastReal[t]);
     if (!anyReal && !this.seeding) return 'no-live-data';
     if (staleWs) return 'no-ws-ticks';
     return '';
