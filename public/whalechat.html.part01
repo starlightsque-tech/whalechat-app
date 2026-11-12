@@ -786,7 +786,7 @@ function blankDB() {
     version: 1,
     users: [], vendors: [], companyProducts: [], products: [], orders: [],
     deposits: [], withdrawals: [], messages: [], statuses: [], chatsMeta: {}, referrals: [], purchases: [],
-    contacts: [], blocks: [], notifications: [], txs: [], reports: [], refunds: [], vendorApplications: [], bonuses: [], bonusClaims: [], emailCampaigns: [],
+    contacts: [], blocks: [], notifications: [], txs: [], reports: [], refunds: [], vendorApplications: [], bonuses: [], bonusClaims: [], emailCampaigns: [], traffic: [],
     settings: {
       crypto: [
         { id: 'cr_1', name: 'USDT (TRC20)', address: 'TQn9Y2khEsLJW1ChVWFMSMeRDow5KcbLSE', network: 'TRC20', note: 'Send only USDT on TRC20. Minimum $5.' },
