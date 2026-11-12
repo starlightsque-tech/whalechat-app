@@ -449,15 +449,6 @@ async function api(req, res, pathname, query) {
       return json(res, 200, { ok: true, ticker, timeframe, feed: market.config.feed, bars, source: bars.length ? 'alpaca' : 'empty' });
     } catch (e) { return json(res, 200, { ok: false, error: e.message, ticker, bars: [] }); }
   }
-  if (pathname === '/api/market/chart' && req.method === 'GET') {
-    const ticker = String(query.get('ticker') || query.get('symbol') || '').toUpperCase();
-    if (!ticker) return json(res, 400, { ok: false, error: 'ticker_required' });
-    const tf = String(query.get('tf') || '1D').toUpperCase();
-    try {
-      const out = await market.chartFor(ticker, tf);
-      return json(res, 200, out);
-    } catch (e) { return json(res, 200, { ok: false, error: e.message, ticker, tf, points: [] }); }
-  }
   if (pathname === '/api/market/config' && req.method === 'GET') {
     const adminId = query.get('adminId') || '';
     const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === adminId && u.role === 'admin') : null;
@@ -472,18 +463,15 @@ async function api(req, res, pathname, query) {
     const refreshSec = Math.min(300, Math.max(5, Math.round(Number(body.refreshSec) || 15)));
     const keyId = typeof body.keyId === 'string' ? body.keyId.trim() : '';
     const secret = typeof body.secret === 'string' ? body.secret.trim() : '';
-    const finnhubGiven = typeof body.finnhubKey === 'string' && body.finnhubKey.trim();
-    const hasKeys = (keyId && secret) || market.configured() || finnhubGiven;
-    if (!hasKeys && body.clearKeys !== true && body.clearFinnhub !== true) {
+    const hasKeys = (keyId && secret) || market.configured();
+    if (!hasKeys && body.clearKeys !== true) {
       return json(res, 400, { ok: false, error: 'keys_required', message: 'Add your Alpaca API Key ID and Secret Key' });
     }
     const before = market.rawConfig();
     const saved = market.saveConfig({
       mode, refreshSec, keyId, secret,
       feed: body.feed, syncEnabled: body.syncEnabled, syncIntervalMin: body.syncIntervalMin,
-      clearKeys: body.clearKeys === true || body.clearKey === true,
-      finnhubKey: typeof body.finnhubKey === 'string' ? body.finnhubKey : '',
-      clearFinnhub: body.clearFinnhub === true
+      clearKeys: body.clearKeys === true || body.clearKey === true
     });
     saveMarketConfig(market.rawConfig()).then((ok) => { if (ok) console.log('[market] Alpaca config persisted to Postgres'); });
     /* audit the connection change — never the secret values themselves */
@@ -496,15 +484,6 @@ async function api(req, res, pathname, query) {
     const keysCleared = body.clearKeys === true || body.clearKey === true;
     if (keysCleared) changes.push({ field: 'apiKeys', from: 'saved', to: 'cleared' });
     else if (keyId || secret) changes.push({ field: 'apiKeys', from: before.keyId ? 'saved' : 'none', to: 'updated' });
-    const fhSaved = saved.finnhub || {};
-    const fhCleared = body.clearFinnhub === true;
-    const fhGiven = finnhubGiven;
-    if (fhCleared) changes.push({ field: 'finnhubKey', from: 'saved', to: 'cleared' });
-    else if (fhGiven) changes.push({ field: 'finnhubKey', from: before.finnhubKey ? 'saved' : 'none', to: 'updated' });
-    if (fhSaved.configured && (fhCleared || fhGiven) && !keysCleared && !(keyId || secret)) {
-      /* a chart-key-only save still needs an audit entry */
-      changes.push({ field: 'chartProvider', from: 'live feed', to: fhCleared ? 'live feed' : 'finnhub' });
-    }
     const keyNote = keysCleared ? 'keys cleared'
       : saved.hasKeys ? ('keys ' + (keyId || secret ? 'updated' : 'saved') + (saved.keyIdMasked ? ' (' + saved.keyIdMasked + ')' : ''))
       : 'no keys';
