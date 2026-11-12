@@ -1,8 +1,8 @@
 {
-  "version": "3.20.3",
-  "build": "2026-11-12T13:55:00Z",
+  "version": "3.21.0",
+  "build": "2026-11-12T14:45:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.20.3 - tighter mobile-friendly admin trading guide.",
-  "releasedAt": "2026-11-12T13:55:00Z",
+  "notes": "WhaleChat 3.21.0 - automatic Finnhub dividend yield sync, duration-scaled WC dividend payouts, dividend badges and admin overrides.",
+  "releasedAt": "2026-11-12T14:45:00Z",
   "minimum": "3.0.0"
 }
