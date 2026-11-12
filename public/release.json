@@ -1,8 +1,8 @@
 {
-  "version": "3.20.3",
-  "build": "2026-11-12T13:55:00Z",
+  "version": "3.20.4",
+  "build": "2026-11-12T14:10:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.20.3 - tighter mobile-friendly admin trading guide.",
-  "releasedAt": "2026-11-12T13:55:00Z",
+  "notes": "WhaleChat 3.20.4 - WC-mode TP/SL amounts in trade history, mobile Rise/Fall worked examples in admin guide.",
+  "releasedAt": "2026-11-12T14:10:00Z",
   "minimum": "3.0.0"
 }
