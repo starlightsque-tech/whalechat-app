@@ -19,7 +19,8 @@ const assetDirs = [
   path.join(PUB, 'products'),
   path.join(PUB, 'bots'),
   path.join(PUB, 'demo', 'products'),
-  path.join(PUB, 'demo', 'sellers')
+  path.join(PUB, 'demo', 'sellers'),
+  path.join(PUB, 'demo', 'banners')
 ].filter((d) => fs.existsSync(d));
 
 let made = 0;
