@@ -517,6 +517,53 @@
   }
 
   /* ------------------------------ admin panel ------------------------------- */
+  function dividendSettingsHTML() {
+    const inv = (typeof DB !== 'undefined' && DB && DB.invest) || {};
+    const stocks = (typeof INV !== 'undefined' && INV.stocks) ? INV.stocks().sort((a, b) => a.ticker.localeCompare(b.ticker)) : [];
+    const ys = inv.dividendYields || {};
+    const ov = inv.dividendOverrides || {};
+    const mult = Number(inv.dividendMultiplier) > 0 ? Number(inv.dividendMultiplier) : 1;
+    const rule = inv.dividendPayoutMode || 'all';
+    const synced = inv.dividendSyncedAt ? new Date(inv.dividendSyncedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'not synced';
+    return `<div class="card" id="divSettingsCard">
+      <div class="between" style="align-items:flex-start;gap:10px">
+        <div><div class="card-title" style="margin:0">Dividends &amp; duration bonus</div>
+          <div class="tiny muted" style="margin-top:3px">Auto-synced from Finnhub every 24h · paid only when the trade timer completes.</div></div>
+        <span class="badge ${inv.dividendSource === 'finnhub' ? 'badge-success' : 'badge-warn'}">${inv.dividendSource === 'finnhub' ? 'Finnhub' : 'Fallback'}</span>
+      </div>
+      <div class="div-settings-grid">
+        <div class="field"><label class="label">Dividend bonus multiplier</label>
+          <input class="input" id="divMultiplier" type="number" step="0.1" min="0" max="10" value="${mult}"/>
+          <div class="tiny muted mt6">1× = exact yield proration</div></div>
+        <div class="field"><label class="label">Payout rule (timer closes)</label>
+          <select class="input" id="divPayoutMode">
+            <option value="all" ${rule === 'all' ? 'selected' : ''}>Pay on all completed timer trades</option>
+            <option value="wins" ${rule === 'wins' ? 'selected' : ''}>Pay on winning timer trades only</option>
+          </select>
+          <div class="tiny muted mt6">TP/SL/manual exits do not earn the dividend.</div></div>
+      </div>
+      <div class="div-yield-head"><span>Symbol</span><span>Synced yield</span><span>Override %</span></div>
+      <div class="div-yield-list">
+        ${stocks.map(s => {
+          const auto = ys[s.ticker] != null ? Number(ys[s.ticker]) : (LT.DIV_FALLBACK[s.ticker] || 0);
+          const o = ov[s.ticker];
+          return `<div class="div-yield-row">
+            <b>${escMarket(s.ticker)}</b>
+            <span class="${auto > 0 ? 'up' : 'muted'}">${auto.toFixed(2)}%</span>
+            <input class="input div-ov" data-div-ticker="${escMarket(s.ticker)}" type="number" step="0.01" min="0" max="100" value="${o != null ? o : ''}" placeholder="${auto.toFixed(2)}"/>
+          </div>`;
+        }).join('')}
+      </div>
+      <div class="tiny muted" style="margin-top:8px">Last sync: ${escMarket(synced)} · source: ${escMarket(inv.dividendSource || 'fallback')} · floor 0.01 WC on dividend-paying symbols.</div>
+      <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
+        <button class="btn btn-primary" data-act="div-save">Save dividend settings</button>
+        <button class="btn btn-soft" data-act="div-sync">Sync from Finnhub now</button>
+        <button class="btn btn-ghost" data-act="div-reset">Reset overrides</button>
+      </div>
+      <div class="tiny muted mt6" id="divSyncNote">Leave an override blank to use the synced annual yield. Overrides are locked at trade entry.</div>
+    </div>`;
+  }
+
   function tradingGuideHTML() {
     return `<div class="card admin-guide" id="tradingGuideCard">
       <div class="between" style="align-items:flex-start;gap:10px">
@@ -746,13 +793,67 @@
     };
   }
 
+  if (typeof App !== 'undefined') {
+    App.divSave = function () {
+      const multEl = document.getElementById('divMultiplier');
+      const modeEl = document.getElementById('divPayoutMode');
+      const mult = Number(multEl && multEl.value);
+      if (!(mult >= 0 && mult <= 10)) return adminToast('Multiplier must be between 0 and 10', 'err');
+      const overrides = {};
+      let bad = '';
+      document.querySelectorAll('[data-div-ticker]').forEach((inp) => {
+        const v = String(inp.value || '').trim();
+        if (!v) return;
+        const n = Number(v);
+        if (!Number.isFinite(n) || n < 0 || n > 100) bad = inp.getAttribute('data-div-ticker');
+        else overrides[inp.getAttribute('data-div-ticker')] = Math.round(n * 100) / 100;
+      });
+      if (bad) return adminToast('Yield for ' + bad + ' must be between 0 and 100%', 'err');
+      if (!DB.invest) DB.invest = {};
+      DB.invest.dividendMultiplier = mult;
+      DB.invest.dividendPayoutMode = modeEl && modeEl.value === 'wins' ? 'wins' : 'all';
+      DB.invest.dividendOverrides = overrides;
+      try { sync(); } catch (e) {}
+      persist();
+      adminToast('Dividend settings saved', 'ok');
+      render();
+    };
+
+    App.divReset = function () {
+      if (!DB.invest) DB.invest = {};
+      DB.invest.dividendOverrides = {};
+      try { sync(); } catch (e) {}
+      persist();
+      adminToast('Dividend overrides cleared — using synced yields', 'ok');
+      render();
+    };
+
+    App.divSync = async function () {
+      if (typeof Remote === 'undefined' || !Remote.enabled) return adminToast('Connect the sync server first', 'err');
+      const btn = document.querySelector('[data-act="div-sync"]');
+      if (btn) { btn.disabled = true; btn.textContent = 'Syncing 16 symbols…'; }
+      try {
+        const meId = (typeof me === 'function' && me()) ? me().id : '';
+        const r = await getJSON('/api/market/dividends/sync', { method: 'POST', body: JSON.stringify({ adminId: meId }) }, 45000);
+        if (!r.res || !r.res.ok || !r.data || !r.data.ok) return adminToast((r.data && r.data.error) || 'Dividend sync failed', 'err');
+        try { await Remote.refresh(true); } catch (e) {}
+        adminToast('Dividends synced from Finnhub', 'ok');
+        render();
+      } catch (e) {
+        adminToast('Dividend sync failed: ' + e.message, 'err');
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Sync from Finnhub now'; }
+      }
+    };
+  }
+
   /* append the feed card to Admin → Stocks */
   if (typeof INV !== 'undefined' && INV.viewAdminStocks && !INV.__mkAdminPatched) {
     const baseAdmin = INV.viewAdminStocks;
     INV.viewAdminStocks = function () {
       const html = baseAdmin.apply(this, arguments);
       if (/Admin access only/.test(html)) return html;
-      return html + adminCardHTML() + tradingGuideHTML();
+      return html + adminCardHTML() + dividendSettingsHTML() + tradingGuideHTML();
     };
     INV.__mkAdminPatched = true;
   }
@@ -862,6 +963,20 @@
       .guide-examples,.guide-controls,.guide-scenarios{grid-template-columns:1fr}
       .guide-sec p,.guide-sec ul,.guide-sec ol{font-size:11.5px}
       .guide-tr{font-size:10.5px;padding:7px}
+    }
+    .div-settings-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:11px}
+    .div-yield-head,.div-yield-row{display:grid;grid-template-columns:1fr 90px 110px;gap:8px;align-items:center}
+    .div-yield-head{margin-top:10px;font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted-2);font-weight:700;padding:0 2px}
+    .div-yield-list{max-height:300px;overflow:auto;border:1px solid var(--border);border-radius:10px;margin-top:4px;background:var(--surface-2)}
+    .div-yield-row{padding:7px 9px;border-top:1px solid var(--border);font-size:11px}
+    .div-yield-row:first-child{border-top:none}
+    .div-yield-row b{font-size:11px} .div-yield-row span{font-variant-numeric:tabular-nums}
+    .div-yield-row .up{color:var(--success)} .div-yield-row .muted{color:var(--muted)}
+    .div-ov{height:29px;padding:3px 6px;font-size:10.5px;text-align:right}
+    @media(max-width:560px){
+      .div-settings-grid{grid-template-columns:1fr}
+      .div-yield-head,.div-yield-row{grid-template-columns:1fr 75px 90px;gap:6px}
+      .div-yield-row{padding:7px 8px}
     }
     .lt-live-badge{display:inline-flex;align-items:center;gap:5px;font-size:9px;font-weight:800;letter-spacing:.08em;
       color:var(--success);border:1px solid rgba(34,197,94,.30);background:rgba(34,197,94,.10);border-radius:99px;padding:2px 7px}
