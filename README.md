@@ -70,7 +70,7 @@ position banner, and saving the table reprices live quotes immediately.
 1. `GET /v2/assets?status=active&asset_class=us_equity` → metadata for tradable US equities (import capped by
    `ALPACA_ASSET_LIMIT`, default 150; existing symbols are always refreshed).
 2. Snapshot prices for every tracked symbol.
-3. `GET /v1/corporate-actions?ca_types=dividend` for the trailing 365 days → annual dividend yield per symbol
+3. `GET /v1/corporate-actions?types=cash_dividend` for the trailing 365 days → `cash_dividends` → annual dividend yield per symbol
    (`sum(rate) / raw price × 100`). Admin dividend overrides remain a separate object and are never overwritten.
 
 `market.js` keeps a shared rolling Alpaca call budget (`ALPACA_MAX_CALLS_PER_MIN`, default 180), waits through 429
