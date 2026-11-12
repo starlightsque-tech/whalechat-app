@@ -1,8 +1,8 @@
 {
-  "version": "3.10.0",
-  "build": "2026-11-12T07:30:00Z",
+  "version": "3.11.0",
+  "build": "2026-11-12T07:44:51Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.10.0 — demo sellers publish 10–50 electronics products each with real product photos, plus demo shopper fleet.",
-  "releasedAt": "2026-11-12T07:30:00Z",
+  "notes": "WhaleChat 3.11.0 - public demo storefronts with banners, editable seller product ranges, demo activity dashboard.",
+  "releasedAt": "2026-11-12T07:44:51Z",
   "minimum": "3.0.0"
 }
