@@ -194,6 +194,18 @@
     return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
 
+  /* 1 WC = $0.50 — every chart label shows both currencies */
+  function wcText(usdValue) {
+    const wc = Math.round((Number(usdValue) / 0.5) * 100) / 100;
+    return (Number.isInteger(wc) ? String(wc) : wc.toFixed(2)) + ' WC';
+  }
+  function priceBoth(usdValue) {
+    return '$' + (Number(usdValue) || 0).toFixed(2) + ' (' + wcText(usdValue) + ')';
+  }
+  function spotHolding(ticker) {
+    try { return (typeof INV !== 'undefined' && INV.holding) ? INV.holding(ticker, me().id) : null; } catch (e) { return null; }
+  }
+
   /* --------------------------- lightweight-charts --------------------------- */
   function loadLWC() {
     if (window.LightweightCharts) return Promise.resolve(window.LightweightCharts);
@@ -343,7 +355,7 @@
           vertLine: { color: 'rgba(46,230,201,.45)', width: 1, style: LWC.LineStyle.Dashed, labelBackgroundColor: '#0f2333' },
           horzLine: { color: 'rgba(46,230,201,.45)', width: 1, style: LWC.LineStyle.Dashed, labelBackgroundColor: '#0f2333' }
         },
-        localization: { priceFormatter: (p) => (cfg.mode === 'portfolio' ? Number(p).toFixed(2) + ' WC' : '$' + Number(p).toFixed(2)) },
+        localization: { priceFormatter: (p) => (cfg.mode === 'portfolio' ? Number(p).toFixed(2) + ' WC' : priceBoth(p)) },
         handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
         handleScale: { axisPressedMouseMove: true, mouseWheel: true, pinch: true }
       });
@@ -358,13 +370,46 @@
       applyBaselineColors(series, side);
       series.setData(data);
       chart.timeScale().fitContent();
+
+      /* USD + WC crosshair tooltip */
+      const tip = document.createElement('div');
+      tip.className = 'wc-chart-tip';
+      tip.style.display = 'none';
+      wrap.appendChild(tip);
+      const moveTip = (param) => {
+        if (!param || !param.point || !param.seriesData || !param.seriesData.get(series)) { tip.style.display = 'none'; return; }
+        const val = Number(param.seriesData.get(series).value) || 0;
+        const tm = param.time ? new Date(Number(param.time) * 1000) : new Date();
+        const timeTxt = tm.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        tip.innerHTML = cfg.mode === 'portfolio'
+          ? '<b>' + val.toFixed(2) + ' WC</b><span>$' + (val * 0.5).toFixed(2) + ' USD · ' + timeTxt + '</span>'
+          : '<b>' + priceBoth(val) + '</b><span>' + timeTxt + '</span>';
+        const x = Math.max(6, Math.min(wrap.clientWidth - 150, param.point.x + 12));
+        const y = Math.max(6, param.point.y - 40);
+        tip.style.left = x + 'px';
+        tip.style.top = y + 'px';
+        tip.style.display = 'block';
+      };
+      chart.subscribeCrosshairMove(moveTip);
+      wrap.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+
+      /* live position banner (spot holding) */
+      const banner = document.createElement('div');
+      banner.className = 'wc-pos-banner';
+      banner.style.display = 'none';
+      wrap.appendChild(banner);
+
       MK.chart = {
         mode: cfg.mode || 'stock', ticker: cfg.ticker || '', chart, series, host, wrap, LWC,
-        basePrice: defaultBase, defaultBase, side,
+        basePrice: defaultBase, defaultBase, side, banner,
         lastTime: data[data.length - 1].time,
         points: data.length, lines: [], lineKey: ''
       };
       syncPriceLines();
+      try {
+        const q0 = (typeof INV !== 'undefined' && INV.quote) ? INV.quote(cfg.ticker) : null;
+        updatePositionBanner(MK.chart, (q0 && q0.price) || defaultBase);
+      } catch (e) {}
       if (typeof ResizeObserver !== 'undefined') {
         MK.chart.ro = new ResizeObserver(() => {
           if (!MK.chart || MK.chart.chart !== chart) return;
@@ -375,6 +420,23 @@
       }
       return MK.chart;
     });
+  }
+
+  function updatePositionBanner(c, price) {
+    if (!c || !c.banner) return;
+    if (c.mode !== 'stock') { c.banner.style.display = 'none'; return; }
+    const h = spotHolding(c.ticker);
+    if (!h || !(Number(h.shares) > 0) || !(Number(price) > 0)) { c.banner.style.display = 'none'; return; }
+    const shares = Number(h.shares) || 0;
+    const px = Number(price) || 0;
+    const investedUsd = Number(h.investedUsd) > 0 ? Number(h.investedUsd) : shares * (Number(h.avgPrice) || px);
+    const valueUsd = shares * px;
+    const pnlUsd = valueUsd - investedUsd;
+    const pnlCoins = pnlUsd / 0.5;
+    const up = pnlUsd >= 0;
+    c.banner.innerHTML = '<div class="wc-pos-line"><span>Position value</span><b>' + usd(valueUsd) + ' <i>(' + (Math.round((valueUsd / 0.5) * 100) / 100).toFixed(2) + ' WC)</i></b></div>' +
+      '<div class="wc-pos-line"><span>Unrealized P&amp;L</span><b class="' + (up ? 'up' : 'down') + '">' + (up ? '+' : '−') + usd(Math.abs(pnlUsd)) + ' <i>(' + (up ? '+' : '−') + Math.abs(pnlCoins).toFixed(2) + ' WC)</i></b></div>';
+    c.banner.style.display = 'block';
   }
 
   function syncPriceLines() {
@@ -396,9 +458,9 @@
         }));
       } catch (e) {}
     };
-    add(pos.entryPrice, '#60a5fa', 'Entry $' + Number(pos.entryPrice).toFixed(2), 2);
-    add(pos.takeProfitPrice, '#22c55e', 'TP $' + Number(pos.takeProfitPrice).toFixed(2), 0);
-    add(pos.stopLossPrice, '#ef4444', (pos.trailingActive ? 'TSL $' : 'SL $') + Number(pos.stopLossPrice).toFixed(2), 0);
+    add(pos.entryPrice, '#60a5fa', 'Entry ' + priceBoth(pos.entryPrice), 2);
+    add(pos.takeProfitPrice, '#22c55e', 'TP ' + priceBoth(pos.takeProfitPrice), 0);
+    add(pos.stopLossPrice, '#ef4444', (pos.trailingActive ? 'TSL ' : 'SL ') + priceBoth(pos.stopLossPrice), 0);
   }
 
   async function mountChart() {
@@ -515,6 +577,7 @@
       applyBaselineColors(c.series, targetSide);
     }
     syncPriceLines();
+    updatePositionBanner(c, q.price);
     const now = Math.floor(Date.now() / 1000);
     const time = now > c.lastTime ? now : c.lastTime + 1;
     appendPoint(c, time, q.price);
@@ -706,6 +769,7 @@
       </div>
       <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
         <button class="btn btn-primary" data-act="mkt-save">Save settings</button>
+        <button class="btn btn-soft" data-act="mkt-sync-all">Sync prices + dividends</button>
         <button class="btn btn-ghost" data-act="mkt-test">Test Finnhub</button>
         <label class="checkline tiny muted" style="margin-left:auto"><input type="checkbox" id="mktClear"/> Clear saved key</label>
       </div>
@@ -740,6 +804,10 @@
       <div class="mkt-stat"><span>Server price tick</span><b>${when(st.lastTickAt)}</b></div>
       <div class="mkt-stat"><span>Rate limit</span><b class="${st.rateLimitedUntil ? 'down' : 'up'}">${st.rateLimitedUntil ? '429 · cooling down' : 'clear'}</b></div>
       <div class="mkt-stat"><span>Unpriced assets</span><b class="${(st.unpriced || 0) ? 'down' : 'up'}">${st.unpriced || 0}</b></div>
+      <div class="mkt-stat"><span>Live stock prices</span><b class="${(st.seed && !st.seed.failed) ? 'up' : 'down'}">${(st.seed ? st.seed.live : 0) + ' / ' + (st.tickers || 0)}</b></div>
+      <div class="mkt-stat"><span>Dividend sync</span><b class="${(st.dividends && !st.dividends.failed) ? 'up' : 'down'}">${(st.dividends ? st.dividends.live : 0) + ' / ' + (st.dividends ? st.dividends.tickers : 0)}</b></div>
+      <div class="mkt-stat"><span>API calls / min</span><b class="${st.apiCallsLastMin > (st.apiBudgetPerMin || 55) ? 'down' : 'up'}">${st.apiCallsLastMin || 0} / ${st.apiBudgetPerMin || 55}</b></div>
+      ${st.dividends && st.dividends.failed ? `<div class="mkt-stat"><span>Yield retry queue</span><b class="down">${escMarket((st.dividends.failedTickers || []).join(', '))}</b></div>` : ''}
       ${st.lastError ? `<div class="mkt-stat"><span>Last error</span><b class="down">${escMarket(st.lastError)}</b></div>` : ''}`;
   }
 
@@ -801,6 +869,23 @@
         adminToast('Save failed: ' + e.message, 'err');
       } finally {
         if (btn) { btn.disabled = false; btn.textContent = 'Save settings'; }
+      }
+    };
+
+    App.mktSyncAll = async function () {
+      if (typeof Remote === 'undefined' || !Remote.enabled) return adminToast('Connect the sync server first', 'err');
+      const btn = document.querySelector('[data-act="mkt-sync-all"]');
+      if (btn) { btn.disabled = true; btn.textContent = 'Syncing…'; }
+      try {
+        const meId = (typeof me === 'function' && me()) ? me().id : '';
+        const r = await getJSON('/api/market/sync-all', { method: 'POST', body: JSON.stringify({ adminId: meId }) }, 15000);
+        if (!r.res || !r.res.ok || !r.data || !r.data.ok) return adminToast((r.data && r.data.error) || 'Sync could not start', 'err');
+        adminToast('Sync started — prices and yields continue in the background', 'ok');
+        setTimeout(() => { try { poll(); paintAdminStatus(); } catch (e) {} }, 4000);
+      } catch (e) {
+        adminToast('Sync failed: ' + e.message, 'err');
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Sync prices + dividends'; }
       }
     };
 
@@ -933,6 +1018,19 @@
     st.textContent = `
     .inv-chart.wc-chart-host{height:240px !important}
     .wc-lwc{width:100%;height:240px;position:relative}
+    .inv-chart.wc-chart-host{position:relative}
+    .wc-chart-tip{position:absolute;z-index:9;pointer-events:none;padding:6px 8px;border-radius:8px;
+      background:rgba(4,16,26,.94);border:1px solid rgba(46,230,201,.35);box-shadow:0 8px 22px rgba(0,0,0,.45);
+      font-size:10.5px;line-height:1.45;max-width:180px}
+    .wc-chart-tip b{display:block;font-size:11.5px;color:#e9f4f9;font-variant-numeric:tabular-nums}
+    .wc-chart-tip span{display:block;color:#8ba4b6;font-size:9.5px}
+    .wc-pos-banner{position:absolute;left:8px;top:8px;z-index:8;pointer-events:none;padding:7px 9px;border-radius:9px;
+      background:rgba(4,16,26,.86);border:1px solid rgba(255,255,255,.12);backdrop-filter:blur(6px);
+      box-shadow:0 8px 20px rgba(0,0,0,.35);min-width:168px}
+    .wc-pos-line{display:flex;justify-content:space-between;gap:10px;font-size:10px;line-height:1.7;color:#8ba4b6}
+    .wc-pos-line b{color:#e9f4f9;font-size:10.5px;font-variant-numeric:tabular-nums;white-space:nowrap}
+    .wc-pos-line b i{font-style:normal;color:#8ba4b6;font-size:9.5px}
+    .wc-pos-line b.up{color:#22c55e} .wc-pos-line b.down{color:#ef4444}
     .wc-lwc-loading{height:240px;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--muted)}
     .wc-feed-notice{margin-top:5px;display:flex;align-items:center;justify-content:center;gap:6px}
     .wc-feed-dot{width:7px;height:7px;border-radius:50%;display:inline-block;flex:0 0 auto}
