@@ -59,7 +59,8 @@ if (!parts.length) {
 const MODULES = [
   { file: 'tawk-control.js', marker: 'wc-tawk-control' },
   { file: 'live-trade.js', marker: 'wc-live-trade' },
-  { file: 'demo-sellers.js', marker: 'wc-demo-sellers' }
+  { file: 'demo-sellers.js', marker: 'wc-demo-sellers' },
+  { file: 'support.js', marker: 'wc-support' }
 ];
 try {
   let page = fs.readFileSync(APP, 'utf8');
