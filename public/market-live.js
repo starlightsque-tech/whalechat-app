@@ -159,6 +159,7 @@
     const onStock = /^#\/invest\/stock\//.test(location.hash || '');
     const meta = MK.chartMeta;
     if (onStock && meta && meta.ticker) {
+      if (meta.source === 'tradingview') return 'TradingView · real-time market chart · live trades';
       if (meta.source === 'finnhub') return 'Finnhub · real-time chart · live market trades';
       if (meta.source === 'live') return 'Live market chart · real-time ticks';
     }
@@ -330,7 +331,8 @@
 
   function destroyChart() {
     if (!MK.chart) return;
-    try { MK.chart.chart.remove(); } catch (e) {}
+    if (MK.chart.tvTimer) { try { clearTimeout(MK.chart.tvTimer); } catch (e) {} }
+    try { if (MK.chart.chart && MK.chart.chart.remove) MK.chart.chart.remove(); } catch (e) {}
     MK.chart = null;
   }
 
@@ -346,7 +348,154 @@
     });
   }
 
+  /* ------------------------ TradingView chart ---------------------------
+     The stock page uses TradingView's symbol-overview widget for real market
+     prices, wired to the symbol the user is trading. The app's live position
+     overlay (Trade value / Earnings / Entry) and the Sell + TP/SL controls
+     stay on top of it. If TradingView cannot load, the page falls back to the
+     server chart (Finnhub candles / live ticks). */
+  function tvSymbolFor(ticker, stock) {
+    const t = String(ticker || '').toUpperCase().replace(/[^A-Z0-9.]/g, '');
+    const ex = String((stock && stock.exchange) || '').toUpperCase();
+    const known = { NASDAQ: 'NASDAQ', NYSE: 'NYSE', AMEX: 'AMEX', ARCA: 'AMEX', BATS: 'BATS', OTC: 'OTC' };
+    const prefix = known[ex] || '';
+    return prefix ? (prefix + ':' + t) : t;
+  }
+
+  function tvConfig(ticker, stock, height) {
+    const sym = tvSymbolFor(ticker, stock);
+    const name = (stock && stock.name) || ticker;
+    return {
+      lineWidth: 2,
+      lineType: 0,
+      chartType: 'area',
+      fontColor: '#8ba4b6',
+      gridLineColor: 'rgba(255,255,255,0.06)',
+      volumeUpColor: 'rgba(34,171,148,0.35)',
+      volumeDownColor: 'rgba(247,82,95,0.35)',
+      backgroundColor: 'rgba(0,0,0,0)',
+      widgetFontColor: '#DBDBDB',
+      upColor: '#22c55e',
+      downColor: '#ef4444',
+      borderUpColor: '#22c55e',
+      borderDownColor: '#ef4444',
+      wickUpColor: '#22c55e',
+      wickDownColor: '#ef4444',
+      colorTheme: 'dark',
+      isTransparent: true,
+      locale: 'en',
+      chartOnly: true,
+      scalePosition: 'right',
+      scaleMode: 'Normal',
+      fontFamily: '-apple-system, BlinkMacSystemFont, Trebuchet MS, Roboto, Ubuntu, sans-serif',
+      valuesTracking: '1',
+      changeMode: 'price-and-percent',
+      symbols: [[name, sym + '|1D']],
+      dateRanges: ['1d|1', '1m|30', '3m|60', '12m|1D', '60m|1W', 'all|1M'],
+      fontSize: '10',
+      headerFontSize: 'medium',
+      autosize: true,
+      width: '100%',
+      height: height || 380,
+      noTimeScale: false,
+      hideDateRanges: false,
+      hideMarketStatus: false,
+      hideSymbolLogo: false
+    };
+  }
+
+  async function tvFallback(host, cfg) {
+    if (!document.body.contains(host)) return;
+    const data = await stockData(cfg.ticker, cfg.tf);
+    const pos = positionFor(cfg.ticker);
+    if (!document.body.contains(host)) return;
+    try {
+      await makeChart(host, Object.assign({}, cfg, {
+        tvSymbol: '',
+        data,
+        baseline: pos ? Number(pos.entryPrice) : Number(data[0].value),
+        side: pos ? pos.side : 'long'
+      }));
+    } catch (e) { /* keep the loading state */ }
+  }
+
+  function makeTVChart(host, cfg) {
+    host.classList.add('wc-chart-host');
+    host.__wcLwc = true;
+    host.removeAttribute('data-chart');
+    host.innerHTML = '';
+    const card = host.closest('.inv-pricecard');
+    if (card) card.classList.add('wc-tv-mode');
+    const wrap = document.createElement('div');
+    wrap.className = 'wc-lwc wc-tv-wrap';
+    wrap.id = 'wcLwcHost';
+    const height = Math.max(300, Math.round(Number(cfg.height) || 380));
+    wrap.style.height = height + 'px';
+    host.appendChild(wrap);
+
+    const tvHost = document.createElement('div');
+    tvHost.className = 'wc-tv-host';
+    tvHost.style.height = (height - 26) + 'px';
+    wrap.appendChild(tvHost);
+
+    const box = document.createElement('div');
+    box.className = 'tradingview-widget-container';
+    box.style.height = '100%';
+    const inner = document.createElement('div');
+    inner.className = 'tradingview-widget-container__widget';
+    inner.style.height = '100%';
+    box.appendChild(inner);
+    const script = document.createElement('script');
+    script.type = 'text/javascript';
+    script.async = true;
+    script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-symbol-overview.js';
+    script.text = JSON.stringify(tvConfig(cfg.ticker, INV.stock(cfg.ticker), height - 26));
+    box.appendChild(script);
+    tvHost.appendChild(box);
+
+    const credit = document.createElement('div');
+    credit.className = 'wc-tv-credit';
+    credit.innerHTML = 'Real-time chart by <a href="https://www.tradingview.com/" target="_blank" rel="noopener nofollow">TradingView</a>';
+    wrap.appendChild(credit);
+
+    /* live trade overlay (same figures as the trade ticket) */
+    const banner = document.createElement('div');
+    banner.className = 'wc-pos-banner';
+    banner.style.display = 'none';
+    wrap.appendChild(banner);
+
+    MK.chartMeta = { ticker: cfg.ticker, tf: cfg.tf || '1D', source: 'tradingview', at: Date.now() };
+    MK.chart = {
+      mode: 'stock', ticker: cfg.ticker, tf: cfg.tf, tv: true, chart: null, series: null,
+      host, wrap, banner, basePrice: 0, defaultBase: 0, side: 'long', points: 0, lastTime: 0
+    };
+    try {
+      const q0 = (typeof INV !== 'undefined' && INV.quote) ? INV.quote(cfg.ticker) : null;
+      updatePositionBanner(MK.chart, (q0 && q0.price) || 0);
+    } catch (e) {}
+
+    /* TradingView blocked / offline -> restore the server chart */
+    const started = Date.now();
+    MK.chart.tvTimer = setTimeout(() => {
+      const nowChart = MK.chart;
+      if (!nowChart || !nowChart.tv || nowChart.host !== host) return;
+      if (tvHost.querySelector('iframe, .tradingview-widget-container iframe') || tvHost.querySelector('canvas')) return;
+      if (!document.body.contains(host)) return;
+      destroyChart();
+      tvFallback(host, cfg);
+    }, 9000);
+    if (MK.chart.tvTimer.unref) MK.chart.tvTimer.unref();
+    /* clear the timer as soon as the widget paints */
+    const watch = setInterval(() => {
+      if (!MK.chart || !MK.chart.tv || MK.chart.host !== host) { clearInterval(watch); return; }
+      if (tvHost.querySelector('iframe')) { clearInterval(watch); if (MK.chart.tvTimer) clearTimeout(MK.chart.tvTimer); }
+      if (Date.now() - started > 20000) clearInterval(watch);
+    }, 500);
+    return MK.chart;
+  }
+
   function makeChart(host, cfg) {
+    if (cfg.mode === 'stock' && cfg.tvSymbol) return Promise.resolve(makeTVChart(host, cfg));
     return loadLWC().then((LWC) => {
       if (!document.body.contains(host)) return null;
       host.classList.add('wc-chart-host');
@@ -482,7 +631,7 @@
 
   function syncPriceLines() {
     const c = MK.chart;
-    if (!c || c.mode !== 'stock') return;
+    if (!c || c.tv || c.mode !== 'stock') return;
     const pos = positionFor(c.ticker);
     const key = pos ? [pos.id, pos.entryPrice, pos.takeProfitPrice, pos.stopLossPrice, pos.trailingActive, pos.trailingStopPct].join('|') : 'none';
     if (c.lineKey === key) return;
@@ -517,14 +666,17 @@
       return;
     }
     destroyChart();
+    const height = Math.round(Math.max(320, Math.min(470, (window.innerHeight || 780) * 0.5)));
+    /* TradingView is the stock chart: real market prices, live */
+    if (MK.useTradingView !== false) {
+      try { makeTVChart(host, { mode: 'stock', ticker, tf, height }); return; } catch (e) {}
+    }
     host.innerHTML = '<div class="wc-lwc-loading">Loading real market chart…</div>';
     const data = await stockData(ticker, tf);
     const pos = positionFor(ticker);
-    /* full-width performance chart: taller than the old 240px strip */
-    const height = Math.round(Math.max(320, Math.min(470, (window.innerHeight || 780) * 0.5)));
     try {
       await makeChart(host, {
-        mode: 'stock', ticker, data, tf, height,
+        mode: 'stock', ticker, data, tf, height, tvSymbol: '',
         baseline: pos ? Number(pos.entryPrice) : Number(data[0].value),
         side: pos ? pos.side : 'long'
       });
@@ -612,6 +764,7 @@
     let q;
     try { q = INV.quote(ticker); } catch (e) { return; }
     if (!q || !(q.price > 0)) return;
+    if (c.tv) { updatePositionBanner(c, q.price); return; }
     const pos = positionFor(ticker);
     const targetBase = pos ? Number(pos.entryPrice) : c.defaultBase;
     const targetSide = pos ? (pos.side === 'short' ? 'short' : 'long') : 'long';
@@ -1385,6 +1538,14 @@
     .inv-chart.wc-chart-host{height:auto;min-height:320px}
     .wc-lwc{width:100%;height:100%;min-height:320px;position:relative}
     .inv-chart.wc-chart-host{position:relative}
+    .wc-tv-wrap{display:flex;flex-direction:column}
+    .wc-tv-host{width:100%;min-height:260px;overflow:hidden;border-radius:10px}
+    .wc-tv-host .tradingview-widget-container{height:100%}
+    .wc-tv-host iframe{width:100%!important;height:100%!important;display:block}
+    .wc-tv-credit{font-size:9.5px;color:var(--muted-2);text-align:right;padding:2px 2px 0}
+    .wc-tv-credit a{color:var(--muted)}
+    .wc-tv-mode .inv-seg{display:none}
+    .wc-tv-mode .inv-pricecard .inv-seg{display:none}
     .wc-chart-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center}
     .wc-chart-actions .btn{min-height:42px;font-weight:700}
     .wc-chart-actions-note{flex:0 0 100%;font-size:10.5px;line-height:1.5;color:var(--muted)}
