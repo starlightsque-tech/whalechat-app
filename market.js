@@ -76,6 +76,8 @@ class MarketService {
     this.configFile = path.join(this.dataDir, 'market-config.json');
     this.config = { mode: 'simulated', apiKey: '', refreshSec: 15 };
     this.quotes = {};
+    this.history = {};
+    this._lastSettleAt = 0;
     this.lastReal = {};
     this.lastRealTime = {};
     this.lastRealAt = 0;
@@ -152,6 +154,7 @@ class MarketService {
         changePct: 0, changeUsd: 0, vol: 1000000,
         dir: 0, updatedAt: now, source: 'simulated', real: false
       };
+      this.recordHistory(t, price, now, 'simulated', false);
     });
   }
 
@@ -176,8 +179,40 @@ class MarketService {
     q.changePct = q.prevClose ? round((q.changeUsd / q.prevClose) * 100, 4) : 0;
     this.quotes[ticker] = q;
     this.lastTickAt = now;
+    this.recordHistory(ticker, q.price, now, q.source, q.real);
     if (q.real) { this.lastReal[ticker] = q.price; this.lastRealTime[ticker] = now; this.lastRealAt = now; }
     return q;
+  }
+
+  /* ------------------------------- history ------------------------------ */
+  recordHistory(ticker, price, now, source, real) {
+    const arr = this.history[ticker] || (this.history[ticker] = []);
+    const at = now || Date.now();
+    const last = arr[arr.length - 1];
+    if (last && at - last.t < 2000) {
+      last.p = round(price, 4);
+      last.t = at;
+      last.real = !!real;
+      return;
+    }
+    arr.push({ t: at, p: round(price, 4), real: !!real, source: source || 'simulated' });
+    if (arr.length > 3000) arr.splice(0, arr.length - 3000);
+  }
+
+  historyFor(tickers, limit) {
+    const out = {};
+    const n = Math.max(10, Math.min(3000, Number(limit) || 600));
+    (tickers || []).forEach((t) => {
+      out[t] = (this.history[t] || []).slice(-n);
+    });
+    return out;
+  }
+
+  _settleSoon() {
+    const now = Date.now();
+    if (now - this._lastSettleAt < 500) return;
+    this._lastSettleAt = now;
+    try { this.settleTrades(); } catch (e) { this.lastError = e.message; }
   }
 
   /* smooth micro ticks anchored on the last real Finnhub price */
@@ -348,6 +383,7 @@ class MarketService {
       if (touched.size) {
         this.wsTicks += touched.size;
         this.lastWsTickAt = Date.now();
+        this._settleSoon();
       }
     };
     ws.onerror = () => { this.wsConnected = false; };
@@ -432,18 +468,42 @@ class MarketService {
         const q = this.quotes[t.ticker];
         if (!q || !(Number(t.entryPrice) > 0)) continue;
         const lev = Math.max(1, Math.min(20, Number(t.leverage) || 1));
-        const dir = t.side === 'short' ? -1 : 1;
-        const move = (q.price - t.entryPrice) / t.entryPrice;
-        let pnl = (Number(t.capitalCoins) || 0) * lev * move * dir;
-        pnl = Math.max(-(Number(t.capitalCoins) || 0), pnl);
-        const pnlCoins = round(pnl, 2);
-        const payout = Math.max(0, round((Number(t.capitalCoins) || 0) + pnlCoins, 2));
-        const pct = (Number(t.capitalCoins) || 0) ? (pnlCoins / t.capitalCoins) * 100 : 0;
+        const direction = t.direction || (t.side === 'short' ? 'FALL' : 'RISE');
+        const dir = direction === 'FALL' ? -1 : 1;
+        const tpPrice = Number(t.takeProfitPrice) || 0;
+        const slPrice = Number(t.stopLossPrice) || 0;
         let reason = '';
-        if (Number(t.tpPct) > 0 && pct >= Number(t.tpPct)) reason = 'Take profit target hit';
-        else if (Number(t.slPct) > 0 && pct <= -Number(t.slPct)) reason = 'Stop loss hit';
-        else if (Number(t.expiresAt) && now >= Number(t.expiresAt)) reason = 'Time limit reached';
+        if (direction === 'RISE') {
+          if (tpPrice > 0 && q.price >= tpPrice) reason = 'Take Profit Hit';
+          else if (slPrice > 0 && q.price <= slPrice) reason = 'Stop Loss Hit';
+        } else {
+          if (tpPrice > 0 && q.price <= tpPrice) reason = 'Take Profit Hit';
+          else if (slPrice > 0 && q.price >= slPrice) reason = 'Stop Loss Hit';
+        }
+        let pnl = 0;
+        let pnlCoins = 0;
+        let pct = 0;
+        if (!reason) {
+          /* legacy trades created before absolute TP/SL prices existed */
+          const move = (q.price - t.entryPrice) / t.entryPrice;
+          pnl = (Number(t.capitalCoins) || 0) * lev * move * dir;
+          pnl = Math.max(-(Number(t.capitalCoins) || 0), pnl);
+          pnlCoins = round(pnl, 2);
+          pct = (Number(t.capitalCoins) || 0) ? (pnlCoins / t.capitalCoins) * 100 : 0;
+          if (Number(t.tpPct) > 0 && pct >= Number(t.tpPct)) reason = 'Take Profit Hit';
+          else if (Number(t.slPct) > 0 && pct <= -Number(t.slPct)) reason = 'Stop Loss Hit';
+          else if (Number(t.expiresAt) && now >= Number(t.expiresAt)) reason = 'Time limit reached';
+        }
         if (!reason) continue;
+        /* absolute TP/SL exits settle on the tick that triggered them */
+        if (reason === 'Take Profit Hit' || reason === 'Stop Loss Hit') {
+          const move = (q.price - t.entryPrice) / t.entryPrice;
+          pnl = (Number(t.capitalCoins) || 0) * lev * move * dir;
+          pnl = Math.max(-(Number(t.capitalCoins) || 0), pnl);
+          pnlCoins = round(pnl, 2);
+          pct = (Number(t.capitalCoins) || 0) ? (pnlCoins / t.capitalCoins) * 100 : 0;
+        }
+        const payout = Math.max(0, round((Number(t.capitalCoins) || 0) + pnlCoins, 2));
         const u = (db.users || []).find((x) => x.id === t.userId);
         if (!u) continue;
 
@@ -472,11 +532,13 @@ class MarketService {
             : `${t.ticker} closed with −${Math.abs(pnlCoins)} WC. ${payout} WC of capital was returned.`;
         db.notifications.unshift({
           id: id('nt_'), userId: u.id,
-          title: payout <= 0 ? 'Trade closed — total loss' : pnlCoins >= 0 ? 'Take profit — trade closed' : 'Trade closed at a loss',
+          title: reason === 'Take Profit Hit' ? 'Take Profit Hit — trade won'
+            : reason === 'Stop Loss Hit' ? 'Stop Loss Hit — trade closed'
+            : payout <= 0 ? 'Trade closed — total loss' : pnlCoins >= 0 ? 'Take profit — trade closed' : 'Trade closed at a loss',
           body, link: '#/invest/orders', icon: payout <= 0 ? 'ban' : 'trend', read: false, createdAt: now
         });
         changed++;
-        console.log('[market] settled', t.ticker, t.side, 'for', u.username, '·', reason, '· payout', payout, 'WC');
+        console.log('[market] settled', t.ticker, direction, 'for', u.username, '·', reason, '· exit', q.price, '· payout', payout, 'WC');
       }
       if (changed) {
         this.persist();
