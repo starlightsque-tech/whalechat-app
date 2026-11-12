@@ -390,6 +390,7 @@ LT.generateDemoUserOrders = function (count) {
     return { ok: false, error: 'Those orders would exceed this device\'s storage (currently ' + Math.round(beforeSize / 1024) + ' KB). Try fewer users.' };
   }
 
+  if (made) { try { LT.addDemoViews(made); } catch (e) {} }
   const cfg = LT.demoUsersCfg();
   cfg.ordering = made;
   cfg.orderAt = Date.now();
@@ -764,6 +765,33 @@ App.demoSellerResetRange = function (vendorId) {
 };
 
 /* ---------------- demo shopper activity (simulated orders) ---------------- */
+/* demo fleets also browse: keep view counts plausible for the reports */
+LT.addDemoViews = function (orderCount) {
+  const vendors = (DB.vendors || []).filter(v => v.demo);
+  if (!vendors.length) return;
+  const totalViews = Math.max(60, Math.round((Number(orderCount) || 0) * 14));
+  const perVendor = Math.ceil(totalViews / vendors.length);
+  vendors.forEach(v => {
+    const n = perVendor + Math.floor(Math.random() * 40);
+    const storePart = Math.round(n * 0.55);
+    v.storeViews = (v.storeViews || 0) + storePart;
+    v.productViews = (v.productViews || 0) + (n - storePart);
+    v.views = (v.views || 0) + n;
+    const items = (DB.products || []).filter(p => p.vendorId === v.id && p.active);
+    items.forEach(p => {
+      if (Math.random() < 0.7) p.views = (p.views || 0) + Math.max(1, Math.round(n / Math.max(1, items.length) * (0.5 + Math.random())));
+    });
+    for (let d = 0; d < 14; d++) {
+      const day = trafficDay(Date.now() - d * 864e5);
+      const add = Math.round(n / 14 * (0.5 + Math.random()));
+      if (!add) continue;
+      let row = DB.traffic.find(r => r.id === 'tv_' + day + '_' + v.id);
+      if (!row) { row = { id: 'tv_' + day + '_' + v.id, day, vendorId: v.id, views: 0 }; DB.traffic.push(row); }
+      row.views += add;
+    }
+  });
+};
+
 LT.seedDemoActivity = function (extra) {
   const cfg = LT.sellersCfg();
   if (!extra && cfg.activity && cfg.activity.seededAt) return cfg.activity;
@@ -811,6 +839,7 @@ LT.seedDemoActivity = function (extra) {
     });
     made++;
   }
+  if (made) { try { LT.addDemoViews(made); } catch (e) {} }
   cfg.activity = { seededAt: (cfg.activity && cfg.activity.seededAt) || now, orders: ((cfg.activity && cfg.activity.orders) || 0) + made, lastAt: now };
   return cfg.activity;
 };
@@ -915,6 +944,7 @@ function ltDemoActivityView() {
     <div><div class="section-title" style="margin:0">Demo activity</div>
       <div class="tiny muted">Everything demo shoppers and demo sellers have done — all simulated, never real revenue</div></div>
     <div class="row gap8">
+      <a href="#/admin/sales" class="btn btn-ghost">${ic('trend', 14)} Sales report</a>
       <a href="#/admin/bots" class="btn btn-ghost">${ic('users', 14)} Shoppers</a>
       <button class="btn btn-primary" data-act="demo-activity-add">${ic('plus', 15)} Generate orders</button>
     </div>
@@ -1042,6 +1072,7 @@ VIEWS.store = function (parts) {
   const v = vendorById(parts[1]);
   if (!v) return `<div class="empty"><div class="ic">${ic('store', 26)}</div><h3>Store not found</h3><p>This storefront may have been removed.</p><a href="#/market" class="btn btn-primary">Back to marketplace</a></div>`;
   const owner = findUser(v.userId) || {};
+  trackStoreView(v.id);
   if (v.demo) { try { LT.ensureDemoSellers(false); } catch (e) {} }
   const active = vendorIsActive(v) && v.status !== 'suspended';
   const all = (DB.products || []).filter(p => p.vendorId === v.id && p.active && p.stock > 0 && !p.hidden);
@@ -1135,6 +1166,274 @@ App.storeShare = async function (vendorId) {
 };
 
 /* ---------------- admin pages: sellers + activity ---------------- */
+/* ======================= sales performance reports =======================
+   Revenue, units, stock and storefront-view conversion for the whole app,
+   each seller and each product. Reads real and simulated orders with an
+   explicit filter so demo activity is never mistaken for real revenue. */
+LT.salesFilters = { days: 30, type: 'all' };
+LT.salesReport = function (opts) {
+  const f = Object.assign({}, LT.salesFilters, opts || {});
+  const days = Number(f.days) || 0;
+  const since = days > 0 ? Date.now() - days * 864e5 : 0;
+  const type = f.type || 'all';
+  const orders = (DB.orders || []).filter(o => (o.createdAt || 0) >= since);
+  const typed = orders.filter(o => type === 'all' ? true : type === 'real' ? !o.simulated : !!o.simulated);
+  const valid = typed.filter(o => !['cancelled', 'refunded'].includes(o.status));
+
+  const sellerMap = new Map();
+  const productMap = new Map();
+  let revenue = 0, units = 0;
+  valid.forEach(o => {
+    revenue += Number(o.totalUsd) || 0;
+    let oUnits = 0;
+    (o.items || []).forEach(it => {
+      const qty = Number(it.qty) || 0;
+      oUnits += qty;
+      const pid = it.productId || it.name;
+      let row = productMap.get(pid);
+      if (!row) {
+        const p = (DB.products || []).find(x => x.id === pid) || {};
+        row = { productId: pid, name: it.name || p.name || 'Product', image: it.image || p.image, category: it.category || p.category || 'Other', vendorId: o.vendorId, units: 0, revenue: 0 };
+        productMap.set(pid, row);
+      }
+      row.units += qty;
+      row.revenue += qty * (Number(it.priceUsd) || 0);
+    });
+    units += oUnits;
+    let s = sellerMap.get(o.vendorId);
+    if (!s) { s = { vendorId: o.vendorId, orders: 0, units: 0, revenue: 0 }; sellerMap.set(o.vendorId, s); }
+    s.orders++;
+    s.units += oUnits;
+    s.revenue += Number(o.totalUsd) || 0;
+  });
+
+  const vendors = (DB.vendors || []).map(v => {
+    const agg = sellerMap.get(v.id) || { orders: 0, units: 0, revenue: 0 };
+    const stock = (DB.products || []).filter(p => p.vendorId === v.id && p.active).reduce((n, p) => n + (Number(p.stock) || 0), 0);
+    const views = Number(v.views) || 0;
+    return {
+      vendor: v, orders: agg.orders, units: agg.units, revenue: agg.revenue,
+      stock, views, storeViews: Number(v.storeViews) || 0, productViews: Number(v.productViews) || 0,
+      conversion: views ? (agg.units / views) * 100 : null
+    };
+  }).sort((a, b) => b.revenue - a.revenue);
+
+  const products = [...productMap.values()].map(row => {
+    const p = (DB.products || []).find(x => x.id === row.productId) || {};
+    const views = Number(p.views) || 0;
+    return Object.assign({}, row, {
+      stock: Number(p.stock) || 0,
+      views,
+      conversion: views ? (row.units / views) * 100 : null
+    });
+  }).sort((a, b) => b.revenue - a.revenue);
+
+  const totalStock = (DB.products || []).filter(p => p.active).reduce((n, p) => n + (Number(p.stock) || 0), 0);
+  const totalViews = vendors.reduce((n, v) => n + v.views, 0);
+  const totalUnits = units;
+
+  const seriesDays = Math.max(1, Math.min(days || 30, 30));
+  const daily = [];
+  for (let i = seriesDays - 1; i >= 0; i--) {
+    const start = new Date(Date.now() - i * 864e5);
+    start.setHours(0, 0, 0, 0);
+    const end = start.getTime() + 864e5;
+    const list = valid.filter(o => (o.createdAt || 0) >= start.getTime() && (o.createdAt || 0) < end);
+    daily.push({
+      label: start.toLocaleDateString('en-US', { day: 'numeric', month: 'short' }),
+      short: start.toLocaleDateString('en-US', { weekday: 'short' }),
+      revenue: list.reduce((n, o) => n + (Number(o.totalUsd) || 0), 0),
+      units: list.reduce((n, o) => n + (o.items || []).reduce((k, i) => k + (Number(i.qty) || 0), 0), 0),
+      orders: list.length
+    });
+  }
+
+  const records = typed.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 150).map(o => {
+    const buyer = findUser(o.buyerId) || {};
+    const vendor = vendorById(o.vendorId) || {};
+    const items = o.items || [];
+    return {
+      order: o, buyer, vendor,
+      units: items.reduce((n, i) => n + (Number(i.qty) || 0), 0),
+      title: items[0] ? items[0].name + (items.length > 1 ? ' +' + (items.length - 1) + ' more' : '') : 'Order'
+    };
+  });
+
+  const real = typed.filter(o => !o.simulated && !['cancelled', 'refunded'].includes(o.status));
+  const demo = typed.filter(o => o.simulated && !['cancelled', 'refunded'].includes(o.status));
+  return {
+    days, type, orders: valid.length, revenue, units: totalUnits,
+    aov: valid.length ? revenue / valid.length : 0,
+    totalStock, totalViews, conversion: totalViews ? (totalUnits / totalViews) * 100 : null,
+    realRevenue: real.reduce((n, o) => n + (Number(o.totalUsd) || 0), 0),
+    demoRevenue: demo.reduce((n, o) => n + (Number(o.totalUsd) || 0), 0),
+    realOrders: real.length, demoOrders: demo.length,
+    vendors, products, daily, records, salesCount: typed.length
+  };
+};
+
+function ltSalesView() {
+  const st = LT.salesReport();
+  const f = LT.salesFilters;
+  const tabs = `<div class="admin-nav">${ADMIN_NAV.map(n => {
+    const key = n.href.replace('#/admin', '') || '';
+    return `<a href="${n.href}" class="${key === '/sales' ? 'on' : ''}">${n.label}</a>`;
+  }).join('')}</div>`;
+  const money = (n) => '$' + Math.round(n).toLocaleString('en-US');
+  const pct = (v) => v == null ? '—' : v.toFixed(v >= 10 ? 0 : 1) + '%';
+  const maxRev = Math.max(1, ...st.daily.map(d => d.revenue));
+  const maxSellerRev = Math.max(1, ...st.vendors.map(v => v.revenue));
+  const maxProductRev = Math.max(1, ...st.products.map(p => p.revenue));
+  const topProducts = st.products.slice(0, 60);
+  const rangeBtn = (d, label) => `<button class="chip ${Number(f.days) === d ? 'on' : ''}" data-act="sales-range" data-id="${d}">${label}</button>`;
+  return `${tabs}
+  <div class="page-head"><div class="between" style="align-items:flex-start;gap:12px;flex-wrap:wrap">
+    <div><div class="section-title" style="margin:0">Sales performance</div>
+      <div class="tiny muted">Revenue, units, stock and storefront conversion across the whole app</div></div>
+    <div class="row gap8" style="align-items:center;flex-wrap:wrap">
+      <div class="chip-row">${rangeBtn(7, '7d')}${rangeBtn(14, '14d')}${rangeBtn(30, '30d')}${rangeBtn(90, '90d')}</div>
+      <select class="input" id="salesType" style="width:auto;height:34px;padding:0 10px" onchange="App.salesType(this.value)">
+        <option value="all" ${f.type === 'all' ? 'selected' : ''}>All orders</option>
+        <option value="real" ${f.type === 'real' ? 'selected' : ''}>Real sales only</option>
+        <option value="demo" ${f.type === 'demo' ? 'selected' : ''}>Demo only</option>
+      </select>
+      <button class="btn btn-ghost btn-sm" data-act="sales-export">${ic('download', 14)} CSV</button>
+    </div>
+  </div></div>
+
+  <div class="grid-cards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px">
+    ${[
+      ['Revenue', money(st.revenue), (f.type === 'all' ? money(st.demoRevenue) + ' demo' : st.orders + ' orders')],
+      ['Units sold', st.units.toLocaleString('en-US'), st.orders + ' paid orders'],
+      ['Avg order value', money(st.aov), 'per paid order'],
+      ['Stock remaining', st.totalStock.toLocaleString('en-US'), 'active listings'],
+      ['Storefront views', st.totalViews.toLocaleString('en-US'), 'store + product pages'],
+      ['Conversion', pct(st.conversion), 'units ÷ views'],
+      ['Demo / real', st.demoOrders + ' / ' + st.realOrders, 'orders in range']
+    ].map(([label, value, sub]) => `<div class="card" style="margin:0">
+      <div class="tiny muted">${label}</div>
+      <div style="font-family:var(--display);font-size:22px;font-weight:800;letter-spacing:-.03em;margin-top:4px">${value}</div>
+      <div class="tiny muted" style="margin-top:2px">${sub}</div>
+    </div>`).join('')}
+  </div>
+
+  <div class="card mt14">
+    <div class="between" style="align-items:center;flex-wrap:wrap;gap:8px">
+      <div><div class="card-title" style="margin:0">Sales · last ${st.daily.length} days</div>
+        <div class="tiny muted">Bars are daily revenue, numbers above are units sold</div></div>
+      <span class="badge">${money(st.revenue)} total</span>
+    </div>
+    <div style="display:flex;align-items:flex-end;gap:6px;height:170px;margin-top:18px">
+      ${st.daily.map(d => `<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:4px;min-width:0" title="${d.label}: ${money(d.revenue)} · ${d.units} units · ${d.orders} orders">
+        <div class="tiny muted" style="font-size:9px">${d.units || ''}</div>
+        <div style="width:100%;max-width:26px;height:${Math.max(3, Math.round(d.revenue / maxRev * 118))}px;border-radius:6px 6px 3px 3px;background:linear-gradient(180deg,#2ee6c9,#3aa0ff);opacity:${d.revenue ? 1 : .18}"></div>
+        <div class="tiny muted" style="font-size:9px;white-space:nowrap">${d.short}</div>
+      </div>`).join('')}
+    </div>
+  </div>
+
+  <div class="card mt14">
+    <div class="between" style="align-items:center;flex-wrap:wrap;gap:8px">
+      <div class="card-title" style="margin:0">Seller performance</div>
+      <span class="badge">${st.vendors.length} stores</span>
+    </div>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th>Store</th><th>Orders</th><th>Units</th><th>Revenue</th><th>Stock</th><th>Views</th><th>Conversion</th><th style="width:110px">Share</th></tr></thead>
+      <tbody>
+        ${st.vendors.map(v => `<tr>
+          <td><a href="#/store/${v.vendor.id}" style="color:inherit;text-decoration:none;font-weight:600">${esc(v.vendor.name)}</a>
+            <div class="tiny muted">${esc(v.vendor.city || '')}${v.vendor.demo ? ' · demo' : ''}</div></td>
+          <td>${v.orders}</td><td>${v.units}</td><td>${money(v.revenue)}</td>
+          <td>${v.stock.toLocaleString('en-US')}</td><td>${v.views.toLocaleString('en-US')}</td>
+          <td>${pct(v.conversion)}</td>
+          <td><div style="height:5px;border-radius:3px;background:var(--surface-2);overflow:hidden"><div style="height:100%;width:${Math.round(v.revenue / maxSellerRev * 100)}%;background:linear-gradient(90deg,#2ee6c9,#3aa0ff)"></div></div></td>
+        </tr>`).join('')}
+      </tbody>
+    </table></div>
+    <div class="tiny muted mt10">Storefront views count unique visits to a store page or product page per session. Conversion is units sold ÷ views over the selected period.</div>
+  </div>
+
+  <div class="card mt14">
+    <div class="between" style="align-items:center;flex-wrap:wrap;gap:8px">
+      <div class="card-title" style="margin:0">Product performance</div>
+      <span class="badge">top ${topProducts.length} of ${st.products.length}</span>
+    </div>
+    ${topProducts.length ? `<div class="table-wrap"><table class="table">
+      <thead><tr><th>Product</th><th>Units</th><th>Revenue</th><th>Stock</th><th>Views</th><th>Conversion</th><th style="width:110px">Revenue share</th></tr></thead>
+      <tbody>
+        ${topProducts.map(p => `<tr>
+          <td><div class="row gap8" style="align-items:center">
+            <span style="width:34px;height:34px;border-radius:8px;overflow:hidden;flex:0 0 auto;background:var(--surface-2)">${p.image ? `<img src="${p.image}" style="width:100%;height:100%;object-fit:cover"/>` : ''}</span>
+            <div style="min-width:0"><div class="small" style="font-weight:600">${esc(p.name)}</div>
+              <div class="tiny muted">${esc(p.category)}</div></div>
+          </div></td>
+          <td>${p.units}</td><td>${money(p.revenue)}</td><td>${p.stock}</td><td>${p.views.toLocaleString('en-US')}</td><td>${pct(p.conversion)}</td>
+          <td><div style="height:5px;border-radius:3px;background:var(--surface-2);overflow:hidden"><div style="height:100%;width:${Math.round(p.revenue / maxProductRev * 100)}%;background:linear-gradient(90deg,#2ee6c9,#3aa0ff)"></div></div></td>
+        </tr>`).join('')}
+      </tbody>
+    </table></div>` : `<div class="inv-empty"><p class="small muted">No paid orders in this period.</p></div>`}
+  </div>
+
+  <div class="card mt14">
+    <div class="between" style="align-items:center;flex-wrap:wrap;gap:8px">
+      <div class="card-title" style="margin:0">Sales records</div>
+      <span class="badge">${st.salesCount} orders · showing ${st.records.length}</span>
+    </div>
+    ${st.records.length ? `<div class="table-wrap"><table class="table">
+      <thead><tr><th>Order</th><th>Buyer</th><th>Seller</th><th>Items</th><th>Units</th><th>Total</th><th>Status</th></tr></thead>
+      <tbody>
+        ${st.records.map(r => `<tr>
+          <td><div class="small" style="font-weight:600">${esc(r.order.ref || r.order.id)}</div>
+            <div class="tiny muted">${dateLabel(r.order.createdAt)}</div></td>
+          <td>${esc(r.buyer.fullName || 'Buyer')}<div class="tiny muted">${esc(r.buyer.username || '')}</div></td>
+          <td>${esc(r.vendor.name || 'Store')}</td>
+          <td class="small">${esc(r.title)}</td>
+          <td>${r.units}</td><td>${usd(r.order.totalUsd)}</td>
+          <td><span class="badge" style="text-transform:capitalize">${esc(r.order.status)}</span>${r.order.simulated ? ' <span class="badge" style="font-size:9px">Demo</span>' : ''}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table></div>` : `<div class="inv-empty"><p class="small muted">No orders in this period.</p></div>`}
+  </div>
+  <style>
+    .table-wrap{overflow:auto;margin-top:8px}
+    .table{width:100%;border-collapse:collapse;font-size:12.5px}
+    .table th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);padding:6px 8px;border-bottom:1px solid var(--border);white-space:nowrap}
+    .table td{padding:8px;border-bottom:1px solid rgba(255,255,255,.05);vertical-align:middle;white-space:nowrap}
+    .table tr:last-child td{border-bottom:none}
+    @media(max-width:720px){.table{font-size:11.5px}.table th,.table td{padding:6px}}
+  </style>`;
+}
+
+App.salesRange = function (days) {
+  LT.salesFilters.days = Number(days) || 30;
+  render();
+};
+App.salesType = function (type) {
+  LT.salesFilters.type = type || 'all';
+  render();
+};
+App.salesExport = function () {
+  const st = LT.salesReport();
+  const head = ['Order', 'Date', 'Status', 'Buyer', 'Seller', 'Items', 'Units', 'Total USD', 'Demo'];
+  const lines = [head.join(',')];
+  const esc = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+  st.records.forEach(r => {
+    lines.push([
+      r.order.ref || r.order.id, new Date(r.order.createdAt || Date.now()).toISOString(), r.order.status,
+      r.buyer.fullName || '', r.vendor.name || '', r.title, r.units, r.order.totalUsd, r.order.simulated ? 'yes' : 'no'
+    ].map(esc).join(','));
+  });
+  try {
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'whalechat-sales-' + new Date().toISOString().slice(0, 10) + '.csv';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    toast('Sales CSV exported', 'ok');
+  } catch (e) { toast('Could not export CSV', 'err'); }
+};
+
 function ltDemoSellersView() {
   const st = LT.demoSellerStats();
   const cfg = st.cfg;
@@ -1260,6 +1559,11 @@ VIEWS.admin = function (parts, params) {
     try { LT.ensureDemoSellers(false); } catch (e) {}
     return ltDemoActivityView();
   }
+  if ((parts[1] || '') === 'sales') {
+    const u = me();
+    if (!u || u.role !== 'admin') return `<div class="card empty"><div class="ic">${ic('lock', 26)}</div><h3>Admin access only</h3></div>`;
+    return ltSalesView();
+  }
   return _adminDemoSellers.apply(this, arguments);
 };
 if (!ADMIN_NAV.some(n => n.key === 'admin-demo-sellers')) {
@@ -1269,6 +1573,10 @@ if (!ADMIN_NAV.some(n => n.key === 'admin-demo-sellers')) {
 if (!ADMIN_NAV.some(n => n.key === 'admin-demo-activity')) {
   ADMIN_NAV.splice(Math.max(0, ADMIN_NAV.length - 2), 0,
     { key: 'admin-demo-activity', label: 'Demo activity', icon: 'trend', href: '#/admin/demo-activity' });
+}
+if (!ADMIN_NAV.some(n => n.key === 'admin-sales')) {
+  ADMIN_NAV.splice(Math.max(0, ADMIN_NAV.length - 2), 0,
+    { key: 'admin-sales', label: 'Sales', icon: 'wallet', href: '#/admin/sales' });
 }
 
 /* seed once the app is up, then retry in the background until it lands */
