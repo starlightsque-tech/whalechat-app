@@ -592,6 +592,22 @@
       </div>
 
       <details class="guide-sec" open>
+        <summary>Spot Buy / Sell — primary order flow</summary>
+        <ul class="guide-list">
+          <li><b>Buy:</b> enter WC or shares. Cost is deducted immediately at the live Finnhub price.</li>
+          <li><b>Position:</b> symbol, entry price, quantity, invested capital, optional TP and SL are recorded.</li>
+          <li><b>Sell:</b> users can sell any open position at the live price. Payout = quantity × price, credited in WC.</li>
+          <li><b>Auto TP/SL:</b> the backend checks every second and sells the whole position atomically when either target is crossed.</li>
+          <li><b>Fees:</b> spot orders have no fee; 1 WC = $0.50.</li>
+        </ul>
+      </details>
+
+      <details class="guide-sec">
+        <summary>Leveraged Rise / Fall — existing positions</summary>
+        <p>The older leveraged Rise/Fall ticket is retained for existing open positions and settlement. New spot orders above are the primary stock-trading flow.</p>
+      </details>
+
+      <details class="guide-sec" open>
         <summary>1 · Trade flow</summary>
         <ol class="guide-steps">
           <li><b>Open.</b> User picks a stock, Rise or Fall, a stake and optional TP/SL. The stake plus entry fee is deducted; the entry price becomes the baseline.</li>
