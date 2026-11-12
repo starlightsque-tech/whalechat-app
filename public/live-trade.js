@@ -133,7 +133,7 @@ const LT = {
     this.open().forEach(t => {
       /* Finnhub-covered symbols are settled by the backend so a closed browser
          cannot miss a payout — avoid paying the same trade twice. */
-      if (typeof WC_MARKET !== 'undefined' && WC_MARKET.feed && WC_MARKET.feed.quotes && WC_MARKET.feed.quotes[t.ticker]) return;
+      if (typeof WC_MARKET !== 'undefined' && typeof WC_MARKET.feedFresh === 'function' && WC_MARKET.feedFresh() && WC_MARKET.feed.quotes && WC_MARKET.feed.quotes[t.ticker]) return;
       const p = this.calc(t);
       if (t.tpPct > 0 && p.pnlPct >= t.tpPct) return void this.settle(t, 'Take profit target hit');
       if (t.slPct > 0 && p.pnlPct <= -t.slPct) return void this.settle(t, 'Stop loss hit');
