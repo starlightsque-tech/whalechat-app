@@ -1,5 +1,5 @@
 /* =========================================================================
-   WhaleChat spot orders — Buy / Sell at the live Alpaca effective price
+   WhaleChat spot orders — Buy / Sell at the live Finnhub price
    TP/SL are monitored and executed atomically by the backend market worker.
    ========================================================================= */
 'use strict';
@@ -7,8 +7,6 @@
   if (typeof window === 'undefined') return;
   const S = window.WC_SPOT = window.WC_SPOT || {};
   S.mode = 'usd';
-  S.tpMode = 'price';
-  S.slMode = 'price';
   S.ticker = '';
 
   function apiPath(p) {
@@ -35,21 +33,13 @@
     const pv = document.getElementById('spotPreview');
     if (!el || !pv) return;
     const q = qFor(S.ticker);
-    if (!q || !(q.price > 0)) { pv.textContent = 'Waiting for a live Alpaca quote…'; return; }
+    if (!q || !(q.price > 0)) { pv.textContent = 'Waiting for a live Finnhub quote…'; return; }
     const v = Number(el.value) || 0;
     let shares = 0, cost = 0, usdAmt = 0;
     if (S.mode === 'usd') { usdAmt = v; shares = v / q.price; cost = v / 0.5; }
     else if (S.mode === 'wc') { cost = v; usdAmt = v * 0.5; shares = usdAmt / q.price; }
     else { shares = v; usdAmt = shares * q.price; cost = usdAmt / 0.5; }
     pv.innerHTML = `<b>${usdAmt.toLocaleString(undefined, { style: 'currency', currency: 'USD' })}</b> = <b>${cost.toFixed(2)} WC</b> · ${shares.toLocaleString(undefined, { maximumFractionDigits: 6 })} shares · live ${px(S.ticker, q.price)} (${(q.price * 2).toFixed(2)} WC)`;
-    const toEl = document.getElementById('spotTp');
-    const slEl = document.getElementById('spotSl');
-    const tpRaw = Number(toEl && toEl.value) || 0;
-    const slRaw = Number(slEl && slEl.value) || 0;
-    const tpHint = document.getElementById('spotTpHint');
-    const slHint = document.getElementById('spotSlHint');
-    if (tpHint) tpHint.textContent = tpRaw > 0 ? (S.tpMode === 'pct' ? 'Price ' + px(S.ticker, q.price * (1 + tpRaw / 100)) + ' (' + (q.price * (1 + tpRaw / 100) * 2).toFixed(2) + ' WC)' : '≈ +' + (((tpRaw / q.price) - 1) * 100).toFixed(2) + '%') : '';
-    if (slHint) slHint.textContent = slRaw > 0 ? (S.slMode === 'pct' ? 'Price ' + px(S.ticker, q.price * (1 - slRaw / 100)) + ' (' + (q.price * (1 - slRaw / 100) * 2).toFixed(2) + ' WC)' : '≈ −' + ((1 - (slRaw / q.price)) * 100).toFixed(2) + '%') : '';
   };
 
   function ticketHTML(ticker) {
@@ -61,7 +51,7 @@
     return `<div class="card" id="spotTicketCard">
       <div class="between" style="align-items:flex-start;gap:10px">
         <div><div class="card-title" style="margin:0">Buy ${escSpot(label(ticker))}</div>
-          <div class="tiny muted" style="margin-top:2px">Live selling price ${price > 0 ? px(ticker, price) + ' (' + (price * 2).toFixed(2) + ' WC)' : 'waiting for Alpaca quote'}</div></div>
+          <div class="tiny muted" style="margin-top:2px">Live selling price ${price > 0 ? px(ticker, price) + ' (' + (price * 2).toFixed(2) + ' WC)' : 'waiting for Finnhub quote'}</div></div>
         <span class="badge badge-success">Spot</span>
       </div>
       <div class="lt-modebtns" style="margin-top:11px">
@@ -76,33 +66,11 @@
       </div>
       <div class="row" style="gap:8px">
         <div class="field grow"><label class="label">Take Profit (optional)</label>
-          <div class="spot-modebtns">
-            <button type="button" class="${S.tpMode === 'price' ? 'on' : ''}" data-act="spot-tp-mode" data-mode="price">Price</button>
-            <button type="button" class="${S.tpMode === 'pct' ? 'on' : ''}" data-act="spot-tp-mode" data-mode="pct">% Gain</button>
-          </div>
-          <input class="input" id="spotTp" type="number" step="0.01" min="0" placeholder="${S.tpMode === 'pct' ? '5' : price > 0 ? (price * 1.05).toFixed(4) : 'price'}"/>
-          <div class="tiny muted" id="spotTpHint"></div></div>
+          <input class="input" id="spotTp" type="number" step="0.01" min="0" placeholder="${price > 0 ? (price * 1.05).toFixed(4) : 'price'}"/></div>
         <div class="field grow"><label class="label">Stop Loss (optional)</label>
-          <div class="spot-modebtns">
-            <button type="button" class="${S.slMode === 'price' ? 'on' : ''}" data-act="spot-sl-mode" data-mode="price">Price</button>
-            <button type="button" class="${S.slMode === 'pct' ? 'on' : ''}" data-act="spot-sl-mode" data-mode="pct">% Loss</button>
-          </div>
-          <input class="input" id="spotSl" type="number" step="0.01" min="0" placeholder="${S.slMode === 'pct' ? '5' : price > 0 ? (price * 0.95).toFixed(4) : 'price'}"/>
-          <div class="tiny muted" id="spotSlHint"></div></div>
+          <input class="input" id="spotSl" type="number" step="0.01" min="0" placeholder="${price > 0 ? (price * 0.95).toFixed(4) : 'price'}"/></div>
       </div>
-      <div class="field"><label class="label">Due time / duration (optional)</label>
-        <select class="input" id="spotDue">
-          <option value="0">No expiry</option>
-          <option value="15">15 minutes</option>
-          <option value="60">1 hour</option>
-          <option value="240">4 hours</option>
-          <option value="1440">1 day</option>
-          <option value="10080">7 days</option>
-        </select>
-        <input class="input" id="spotDueCustom" type="datetime-local" style="margin-top:6px" title="Custom due time"/>
-        <div class="tiny muted" style="margin-top:4px">Choose a preset or a custom expiry. The backend closes the trade at the live effective price when time is up.</div>
-      </div>
-      <div class="tiny muted" style="margin:-2px 0 10px;line-height:1.55">TP, SL and due time run on the backend every second and close the whole position at the live effective price when hit.</div>
+      <div class="tiny muted" style="margin:-2px 0 10px;line-height:1.55">TP/SL run on the backend every second and sell the whole position at the live price when hit.</div>
       <button class="btn btn-primary" data-act="spot-buy" style="width:100%">${typeof ic === 'function' ? ic('trend', 15) : ''} Buy ${escSpot(label(ticker))}</button>
       ${h ? positionHTML(ticker, h, q) : ''}
     </div>`;
@@ -127,7 +95,6 @@
         <div><span>P/L</span><b class="${pnl >= 0 ? 'up' : 'down'}" data-spot-pnl>${pnl >= 0 ? '+' : '−'}${Math.abs(pnl).toFixed(2)} WC <span class="tiny">(${pnl >= 0 ? '+' : '−'}$${Math.abs(pnl * 0.5).toFixed(2)})</span></b></div>
         <div><span>Take Profit</span><b>${Number(h.takeProfitPrice) > 0 ? px(ticker, h.takeProfitPrice) : '—'}</b></div>
         <div><span>Stop Loss</span><b>${Number(h.stopLossPrice) > 0 ? px(ticker, h.stopLossPrice) : '—'}</b></div>
-        <div><span>Due time</span><b>${h.dueTime ? new Date(Number(h.dueTime)).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}</b></div>
       </div>
       <div class="row" style="gap:7px;margin-top:9px">
         <button class="btn btn-danger grow" data-act="spot-sell" data-t="${escSpot(ticker)}">Sell now</button>
@@ -140,13 +107,11 @@
           <div class="field grow" style="margin:0"><label class="label">Stop Loss</label>
             <input class="input" id="spotInlineSl" type="number" step="0.01" min="0" value="${Number(h.stopLossPrice) > 0 ? h.stopLossPrice : ''}" placeholder="optional"/></div>
         </div>
-        <div class="field" style="margin-top:8px"><label class="label">Due time</label>
-          <input class="input" id="spotInlineDue" type="datetime-local" value="${h.dueTime ? localDT(h.dueTime) : ''}"/></div>
         <div class="row" style="gap:8px;margin-top:8px">
-          <button class="btn btn-sm btn-primary grow" data-act="spot-save-tpsl" data-t="${escSpot(ticker)}">Save exit rules</button>
+          <button class="btn btn-sm btn-primary grow" data-act="spot-save-tpsl" data-t="${escSpot(ticker)}">Save TP / SL</button>
           <button class="btn btn-sm btn-ghost" data-act="spot-clear-tpsl" data-t="${escSpot(ticker)}">Clear</button>
         </div>
-        <div class="tiny muted" style="margin-top:5px">TP must be above entry, SL below. The first level or due time closes the position.</div>
+        <div class="tiny muted" style="margin-top:5px">TP must be above entry, SL below. The backend executes the first level hit.</div>
       </div>
       <div class="tiny muted center" style="margin-top:5px">Payout WC = (quantity × exit USD) ÷ 0.50 · credited instantly</div>
     </div>`;
@@ -169,16 +134,6 @@
     else content.insertBefore(box, content.firstChild);
     const amt = document.getElementById('spotAmount');
     if (amt) amt.addEventListener('input', S.preview);
-    ['spotTp', 'spotSl', 'spotDue', 'spotDueCustom'].forEach((id) => {
-      const el = document.getElementById(id);
-      if (el) el.addEventListener('input', S.preview);
-    });
-    const dueSel = document.getElementById('spotDue');
-    const dueCustom = document.getElementById('spotDueCustom');
-    if (dueSel && dueCustom) {
-      dueSel.addEventListener('change', () => { if (Number(dueSel.value) > 0) dueCustom.value = ''; });
-      dueCustom.addEventListener('change', () => { if (dueCustom.value) dueSel.value = '0'; });
-    }
     S.preview();
   }
 
@@ -245,36 +200,13 @@
       S.preview();
     };
 
-    App.spotTpMode = function (id, ds) {
-      S.tpMode = ds.mode === 'pct' ? 'pct' : 'price';
-      document.querySelectorAll('[data-act="spot-tp-mode"]').forEach((b) => b.classList.toggle('on', b.getAttribute('data-mode') === S.tpMode));
-      const el = document.getElementById('spotTp');
-      if (el) { el.value = ''; el.placeholder = S.tpMode === 'pct' ? '5' : ''; }
-      S.preview();
-    };
-
-    App.spotSlMode = function (id, ds) {
-      S.slMode = ds.mode === 'pct' ? 'pct' : 'price';
-      document.querySelectorAll('[data-act="spot-sl-mode"]').forEach((b) => b.classList.toggle('on', b.getAttribute('data-mode') === S.slMode));
-      const el = document.getElementById('spotSl');
-      if (el) { el.value = ''; el.placeholder = S.slMode === 'pct' ? '5' : ''; }
-      S.preview();
-    };
-
     App.spotBuy = async function () {
       if (typeof Remote === 'undefined' || !Remote.enabled) return tmsg('Connect the sync server to place spot orders', 'err');
       const amt = Number((document.getElementById('spotAmount') || {}).value) || 0;
       if (!(amt > 0)) return tmsg('Enter an amount or quantity', 'err');
-      const q = qFor(S.ticker);
-      const live = q && q.price > 0 ? Number(q.price) : 0;
-      const tpRaw = Number((document.getElementById('spotTp') || {}).value) || 0;
-      const slRaw = Number((document.getElementById('spotSl') || {}).value) || 0;
-      const tp = tpRaw > 0 ? (S.tpMode === 'pct' ? live * (1 + tpRaw / 100) : tpRaw) : 0;
-      const sl = slRaw > 0 ? (S.slMode === 'pct' ? live * (1 - slRaw / 100) : slRaw) : 0;
-      const duePreset = Number((document.getElementById('spotDue') || {}).value) || 0;
-      const dueCustom = Date.parse(((document.getElementById('spotDueCustom') || {}).value) || '') || 0;
-      const dueTime = dueCustom > 0 ? dueCustom : (duePreset > 0 ? Date.now() + duePreset * 60000 : 0);
-      const body = { userId: me().id, ticker: S.ticker, tpPrice: tp, slPrice: sl, dueTime };
+      const tp = Number((document.getElementById('spotTp') || {}).value) || 0;
+      const sl = Number((document.getElementById('spotSl') || {}).value) || 0;
+      const body = { userId: me().id, ticker: S.ticker, tpPrice: tp, slPrice: sl };
       if (S.mode === 'usd') body.amountUsd = amt;
       else if (S.mode === 'wc') body.amountCoins = amt;
       else body.shares = amt;
@@ -309,10 +241,8 @@
       const ticker = ds.t || S.ticker;
       const tp = Number((document.getElementById('spotInlineTp') || {}).value) || 0;
       const sl = Number((document.getElementById('spotInlineSl') || {}).value) || 0;
-      const dueVal = ((document.getElementById('spotInlineDue') || {}).value) || '';
-      const dueTime = Date.parse(dueVal) || 0;
       try {
-        const r = await apiJSON('/api/market/spot/tpsl', { method: 'POST', body: JSON.stringify({ userId: me().id, ticker, tpPrice: tp, slPrice: sl, dueTime }) }, 20000);
+        const r = await apiJSON('/api/market/spot/tpsl', { method: 'POST', body: JSON.stringify({ userId: me().id, ticker, tpPrice: tp, slPrice: sl }) }, 20000);
         if (!r.res || !r.res.ok || !r.data || !r.data.ok) return tmsg((r.data && r.data.error) || 'Update failed', 'err');
         await Remote.refresh(true); tmsg('TP / SL updated', 'ok'); render();
       } catch (e) { tmsg('Update failed: ' + e.message, 'err'); }
@@ -323,8 +253,7 @@
       if (!ed) return;
       const tp = document.getElementById('spotInlineTp');
       const sl = document.getElementById('spotInlineSl');
-      const due = document.getElementById('spotInlineDue');
-      if (tp) tp.value = ''; if (sl) sl.value = ''; if (due) due.value = '';
+      if (tp) tp.value = ''; if (sl) sl.value = '';
       App.spotSaveTpsl(id, ds);
     };
 
@@ -344,30 +273,19 @@
         <div class="field"><label class="label">Take Profit price</label>
           <input class="input" id="spotEditTp" type="number" step="0.01" value="${Number(h.takeProfitPrice) > 0 ? h.takeProfitPrice : ''}" placeholder="optional"/></div>
         <div class="field"><label class="label">Stop Loss price</label>
-          <input class="input" id="spotEditSl" type="number" step="0.01" value="${Number(h.stopLossPrice) > 0 ? h.stopLossPrice : ''}" placeholder="optional"/></div>
-        <div class="field"><label class="label">Due time</label>
-          <input class="input" id="spotEditDue" type="datetime-local" value="${h.dueTime ? localDT(h.dueTime) : ''}"/></div>`,
+          <input class="input" id="spotEditSl" type="number" step="0.01" value="${Number(h.stopLossPrice) > 0 ? h.stopLossPrice : ''}" placeholder="optional"/></div>`,
         `<button class="btn btn-ghost" data-close style="flex:1">Cancel</button>
          <button class="btn btn-primary" id="spotTpSave" style="flex:1">Save</button>`), { locked: false });
       document.getElementById('spotTpSave').onclick = async () => {
         const tp = Number(document.getElementById('spotEditTp').value) || 0;
         const sl = Number(document.getElementById('spotEditSl').value) || 0;
-        const dueTime = Date.parse(((document.getElementById('spotEditDue') || {}).value) || '') || 0;
         try {
-          const r = await apiJSON('/api/market/spot/tpsl', { method: 'POST', body: JSON.stringify({ userId: me().id, ticker, tpPrice: tp, slPrice: sl, dueTime }) }, 20000);
+          const r = await apiJSON('/api/market/spot/tpsl', { method: 'POST', body: JSON.stringify({ userId: me().id, ticker, tpPrice: tp, slPrice: sl }) }, 20000);
           if (!r.res || !r.res.ok || !r.data || !r.data.ok) return tmsg((r.data && r.data.error) || 'Update failed', 'err');
           closeModal(); await Remote.refresh(true); tmsg('TP / SL updated', 'ok'); render();
         } catch (e) { tmsg('Update failed: ' + e.message, 'err'); }
       };
     };
-  }
-
-  function localDT(ms) {
-    try {
-      const d = new Date(Number(ms));
-      const p = (n) => String(n).padStart(2, '0');
-      return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes());
-    } catch (e) { return ''; }
   }
 
   function escSpot(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
@@ -398,9 +316,6 @@
     .spot-row{display:flex;gap:8px;align-items:center;padding:9px 0;border-top:1px solid var(--border)}
     .spot-row:first-of-type{border-top:none}
     .spot-tpsl-edit{margin-top:9px;padding:9px;border:1px dashed var(--border);border-radius:10px;background:var(--surface)}
-    .spot-modebtns{display:flex;gap:4px;margin-bottom:4px}
-    .spot-modebtns button{flex:1;padding:4px 6px;font-size:9.5px;font-weight:700;border-radius:7px;border:1px solid var(--border);background:transparent;color:var(--muted)}
-    .spot-modebtns button.on{background:rgba(46,230,201,.12);border-color:rgba(46,230,201,.4);color:var(--accent)}
     @media(max-width:420px){.spot-grid{grid-template-columns:1fr 1fr}}
     `;
     document.head.appendChild(st);
