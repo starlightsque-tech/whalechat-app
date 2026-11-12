@@ -747,7 +747,7 @@
       if (refresh) refresh.value = r.data.refreshSec;
       if (hint) hint.textContent = r.data.hasKey
         ? 'A key is saved on the server (' + r.data.keyMasked + '). Leave blank to keep it, or paste a new one to replace it.'
-        : 'No key saved yet. Hybrid mode needs a key; Simulated Only runs 24/7 without one.';
+        : 'No key saved yet. Hybrid mode needs a Finnhub key; without it quotes stay offline.';
       paintAdminStatus();
     } catch (e) { /* keep static card */ }
     finally { MK.adminLoading = false; }
@@ -779,7 +779,7 @@
         MK.config = r.data;
         MK.adminLoaded = false;
         try { await poll(); } catch (e) {}
-        adminToast('Market data settings saved · ' + (r.data.mode === 'hybrid' ? 'Hybrid' : 'Simulated only'), 'ok');
+        adminToast('Market data settings saved · Live Finnhub mode', 'ok');
         if (typeof render === 'function') render();
       } catch (e) {
         adminToast('Save failed: ' + e.message, 'err');
