@@ -1,8 +1,8 @@
 {
-  "version": "3.21.1",
-  "build": "2026-11-12T15:00:00Z",
+  "version": "3.21.2",
+  "build": "2026-11-12T15:20:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.21.1 - accurate Finnhub live dividend count in admin status.",
-  "releasedAt": "2026-11-12T15:00:00Z",
+  "notes": "WhaleChat 3.21.2 - dividend yield badges and duration bonus estimates on watchlist and portfolio rows.",
+  "releasedAt": "2026-11-12T15:20:00Z",
   "minimum": "3.0.0"
 }
