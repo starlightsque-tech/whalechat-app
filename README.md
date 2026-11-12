@@ -203,3 +203,47 @@ keep the last 48 copies, so restarts never lose data.
 
 
 
+
+## Demo sellers & demo media
+
+The marketplace ships with a fleet of demo storefronts so it never looks empty. Six vendor
+accounts publish **10–50 different electronics products each** (fridges, solar lamps, phones,
+watches, sound systems, JBL players, chargers, headphones, speakers and power banks) from a
+catalogue of 36 models — 144 listings in total.
+
+Everything is generated from one source file and is safe to re-run:
+
+```
+catalog/demo-catalog.source.json      sellers, product models, specs, prices, image prompts
+scripts/generate-demo-catalog.mjs     assigns 10–50 products per seller, sets price/stock, writes
+                                      public/demo-catalog.json and encodes the images
+scripts/encode-demo-images.py         resize/crop renders → public/demo/**/*.jpg.b64 (needs Pillow)
+assets-src/demo/{products,sellers}/   source renders (1024px PNGs) used when regenerating
+public/demo-catalog.json              generated runtime catalogue fetched by the app
+public/demo/products/*.jpg.b64        36 realistic product photos
+public/demo/sellers/*.jpg.b64         6 real owner portraits
+```
+
+Regenerate after editing the source catalogue:
+
+```bash
+# renders already in assets-src/demo (products/<slug>.png, sellers/<slug>.png)
+node scripts/generate-demo-catalog.mjs
+
+# only rebuild the JSON, keep the committed photos
+node scripts/generate-demo-catalog.mjs --skip-images
+
+npm run build     # decode images + assemble public/whalechat.html
+```
+
+Bump `version` in `catalog/demo-catalog.source.json` when listings change — installed apps
+re-seed automatically (updates in place, retires only demo listings that were never ordered).
+
+In the app, **Admin → Demo sellers** shows every storefront with its product count, and lets an
+admin turn the fleet off (hides the listings) or republish the catalogues. Each seller account is
+`isBot` + `isDemoSeller` with no password, and every listing carries `demo: true`, so demo stock
+is always distinguishable from real vendor inventory. Demo shopper orders remain flagged
+`simulated` as before.
+
+Product photos and portraits are studio-style renders shipped with the app — no emoji and no
+placeholder graphics. Owner avatars live at `./demo/sellers/<seller-slug>.jpg`.
