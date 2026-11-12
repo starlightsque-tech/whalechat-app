@@ -509,7 +509,7 @@ class MarketService {
     return Number(FALLBACK_DIVIDEND_YIELDS[ticker]) || 0;
   }
 
-  applyDividendMap(map, source) {
+  applyDividendMap(map, source, liveCount) {
     const db = this.getDb && this.getDb();
     if (!db) return null;
     if (!db.invest) db.invest = {};
@@ -521,7 +521,7 @@ class MarketService {
     if (!db.invest.dividendOverrides || typeof db.invest.dividendOverrides !== 'object') db.invest.dividendOverrides = {};
     this.dividendSyncedAt = db.invest.dividendSyncedAt;
     this.dividendSource = db.invest.dividendSource;
-    this.dividendFetched = Object.keys(db.invest.dividendYields).length;
+    this.dividendFetched = liveCount != null ? Number(liveCount) : (source === 'finnhub' ? TICKERS.length : 0);
     this.persist();
     try { this.broadcast('change', { rev: null, source: 'dividend-sync', at: Date.now() }); } catch (e) {}
     return db.invest.dividendYields;
@@ -566,7 +566,7 @@ class MarketService {
         }
         source = fetched ? 'finnhub' : 'fallback';
       }
-      this.applyDividendMap(map, source);
+      this.applyDividendMap(map, source, fetched);
       console.log('[market] dividends synced ·', source, '·', fetched, 'live /', TICKERS.length, 'tickers');
     } finally {
       this.syncingDividends = false;
@@ -770,7 +770,7 @@ class MarketService {
       } catch (e) { this.lastError = e.message; }
     }, Math.max(5000, this.config.refreshSec * 1000)));
     /* make fallback yields available immediately, then refresh from Finnhub */
-    this.applyDividendMap(this.fallbackDividendMap(), 'fallback');
+    this.applyDividendMap(this.fallbackDividendMap(), 'fallback', 0);
     this.timers.push(setInterval(() => { this.syncDividends().catch((e) => { this.lastError = e.message; }); }, 24 * 3600 * 1000));
     if (this.config.mode === 'hybrid' && this.config.apiKey) {
       await this.seedFromFinnhub();
