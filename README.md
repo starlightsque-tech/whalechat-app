@@ -78,6 +78,29 @@ cooldowns instead of aborting, keeps previously synced yields when a request fai
 Admin status shows WebSocket auth state, live price count, dividend sync, API calls/minute, scheduled-sync state and
 the retry queue.
 
+### Stock chart · Finnhub (real-time)
+
+The stock page chart is served by **Finnhub**, not Alpaca:
+
+| Piece | Where | Notes |
+|---|---|---|
+| Provider | `finnhub.js` (`FinnhubClient`) | `GET /quote` for live prices + `GET /stock/candle` for 1D/1W/1M/3M/1Y/ALL candles. Server-side key, 60-calls/min budget, response cache. |
+| Key | `FINNHUB_API_KEY` env **or** Admin → Stocks → *Chart provider · Finnhub* | Stored in `DATA_DIR/market-config.json` (0600) + Postgres, masked in the UI, never sent to a browser. |
+| API | `GET /api/market/chart?ticker=AAPL&tf=1D` | Returns `points` (ms timestamp + price), `source` (`finnhub` / `live`), `resolution`, `latest` and a readable `chartError`. |
+| Fallback | `market.js` | If no Finnhub key is saved, or the Finnhub plan blocks candles (401/403), the chart falls back to the server's real 1-minute tick history — never a random walk. |
+
+The chart is rendered full-width at **320–470 px** (half the viewport height), fills content to
+the visible range, applies the admin **Override %** to every candle exactly like live quotes, and
+appends the live traded price every ~2 seconds. The status line under the chart reads
+*Finnhub · real-time chart · live market trades* when Finnhub is the source.
+
+**Live exit controls under the chart** — `Sell position` and `Take Profit / Loss` sit directly
+below the chart (with a live *Trade value / Earnings / Losses / Entry* strip) so a position can be
+closed or given TP/SL limits without scrolling down to the order ticket. Both reuse the atomic
+`/api/market/spot/sell` and `/api/market/spot/tpsl` endpoints. The overlay on the chart itself now
+shows **Trade value** (purchase value repriced by live earnings/losses), **Earnings / Losses**
+(counting in real time, USD + WC + %) and **Entry price**.
+
 ### API key + secret connection panel
 
 **Admin → Stocks → Market data · Alpaca** is where the connection is configured. It shows the resolved endpoint
