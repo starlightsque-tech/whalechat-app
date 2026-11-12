@@ -470,6 +470,16 @@ class MarketService {
         const lev = Math.max(1, Math.min(20, Number(t.leverage) || 1));
         const direction = t.direction || (t.side === 'short' ? 'FALL' : 'RISE');
         const dir = direction === 'FALL' ? -1 : 1;
+        if (!t.direction) t.direction = direction;
+        if (t.stakeAmount == null) t.stakeAmount = t.capitalCoins;
+        if (!(Number(t.takeProfitPrice) > 0) && Number(t.tpPct) > 0) {
+          const m = Number(t.tpPct) / (100 * lev);
+          t.takeProfitPrice = round(t.entryPrice * (direction === 'FALL' ? (1 - m) : (1 + m)), 4);
+        }
+        if (!(Number(t.stopLossPrice) > 0) && Number(t.slPct) > 0) {
+          const m = Number(t.slPct) / (100 * lev);
+          t.stopLossPrice = round(t.entryPrice * (direction === 'FALL' ? (1 + m) : (1 - m)), 4);
+        }
         const tpPrice = Number(t.takeProfitPrice) || 0;
         const slPrice = Number(t.stopLossPrice) || 0;
         let reason = '';
