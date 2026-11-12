@@ -88,12 +88,18 @@
     } catch (e) { /* local mode / offline: the built-in simulator keeps running */ }
   }
 
+  function feedFresh() {
+    if (!MK.feed || !MK.feed.quotes || !MK.lastPollAt) return false;
+    const refresh = (MK.feed.status && Number(MK.feed.status.refreshSec)) || 15;
+    return Date.now() - MK.lastPollAt < Math.max(10000, refresh * 2500);
+  }
+
   /* Keep the client simulation from fighting the authoritative server cache. */
   function patchTick() {
     if (typeof INV === 'undefined' || INV.__mkTickPatched) return;
     const baseTick = INV.tick;
     INV.tick = function () {
-      if (!MK.feed || !MK.feed.quotes) return baseTick.apply(INV, arguments);
+      if (!feedFresh()) return baseTick.apply(INV, arguments);
       const now = Date.now();
       /* only tickers Finnhub does not cover keep the local simulator */
       INV.stocks().forEach((s) => {
