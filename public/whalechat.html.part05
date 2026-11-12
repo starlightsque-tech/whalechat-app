@@ -113,7 +113,7 @@ App.orderDetail = function (id) {
     <div class="kv"><span class="k">Vendor</span><span class="v">@${esc(vu ? vu.username : '—')}</span></div>
     ${o.tracking ? `<div class="kv"><span class="k">Tracking ref</span><span class="v">${esc(o.tracking)}</span></div>` : ''}`,
     `<button class="btn btn-ghost" data-close style="flex:1">Close</button>
-     ${vu ? `<button class="btn btn-ghost" data-act="open-chat" data-id="${vu.id}" data-close style="flex:1">${ic('chat', 15)} Vendor</button>` : ''}
+     <button class="btn btn-ghost" data-act="live-support" data-id="${o.id}" data-close style="flex:1">${ic('chat', 15)} Support</button>
      <button class="btn btn-primary" data-act="track-order" data-id="${o.id}" style="flex:1">${ic('truck', 15)} Track</button>`));
 };
 
