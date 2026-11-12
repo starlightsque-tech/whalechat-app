@@ -388,6 +388,13 @@ async function api(req, res, pathname, query) {
     console.log('[market] config saved by @' + admin.username + ' · mode', saved.mode, '· refresh', saved.refreshSec + 's', '· key', saved.hasKey ? 'set' : 'cleared');
     return json(res, 200, saved);
   }
+  if (pathname === '/api/market/dividends/sync' && req.method === 'POST') {
+    const body = await readBody(req);
+    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === body.adminId && u.role === 'admin') : null;
+    if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
+    const status = await market.syncDividends(true);
+    return json(res, 200, { ok: true, status });
+  }
   if (pathname === '/api/market/test' && req.method === 'POST') {
     const body = await readBody(req);
     const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === body.adminId && u.role === 'admin') : null;
