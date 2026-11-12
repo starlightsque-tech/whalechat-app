@@ -32,6 +32,12 @@ const bots = new BotService({
   broadcast: (event, data) => { try { broadcast(event, data); } catch (e) {} },
   getQuote: (ticker) => market.spotQuote(ticker)
 });
+const { ShareService } = require('./shares');
+const shares = new ShareService({
+  getDb: () => store.db,
+  persist: () => persistNow(),
+  broadcast: (event, data) => { try { broadcast(event, data); } catch (e) {} }
+});
 let pool = null;
 const BUILD = process.env.APP_BUILD || new Date().toISOString();
 
@@ -105,6 +111,7 @@ function ensureTradingAssets() {
   let changed = false;
   /* bot tier catalogue + settings live in the synced database; seed them once */
   try { if (bots.ensureDefaults(db)) changed = true; } catch (e) { console.error('[bots] defaults:', e.message); }
+  try { if (shares.ensureDefaults(db)) changed = true; } catch (e) { console.error('[shares] defaults:', e.message); }
   db.stocks.forEach((s) => {
     if (!s || !s.ticker) return;
     if (!s.assetClass) { s.assetClass = 'us'; changed = true; }
@@ -495,6 +502,54 @@ async function api(req, res, pathname, query) {
       return json(res, 200, saved);
     } catch (e) { return json(res, 400, { ok: false, error: e.message }); }
   }
+  /* --- WhaleChat share investment plans ------------------------------------ */
+  if (pathname === '/api/shares/state' && req.method === 'GET') {
+    const userId = query.get('userId') || '';
+    const u = (store.db && (store.db.users || []).find(x => x.id === userId));
+    if (!u) return json(res, 404, { ok: false, error: 'user_not_found' });
+    try { return json(res, 200, shares.publicState(userId)); }
+    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+  if (pathname === '/api/shares/invest' && req.method === 'POST') {
+    const body = await readBody(req);
+    const u = (store.db && (store.db.users || []).find(x => x.id === body.userId));
+    if (!u) return json(res, 404, { ok: false, error: 'user_not_found' });
+    try { return json(res, 200, shares.invest(body)); }
+    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+  if (pathname === '/api/shares/admin' && req.method === 'GET') {
+    const adminId = query.get('adminId') || '';
+    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === adminId && u.role === 'admin') : null;
+    if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
+    try { return json(res, 200, shares.adminState()); }
+    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+  if (pathname === '/api/shares/admin/plans' && req.method === 'POST') {
+    const body = await readBody(req);
+    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === body.adminId && u.role === 'admin') : null;
+    if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
+    try {
+      const saved = shares.savePlans(body);
+      console.log('[shares] plans saved by @' + admin.username + ' ·', saved.plans.length);
+      return json(res, 200, saved);
+    } catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+  if (pathname === '/api/market/sync-all' && req.method === 'POST') {
+    const body = await readBody(req);
+    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === body.adminId && u.role === 'admin') : null;
+    if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
+    if (!market.config.apiKey) return json(res, 400, { ok: false, error: 'Add a Finnhub API key first' });
+    /* run in the background: the shared rate limiter finishes the whole
+       catalogue even when Finnhub returns a 429 mid-run. */
+    (async () => {
+      try {
+        await market.seedFromFinnhub();
+        await market.syncDividends(true);
+        console.log('[market] full sync finished ·', market.status().seed, market.dividendStatus());
+      } catch (e) { console.error('[market] full sync failed:', e.message); }
+    })();
+    return json(res, 200, { ok: true, started: true, message: 'Syncing live prices + dividends in the background' });
+  }
   if (pathname === '/api/market/search' && req.method === 'GET') {
     const adminId = query.get('adminId') || '';
     const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === adminId && u.role === 'admin') : null;
@@ -724,6 +779,7 @@ server.headersTimeout = 70000;
   }
   market.start();
   bots.startTimers();
+  shares.startTimers();
   server.listen(PORT, HOST, () => {
     console.log(`[whalechat] listening on http://localhost:${PORT}`);
     console.log(`[whalechat] data: ${DATA_DIR}`);
@@ -736,6 +792,7 @@ function shutdown(signal) {
   if (stopping) return; stopping = true;
   try { market.stop(); } catch (e) {}
   try { bots.stopTimers(); } catch (e) {}
+  try { shares.stopTimers(); } catch (e) {}
   console.log(`[whalechat] ${signal} — saving and exiting`);
   try { if (store.db) snapshot('shutdown'); } catch (e) {}
   try { persistNow(); } catch (e) {}
