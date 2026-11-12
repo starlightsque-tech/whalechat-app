@@ -1,4 +1,4 @@
-# WhaleChat 3.24.0 — web app + mobile apps
+# WhaleChat 3.25.0 — web app + mobile apps
 
 WhaleChat is a social + marketplace + wallet product built as a single-page app with a
 Node sync server and native Android/iOS shells.
@@ -72,14 +72,23 @@ levels that were set, and the chart's `Entry` / `TP` / `TSL` lines follow a trai
 
 ### Spot Buy / Sell (primary stock flow)
 
-`market.js` owns the spot book. `POST /api/market/spot/buy` accepts `amountCoins` **or** `shares` and executes at the
-current live quote: the cost is deducted from the wallet immediately and a position is recorded with symbol, entry
-price, quantity, invested capital and optional TP/SL. `POST /api/market/spot/sell` closes the whole position at the
+`market.js` owns the spot book. `POST /api/market/spot/buy` accepts `amountUsd` (primary), `amountCoins` or `shares`
+and executes at the current live quote: the cost is deducted from the wallet immediately and a position is recorded
+with symbol, entry price (USD + WC), quantity, invested capital (USD + WC) and optional TP/SL. The order ticket shows
+the live selling price in USD and WC, takes a USD amount and calculates **WC = USD ÷ 0.50** live as you type. `POST /api/market/spot/sell` closes the whole position at the
 live price and credits `quantity × price` back in WC. Every fill is written to `trades`, `txs` and notifications.
 `settleSpot()` runs once per second: when the live price crosses TP (`>=`) or SL (`<=`) the backend sells the
 position and credits the payout even if every browser is closed. `sellSpotInternal()` re-checks that the position
 is still present in the live book and sets a per-position `closing` flag, so a manual sell and a TP/SL trigger in
 the same millisecond cannot double-credit: the first caller closes it, the second sees it gone and returns.
+
+Every closed spot sell stores `entryPriceUsd`, `exitPriceUsd`, `payoutUsd`, `plUsd`, `plCoins` and `wcRate`, and the
+Orders screen shows entry → exit and net P&L in **both USD and WC**.
+
+The stock chart uses lightweight-charts with a custom `localization.priceFormatter` so the Y-axis, last-value label
+and price lines render as `$205.00 (410 WC)`. A custom crosshair tooltip shows the same dual price at the pointer, and
+a live position banner overlays the chart with **Position value** and **Unrealized P&L** in USD and WC while a spot
+position is open.
 
 ### Trading Bot Assistant
 
@@ -105,6 +114,41 @@ billing cycle, accuracy, enabled state, a per-tier speed override, and the globa
 API: `GET /api/bots/state?userId=`, `POST /api/bots/subscribe`, `POST /api/bots/start`, `POST /api/bots/stop`,
 `GET /api/bots/admin?adminId=`, `POST /api/bots/admin/config`. The UI lives in `public/trading-bots.js` and is
 injected as the `wc-trading-bots` module at build time (route `#/invest/bots`).
+
+The bot dashboard also draws a **session performance chart**: allocated capital over time and cumulative P/L, built
+from the session's trade log (`poolAfter` at each trade) and rendered as two SVG panels with WC axis labels.
+
+### WhaleChat Shares
+
+`shares.js` (`ShareService`) runs a simulated WhaleChat share price feed and the investment-plan engine:
+
+| Piece | Where | Notes |
+|---|---|---|
+| Plans | `db.sharePlans` | Admin-defined name, min/max investment (USD), duration (days/months/years), % return and enabled flag. |
+| Investments | `db.shareInvestments` | Per-user plan snapshot, shares bought, entry price, start/end, accrued profit and equity history. |
+| Share market | `db.shareMarket` | Simulated USD share price with a 720-point movement history, ticked every 5 seconds. |
+
+Users open **Invest → WhaleChat Shares** (`#/invest/shares`) to see the live share price in USD + WC, a movement chart,
+an earnings counter, active plans with progress and per-plan performance charts, and the plan marketplace. Buying
+deducts **WC = USD ÷ 0.50**, locks the plan terms and credits nothing until maturity. Accrual is linear over the plan
+duration (displayed to 6 decimals so the counter moves in real time); at maturity the principal plus the fixed profit
+is credited automatically with a `share-maturity` transaction and notification.
+
+Admins manage plans in **Admin → Stocks → WhaleChat share investment plans** (add/remove rows, min/max USD, duration,
+return %, live toggle). API: `GET /api/shares/state?userId=`, `POST /api/shares/invest`,
+`GET /api/shares/admin?adminId=`, `POST /api/shares/admin/plans`. UI: `public/whalechat-shares.js`
+(module `wc-whalechat-shares`).
+
+### Finnhub sync resilience
+
+Finnhub's free tier allows 60 calls/minute. `market.js` now keeps one shared rolling call budget
+(`FINNHUB_MAX_CALLS_PER_MIN`, default 55) that covers seeding, polling and dividend sync. A 429 no longer aborts a
+sync: the worker waits out the cooldown and continues with the remaining symbols, preserving previously synced live
+yields instead of overwriting them with fallback values. Failed yields are retried automatically after a few minutes
+and failed prices are refreshed by the next poll cycle. Admin → Stocks shows **Live stock prices**, **Dividend sync**,
+**API calls / minute** and the retry queue, plus a **Sync prices + dividends** button
+(`POST /api/market/sync-all`). Override percentages remain a separate object (`db.invest.dividendOverrides`) and are
+never touched by the sync.
 
 Environment variables (optional, useful for first boot): `FINNHUB_API_KEY`, `FINNHUB_MODE=hybrid`.
 For provider testing only: `FINNHUB_REST_BASE`, `FINNHUB_WS_URL`, `FINNHUB_SEED_DELAY_MS`, `US_MARKET_FORCE_OPEN=1`.
