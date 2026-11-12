@@ -423,6 +423,22 @@ async function api(req, res, pathname, query) {
   if (pathname === '/api/market/status' && req.method === 'GET') {
     return json(res, 200, Object.assign({ ok: true }, market.status()));
   }
+  if (pathname === '/api/market/health' && req.method === 'GET') {
+    return json(res, 200, market.health());
+  }
+  if (pathname === '/api/market/audit' && req.method === 'GET') {
+    const adminId = query.get('adminId') || '';
+    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === adminId && u.role === 'admin') : null;
+    if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
+    const db = store.db || {};
+    const total = Array.isArray(db.marketAudit) ? db.marketAudit.length : 0;
+    return json(res, 200, {
+      ok: true,
+      at: Date.now(),
+      total,
+      entries: market.auditList(Number(query.get('limit')) || 100, query.get('category') || 'all')
+    });
+  }
   if (pathname === '/api/market/bars' && req.method === 'GET') {
     const ticker = String(query.get('ticker') || query.get('symbol') || '').toUpperCase();
     if (!ticker) return json(res, 400, { ok: false, error: 'ticker_required' });
@@ -451,12 +467,34 @@ async function api(req, res, pathname, query) {
     if (!hasKeys && body.clearKeys !== true) {
       return json(res, 400, { ok: false, error: 'keys_required', message: 'Add your Alpaca API Key ID and Secret Key' });
     }
+    const before = market.rawConfig();
     const saved = market.saveConfig({
       mode, refreshSec, keyId, secret,
       feed: body.feed, syncEnabled: body.syncEnabled, syncIntervalMin: body.syncIntervalMin,
       clearKeys: body.clearKeys === true || body.clearKey === true
     });
     saveMarketConfig(market.rawConfig()).then((ok) => { if (ok) console.log('[market] Alpaca config persisted to Postgres'); });
+    /* audit the connection change — never the secret values themselves */
+    const changes = [];
+    if (before.mode !== saved.mode) changes.push({ field: 'mode', from: before.mode, to: saved.mode });
+    if (before.feed !== saved.feed) changes.push({ field: 'feed', from: before.feed, to: saved.feed });
+    if (Number(before.refreshSec) !== Number(saved.refreshSec)) changes.push({ field: 'refreshSec', from: Number(before.refreshSec), to: Number(saved.refreshSec) });
+    if (!!before.syncEnabled !== !!saved.syncEnabled) changes.push({ field: 'autoSync', from: !!before.syncEnabled, to: !!saved.syncEnabled });
+    if (Number(before.syncIntervalMin) !== Number(saved.syncIntervalMin)) changes.push({ field: 'syncIntervalMin', from: Number(before.syncIntervalMin), to: Number(saved.syncIntervalMin) });
+    const keysCleared = body.clearKeys === true || body.clearKey === true;
+    if (keysCleared) changes.push({ field: 'apiKeys', from: 'saved', to: 'cleared' });
+    else if (keyId || secret) changes.push({ field: 'apiKeys', from: before.keyId ? 'saved' : 'none', to: 'updated' });
+    const keyNote = keysCleared ? 'keys cleared'
+      : saved.hasKeys ? ('keys ' + (keyId || secret ? 'updated' : 'saved') + (saved.keyIdMasked ? ' (' + saved.keyIdMasked + ')' : ''))
+      : 'no keys';
+    if (changes.length) {
+      market.audit('connection.saved', {
+        category: 'connection', actor: '@' + admin.username, actorId: admin.id,
+        target: 'Alpaca · ' + String(saved.mode) + ' / ' + String(saved.feed).toUpperCase(),
+        summary: 'Connection saved · ' + keyNote + ' · refresh ' + saved.refreshSec + 's · auto-sync ' + (saved.syncEnabled ? saved.syncIntervalMin + 'min' : 'off'),
+        changes
+      });
+    }
     console.log('[market] Alpaca config saved by @' + admin.username + ' · mode', saved.mode, '· refresh', saved.refreshSec + 's', '· keys', saved.hasKeys ? 'set' : 'cleared', '· sync', saved.syncEnabled ? saved.syncIntervalMin + 'min' : 'off');
     return json(res, 200, saved);
   }
@@ -567,7 +605,7 @@ async function api(req, res, pathname, query) {
     /* run in the background so the admin screen stays responsive */
     (async () => {
       try {
-        const status = await market.syncAll(true);
+        const status = await market.syncAll(true, { name: '@' + admin.username, id: admin.id });
         console.log('[market] full Alpaca sync finished · assets', status.assetCounts, '· prices', status.seed, '· dividends', status.dividends);
       } catch (e) { console.error('[market] full Alpaca sync failed:', e.message); }
     })();
@@ -584,7 +622,7 @@ async function api(req, res, pathname, query) {
     const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === body.adminId && u.role === 'admin') : null;
     if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
     try {
-      const result = market.saveStockSettings(Array.isArray(body.updates) ? body.updates : []);
+      const result = market.saveStockSettings(Array.isArray(body.updates) ? body.updates : [], { name: '@' + admin.username, id: admin.id });
       store.rev += 1; store.updatedAt = Date.now(); persist();
       try { broadcast('change', { rev: store.rev, source: 'market-overrides', at: store.updatedAt }); } catch (e) {}
       return json(res, 200, { ok: true, stocks: result, rev: store.rev });
@@ -612,7 +650,7 @@ async function api(req, res, pathname, query) {
     const body = await readBody(req);
     const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === body.adminId && u.role === 'admin') : null;
     if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
-    const status = await market.syncDividends(true);
+    const status = await market.syncDividends(true, { name: '@' + admin.username, id: admin.id }, false);
     return json(res, 200, { ok: true, status });
   }
   if (pathname === '/api/market/test' && req.method === 'POST') {
@@ -620,7 +658,7 @@ async function api(req, res, pathname, query) {
     const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === body.adminId && u.role === 'admin') : null;
     if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
     if (!market.configured()) return json(res, 400, { ok: false, error: 'no_keys', message: 'Save your Alpaca API keys first' });
-    const test = await market.testConnection();
+    const test = await market.testConnection({ name: '@' + admin.username, id: admin.id });
     return json(res, 200, Object.assign({ ok: !!test.ok, price: test.price || null, symbol: 'AAPL', message: test.message, status: market.status() }, test));
   }
   // --- bonus claim (atomic one-time code) -------------------------------
