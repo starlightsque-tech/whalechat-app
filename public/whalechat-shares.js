@@ -67,6 +67,7 @@
 
   async function loadAdmin(force) {
     if (!isAdmin()) return null;
+    if (typeof Remote === 'undefined' || !Remote.enabled) return null;
     if (S.adminLoading && S.adminPending) return S.adminPending;
     if (!force && S.admin && Date.now() - S.adminLoadedAt < 5000) return S.admin;
     S.adminLoading = true;
