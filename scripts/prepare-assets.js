@@ -60,6 +60,7 @@ const MODULES = [
   { file: 'tawk-control.js', marker: 'wc-tawk-control' },
   { file: 'live-trade.js', marker: 'wc-live-trade' },
   { file: 'assets-multi.js', marker: 'wc-assets-multi' },
+  { file: 'spot-orders.js', marker: 'wc-spot-orders' },
   { file: 'market-live.js', marker: 'wc-market-live' },
   { file: 'demo-sellers.js', marker: 'wc-demo-sellers' },
   { file: 'support.js', marker: 'wc-support' }
