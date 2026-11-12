@@ -98,6 +98,57 @@
     </div>`;
   }
 
+  function perfSVG(session) {
+    const alloc = Math.max(0.01, Number(session.allocatedCoins) || 0.01);
+    const trades = (session.trades || []).slice().reverse();
+    const pts = [{ t: session.startedAt || Date.now(), cap: alloc, pnl: 0 }];
+    trades.forEach((tr) => {
+      const cap = Number(tr.poolAfter);
+      if (Number.isFinite(cap)) pts.push({ t: Number(tr.at) || Date.now(), cap, pnl: cap - alloc });
+    });
+    if (pts.length === 1) pts.push({ t: Date.now(), cap: Number(session.poolCoins) || alloc, pnl: (Number(session.poolCoins) || alloc) - alloc });
+    const W = 320, H = 132, topY = 10, topH = 54, botY = 84, botH = 34;
+    const caps = pts.map((p) => p.cap);
+    let capMin = Math.min.apply(null, caps), capMax = Math.max.apply(null, caps);
+    if (capMax - capMin < alloc * 0.01) { const pad = Math.max(0.5, alloc * 0.01); capMin -= pad; capMax += pad; }
+    const padC = (capMax - capMin) * 0.12; capMin -= padC; capMax += padC;
+    const pnls = pts.map((p) => p.pnl);
+    let pMax = Math.max.apply(null, pnls.concat([0])), pMin = Math.min.apply(null, pnls.concat([0]));
+    if (pMax - pMin < 0.01) { pMax = 0.5; pMin = -0.5; }
+    const padP = (pMax - pMin) * 0.18; pMax += padP; pMin -= padP;
+    const xAt = (i) => 6 + (i / Math.max(1, pts.length - 1)) * (W - 44);
+    const yCap = (v) => topY + topH - ((v - capMin) / (capMax - capMin)) * topH;
+    const yPnl = (v) => botY + botH - ((v - pMin) / (pMax - pMin)) * botH;
+    const line = (fn, val) => pts.map((p, i) => (i ? 'L' : 'M') + xAt(i).toFixed(1) + ' ' + fn(val(p)).toFixed(1)).join(' ');
+    const capPath = line(yCap, (p) => p.cap);
+    const areaPath = capPath + ' L' + xAt(pts.length - 1).toFixed(1) + ' ' + (topY + topH) + ' L' + xAt(0).toFixed(1) + ' ' + (topY + topH) + ' Z';
+    const pnlPath = line(yPnl, (p) => p.pnl);
+    const lastPnl = pts[pts.length - 1].pnl;
+    const pnlColor = lastPnl >= 0 ? '#22c55e' : '#ef4444';
+    const zeroY = yPnl(0).toFixed(1);
+    const fmt = (v) => (Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(2));
+    const tLabel = (ms) => { try { return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; } };
+    return `<svg class="bot-perf-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Bot capital and cumulative profit chart">
+      <defs><linearGradient id="botCapFill" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#2ee6c9" stop-opacity=".28"/><stop offset="100%" stop-color="#2ee6c9" stop-opacity="0"/>
+      </linearGradient></defs>
+      <text x="6" y="8" class="bot-perf-lbl">Allocated capital (WC)</text>
+      <text x="${W - 6}" y="8" text-anchor="end" class="bot-perf-val">${fmt(pts[pts.length - 1].cap)} WC</text>
+      <path d="${areaPath}" fill="url(#botCapFill)"/>
+      <path d="${capPath}" fill="none" stroke="#2ee6c9" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>
+      <text x="6" y="${botY - 4}" class="bot-perf-lbl">Cumulative P/L (WC)</text>
+      <text x="${W - 6}" y="${botY - 4}" text-anchor="end" class="bot-perf-val" style="fill:${pnlColor}">${lastPnl >= 0 ? '+' : '−'}${fmt(Math.abs(lastPnl))} WC</text>
+      <line x1="6" y1="${zeroY}" x2="${W - 38}" y2="${zeroY}" stroke="rgba(255,255,255,.14)" stroke-dasharray="3 3"/>
+      <path d="${pnlPath}" fill="none" stroke="${pnlColor}" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>
+      <text x="${W - 38}" y="${topY + 10}" class="bot-perf-axis">${fmt(capMax)}</text>
+      <text x="${W - 38}" y="${topY + topH}" class="bot-perf-axis">${fmt(capMin)}</text>
+      <text x="${W - 38}" y="${botY + 8}" class="bot-perf-axis">${fmt(pMax)}</text>
+      <text x="${W - 38}" y="${botY + botH}" class="bot-perf-axis">${fmt(pMin)}</text>
+      <text x="6" y="${H - 2}" class="bot-perf-axis">${tLabel(pts[0].t)}</text>
+      <text x="${W - 38}" y="${H - 2}" text-anchor="end" class="bot-perf-axis">${tLabel(pts[pts.length - 1].t)}</text>
+    </svg>`;
+  }
+
   function sessionHTML(session) {
     if (!session) {
       const owned = (B.state && B.state.tiers || []).filter((t) => t.owned);
@@ -132,6 +183,11 @@
       </div>
       <div class="bot-poolbar"><i style="width:${pct}%"></i></div>
       <div class="tiny muted" style="margin-top:4px">Started ${when(session.startedAt)} · initial allocation ${num(session.allocatedCoins)} WC</div>
+      <div class="bot-perf">
+        <div class="between" style="margin-bottom:4px"><b style="font-size:11.5px">Session performance</b>
+          <span class="tiny muted">allocated capital · cumulative P/L</span></div>
+        ${perfSVG(session)}
+      </div>
       <div class="row" style="gap:8px;margin-top:12px">
         <button class="btn btn-danger grow" data-act="bot-stop">Stop Bot &amp; return capital</button>
         <button class="btn btn-ghost" data-act="bot-refresh">${typeof ic === 'function' ? ic('refresh', 14) : ''}</button>
@@ -528,6 +584,11 @@
     .bot-stats span{font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted-2);font-weight:700}
     .bot-stats b{font-size:12px;font-variant-numeric:tabular-nums}
     .bot-stats b.up{color:var(--success)} .bot-stats b.down{color:var(--danger)}
+    .bot-perf{margin-top:10px;padding:9px 10px 6px;border:1px solid var(--border);border-radius:11px;background:var(--surface-2)}
+    .bot-perf-svg{width:100%;height:142px;display:block;overflow:visible}
+    .bot-perf-lbl{fill:#8ba4b6;font-size:8px;font-weight:700;letter-spacing:.05em;text-transform:uppercase}
+    .bot-perf-val{fill:#e9f4f9;font-size:9px;font-weight:750;font-variant-numeric:tabular-nums}
+    .bot-perf-axis{fill:#63798a;font-size:7.5px;font-variant-numeric:tabular-nums}
     .bot-poolbar{height:7px;border-radius:99px;background:rgba(255,255,255,.07);margin-top:10px;overflow:hidden}
     .bot-poolbar i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#2ee6c9,#3aa0ff)}
     .bot-log{margin-top:12px;padding:10px;border:1px solid var(--border);border-radius:11px;background:var(--surface-2)}
