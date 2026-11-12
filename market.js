@@ -25,6 +25,18 @@ const BASE_PRICES = {
   DIS: 112.44, V: 309.51, UBER: 74.21, AMZN: 206.74
 };
 
+const FALLBACK_DIVIDEND_YIELDS = {
+  AAPL: 0.45, TSLA: 0, NVDA: 0.03, COIN: 0, MSTR: 0, MARA: 0, KO: 3.00, JPM: 2.20,
+  NKE: 1.80, UNH: 1.50, AVGO: 1.20, WMT: 1.00, DIS: 0.80, V: 0.75, UBER: 0, AMZN: 0,
+  MSFT: 0.70, GOOGL: 0.45, META: 0.35, NFLX: 0, AMD: 0, PEP: 3.40, PLTR: 0, ARM: 0,
+  SHOP: 0, HOOD: 0, LLY: 0.70, XOM: 3.30, SMCI: 0, RIVN: 0
+};
+
+const DURATION_LABELS = { 5: '5 min', 15: '15 min', 60: '1 hour', 240: '4 hours', 1440: '1 day' };
+function durationLabel(minutes, stored) {
+  return stored || DURATION_LABELS[Number(minutes)] || (Number(minutes) ? Number(minutes) + ' min' : 'duration');
+}
+
 const NY_HOLIDAYS = new Set([
   // 2025
   '2025-01-01', '2025-01-20', '2025-02-17', '2025-04-18', '2025-05-26', '2025-06-19',
@@ -99,6 +111,10 @@ class MarketService {
     this.lastError = '';
     this.seeding = false;
     this.startedAt = Date.now();
+    this.syncingDividends = false;
+    this.dividendSyncedAt = 0;
+    this.dividendSource = '';
+    this.dividendFetched = 0;
     this.timers = [];
     this.settleLock = false;
   }
@@ -464,6 +480,7 @@ class MarketService {
       rateLimitedUntil: this.rateLimitedUntil > Date.now() ? this.rateLimitedUntil : null,
       lastError: this.lastError || '',
       tickers: TICKERS.length,
+      dividends: this.dividendStatus(),
       startedAt: this.startedAt
     };
   }
@@ -477,6 +494,93 @@ class MarketService {
       notice: this.notice(),
       status: this.status(),
       quotes: this.quotes
+    };
+  }
+
+  /* --------------------------- dividends ------------------------------- */
+  fallbackDividendMap() { return Object.assign({}, FALLBACK_DIVIDEND_YIELDS); }
+
+  dividendYieldFor(db, ticker) {
+    const inv = (db && db.invest) || {};
+    const ov = inv.dividendOverrides && inv.dividendOverrides[ticker];
+    if (ov != null && ov !== '' && Number.isFinite(Number(ov))) return Math.max(0, Math.min(100, Number(ov)));
+    const auto = inv.dividendYields && inv.dividendYields[ticker];
+    if (auto != null && Number.isFinite(Number(auto))) return Math.max(0, Math.min(100, Number(auto)));
+    return Number(FALLBACK_DIVIDEND_YIELDS[ticker]) || 0;
+  }
+
+  applyDividendMap(map, source) {
+    const db = this.getDb && this.getDb();
+    if (!db) return null;
+    if (!db.invest) db.invest = {};
+    db.invest.dividendYields = Object.assign({}, db.invest.dividendYields || {}, map || {});
+    db.invest.dividendSyncedAt = Date.now();
+    db.invest.dividendSource = source || 'fallback';
+    if (!(Number(db.invest.dividendMultiplier) > 0)) db.invest.dividendMultiplier = 1;
+    if (!db.invest.dividendPayoutMode) db.invest.dividendPayoutMode = 'all';
+    if (!db.invest.dividendOverrides || typeof db.invest.dividendOverrides !== 'object') db.invest.dividendOverrides = {};
+    this.dividendSyncedAt = db.invest.dividendSyncedAt;
+    this.dividendSource = db.invest.dividendSource;
+    this.dividendFetched = Object.keys(db.invest.dividendYields).length;
+    this.persist();
+    try { this.broadcast('change', { rev: null, source: 'dividend-sync', at: Date.now() }); } catch (e) {}
+    return db.invest.dividendYields;
+  }
+
+  async fetchDividendYield(ticker) {
+    const key = this.config.apiKey;
+    if (!key || Date.now() < this.rateLimitedUntil) return null;
+    const url = FINNHUB_REST_BASE + '/api/v1/stock/metric?symbol=' + encodeURIComponent(ticker) + '&metric=all&token=' + encodeURIComponent(key);
+    try {
+      const r = await this.getJSON(url, 9000);
+      if (r.status === 429) {
+        this.rateLimitedUntil = Date.now() + 60 * 1000;
+        this.lastError = 'Finnhub rate limit hit during dividend sync';
+        return null;
+      }
+      if (r.status !== 200 || !r.data) return null;
+      const m = r.data.metric || r.data;
+      const v = Number(m.dividendYieldIndicatedAnnual);
+      if (!Number.isFinite(v) || v < 0) return null;
+      return round(Math.min(100, v), 2);
+    } catch (e) {
+      this.lastError = 'Dividend sync failed: ' + e.message;
+      return null;
+    }
+  }
+
+  async syncDividends(manual) {
+    if (this.syncingDividends) return this.dividendStatus();
+    this.syncingDividends = true;
+    const fallback = this.fallbackDividendMap();
+    const map = Object.assign({}, fallback);
+    let source = 'fallback';
+    let fetched = 0;
+    try {
+      if (this.config.mode === 'hybrid' && this.config.apiKey) {
+        for (const t of TICKERS) {
+          if (this.stopped || Date.now() < this.rateLimitedUntil) break;
+          const v = await this.fetchDividendYield(t);
+          if (v != null) { map[t] = v; fetched++; } else { map[t] = fallback[t] || 0; }
+          await sleep(SEED_DELAY_MS);                       // default 1.2s spacing
+        }
+        source = fetched ? 'finnhub' : 'fallback';
+      }
+      this.applyDividendMap(map, source);
+      console.log('[market] dividends synced ·', source, '·', fetched, 'live /', TICKERS.length, 'tickers');
+    } finally {
+      this.syncingDividends = false;
+    }
+    return this.dividendStatus();
+  }
+
+  dividendStatus() {
+    return {
+      syncedAt: this.dividendSyncedAt || null,
+      source: this.dividendSource || 'fallback',
+      live: this.dividendFetched || 0,
+      tickers: TICKERS.length,
+      syncing: this.syncingDividends
     };
   }
 
@@ -564,6 +668,46 @@ class MarketService {
         if (!u) continue;
 
         u.balance = round((Number(u.balance) || 0) + payout, 2);
+
+        /* duration-scaled virtual dividend, paid only when the timer expires */
+        let dividendCoins = 0;
+        if (reason === 'Time limit reached' && !t.dividendPaid) {
+          const inv = db.invest || {};
+          const mode = inv.dividendPayoutMode || 'all';
+          const yieldPct = Number(t.dividendYield) >= 0 ? Number(t.dividendYield) : this.dividendYieldFor(db, t.ticker);
+          const minutes = Number(t.durationMinutes) || 0;
+          const mult = Number(inv.dividendMultiplier) > 0 ? Number(inv.dividendMultiplier) : 1;
+          let bonus = Number(t.dividendBonus);
+          if (!(bonus > 0) && yieldPct > 0 && minutes > 0) {
+            bonus = (Number(t.capitalCoins) || 0) * (yieldPct / 100 / 365) * mult * (minutes / 1440);
+            if (bonus > 0 && bonus < 0.01) bonus = 0.01;
+            bonus = round(bonus, 2);
+          }
+          if (mode === 'wins' && pnlCoins <= 0) bonus = 0;
+          if (bonus > 0) {
+            dividendCoins = round(bonus, 2);
+            u.balance = round((Number(u.balance) || 0) + dividendCoins, 2);
+            t.dividendPaid = true;
+            t.dividendCoins = dividendCoins;
+            t.dividendPaidAt = now;
+            db.txs = db.txs || [];
+            db.txs.unshift({
+              id: id('tx_'), userId: u.id, type: 'dividend',
+              label: `Dividend Bonus - ${t.ticker} (${durationLabel(minutes, t.durationLabel)})`,
+              coins: dividendCoins,
+              meta: { tradeId: t.id, annualYield: yieldPct, multiplier: mult, server: true },
+              createdAt: now
+            });
+            db.notifications = db.notifications || [];
+            db.notifications.unshift({
+              id: id('nt_'), userId: u.id, title: 'Dividend bonus credited',
+              body: `+${dividendCoins} WC dividend for ${t.ticker} (${durationLabel(minutes, t.durationLabel)}).`,
+              link: '#/invest/orders', icon: 'gift', read: false, createdAt: now
+            });
+          }
+        }
+        t.totalPayoutCoins = round(payout + dividendCoins, 2);
+
         t.status = 'Completed';
         t.closedAt = now;
         t.closeReason = reason;
@@ -625,9 +769,15 @@ class MarketService {
         if (this.config.mode === 'hybrid' && this.config.apiKey && usMarketOpen()) this.pollCycle();
       } catch (e) { this.lastError = e.message; }
     }, Math.max(5000, this.config.refreshSec * 1000)));
+    /* make fallback yields available immediately, then refresh from Finnhub */
+    this.applyDividendMap(this.fallbackDividendMap(), 'fallback');
+    this.timers.push(setInterval(() => { this.syncDividends().catch((e) => { this.lastError = e.message; }); }, 24 * 3600 * 1000));
     if (this.config.mode === 'hybrid' && this.config.apiKey) {
       await this.seedFromFinnhub();
       this.connectWS();
+      await this.syncDividends();
+    } else {
+      this.dividendSource = 'fallback';
     }
   }
 
