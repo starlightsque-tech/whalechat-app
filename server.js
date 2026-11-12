@@ -239,7 +239,7 @@ function serveStatic(req, res, pathname) {
   });
 }
 
-const COLLECTIONS = ['users', 'vendors', 'companyProducts', 'products', 'orders', 'deposits', 'withdrawals', 'messages', 'statuses', 'notifications', 'contacts', 'blocks', 'txs', 'referrals', 'purchases', 'refunds', 'vendorApplications', 'reports', 'bonuses', 'bonusClaims', 'emailCampaigns'];
+const COLLECTIONS = ['users', 'vendors', 'companyProducts', 'products', 'orders', 'deposits', 'withdrawals', 'messages', 'statuses', 'notifications', 'contacts', 'blocks', 'txs', 'referrals', 'purchases', 'refunds', 'vendorApplications', 'reports', 'bonuses', 'bonusClaims', 'emailCampaigns', 'stocks', 'holdings', 'trades', 'watchlist', 'alerts', 'audit'];
 function applyOps(db, ops) {
   const pushes = [];
   const events = [];
@@ -406,6 +406,26 @@ async function api(req, res, pathname, query) {
   if (pathname === '/api/release' && req.method === 'GET') {
     const v = readJSON(path.join(PUBLIC_DIR, 'version.json'), {});
     return json(res, 200, { ok: true, version: v.version || '3.2.0', build: v.build || BUILD, uptimeSec: Math.floor((Date.now() - STARTED) / 1000), clients: clients.size, rev: store.rev, devices: subscriptions.length, publicUrl: PUBLIC_URL || null, users: (store.db && store.db.users) ? store.db.users.length : 0 });
+  }
+  if (pathname === '/api/admin/mail' && req.method === 'POST') {
+    const body = await readBody(req);
+    const db = (store && store.db) || {};
+    const admin = (db.users || []).find(u => u.id === body.adminId && u.role === 'admin');
+    if (!admin) return json(res, 403, { ok: false, error: 'admin only' });
+    try {
+      const file = path.join(DATA_DIR, 'mail.json');
+      let cur = {};
+      try { cur = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) {}
+      if (body.brevoKey) cur.brevoKey = String(body.brevoKey).trim();
+      if (body.from) cur.from = String(body.from).trim();
+      if (body.fromName) cur.fromName = String(body.fromName).trim();
+      if (body.resendKey) cur.resendKey = String(body.resendKey).trim();
+      cur.updatedAt = new Date().toISOString();
+      writeJSONAtomic(file, cur);
+      if (cur.brevoKey) process.env.BREVO_API_KEY = cur.brevoKey;
+      if (cur.from) process.env.MAIL_FROM = cur.from;
+      return json(res, 200, { ok: true, configured: email.configured(), from: cur.from || null });
+    } catch (e) { return json(res, 500, { ok: false, error: e.message }); }
   }
   if (pathname === '/api/reload' && req.method === 'POST') {
     const body = await readBody(req);
