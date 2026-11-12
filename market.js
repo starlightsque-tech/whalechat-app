@@ -692,13 +692,17 @@ class MarketService {
     try { return require('ws'); } catch (e) { return null; }
   }
 
+  wsUrl() {
+    return process.env.ALPACA_WS_URL || ('wss://stream.data.alpaca.markets/v2/' + (this.config.feed === 'sip' ? 'sip' : 'iex'));
+  }
+
   connectWS() {
     if (this.stopped || !this.configured()) return;
     const WS = this.wsClass();
     if (!WS) { this.lastError = 'WebSocket client unavailable — REST polling active'; return; }
     this.closeWS();
     let ws;
-    try { ws = new WS(ALPACA_WS_URL); } catch (e) { this.lastError = 'Alpaca WebSocket failed: ' + e.message; return; }
+    try { ws = new WS(this.wsUrl()); } catch (e) { this.lastError = 'Alpaca WebSocket failed: ' + e.message; return; }
     this.ws = ws;
     this.wsAuthed = false;
     let retryDelay = 5000;
@@ -858,7 +862,8 @@ class MarketService {
     for (let i = 0; i < list.length; i += 100) {
       const chunk = list.slice(i, i + 100);
       const path = '/v1/corporate-actions?ca_types=dividend&start=' + isoDate(start) + '&end=' + isoDate(end) + '&symbols=' + encodeURIComponent(chunk.join(','));
-      const data = await this.apiGet(path, 'trading', 20000);
+      /* Corporate Actions lives on the market-data host, not the trading host */
+      const data = await this.apiGet(path, 'data', 20000);
       const divs = (data && data.corporate_actions && data.corporate_actions.dividends) || [];
       out.push.apply(out, divs);
       if (i + 100 < list.length) await sleep(SEED_DELAY_MS);
