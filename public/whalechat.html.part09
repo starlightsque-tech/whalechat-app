@@ -594,7 +594,8 @@ INV.viewWatchlist = function () {
       return `<a class="inv-row" href="#/invest/stock/${s.ticker}">
         ${INV.logoHTML(s, 34)}
         <div class="grow" style="min-width:0"><div class="small" style="font-weight:650">${esc(s.ticker)}</div>
-          <div class="tiny muted ellipsis">${esc(s.name)}</div></div>
+          <div class="tiny muted ellipsis">${esc(s.name)}</div>
+          <div class="div-row">${INV.dividendBadge ? INV.dividendBadge(s.ticker) : ''}${INV.dividendEstimate ? INV.dividendEstimate(s.ticker, 100, 1440, '1d/100WC') : ''}</div></div>
         <div style="text-align:right"><div class="small" style="font-weight:650" data-lv="price:${s.ticker}">${usd(q.price)}</div>
           <div class="tiny ${INV.chgClass(q.changePct)}" data-lv="pct:${s.ticker}">${q.changePct >= 0 ? '+' : ''}${q.changePct.toFixed(2)}%</div></div>
         <button class="btn-icon" data-act="inv-star" data-t="${s.ticker}" title="Unstar">${ic('x', 15)}</button></a>`;
