@@ -70,6 +70,28 @@ TP/SL can be entered as a **percentage**, an exact **USD price**, or a **WC amou
 ratchet behind favourable price movement and only tighten. Open-trade cards and closed-trade history show the
 levels that were set, and the chart's `Entry` / `TP` / `TSL` lines follow a trailing stop as it moves.
 
+### Pro Chart · TradingView Lightweight Charts v5
+
+`public/pro-chart.js` (module `wc-pro-chart`) is the single chart component for both the stock
+trading view and the portfolio equity curve. It loads **lightweight-charts 5.3.0** from unpkg and
+uses only the v5 API — `chart.addSeries(CandlestickSeries | BaselineSeries | AreaSeries, options)`,
+`createSeriesMarkers(series, markers)` and `series.createPriceLine(...)`; no v4 helpers.
+
+| Feature | Implementation |
+|---|---|
+| Canvas | Obsidian `#07090E`, ultra-subtle grid `rgba(255,255,255,.03)`, monospace price/time scales, no attribution logo |
+| Series | Neon baseline (cyan `#00F5D4` above the average entry, magenta `#FF2A85` below, gradient fills) **and** high-contrast candles (cyan bullish / magenta bearish, borderless wicks) |
+| HUD | Glassmorphic card (`backdrop-filter: blur(12px)`, white/5 + white/10) with symbol, live price, 24h %, unrealized P&L ($ and %), and the hovered timestamp + price |
+| Live ticks | 1 s bridge to the app quote feed, plus a mock generator (500–1000 ms) until real ticks arrive. Any external WebSocket can call `WC_PRO_CHART.feedTick(ticker, { time, price, volume })` |
+| Price line | Solid live price line whose colour flips cyan (up tick) / magenta (down tick) |
+| Position | Dashed **AVG** entry line, dotted **TP** (cyan) and **SL** (magenta) price lines with axis labels |
+| Markers | `createSeriesMarkers` arrows — BUY below the bar, SELL above it, labelled with quantity and execution price |
+| Controls | 1m / 5m / 15m / 1H / 1D / ALL pills, Price ↔ Portfolio toggle, and **BUY / SELL** buttons pinned inside the chart (SELL turns blue in profit, magenta in loss) |
+| Lifecycle | `ResizeObserver` + `chart.remove()` teardown; instances are destroyed when their host leaves the DOM |
+
+The stock page mounts the stock view, the Invest dashboard portfolio card and the Live-trade
+dashboard (`#ltDashChart`) mount the portfolio equity view with the same component.
+
 ### Spot Buy / Sell (primary stock flow)
 
 `market.js` owns the spot book. `POST /api/market/spot/buy` accepts `amountUsd` (primary), `amountCoins` or `shares`
