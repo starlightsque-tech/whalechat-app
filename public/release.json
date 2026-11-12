@@ -1,8 +1,8 @@
 {
-  "version": "3.11.0",
-  "build": "2026-11-12T07:44:51Z",
+  "version": "3.12.0",
+  "build": "2026-11-12T08:10:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.11.0 - public demo storefronts with banners, editable seller product ranges, demo activity dashboard.",
-  "releasedAt": "2026-11-12T07:44:51Z",
+  "notes": "WhaleChat 3.12.0 - admin product generator (1-50 at a time, append-only), 21 extra catalogue models and photos.",
+  "releasedAt": "2026-11-12T08:10:00Z",
   "minimum": "3.0.0"
 }
