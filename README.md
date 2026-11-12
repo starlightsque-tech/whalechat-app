@@ -1,4 +1,4 @@
-# WhaleChat 3.26.0 — web app + mobile apps
+# WhaleChat 3.25.0 — web app + mobile apps
 
 WhaleChat is a social + marketplace + wallet product built as a single-page app with a
 Node sync server and native Android/iOS shells.
@@ -33,109 +33,52 @@ whalechat-release.apk   signed release APK (v3.2.0, code 6)
 Dockerfile · docker-compose.yml · Caddyfile · render.yaml
 ```
 
-## Market data (Alpaca REST + IEX WebSocket)
+## Market data (Finnhub + 24/7 OTC fallback)
 
-`Admin → Stocks → Market data · Alpaca` stores the connection server-side:
+`Admin → Stocks → Market data · Finnhub` stores three server-side settings:
 
 | Setting | Purpose |
 |---|---|
-| **Alpaca API Key ID / Secret Key** | Kept only in `DATA_DIR/market-config.json` (mode 0600) and Postgres. Never written to the synced database and never sent to browsers. |
-| **Environment** | `Paper / Sandbox` (paper trading host for assets + corporate actions) or `Live Data` (live host). Market data itself is real either way. |
-| **Feed** | `IEX` (free) or `SIP` (subscription). |
-| **Refresh interval** | REST snapshot fallback interval in seconds. Default **15**. |
-| **Auto-sync** | Scheduled assets / prices / dividends sync with an interval selector (5 minutes → 24 hours). |
+| **Finnhub API Key** | Kept only in `DATA_DIR/market-config.json` (mode 0600). It is never written to the synced app database and never sent to browsers. |
+| **Data mode** | `Hybrid (Live Finnhub + 24/7 Simulated Fallback)` or `Simulated Only`. |
+| **Refresh interval** | Seconds between REST refresh/status cycles. Default **15**. |
 
-The server seeds tracked symbols with `GET /v2/stocks/snapshots` (batched up to 100 symbols per call), serves
-1-minute historical bars from `GET /v2/stocks/{symbol}/bars`, and streams live trades/bars from one shared
-**`wss://stream.data.alpaca.markets/v2/iex`** WebSocket (auth message → subscribe trades + bars). Every browser reads
-`GET /api/market/quotes` and the chart reads `GET /api/market/bars`, so Alpaca keys never reach a client.
+In **Hybrid** mode the backend seeds `AAPL, TSLA, NVDA, COIN, MSTR, MARA, KO, JPM, NKE, UNH, AVGO, WMT, DIS, V, UBER, AMZN`
+through Finnhub's `/quote` endpoint **1.2 seconds apart** (under the 60 calls/minute free-tier limit), then opens one shared
+WebSocket to `wss://ws.finnhub.io` and subscribes every symbol. Prices are cached in server memory and every browser reads
+`GET /api/market/quotes`, so users never call Finnhub directly.
 
-### Price Override % (per stock)
+The fallback engine runs automatically when the US market is closed, Finnhub returns HTTP `429`, or WebSocket ticks stop:
+the server keeps producing smooth micro-ticks from the **last real Finnhub close**, so virtual Rise/Fall trades stay live
+24/7 with no frozen charts. The market notice switches between **“Live market data via Finnhub”** and
+**“24/7 OTC market mode active (based on last real close)”**.
 
-`Admin → Stocks · raw price, override & effective price` lists every synced stock with raw Alpaca price, editable
-**Override %**, effective price, dividend yield and an Active toggle. The rule is applied server-side everywhere:
+Live trades on covered symbols are also settled by the backend every few seconds (take-profit, stop-loss, duration expiry),
+so Whale Coin payouts and notifications happen even if every browser tab is closed.
 
-```
-effectivePrice = rawAlpacaPrice × (1 + overridePct / 100)
-```
+Every Rise/Fall trade can carry optional **Take Profit (TP)** and **Stop Loss (SL)** levels, entered as a
+percentage move or an exact USD target price. The trade form validates the side (Rise: TP above entry, SL
+below; Fall: TP below entry, SL above), open trades can edit or clear their levels from Active Trades, and
+the chart draws `Entry` / `TP` / `SL` price lines with `createPriceLine()` until the trade closes. The same
+lightweight-charts baseline view is used on the portfolio performance card, with the live/OTC mode notice.
 
-A `+5%` override makes a `$200.00` raw quote show, trade, trigger TP/SL and pay out at **$210.00 (420 WC)**. Overrides
-are stored on `db.stocks[i].overridePct`, applied to live ticks, historical bars, chart Y-axis/tooltips/tickers and the
-position banner, and saving the table reprices live quotes immediately.
+The stock detail chart uses TradingView **lightweight-charts** `BaselineSeries` loaded from unpkg. Its baseline is the exact
+trade entry price for an open Rise/Fall position (green above / red below, inverted for Short), with `timeVisible: true`
+and `secondsVisible: true` and per-tick `series.update()` — no reloads.
 
-### Sync, assets and dividends
-
-**Sync Now from Alpaca** (or the scheduled job) runs `syncAll()`:
-
-1. `GET /v2/assets?status=active&asset_class=us_equity` → metadata for tradable US equities (import capped by
-   `ALPACA_ASSET_LIMIT`, default 150; existing symbols are always refreshed).
-2. Snapshot prices for every tracked symbol.
-3. `GET /v1/corporate-actions?types=cash_dividend` for the trailing 365 days → `cash_dividends` → annual dividend yield per symbol
-   (`sum(rate) / raw price × 100`). Admin dividend overrides remain a separate object and are never overwritten.
-
-`market.js` keeps a shared rolling Alpaca call budget (`ALPACA_MAX_CALLS_PER_MIN`, default 180), waits through 429
-cooldowns instead of aborting, keeps previously synced yields when a request fails, and retries failed yields.
-Admin status shows WebSocket auth state, live price count, dividend sync, API calls/minute, scheduled-sync state and
-the retry queue.
-
-### Stock chart · TradingView technical analysis (active trade)
-
-The stock page no longer renders an Alpaca or Finnhub chart. It mounts
-`public/trade-analysis.js` (`WC_TA`, module `wc-trade-analysis`) into the chart card:
-
-| Piece | Widget / source | Notes |
-|---|---|---|
-| Technical analysis | `<tv-technical-analysis>` (`tv-technical-analysis.js`) | Symbol = `EXCHANGE:TICKER` from the stock metadata, `interval="15"`, `ratings-display-mode="gauge-and-stats"`, `ratings-mode="multiple"`. |
-| Price movement | `<tv-mini-chart>` (`tv-mini-chart.js`) | Same symbol; the container gets a green glow while the price is ticking up and a red glow while it is falling, with a live `▲ +x.xx%` / `▼ -x.xx%` tag. |
-| Live ledger | app quote (`/api/market/quotes`) | **Trade value**, **Entry price**, **Live price**, then **Earnings** (green) or **Losses** (red) counting in real time in USD + WC + %. |
-| Controls | `/api/market/spot/buy` · `/sell` · `/tpsl` | Red **Buy** opens a trade (USD amount, optional TP/SL %, due time). **Sell** is blue with *Sell · take profit* while the trade is in profit and red-tinted with *Sell · stop loss* while it is underwater. A compact **TP / SL** button edits the exit rules. |
-
-Both widgets load client-side from `widgets.tradingview-widget.com`, so no API key is needed. If the
-widgets cannot load (offline/blocked), the card still shows the live price, the P&L ledger and the
-Buy/Sell controls. The app's own timeframe and Line/Candles chips are hidden on this page because
-the widgets provide their own range controls.
-
-### API key + secret connection panel
-
-**Admin → Stocks → Market data · Alpaca** is where the connection is configured. It shows the resolved endpoint
-(`https://paper-api.alpaca.markets/v2` for paper keys, `https://api.alpaca.markets/v2` for live keys), fields for the
-**Alpaca API Key ID** and **Secret Key**, environment, feed, refresh interval and the auto-sync schedule. Both fields
-are write-only: a saved key is shown only as a masked id (`AK…9XYZ`) and leaving the fields blank keeps the stored
-keys. `Test Connection & Save` writes the config, reconnects the stream and probes AAPL. Keys are persisted to
-`DATA_DIR/market-config.json` (mode 0600) and Postgres, never to the synced database, and
-`ALPACA_KEY_ID` / `ALPACA_SECRET_KEY` still work as first-boot environment variables.
-
-### Alpaca health widget
-
-The same screen renders a live health card backed by `GET /api/market/health`. It scores seven checks —
-**credentials, REST snapshots, IEX WebSocket, rate budget, scheduled data sync, price coverage and the US session** —
-into a 0–100 score (`healthy` / `degraded` / `at risk` / `offline`) and shows REST latency, last real tick, stream
-ticks, last connection test and server uptime. The card refreshes every 10 seconds while the page is open.
-
-### Override & data sync audit log
-
-Every override change, active toggle, sync run, dividend sync, connection save and connection test is appended to
-`db.marketAudit` (capped at 1000 entries, survives redeploys with the rest of the database) by `market.audit()`.
-Entries record the admin (`@username`), category (`override` / `sync` / `connection`), result, duration and a
-before → after change list — for example `AAPL 0.00% → 7.50%`. Secrets are never logged; only the masked key id.
-
-| Piece | Where | Notes |
-|---|---|---|
-| Log | `db.marketAudit` | Newest first. Written by `market.js`; scheduled syncs are attributed to `scheduler`. |
-| API | `GET /api/market/audit?adminId=…&category=…&limit=…` | Admin only. Returns `entries` + `total`. |
-| UI | Admin → Stocks → *Override & data sync audit log* | Filter by Overrides / Data sync / Connection, load more, export CSV. |
+TP/SL can be entered as a **percentage**, an exact **USD price**, or a **WC amount** target. Trailing stops
+ratchet behind favourable price movement and only tighten. Open-trade cards and closed-trade history show the
+levels that were set, and the chart's `Entry` / `TP` / `TSL` lines follow a trailing stop as it moves.
 
 ### Spot Buy / Sell (primary stock flow)
 
 `market.js` owns the spot book. `POST /api/market/spot/buy` accepts `amountUsd` (primary), `amountCoins` or `shares`
 and executes at the current live quote: the cost is deducted from the wallet immediately and a position is recorded
-with symbol, entry price (USD + WC), quantity, invested capital (USD + WC), optional TP/SL and an optional due time.
-TP/SL can be entered as an exact price or a percentage gain/loss; due time can be a preset duration (15 min → 7 days)
-or a custom timestamp. The order ticket shows
+with symbol, entry price (USD + WC), quantity, invested capital (USD + WC) and optional TP/SL. The order ticket shows
 the live selling price in USD and WC, takes a USD amount and calculates **WC = USD ÷ 0.50** live as you type. `POST /api/market/spot/sell` closes the whole position at the
 live price and credits `quantity × price` back in WC. Every fill is written to `trades`, `txs` and notifications.
-`settleSpot()` runs once per second: when the live price crosses TP (`>=`), SL (`<=`) or the due time arrives, the
-backend closes the position and credits the payout even if every browser is closed. `sellSpotInternal()` re-checks that the position
+`settleSpot()` runs once per second: when the live price crosses TP (`>=`) or SL (`<=`) the backend sells the
+position and credits the payout even if every browser is closed. `sellSpotInternal()` re-checks that the position
 is still present in the live book and sets a per-position `closing` flag, so a manual sell and a TP/SL trigger in
 the same millisecond cannot double-credit: the first caller closes it, the second sees it gone and returns.
 
@@ -196,15 +139,25 @@ return %, live toggle). API: `GET /api/shares/state?userId=`, `POST /api/shares/
 `GET /api/shares/admin?adminId=`, `POST /api/shares/admin/plans`. UI: `public/whalechat-shares.js`
 (module `wc-whalechat-shares`).
 
-Environment variables (optional, useful for first boot): `ALPACA_KEY_ID`, `ALPACA_SECRET_KEY`, `ALPACA_MODE=paper|live`,
-`ALPACA_SYNC_INTERVAL_MIN`, `ALPACA_FEED=iex|sip`.
-For provider testing only: `ALPACA_DATA_BASE`, `ALPACA_TRADING_BASE`, `ALPACA_WS_URL`, `ALPACA_SEED_DELAY_MS`, `US_MARKET_FORCE_OPEN=1`.
+### Finnhub sync resilience
 
-**Verify Alpaca end-to-end** (on the server host, after `npm install`):
+Finnhub's free tier allows 60 calls/minute. `market.js` now keeps one shared rolling call budget
+(`FINNHUB_MAX_CALLS_PER_MIN`, default 55) that covers seeding, polling and dividend sync. A 429 no longer aborts a
+sync: the worker waits out the cooldown and continues with the remaining symbols, preserving previously synced live
+yields instead of overwriting them with fallback values. Failed yields are retried automatically after a few minutes
+and failed prices are refreshed by the next poll cycle. Admin → Stocks shows **Live stock prices**, **Dividend sync**,
+**API calls / minute** and the retry queue, plus a **Sync prices + dividends** button
+(`POST /api/market/sync-all`). Override percentages remain a separate object (`db.invest.dividendOverrides`) and are
+never touched by the sync.
+
+Environment variables (optional, useful for first boot): `FINNHUB_API_KEY`, `FINNHUB_MODE=hybrid`.
+For provider testing only: `FINNHUB_REST_BASE`, `FINNHUB_WS_URL`, `FINNHUB_SEED_DELAY_MS`, `US_MARKET_FORCE_OPEN=1`.
+
+**Verify a live key end-to-end** (on the server host, after `npm install`):
 
 ```bash
-ALPACA_KEY_ID=your_key ALPACA_SECRET_KEY=your_secret node scripts/verify-alpaca.js
-npm run verify:alpaca          # same, uses ALPACA_KEY_ID / ALPACA_SECRET_KEY
+FINNHUB_API_KEY=your_key node scripts/verify-finnhub.js
+npm run verify:finnhub          # same, uses FINNHUB_API_KEY from the environment
 ```
 
 ## Run locally
