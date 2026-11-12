@@ -384,9 +384,9 @@
         }));
       } catch (e) {}
     };
-    add(pos.entryPrice, '#60a5fa', 'Entry', 2);
-    add(pos.takeProfitPrice, '#22c55e', 'TP', 0);
-    add(pos.stopLossPrice, '#ef4444', 'SL', 0);
+    add(pos.entryPrice, '#60a5fa', 'Entry $' + Number(pos.entryPrice).toFixed(2), 2);
+    add(pos.takeProfitPrice, '#22c55e', 'TP $' + Number(pos.takeProfitPrice).toFixed(2), 0);
+    add(pos.stopLossPrice, '#ef4444', 'SL $' + Number(pos.stopLossPrice).toFixed(2), 0);
   }
 
   async function mountChart() {
