@@ -1,8 +1,8 @@
 {
   "version": "3.25.0",
-  "build": "2026-11-13T04:30:00Z",
+  "build": "2026-11-13T07:00:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.25.0 (restored) - rolled back to the last release before the Alpaca chart: Finnhub live market data + charts, USD spot buying with WC conversion, bots, shares. Build stamp advanced so installed apps pick the rollback up.",
-  "releasedAt": "2026-11-13T04:30:00Z",
+  "notes": "WhaleChat 3.25.0 (restored) + Pro Chart: TradingView Lightweight Charts v5 for stock trading and portfolio performance, neon baseline/candles, glass HUD, entry/TP/SL lines, BUY/SELL markers and on-chart buy/sell controls. Finnhub market data.",
+  "releasedAt": "2026-11-13T07:00:00Z",
   "minimum": "3.0.0"
 }
