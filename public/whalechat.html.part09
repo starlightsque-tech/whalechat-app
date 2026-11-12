@@ -186,9 +186,9 @@ INV.viewDash = function (params) {
 };
 
 /* ------------------------------ market ------------------------------ */
-INV.marketCat = 'Top Gainers';
+INV.marketCat = 'All';
 INV.marketQuery = '';
-INV.CATS = ['Top Gainers', 'Top Losers', 'Most Traded', 'Trending', 'Technology', 'Crypto', 'Dividend', 'New'];
+INV.CATS = ['All', 'US Stocks', 'Global Stocks', 'Forex', 'Crypto'];
 
 INV.marketFiltered = function () {
   let list = INV.stocks();
@@ -215,7 +215,7 @@ INV.cardHTML = function (s) {
     <div class="row" style="gap:9px;align-items:center">
       ${INV.logoHTML(s, 32)}
       <div class="grow" style="min-width:0">
-        <div class="small ellipsis" style="font-weight:700">${esc(s.ticker)}</div>
+        <div class="small ellipsis" style="font-weight:700;display:flex;align-items:center;gap:5px">${esc(INV.assetTicker ? INV.assetTicker(s) : s.ticker)}${INV.assetClassBadge ? INV.assetClassBadge(s) : ''}</div>
         <div class="tiny muted ellipsis row" style="gap:5px"><span class="ellipsis">${esc(s.name)}</span>${INV.dividendBadge ? INV.dividendBadge(s.ticker) : ''}</div>
       </div>
       ${s.paused || INV.paused(s.ticker) ? `<span class="badge badge-warn" style="font-size:9px">Paused</span>` : ''}
@@ -223,7 +223,7 @@ INV.cardHTML = function (s) {
     <div class="inv-sparkwrap" data-spark="${s.ticker}">${INV.spark(s.ticker)}</div>
     <div class="between" style="align-items:flex-end;margin-top:2px">
       <div>
-        <div class="small" style="font-weight:700" data-lv="price:${s.ticker}">${usd(q.price)}</div>
+        <div class="small" style="font-weight:700" data-lv="price:${s.ticker}">${INV.priceText ? INV.priceText(s.ticker, q.price) : usd(q.price)}</div>
         <div class="tiny muted" data-lv="wc:${s.ticker}">${coins(usdToCoins(q.price))} WC</div>
       </div>
       <span class="inv-chg ${c} ${q.dir > 0 ? 'flash-up' : q.dir < 0 ? 'flash-down' : ''}" data-lv="pct:${s.ticker}">${q.changePct >= 0 ? '+' : ''}${q.changePct.toFixed(2)}%</span>
@@ -238,10 +238,10 @@ INV.viewMarket = function () {
     <a href="#/invest/watchlist" class="btn btn-sm btn-ghost">${ic('star', 14)} Watchlist</a>
   </div></div>
   <div class="searchbar" style="margin-bottom:10px">${ic('search', 17)}
-    <input id="ivSearch" placeholder="Search company or ticker — AAPL, TSLA, NVDA…" value="${esc(INV.marketQuery)}" autocomplete="off"/></div>
+    <input id="ivSearch" placeholder="Search asset — AAPL, VOD.L, EUR/USD, BTC/USDT…" value="${esc(INV.marketQuery)}" autocomplete="off"/></div>
   <div class="chip-row inv-cats" id="ivCats">${INV.CATS.map(c => `<button class="chip ${c === INV.marketCat && !INV.marketQuery ? 'on' : ''}" data-act="inv-cat" data-cat="${esc(c)}">${esc(c)}</button>`).join('')}</div>
   <div class="inv-grid" id="ivList">${list.length ? list.map(INV.cardHTML).join('') : `<div class="inv-empty" style="grid-column:1/-1">${ic('search', 26)}<p class="small muted">No stocks match “${esc(INV.marketQuery)}”.</p></div>`}</div>
-  <div class="card inv-note">${ic('help', 14)} <span class="tiny">Simulated market data, refreshed every 5 seconds. Connect a market data API in Admin → Stocks to switch to live quotes.</span></div>`;
+  <div class="card inv-note" data-market-notice="1">${ic('help', 14)} <span class="tiny">Live market data via Finnhub — US stocks, global stocks, forex and crypto.</span></div>`;
 };
 AFTER.invest = function (parts) {
   const sub = parts[1] || '';
@@ -289,7 +289,7 @@ INV.viewStock = function (rawTicker, params) {
       <a href="#/invest/market" class="btn-icon">${ic('back', 18)}</a>
       <div class="row" style="gap:9px;align-items:center">${INV.logoHTML(s, 34)}
         <div><div class="small" style="font-weight:700;display:flex;align-items:center;gap:6px">${esc(s.name)}${INV.dividendBadge ? INV.dividendBadge(s.ticker) : ''}</div>
-        <div class="tiny muted">${esc(s.ticker)} · ${esc(s.sector)}</div></div></div>
+        <div class="tiny muted">${esc(INV.assetTicker ? INV.assetTicker(s) : s.ticker)} · ${esc(s.sector)}</div></div></div>
     </div>
     <div class="row" style="gap:6px">
       <button class="btn btn-sm ${watching ? 'btn-soft' : 'btn-ghost'}" data-act="inv-star" data-t="${s.ticker}">
@@ -301,7 +301,7 @@ INV.viewStock = function (rawTicker, params) {
   <div class="card inv-pricecard">
     <div class="between" style="align-items:flex-end">
       <div>
-        <div class="inv-price" data-lv="price:${s.ticker}">${usd(q.price)}</div>
+        <div class="inv-price" data-lv="price:${s.ticker}">${INV.priceText ? INV.priceText(s.ticker, q.price) : usd(q.price)}</div>
         <div class="tiny muted" data-lv="wc:${s.ticker}">${coins(usdToCoins(q.price))} WC</div>
       </div>
       <div class="inv-chg ${INV.chgClass(chg)}" data-lv="pct:${s.ticker}">
@@ -352,14 +352,14 @@ INV.viewStock = function (rawTicker, params) {
     <div class="card">
       <div class="card-title">Key statistics</div>
       <div class="inv-statgrid">
-        <div><span class="tiny muted">Open</span><b>${usd(q.open)}</b></div>
-        <div><span class="tiny muted">Day high</span><b>${usd(q.dayHigh)}</b></div>
-        <div><span class="tiny muted">Day low</span><b>${usd(q.dayLow)}</b></div>
+        <div><span class="tiny muted">Open</span><b>${INV.priceText ? INV.priceText(s.ticker, q.open) : usd(q.open)}</b></div>
+        <div><span class="tiny muted">Day high</span><b>${INV.priceText ? INV.priceText(s.ticker, q.dayHigh) : usd(q.dayHigh)}</b></div>
+        <div><span class="tiny muted">Day low</span><b>${INV.priceText ? INV.priceText(s.ticker, q.dayLow) : usd(q.dayLow)}</b></div>
         <div><span class="tiny muted">Volume</span><b>${(q.vol / 1e6).toFixed(1)}M</b></div>
         <div><span class="tiny muted">Market cap</span><b>$${(s.mcap || 0).toFixed(0)}B</b></div>
         <div><span class="tiny muted">P/E ratio</span><b>${s.pe ? s.pe.toFixed(1) : '—'}</b></div>
-        <div><span class="tiny muted">52W high</span><b>${usd(hi52)}</b></div>
-        <div><span class="tiny muted">52W low</span><b>${usd(lo52)}</b></div>
+        <div><span class="tiny muted">52W high</span><b>${INV.priceText ? INV.priceText(s.ticker, hi52) : usd(hi52)}</b></div>
+        <div><span class="tiny muted">52W low</span><b>${INV.priceText ? INV.priceText(s.ticker, lo52) : usd(lo52)}</b></div>
         <div><span class="tiny muted">Dividend yield</span><b>${(INV.dividendYield ? INV.dividendYield(s.ticker) : (s.div || 0)) > 0 ? (INV.dividendYield ? INV.dividendYield(s.ticker) : s.div).toFixed(2) + '%' : 'None'}</b></div>
         <div><span class="tiny muted">Your avg</span><b>${hold ? usd(hold.avgPrice) : '—'}</b></div>
       </div>
@@ -593,10 +593,10 @@ INV.viewWatchlist = function () {
       const q = INV.quote(s.ticker);
       return `<a class="inv-row" href="#/invest/stock/${s.ticker}">
         ${INV.logoHTML(s, 34)}
-        <div class="grow" style="min-width:0"><div class="small" style="font-weight:650">${esc(s.ticker)}</div>
+        <div class="grow" style="min-width:0"><div class="small" style="font-weight:650;display:flex;align-items:center;gap:5px">${esc(INV.assetTicker ? INV.assetTicker(s) : s.ticker)}${INV.assetClassBadge ? INV.assetClassBadge(s) : ''}</div>
           <div class="tiny muted ellipsis">${esc(s.name)}</div>
           <div class="div-row">${INV.dividendBadge ? INV.dividendBadge(s.ticker) : ''}${INV.dividendEstimate ? INV.dividendEstimate(s.ticker, 100, 1440, '1d/100WC') : ''}</div></div>
-        <div style="text-align:right"><div class="small" style="font-weight:650" data-lv="price:${s.ticker}">${usd(q.price)}</div>
+        <div style="text-align:right"><div class="small" style="font-weight:650" data-lv="price:${s.ticker}">${INV.priceText ? INV.priceText(s.ticker, q.price) : usd(q.price)}</div>
           <div class="tiny ${INV.chgClass(q.changePct)}" data-lv="pct:${s.ticker}">${q.changePct >= 0 ? '+' : ''}${q.changePct.toFixed(2)}%</div></div>
         <button class="btn-icon" data-act="inv-star" data-t="${s.ticker}" title="Unstar">${ic('x', 15)}</button></a>`;
     }).join('')}</div>` : `<div class="inv-empty">${ic('star', 26)}<p class="small muted">No starred stocks yet. Tap the star on any stock to follow it.</p></div>`}
@@ -664,13 +664,13 @@ INV.viewAdminStocks = function () {
 
   return `${INV.adminTabs()}
   <div class="page-head"><div class="between">
-    <div><div class="section-title" style="margin:0">Stocks & trading</div>
+    <div><div class="section-title" style="margin:0">Markets &amp; trading</div>
       <div class="tiny muted">Catalogue, pricing, fees, paused symbols and user exposure</div></div>
     <button class="btn btn-sm btn-primary" data-act="inv-admin-add">${ic('plus', 14)} Add stock</button>
   </div></div>
 
   <div class="grid-kpi">
-    <div class="kpi"><span class="tiny muted">Listed stocks</span><b>${stocks.length}</b></div>
+    <div class="kpi"><span class="tiny muted">Listed assets</span><b>${stocks.length}</b></div>
     <div class="kpi"><span class="tiny muted">Open positions</span><b>${DB.holdings.length}</b></div>
     <div class="kpi"><span class="tiny muted">Trades</span><b>${DB.trades.length}</b></div>
     <div class="kpi"><span class="tiny muted">Trading fee</span><b>${fee}%</b></div>
@@ -694,10 +694,10 @@ INV.viewAdminStocks = function () {
         const q = INV.quote(s.ticker);
         const paused = INV.paused(s.ticker);
         return `<tr>
-          <td><b>${esc(s.ticker)}</b></td>
-          <td class="ellipsis" style="max-width:150px">${esc(s.name)}</td>
+          <td><b>${esc(INV.assetTicker ? INV.assetTicker(s) : s.ticker)}</b><div class="tiny muted">${esc((s.assetClass || 'us').toUpperCase())}</div></td>
+          <td class="ellipsis" style="max-width:150px">${esc(s.name)}<div class="tiny muted">${esc(s.exchange || '')}</div></td>
           <td class="muted">${esc(s.sector || '—')}</td>
-          <td class="num"><span data-lv="price:${s.ticker}">${usd(q.price)}</span></td>
+          <td class="num"><span data-lv="price:${s.ticker}">${INV.priceText ? INV.priceText(s.ticker, q.price) : usd(q.price)}</span></td>
           <td class="num ${INV.chgClass(Number(q.changePct) || 0)}">${(Number(q.changePct) || 0) >= 0 ? '+' : ''}${(Number(q.changePct) || 0).toFixed(2)}%</td>
           <td><span class="badge ${paused ? 'badge-warn' : 'badge-success'}">${paused ? 'Paused' : 'Live'}</span></td>
           <td class="row" style="gap:4px;justify-content:flex-end">
@@ -866,7 +866,7 @@ INV.paint = function () {
     if (kind === 'cash') return INV.setText(el, coins(u.balance) + ' WC');
     if (!t) return;
     const q = INV.quote(t); if (!q) return;
-    if (kind === 'price') INV.setText(el, usd(q.price));
+    if (kind === 'price') INV.setText(el, (INV.priceText ? INV.priceText(t, q.price) : usd(q.price)));
     if (kind === 'wc') INV.setText(el, coins(usdToCoins(q.price)) + ' WC');
     if (kind === 'pct') {
       INV.setText(el, (q.changePct >= 0 ? '+' : '') + q.changePct.toFixed(2) + '%');
