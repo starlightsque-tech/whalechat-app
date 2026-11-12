@@ -220,7 +220,7 @@ scripts/generate-demo-catalog.mjs     assigns 10–50 products per seller, sets 
 scripts/encode-demo-images.py         resize/crop renders → public/demo/{products,sellers,banners}/*.jpg.b64
 assets-src/demo/{products,sellers,banners}/  source renders used when regenerating (needs Pillow)
 public/demo-catalog.json              generated runtime catalogue fetched by the app
-public/demo/products/*.jpg.b64        36 realistic product photos (560×560)
+public/demo/products/*.jpg.b64        57 realistic product photos (36 core + 21 extra, 560×560)
 public/demo/sellers/*.jpg.b64         6 real owner portraits (320×320)
 public/demo/banners/*.jpg.b64         6 storefront banners (1200×400)
 ```
@@ -260,6 +260,21 @@ every device. Saving updates the storefront in place: listings still inside the 
 price and stock, new ones are added, and listings that fall out of the range are hidden — unless a
 real order references them, in which case they are retired (`active:false`) instead of deleted so
 order history is never orphaned. **Reset to default** returns the store to its catalogue slice.
+
+### Generating more products (append-only)
+
+**Admin → Demo sellers → Generate more products** lets an admin pick a storefront (or all of them), a
+category and **how many products to generate (1–50)**. Each run adds brand-new listings:
+
+- unused catalogue models are assigned first, so new products never repeat a store's range;
+- when a category's models are exhausted for a store, a distinct edition variant is created
+  (e.g. *"FrostLine 610L French Door · Graphite"*) with its own price, stock and model slug;
+- **nothing existing is removed, renamed or replaced** — the run only appends, and the toast reports
+  how many listings were added;
+- generated listings are flagged `generated: true`, so **Republish catalogues**, **Edit range** and
+  **Reset range** all preserve them;
+- every generated product gets a committed photo (`public/demo/products/*.jpg.b64`) — extra models can
+  declare `deriveFrom` + `derive` in the source so the encoder creates a distinct shot from a base render.
 
 ### Demo activity dashboard
 
