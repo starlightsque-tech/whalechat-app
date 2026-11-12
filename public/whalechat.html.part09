@@ -216,7 +216,7 @@ INV.cardHTML = function (s) {
       ${INV.logoHTML(s, 32)}
       <div class="grow" style="min-width:0">
         <div class="small ellipsis" style="font-weight:700">${esc(s.ticker)}</div>
-        <div class="tiny muted ellipsis">${esc(s.name)}</div>
+        <div class="tiny muted ellipsis row" style="gap:5px"><span class="ellipsis">${esc(s.name)}</span>${INV.dividendBadge ? INV.dividendBadge(s.ticker) : ''}</div>
       </div>
       ${s.paused || INV.paused(s.ticker) ? `<span class="badge badge-warn" style="font-size:9px">Paused</span>` : ''}
     </div>
@@ -288,7 +288,7 @@ INV.viewStock = function (rawTicker, params) {
     <div class="row" style="gap:10px;align-items:center">
       <a href="#/invest/market" class="btn-icon">${ic('back', 18)}</a>
       <div class="row" style="gap:9px;align-items:center">${INV.logoHTML(s, 34)}
-        <div><div class="small" style="font-weight:700">${esc(s.name)}</div>
+        <div><div class="small" style="font-weight:700;display:flex;align-items:center;gap:6px">${esc(s.name)}${INV.dividendBadge ? INV.dividendBadge(s.ticker) : ''}</div>
         <div class="tiny muted">${esc(s.ticker)} · ${esc(s.sector)}</div></div></div>
     </div>
     <div class="row" style="gap:6px">
@@ -360,7 +360,7 @@ INV.viewStock = function (rawTicker, params) {
         <div><span class="tiny muted">P/E ratio</span><b>${s.pe ? s.pe.toFixed(1) : '—'}</b></div>
         <div><span class="tiny muted">52W high</span><b>${usd(hi52)}</b></div>
         <div><span class="tiny muted">52W low</span><b>${usd(lo52)}</b></div>
-        <div><span class="tiny muted">Dividend</span><b>${s.div ? s.div.toFixed(2) + '%' : 'None'}</b></div>
+        <div><span class="tiny muted">Dividend yield</span><b>${(INV.dividendYield ? INV.dividendYield(s.ticker) : (s.div || 0)) > 0 ? (INV.dividendYield ? INV.dividendYield(s.ticker) : s.div).toFixed(2) + '%' : 'None'}</b></div>
         <div><span class="tiny muted">Your avg</span><b>${hold ? usd(hold.avgPrice) : '—'}</b></div>
       </div>
     </div>
