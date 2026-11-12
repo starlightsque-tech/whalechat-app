@@ -6,7 +6,7 @@
 (function () {
   if (typeof window === 'undefined') return;
   const S = window.WC_SPOT = window.WC_SPOT || {};
-  S.mode = 'wc';
+  S.mode = 'usd';
   S.ticker = '';
 
   function apiPath(p) {
@@ -35,10 +35,11 @@
     const q = qFor(S.ticker);
     if (!q || !(q.price > 0)) { pv.textContent = 'Waiting for a live Finnhub quote…'; return; }
     const v = Number(el.value) || 0;
-    let shares = 0, cost = 0;
-    if (S.mode === 'wc') { cost = v; shares = (v * 0.5) / q.price; }
-    else { shares = v; cost = (shares * q.price) / 0.5; }
-    pv.innerHTML = `<b>${shares.toLocaleString(undefined, { maximumFractionDigits: 6 })} shares</b> · cost ${cost.toFixed(2)} WC · live ${px(S.ticker, q.price)}`;
+    let shares = 0, cost = 0, usdAmt = 0;
+    if (S.mode === 'usd') { usdAmt = v; shares = v / q.price; cost = v / 0.5; }
+    else if (S.mode === 'wc') { cost = v; usdAmt = v * 0.5; shares = usdAmt / q.price; }
+    else { shares = v; usdAmt = shares * q.price; cost = usdAmt / 0.5; }
+    pv.innerHTML = `<b>${usdAmt.toLocaleString(undefined, { style: 'currency', currency: 'USD' })}</b> = <b>${cost.toFixed(2)} WC</b> · ${shares.toLocaleString(undefined, { maximumFractionDigits: 6 })} shares · live ${px(S.ticker, q.price)} (${(q.price * 2).toFixed(2)} WC)`;
   };
 
   function ticketHTML(ticker) {
@@ -50,17 +51,18 @@
     return `<div class="card" id="spotTicketCard">
       <div class="between" style="align-items:flex-start;gap:10px">
         <div><div class="card-title" style="margin:0">Buy ${escSpot(label(ticker))}</div>
-          <div class="tiny muted" style="margin-top:2px">Market order · live ${price > 0 ? px(ticker, price) : 'waiting for Finnhub quote'}</div></div>
+          <div class="tiny muted" style="margin-top:2px">Live selling price ${price > 0 ? px(ticker, price) + ' (' + (price * 2).toFixed(2) + ' WC)' : 'waiting for Finnhub quote'}</div></div>
         <span class="badge badge-success">Spot</span>
       </div>
       <div class="lt-modebtns" style="margin-top:11px">
+        <button type="button" class="${S.mode === 'usd' ? 'on' : ''}" data-act="spot-mode" data-mode="usd">Invest USD</button>
         <button type="button" class="${S.mode === 'wc' ? 'on' : ''}" data-act="spot-mode" data-mode="wc">Invest WC</button>
         <button type="button" class="${S.mode === 'shares' ? 'on' : ''}" data-act="spot-mode" data-mode="shares">Shares</button>
       </div>
-      <div class="field" style="margin-top:9px"><label class="label" id="spotAmountLabel">${S.mode === 'wc' ? 'Investment amount (WC)' : 'Number of shares'}</label>
-        <div class="input-wrap"><span class="inv-prefix" id="spotPrefix">${S.mode === 'wc' ? 'WC' : 'sh'}</span>
+      <div class="field" style="margin-top:9px"><label class="label" id="spotAmountLabel">${S.mode === 'usd' ? 'Investment amount (USD)' : S.mode === 'wc' ? 'Investment amount (WC)' : 'Number of shares'}</label>
+        <div class="input-wrap"><span class="inv-prefix" id="spotPrefix">${S.mode === 'usd' ? '$' : S.mode === 'wc' ? 'WC' : 'sh'}</span>
           <input class="input" id="spotAmount" type="number" step="0.01" min="0" placeholder="0"/></div>
-        <div class="tiny muted" id="spotPreview" style="margin-top:5px">Enter an amount to see the estimated shares and cost.</div>
+        <div class="tiny muted" id="spotPreview" style="margin-top:5px">Enter a USD amount — WC is calculated at 1 WC = $0.50.</div>
       </div>
       <div class="row" style="gap:8px">
         <div class="field grow"><label class="label">Take Profit (optional)</label>
@@ -88,9 +90,9 @@
         <div><span>Symbol</span><b>${escSpot(label(ticker))}</b></div>
         <div><span>Quantity</span><b data-spot-qty>${shares.toLocaleString(undefined, { maximumFractionDigits: 6 })}</b></div>
         <div><span>Entry price</span><b data-spot-entry>${px(ticker, avg)}</b></div>
-        <div><span>Invested</span><b data-spot-invested>${invested.toFixed(2)} WC</b></div>
-        <div><span>Live value</span><b data-spot-value>${value.toFixed(2)} WC</b></div>
-        <div><span>P/L</span><b class="${pnl >= 0 ? 'up' : 'down'}" data-spot-pnl>${pnl >= 0 ? '+' : '−'}${Math.abs(pnl).toFixed(2)} WC</b></div>
+        <div><span>Invested</span><b data-spot-invested>${invested.toFixed(2)} WC <span class="tiny muted">(${((Number(h.investedUsd) || invested * 0.5)).toFixed(2)} USD)</span></b></div>
+        <div><span>Live value</span><b data-spot-value>${value.toFixed(2)} WC <span class="tiny muted">(${(value * 0.5).toFixed(2)} USD)</span></b></div>
+        <div><span>P/L</span><b class="${pnl >= 0 ? 'up' : 'down'}" data-spot-pnl>${pnl >= 0 ? '+' : '−'}${Math.abs(pnl).toFixed(2)} WC <span class="tiny">(${pnl >= 0 ? '+' : '−'}$${Math.abs(pnl * 0.5).toFixed(2)})</span></b></div>
         <div><span>Take Profit</span><b>${Number(h.takeProfitPrice) > 0 ? px(ticker, h.takeProfitPrice) : '—'}</b></div>
         <div><span>Stop Loss</span><b>${Number(h.stopLossPrice) > 0 ? px(ticker, h.stopLossPrice) : '—'}</b></div>
       </div>
@@ -111,7 +113,7 @@
         </div>
         <div class="tiny muted" style="margin-top:5px">TP must be above entry, SL below. The backend executes the first level hit.</div>
       </div>
-      <div class="tiny muted center" style="margin-top:5px">Payout = quantity × current live price · credited to WC</div>
+      <div class="tiny muted center" style="margin-top:5px">Payout WC = (quantity × exit USD) ÷ 0.50 · credited instantly</div>
     </div>`;
   }
 
@@ -183,18 +185,18 @@
     const set = (sel, txt) => { const n = el.querySelector(sel); if (n) n.textContent = txt; };
     set('[data-spot-qty]', shares.toLocaleString(undefined, { maximumFractionDigits: 6 }));
     set('[data-spot-entry]', px(S.ticker, avg));
-    set('[data-spot-invested]', invested.toFixed(2) + ' WC');
-    set('[data-spot-value]', value.toFixed(2) + ' WC');
+    set('[data-spot-invested]', invested.toFixed(2) + ' WC ($' + (invested * 0.5).toFixed(2) + ')');
+    set('[data-spot-value]', value.toFixed(2) + ' WC ($' + (value * 0.5).toFixed(2) + ')');
     const pn = el.querySelector('[data-spot-pnl]');
-    if (pn) { pn.textContent = (pnl >= 0 ? '+' : '−') + Math.abs(pnl).toFixed(2) + ' WC'; pn.className = pnl >= 0 ? 'up' : 'down'; }
+    if (pn) { pn.textContent = (pnl >= 0 ? '+' : '−') + Math.abs(pnl).toFixed(2) + ' WC (' + (pnl >= 0 ? '+' : '−') + '$' + Math.abs(pnl * 0.5).toFixed(2) + ')'; pn.className = pnl >= 0 ? 'up' : 'down'; }
   };
 
   if (typeof App !== 'undefined') {
     App.spotMode = function (id, ds) {
-      S.mode = ds.mode === 'shares' ? 'shares' : 'wc';
+      S.mode = ds.mode === 'shares' ? 'shares' : ds.mode === 'wc' ? 'wc' : 'usd';
       document.querySelectorAll('[data-act="spot-mode"]').forEach((b) => b.classList.toggle('on', b.getAttribute('data-mode') === S.mode));
-      const pre = document.getElementById('spotPrefix'); if (pre) pre.textContent = S.mode === 'wc' ? 'WC' : 'sh';
-      const lab = document.getElementById('spotAmountLabel'); if (lab) lab.textContent = S.mode === 'wc' ? 'Investment amount (WC)' : 'Number of shares';
+      const pre = document.getElementById('spotPrefix'); if (pre) pre.textContent = S.mode === 'usd' ? '$' : S.mode === 'wc' ? 'WC' : 'sh';
+      const lab = document.getElementById('spotAmountLabel'); if (lab) lab.textContent = S.mode === 'usd' ? 'Investment amount (USD)' : S.mode === 'wc' ? 'Investment amount (WC)' : 'Number of shares';
       S.preview();
     };
 
@@ -205,7 +207,9 @@
       const tp = Number((document.getElementById('spotTp') || {}).value) || 0;
       const sl = Number((document.getElementById('spotSl') || {}).value) || 0;
       const body = { userId: me().id, ticker: S.ticker, tpPrice: tp, slPrice: sl };
-      if (S.mode === 'wc') body.amountCoins = amt; else body.shares = amt;
+      if (S.mode === 'usd') body.amountUsd = amt;
+      else if (S.mode === 'wc') body.amountCoins = amt;
+      else body.shares = amt;
       try {
         const r = await apiJSON('/api/market/spot/buy', { method: 'POST', body: JSON.stringify(body) }, 25000);
         if (!r.res || !r.res.ok || !r.data || !r.data.ok) return tmsg((r.data && r.data.error) || 'Buy failed', 'err');
@@ -228,7 +232,7 @@
         const r = await apiJSON('/api/market/spot/sell', { method: 'POST', body: JSON.stringify({ userId: me().id, ticker }) }, 25000);
         if (!r.res || !r.res.ok || !r.data || !r.data.ok) return tmsg((r.data && r.data.error) || 'Sell failed', 'err');
         await Remote.refresh(true);
-        tmsg('Sold · ' + Number(r.data.payout).toFixed(2) + ' WC credited', 'ok');
+        tmsg('Sold · ' + Number(r.data.payout).toFixed(2) + ' WC ($' + Number(r.data.payout * 0.5).toFixed(2) + ') credited', 'ok');
         render();
       } catch (e) { tmsg('Sell failed: ' + e.message, 'err'); }
     };
