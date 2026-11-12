@@ -216,12 +216,13 @@ Everything is generated from one source file and is safe to re-run:
 ```
 catalog/demo-catalog.source.json      sellers, product models, specs, prices, image prompts
 scripts/generate-demo-catalog.mjs     assigns 10–50 products per seller, sets price/stock, writes
-                                      public/demo-catalog.json and encodes the images
-scripts/encode-demo-images.py         resize/crop renders → public/demo/**/*.jpg.b64 (needs Pillow)
-assets-src/demo/{products,sellers}/   source renders (1024px PNGs) used when regenerating
+                                      public/demo-catalog.json (sellers, all models, listings)
+scripts/encode-demo-images.py         resize/crop renders → public/demo/{products,sellers,banners}/*.jpg.b64
+assets-src/demo/{products,sellers,banners}/  source renders used when regenerating (needs Pillow)
 public/demo-catalog.json              generated runtime catalogue fetched by the app
-public/demo/products/*.jpg.b64        36 realistic product photos
-public/demo/sellers/*.jpg.b64         6 real owner portraits
+public/demo/products/*.jpg.b64        36 realistic product photos (560×560)
+public/demo/sellers/*.jpg.b64         6 real owner portraits (320×320)
+public/demo/banners/*.jpg.b64         6 storefront banners (1200×400)
 ```
 
 Regenerate after editing the source catalogue:
@@ -238,6 +239,36 @@ npm run build     # decode images + assemble public/whalechat.html
 
 Bump `version` in `catalog/demo-catalog.source.json` when listings change — installed apps
 re-seed automatically (updates in place, retires only demo listings that were never ordered).
+
+### Storefronts
+
+Every seller has a public profile at **`#/store/<vendorId>`**: banner, avatar, store name, owner,
+location, member-since date, star rating and review count, trust score, product/order/stock stats,
+tagline, bio, category filters, all of the store's live listings and a policies panel. Admin sees an
+extra **Edit range** button there. Marketplace product cards and the product page's sold-by block
+link straight to the storefront.
+
+### Editing a seller's product range
+
+**Admin → Demo sellers → Edit range** opens a per-store panel where an admin can:
+
+- set how many products the store publishes (**10–50**, validated against the catalogue), and
+- tick the categories its range is drawn from (only those models are used).
+
+The override is stored in `DB.settings.demoSellers.ranges`, so it survives republishing and syncs to
+every device. Saving updates the storefront in place: listings still inside the range keep their
+price and stock, new ones are added, and listings that fall out of the range are hidden — unless a
+real order references them, in which case they are retired (`active:false`) instead of deleted so
+order history is never orphaned. **Reset to default** returns the store to its catalogue slice.
+
+### Demo activity dashboard
+
+**Admin → Demo activity** (`#/admin/demo-activity`) is the demo fleet's analytics page: seller /
+shopper / listing / order counters, simulated GMV, a 14-day orders chart, storefront leaderboard,
+category mix, per-shopper spend and cadence, and the most recent demo orders. Everything is computed
+from orders flagged `simulated`. The first time the storefronts seed, 72 historical demo orders are
+backfilled across the previous 28 days (deterministic IDs, so devices never duplicate them), and
+**Generate orders** adds another 24 dated within the last three days.
 
 In the app, **Admin → Demo sellers** shows every storefront with its product count, and lets an
 admin turn the fleet off (hides the listings) or republish the catalogues. Each seller account is
