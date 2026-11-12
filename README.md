@@ -1,4 +1,4 @@
-# WhaleChat 3.5.2 — web app + mobile apps
+# WhaleChat 3.17.0 — web app + mobile apps
 
 WhaleChat is a social + marketplace + wallet product built as a single-page app with a
 Node sync server and native Android/iOS shells.
@@ -32,6 +32,35 @@ mobile/
 whalechat-release.apk   signed release APK (v3.2.0, code 6)
 Dockerfile · docker-compose.yml · Caddyfile · render.yaml
 ```
+
+## Market data (Finnhub + 24/7 OTC fallback)
+
+`Admin → Stocks → Market data · Finnhub` stores three server-side settings:
+
+| Setting | Purpose |
+|---|---|
+| **Finnhub API Key** | Kept only in `DATA_DIR/market-config.json` (mode 0600). It is never written to the synced app database and never sent to browsers. |
+| **Data mode** | `Hybrid (Live Finnhub + 24/7 Simulated Fallback)` or `Simulated Only`. |
+| **Refresh interval** | Seconds between REST refresh/status cycles. Default **15**. |
+
+In **Hybrid** mode the backend seeds `AAPL, TSLA, NVDA, COIN, MSTR, MARA, KO, JPM, NKE, UNH, AVGO, WMT, DIS, V, UBER, AMZN`
+through Finnhub's `/quote` endpoint **1.2 seconds apart** (under the 60 calls/minute free-tier limit), then opens one shared
+WebSocket to `wss://ws.finnhub.io` and subscribes every symbol. Prices are cached in server memory and every browser reads
+`GET /api/market/quotes`, so users never call Finnhub directly.
+
+The fallback engine runs automatically when the US market is closed, Finnhub returns HTTP `429`, or WebSocket ticks stop:
+the server keeps producing smooth micro-ticks from the **last real Finnhub close**, so virtual Rise/Fall trades stay live
+24/7 with no frozen charts. The market notice switches between **“Live market data via Finnhub”** and
+**“24/7 OTC market mode active (based on last real close)”**.
+
+Live trades on covered symbols are also settled by the backend every few seconds (take-profit, stop-loss, duration expiry),
+so Whale Coin payouts and notifications happen even if every browser tab is closed.
+
+The stock detail chart uses TradingView **lightweight-charts** `BaselineSeries` loaded from unpkg. Its baseline is the exact
+trade entry price for an open Rise/Fall position (green above / red below, inverted for Short), with `timeVisible: true`
+and `secondsVisible: true` and per-tick `series.update()` — no reloads.
+
+Environment variables (optional, useful for first boot): `FINNHUB_API_KEY`, `FINNHUB_MODE=hybrid`.
 
 ## Run locally
 
