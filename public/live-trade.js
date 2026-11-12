@@ -733,62 +733,59 @@ setTimeout(function () {
   });
 }, 0);
 
-/* ==================== admin: generate the wholesale catalogue ==================== */
 App.admGenerateProducts = async function () {
-  if (!await confirmDialog({ title: 'Generate wholesale products?',
-    body: 'Adds 8 products with real product photography, specifications, wholesale prices and stock, ready for vendors to buy.',
-    ok: 'Generate products' })) return;
-  let cat = null;
+  const el = document.getElementById('companyGenCount');
+  const count = Math.round(Number(el && el.value) || 0);
+  if (count < 50 || count > 100) return toast('Choose between 50 and 100 products', 'err');
+  if (!await confirmDialog({
+    title: 'Generate ' + count + ' wholesale products?',
+    body: 'Adds ' + count + ' new products to the Company Marketplace across electronics, sound systems, phones, watches, bags, chargers, power banks and solar systems. Products already in the catalogue stay exactly as they are.',
+    ok: 'Generate ' + count + ' products'
+  })) return;
   try {
-    const res = await fetch('./products.json?t=' + Date.now(), { cache: 'no-store' });
-    if (!res.ok) throw new Error('catalogue not found');
-    cat = await res.json();
-  } catch (e) { return toast('Could not load the catalogue: ' + e.message, 'err'); }
-  const items = (cat && cat.products) || [];
-  if (!items.length) return toast('Catalogue is empty', 'err');
-  if (!Array.isArray(DB.companyProducts)) DB.companyProducts = [];
-  let added = 0, updated = 0;
-  items.forEach(it => {
-    const existing = DB.companyProducts.find(p => p.id === it.id)
-      || DB.companyProducts.find(p => (p.name || '').toLowerCase() === String(it.name).toLowerCase());
-    if (existing) {
-      existing.name = it.name; existing.category = it.category; existing.priceUsd = it.priceUsd;
-      existing.stock = Number(it.stock) || existing.stock || 0;
-      existing.description = it.description; existing.image = it.image; existing.emoji = null;
-      updated++;
-    } else {
-      DB.companyProducts.push({
-        id: it.id, name: it.name, category: it.category, priceUsd: it.priceUsd,
-        stock: Number(it.stock) || 0, description: it.description, image: it.image,
-        emoji: null, createdAt: Date.now()
-      });
-      added++;
-    }
-  });
-  try { AUDIT.log('Wholesale catalogue generated', added + ' added · ' + updated + ' updated'); } catch (e) {}
-  try { sync(); } catch (e) {}
-  persist();
-  toast('Generated ' + items.length + ' products with real photos', 'ok');
-  render();
+    const res = await LT.generateCompanyProducts(count);
+    if (!res.ok) return toast(res.error, 'err');
+    const cats = Object.keys(res.byCategory).length;
+    toast(res.added + ' products added across ' + cats + ' categories · ' + res.total + ' in the company market', 'ok', 3600);
+    render();
+  } catch (e) {
+    toast('Could not generate products: ' + e.message, 'err');
+  }
 };
 
 function ltProductsCard() {
-  const total = (DB.companyProducts || []).length;
-  const withPics = (DB.companyProducts || []).filter(p => p.image).length;
+  const items = DB.companyProducts || [];
+  const total = items.length;
+  const withPics = items.filter(p => p.image).length;
+  const cats = [...new Set(items.map(p => p.category))];
+  const gen = (DB.settings && DB.settings.companyGen) || null;
   return `<div class="card mt16">
-    <div class="between" style="align-items:center;flex-wrap:wrap;gap:10px">
-      <div><div class="card-title" style="margin:0 0 4px">Generate products</div>
-        <div class="small muted">8 wholesale products with real photography, specifications, prices and stock — ready for vendors to buy.</div></div>
-      <button class="btn btn-primary" data-act="adm-generate-products">${ic('box', 15)} Generate products</button>
+    <div class="between" style="align-items:flex-start;flex-wrap:wrap;gap:12px">
+      <div style="min-width:220px;flex:1">
+        <div class="card-title" style="margin:0 0 4px">Generate products</div>
+        <div class="small muted" style="line-height:1.7">
+          Add <b>50–100 different products</b> to the Company Marketplace so vendors have fresh stock to buy:
+          electronics, sound systems, phones, watches, bags, chargers, power banks and solar systems.
+          Existing products are <b>kept</b> — generating only adds new SKUs.
+        </div>
+      </div>
+      <div class="row" style="gap:8px;align-items:flex-end;flex-wrap:wrap">
+        <div class="field" style="margin:0;width:120px"><label class="label">How many</label>
+          <input class="input" id="companyGenCount" type="number" min="50" max="100" step="1" value="60" inputmode="numeric"/></div>
+        <button class="btn btn-primary" data-act="adm-generate-products">${ic('box', 15)} Generate products</button>
+      </div>
     </div>
     <div class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap">
       <span class="badge">${total} products</span>
+      <span class="badge">${cats.length} categories</span>
       <span class="badge ${withPics ? 'badge-success' : 'badge-warn'}">${withPics} with photos</span>
       <span class="badge">Vendors only</span>
     </div>
+    ${cats.length ? `<div class="row" style="gap:6px;margin-top:8px;flex-wrap:wrap">${cats.slice(0, 14).map(c => `<span class="badge" style="font-size:10px">${esc(c)}</span>`).join('')}${cats.length > 14 ? `<span class="tiny muted">+${cats.length - 14} more</span>` : ''}</div>` : ''}
     <div class="tiny muted mt10" style="line-height:1.7">
-      Running it again refreshes names, specs, prices and photos on the same 8 products — it never duplicates them.
-      Product photos are real studio shots shipped with the app, not illustrations or emoji.</div>
+      ${gen && gen.lastAt ? `Last run: <b>${gen.lastCount}</b> products ${timeAgo(gen.lastAt)} · ${gen.total} generated in total. ` : ''}
+      Every run picks different catalogue models first, then edition variants, so the marketplace fills with
+      distinct SKUs. Photos are real studio shots shipped with the app — not illustrations or emoji.</div>
   </div>`;
 }
 
