@@ -18,3 +18,7 @@ public/bots/*.jpg
 public/demo/products/*.jpg
 public/demo/sellers/*.jpg
 public/whalechat.html
+
+# decoded demo imagery (only .b64 is committed)
+public/company/products/*.jpg
+public/demo/banners/*.jpg
