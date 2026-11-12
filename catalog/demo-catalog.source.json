@@ -1,0 +1,458 @@
+{
+  "version": 1,
+  "note": "Source of truth for the demo seller fleet. scripts/generate-demo-catalog.mjs turns this into public/demo-catalog.json and the committed .jpg.b64 images. Bump version whenever products or sellers change so installed apps re-seed.",
+  "sellers": [
+    {
+      "slug": "nordvolt-electronics",
+      "name": "Jonas Weber",
+      "storeName": "Nordvolt Electronics",
+      "storeUsername": "nordvolt.electronics",
+      "email": "jonas.weber@nordvolt.de",
+      "phone": "+49 30 9014 8820",
+      "country": "Germany",
+      "city": "Berlin",
+      "address": "Warschauer Straße 58",
+      "postal": "10243",
+      "tagline": "Large appliances and power, built for European homes.",
+      "bio": "Nordvolt has supplied Berlin households with fridges, home audio and charging gear since 2016. Every unit is bench-tested before it ships.",
+      "primaryCategories": [
+        "Fridges",
+        "Power Banks",
+        "Chargers",
+        "Sound Systems"
+      ],
+      "productCount": 34
+    },
+    {
+      "slug": "solaris-grid",
+      "name": "Amara Okafor",
+      "storeName": "Solaris Grid",
+      "storeUsername": "solaris.grid",
+      "email": "amara@solarisgrid.ng",
+      "phone": "+234 802 431 7788",
+      "country": "Nigeria",
+      "city": "Lagos",
+      "address": "14 Adeola Odeku Street, Victoria Island",
+      "postal": "101241",
+      "tagline": "Solar lighting, backup power and home electronics.",
+      "bio": "Solaris Grid designs off-grid lighting kits and power backups for West African homes, clinics and small businesses, alongside a compact range of home electronics.",
+      "primaryCategories": [
+        "Solar Lamps",
+        "Power Banks",
+        "Chargers"
+      ],
+      "productCount": 18
+    },
+    {
+      "slug": "brightline-audio",
+      "name": "Hannah Blake",
+      "storeName": "BrightLine Audio",
+      "storeUsername": "brightline.audio",
+      "email": "hannah@brightlineaudio.co.uk",
+      "phone": "+44 161 328 4410",
+      "country": "United Kingdom",
+      "city": "Manchester",
+      "address": "22 Hilton Street, Northern Quarter",
+      "postal": "M1 2EF",
+      "tagline": "Party speakers, headphones and home audio — plus everyday electronics.",
+      "bio": "BrightLine is a Manchester audio specialist that also stocks a curated range of everyday electronics: party speakers, ANC headphones, sound systems, phones and home appliances.",
+      "primaryCategories": [
+        "JBL Players",
+        "Speakers",
+        "Headphones",
+        "Sound Systems"
+      ],
+      "productCount": 26
+    },
+    {
+      "slug": "meridian-gadgets",
+      "name": "Rashid Al-Mansoori",
+      "storeName": "Meridian Gadgets",
+      "storeUsername": "meridian.gadgets",
+      "email": "rashid@meridiangadgets.ae",
+      "phone": "+971 4 338 6620",
+      "country": "United Arab Emirates",
+      "city": "Dubai",
+      "address": "Shop 12, Al Fahidi Street, Bur Dubai",
+      "postal": "00000",
+      "tagline": "Phones, wearables and fast charging, Dubai direct.",
+      "bio": "Meridian Gadgets stocks international and regional phone models with same-day dispatch across the Gulf.",
+      "primaryCategories": [
+        "Phones",
+        "Watches",
+        "Chargers",
+        "Power Banks"
+      ],
+      "productCount": 22
+    },
+    {
+      "slug": "kanto-sound-lab",
+      "name": "Kenji Sato",
+      "storeName": "Kanto Sound Lab",
+      "storeUsername": "kanto.soundlab",
+      "email": "kenji@kantosound.jp",
+      "phone": "+81 6 6374 2210",
+      "country": "Japan",
+      "city": "Osaka",
+      "address": "3-2-11 Namba, Chuo-ku",
+      "postal": "542-0076",
+      "tagline": "Carefully tuned audio and everyday electronics from Osaka.",
+      "bio": "Kanto Sound Lab is a small Osaka audio workshop. Each speaker and headphone listing is tuned and measured in-house, and the store also carries a small range of wearables and home electronics.",
+      "primaryCategories": [
+        "Headphones",
+        "Speakers",
+        "Sound Systems",
+        "JBL Players",
+        "Watches"
+      ],
+      "productCount": 30
+    },
+    {
+      "slug": "apex-home-tech",
+      "name": "Daniel Reyes",
+      "storeName": "Apex Home Tech",
+      "storeUsername": "apex.hometech",
+      "email": "daniel@apexhometech.com",
+      "phone": "+1 512 555 0148",
+      "country": "United States",
+      "city": "Austin",
+      "address": "1904 South Congress Avenue",
+      "postal": "78704",
+      "tagline": "Kitchen, patio and wearable tech for Austin homes.",
+      "bio": "Apex Home Tech is an Austin retailer focused on kitchen appliances, outdoor solar lighting and everyday wearables.",
+      "primaryCategories": [
+        "Fridges",
+        "Solar Lamps",
+        "Watches",
+        "Speakers"
+      ],
+      "productCount": 14
+    }
+  ],
+  "models": [
+    {
+      "slug": "fridge-french-door",
+      "name": "FrostLine 610L French Door Fridge",
+      "category": "Fridges",
+      "basePriceUsd": 1249,
+      "color": "Brushed stainless steel",
+      "description": "610L French-door refrigerator with twin doors, a full-width bottom freezer drawer, inverter compressor, multi-airflow cooling and a plumbed water dispenser. 178 × 91 × 72 cm.",
+      "prompt": "large stainless-steel French-door refrigerator, brushed finish, slim vertical handles, three-quarter front view"
+    },
+    {
+      "slug": "fridge-side-by-side",
+      "name": "FrostLine 520L Side-by-Side Fridge",
+      "category": "Fridges",
+      "basePriceUsd": 999,
+      "color": "Matte black",
+      "description": "520L side-by-side fridge with an integrated ice and water dispenser, dual cooling zones, touch controls and a 10-year compressor warranty. 177 × 90 × 70 cm.",
+      "prompt": "black side-by-side refrigerator with ice and water dispenser, matte dark finish, three-quarter front view"
+    },
+    {
+      "slug": "fridge-retro-cream",
+      "name": "RetroChill 1950s 120L Fridge",
+      "category": "Fridges",
+      "basePriceUsd": 399,
+      "color": "Cream enamel / chrome",
+      "description": "Compact 120L retro fridge with a cream enamel body, chrome trim, rounded corners, adjustable glass shelves and a small freezer box. 84 × 55 × 58 cm.",
+      "prompt": "cream 1950s retro compact refrigerator with chrome trim and rounded corners, three-quarter front view"
+    },
+    {
+      "slug": "fridge-minibar-glass",
+      "name": "CoolView 98L Glass Door Fridge",
+      "category": "Fridges",
+      "basePriceUsd": 289,
+      "color": "Black frame / glass",
+      "description": "98L glass-front beverage cooler with interior LED lighting, five wire shelves, a digital thermostat and a lockable door. Holds 96 cans. 85 × 48 × 45 cm.",
+      "prompt": "small glass-front beverage cooler mini fridge with interior LED lighting and drink cans, black frame, three-quarter front view"
+    },
+    {
+      "slug": "solar-floodlight",
+      "name": "SolarMax 100W Flood Light",
+      "category": "Solar Lamps",
+      "basePriceUsd": 46,
+      "color": "Black",
+      "description": "100W equivalent solar flood light with a separate 6V monocrystalline panel, 12000mAh battery, 6500K daylight output, IP66 rating and a 5m cable. Remote included.",
+      "prompt": "solar LED flood light with a separate small solar panel on a bracket, black housing, three-quarter front view"
+    },
+    {
+      "slug": "solar-garden-lantern",
+      "name": "SolarGlo Garden Path Lantern",
+      "category": "Solar Lamps",
+      "basePriceUsd": 18,
+      "color": "Black / warm white",
+      "description": "Solar garden path lantern with a warm 2700K LED bulb, die-cast metal frame, automatic dusk-to-dawn switching and a 45cm ground stake. IP44 rated.",
+      "prompt": "solar garden path lantern with warm glowing bulb in a black metal frame and ground stake, three-quarter front view"
+    },
+    {
+      "slug": "solar-camping-lantern",
+      "name": "SolarCamp Collapsible Lantern",
+      "category": "Solar Lamps",
+      "basePriceUsd": 24,
+      "color": "Orange / black",
+      "description": "Rechargeable camping lantern that collapses flat, with a top solar panel, 2000mAh battery, three brightness modes and a warm 360° glow. USB-C charging and a hanging hook.",
+      "prompt": "rechargeable solar camping lantern, collapsible orange and black body, small solar panel on top, warm LED glow, three-quarter front view"
+    },
+    {
+      "slug": "solar-street-light",
+      "name": "StreetRay 60W Solar Street Light",
+      "category": "Solar Lamps",
+      "basePriceUsd": 89,
+      "color": "Grey aluminium",
+      "description": "All-in-one 60W solar street light with an integrated panel, 15000mAh lithium battery, motion sensor, dusk-to-dawn controller and a wall or pole bracket. 1200 lumen.",
+      "prompt": "all-in-one solar street light with integrated solar panel on top and grey aluminium housing, three-quarter front view"
+    },
+    {
+      "slug": "phone-flagship-titanium",
+      "name": "Volt V15 Pro 5G 256GB",
+      "category": "Phones",
+      "basePriceUsd": 599,
+      "color": "Natural titanium",
+      "description": "6.7-inch LTPO AMOLED at 120Hz, 50MP triple camera with OIS, 256GB storage, 12GB RAM, 5000mAh battery with 80W charging, IP68 and eSIM support.",
+      "prompt": "premium flagship smartphone in natural titanium with triple rear camera array, standing upright, three-quarter front view"
+    },
+    {
+      "slug": "phone-blue-midrange",
+      "name": "Nova A7 5G 128GB",
+      "category": "Phones",
+      "basePriceUsd": 229,
+      "color": "Ocean blue",
+      "description": "6.6-inch 90Hz AMOLED, 50MP quad camera, 128GB storage with microSD expansion, 8GB RAM, 5000mAh battery and 33W fast charging.",
+      "prompt": "mid-range smartphone in glossy ocean blue with quad camera module and screen on, three-quarter front view"
+    },
+    {
+      "slug": "phone-foldable",
+      "name": "Fold X2 5G 512GB",
+      "category": "Phones",
+      "basePriceUsd": 1099,
+      "color": "Midnight blue",
+      "description": "Book-style foldable with a 7.8-inch inner 120Hz display, 6.3-inch cover screen, 512GB storage, 12GB RAM, triple camera and 45W charging.",
+      "prompt": "foldable smartphone half-open like a book with glowing inner screen, dark blue, three-quarter front view"
+    },
+    {
+      "slug": "phone-rugged",
+      "name": "Terra R1 Rugged 5G",
+      "category": "Phones",
+      "basePriceUsd": 349,
+      "color": "Black / orange",
+      "description": "IP68/IP69K rugged phone with a 6.6-inch display, 108MP camera, 256GB storage, 10000mAh battery, glove touch support and a reinforced aluminium frame.",
+      "prompt": "rugged black smartphone with thick rubber bumpers and orange accents, screen showing a map, three-quarter front view"
+    },
+    {
+      "slug": "watch-round-amoled",
+      "name": "Pulse Round S2 Smartwatch",
+      "category": "Watches",
+      "basePriceUsd": 199,
+      "color": "Titanium / black",
+      "description": "1.43-inch round AMOLED smartwatch in a titanium case with GPS, heart rate, SpO2 and sleep tracking, 14-day battery, 5ATM water resistance and 100+ sport modes.",
+      "prompt": "round AMOLED smartwatch with titanium case, black sport band and analog watch face, three-quarter front view"
+    },
+    {
+      "slug": "watch-square",
+      "name": "Pulse Square Fit Smartwatch",
+      "category": "Watches",
+      "basePriceUsd": 149,
+      "color": "Silver / white",
+      "description": "1.9-inch square AMOLED smartwatch with an aluminium case, always-on display, GPS, NFC payments, stress tracking and a 10-day battery. Includes a white silicone band.",
+      "prompt": "square-faced smartwatch with aluminium case and white silicone band showing fitness rings, three-quarter front view"
+    },
+    {
+      "slug": "watch-fitness-band",
+      "name": "Stride Band 4 Tracker",
+      "category": "Watches",
+      "basePriceUsd": 59,
+      "color": "Black",
+      "description": "Slim fitness band with a 1.6-inch AMOLED display, 24/7 heart rate and sleep tracking, 30 workout modes, 5ATM water resistance and a 14-day battery.",
+      "prompt": "slim fitness tracker band with curved AMOLED display and black strap showing steps and heart rate, three-quarter front view"
+    },
+    {
+      "slug": "watch-rugged-sport",
+      "name": "Trail GPS Pro Watch",
+      "category": "Watches",
+      "basePriceUsd": 279,
+      "color": "Black / orange",
+      "description": "Rugged multisport GPS watch with a sapphire lens, barometric altimeter, compass, dual-band GPS, 30-day battery in smartwatch mode and 100m water resistance.",
+      "prompt": "chunky rugged sports GPS watch, black case with orange bezel and buttons, screen showing a compass, three-quarter front view"
+    },
+    {
+      "slug": "sound-system-home-theatre",
+      "name": "Arena 5.1 Home Theatre",
+      "category": "Sound Systems",
+      "basePriceUsd": 449,
+      "color": "Black",
+      "description": "5.1-channel home theatre with a 320W soundbar, wireless subwoofer, two rear satellites, Dolby Audio, HDMI eARC, optical and Bluetooth 5.3.",
+      "prompt": "5.1 home theatre system with soundbar, subwoofer and two satellite speakers, black, three-quarter front view"
+    },
+    {
+      "slug": "sound-system-hifi",
+      "name": "Studio 200 Hi-Fi System",
+      "category": "Sound Systems",
+      "basePriceUsd": 329,
+      "color": "Silver / walnut",
+      "description": "Compact hi-fi system with a 2 × 60W amplifier, two walnut bookshelf speakers, Bluetooth, optical, RCA and USB inputs, plus a headphone jack.",
+      "prompt": "bookshelf hi-fi stereo system with silver amplifier and two wooden speakers, three-quarter front view"
+    },
+    {
+      "slug": "sound-system-pa",
+      "name": "StagePro 800W PA System",
+      "category": "Sound Systems",
+      "basePriceUsd": 519,
+      "color": "Black",
+      "description": "Portable 800W PA system with a powered 8-channel mixer, two 10-inch speakers on tripod stands, Bluetooth, USB/SD playback and two wireless microphones.",
+      "prompt": "portable PA system with powered mixer, two speakers on tripod stands and cables, black, three-quarter front view"
+    },
+    {
+      "slug": "jbl-partybox",
+      "name": "JBL PartyBox 310",
+      "category": "JBL Players",
+      "basePriceUsd": 549,
+      "color": "Black / orange",
+      "description": "240W portable party speaker with two 6.5-inch woofers, dynamic LED light rings, 18-hour battery, wheels and a telescopic handle, Bluetooth and mic/guitar inputs.",
+      "prompt": "large portable party speaker with black housing, two woofers with glowing orange LED rings, handle and wheels, three-quarter front view"
+    },
+    {
+      "slug": "jbl-flip",
+      "name": "JBL Flip 6",
+      "category": "JBL Players",
+      "basePriceUsd": 129,
+      "color": "Black / orange",
+      "description": "Cylindrical portable Bluetooth speaker with a racetrack woofer and twin tweeters, 12-hour battery, IP67 waterproofing, USB-C charging and PartyBoost pairing.",
+      "prompt": "compact cylindrical portable Bluetooth speaker lying horizontally, black fabric mesh with orange accents, three-quarter front view"
+    },
+    {
+      "slug": "jbl-go",
+      "name": "JBL Go 4",
+      "category": "JBL Players",
+      "basePriceUsd": 49,
+      "color": "Black / orange",
+      "description": "Pocket-sized Bluetooth speaker with a built-in carabiner strap, 7-hour battery, IP67 rating, USB-C charging and JBL Pro Sound tuning.",
+      "prompt": "tiny pocket-sized Bluetooth speaker with black body, orange rubber trim and small orange carabiner strap, three-quarter front view"
+    },
+    {
+      "slug": "charger-gan-100w",
+      "name": "Volt 100W GaN Charger",
+      "category": "Chargers",
+      "basePriceUsd": 59,
+      "color": "White",
+      "description": "100W GaN wall charger with three USB-C ports and one USB-A, folding prongs, intelligent power sharing and support for PD 3.0, PPS and QC 4+.",
+      "prompt": "compact 100W GaN wall charger with three USB-C ports, white body and folding plug, three-quarter front view"
+    },
+    {
+      "slug": "charger-wireless-3in1",
+      "name": "TriDock 3-in-1 Wireless Charger",
+      "category": "Chargers",
+      "basePriceUsd": 45,
+      "color": "Matte black",
+      "description": "3-in-1 charging stand for phone, smartwatch and earbuds, 15W magnetic phone charging, 5W watch pad, 3W earbuds pad and a fabric-wrapped aluminium base.",
+      "prompt": "3-in-1 wireless charging stand for phone, watch and earbuds in matte black, three-quarter front view"
+    },
+    {
+      "slug": "charger-car",
+      "name": "RoadCharge 45W Car Charger",
+      "category": "Chargers",
+      "basePriceUsd": 22,
+      "color": "Gunmetal",
+      "description": "45W dual-port car charger with USB-C PD and USB-A QC, a brushed aluminium body, blue LED ring and built-in over-current protection.",
+      "prompt": "dual-port USB-C car charger with brushed aluminium body and blue LED ring, three-quarter front view"
+    },
+    {
+      "slug": "headphones-over-ear",
+      "name": "Aura ANC Over-Ear Headphones",
+      "category": "Headphones",
+      "basePriceUsd": 179,
+      "color": "Matte black",
+      "description": "Over-ear headphones with hybrid active noise cancelling, 40mm drivers, memory foam earcups, 45-hour battery, multipoint Bluetooth 5.3 and a hard travel case.",
+      "prompt": "premium over-ear noise-cancelling headphones in matte black with memory foam earcups, three-quarter front view"
+    },
+    {
+      "slug": "earbuds-anc",
+      "name": "Aura Buds Pro ANC",
+      "category": "Headphones",
+      "basePriceUsd": 89,
+      "color": "White",
+      "description": "True wireless earbuds with hybrid ANC, 11mm drivers, transparency mode, IPX5 sweat resistance, 8-hour bud battery and 32 hours with the wireless charging case.",
+      "prompt": "true wireless earbuds in an open white charging case, three-quarter front view"
+    },
+    {
+      "slug": "headset-gaming",
+      "name": "Strike RGB Gaming Headset",
+      "category": "Headphones",
+      "basePriceUsd": 79,
+      "color": "Black / RGB",
+      "description": "Wired gaming headset with 50mm drivers, a detachable noise-cancelling boom mic, RGB earcups, memory foam cushions and a 3.5mm plus USB connection.",
+      "prompt": "black gaming headset with boom microphone and subtle RGB earcup accents, three-quarter front view"
+    },
+    {
+      "slug": "headphones-on-ear",
+      "name": "Navy On-Ear Wireless Headphones",
+      "category": "Headphones",
+      "basePriceUsd": 69,
+      "color": "Navy / tan",
+      "description": "On-ear wireless headphones with a tan leather headband, 36mm drivers, 30-hour battery, multipoint pairing and a folding aluminium frame.",
+      "prompt": "navy blue on-ear wireless headphones with tan leather headband and silver hinges, three-quarter front view"
+    },
+    {
+      "slug": "speaker-smart",
+      "name": "Echo Smart Speaker",
+      "category": "Speakers",
+      "basePriceUsd": 89,
+      "color": "Charcoal grey",
+      "description": "Fabric-wrapped smart speaker with a 360° light ring, far-field microphones, room-filling 25W sound, Wi-Fi and Bluetooth, plus voice assistant support.",
+      "prompt": "fabric-wrapped charcoal grey smart speaker with glowing light ring on top, three-quarter front view"
+    },
+    {
+      "slug": "speaker-bookshelf-pair",
+      "name": "Walnut Bookshelf Speakers (Pair)",
+      "category": "Speakers",
+      "basePriceUsd": 149,
+      "color": "Walnut",
+      "description": "Pair of passive bookshelf speakers with walnut cabinets, 5.25-inch woven woofers, silk-dome tweeters and 100W peak handling. Binding posts accept banana plugs.",
+      "prompt": "pair of bookshelf Bluetooth speakers with walnut wood cabinets and black drivers, three-quarter front view"
+    },
+    {
+      "slug": "speaker-soundbar",
+      "name": "CinemaBar 2.1 Soundbar",
+      "category": "Speakers",
+      "basePriceUsd": 199,
+      "color": "Black",
+      "description": "2.1-channel soundbar with a wireless subwoofer, 220W output, Dolby Digital, HDMI eARC, optical and Bluetooth, plus three EQ modes for movies, music and news.",
+      "prompt": "low-profile black soundbar with fabric grille and compact wireless subwoofer, three-quarter front view"
+    },
+    {
+      "slug": "powerbank-20000",
+      "name": "Titan 20K Power Bank",
+      "category": "Power Banks",
+      "basePriceUsd": 39,
+      "color": "Matte black",
+      "description": "20000mAh power bank with a digital percentage display, 22.5W USB-C PD and USB-A QC outputs, pass-through charging and airline-safe capacity.",
+      "prompt": "20000mAh matte black aluminium power bank with digital percentage display and two USB ports, three-quarter front view"
+    },
+    {
+      "slug": "powerbank-slim-10000",
+      "name": "SlimCard 10K Power Bank",
+      "category": "Power Banks",
+      "basePriceUsd": 25,
+      "color": "Pale blue",
+      "description": "Credit-card-sized 10000mAh power bank, 20W USB-C PD, four LED indicators, 12mm thick and 190g. Charges a phone roughly twice.",
+      "prompt": "slim credit-card-sized pale blue 10000mAh power bank with USB-C port and four LED indicators, three-quarter front view"
+    },
+    {
+      "slug": "powerbank-solar",
+      "name": "SunVault Solar Power Bank",
+      "category": "Power Banks",
+      "basePriceUsd": 35,
+      "color": "Orange / black",
+      "description": "Rugged 20000mAh solar power bank with a fold-out panel, wireless charging pad, dual USB outputs, IP65 rating, carabiner clip and a built-in flashlight.",
+      "prompt": "rugged orange and black solar power bank with small solar panel, rubber bumpers and carabiner clip, three-quarter front view"
+    },
+    {
+      "slug": "powerbank-laptop-65w",
+      "name": "WorkHorse 65W Laptop Power Bank",
+      "category": "Power Banks",
+      "basePriceUsd": 69,
+      "color": "Dark grey",
+      "description": "24000mAh laptop power bank with 65W USB-C PD output, a 30W second port, an LED battery readout and a braided USB-C cable. Charges a 13-inch laptop to 50% in 45 minutes.",
+      "prompt": "65W dark grey laptop power bank with two USB-C ports, LED battery indicator and braided cable, three-quarter front view"
+    }
+  ]
+}
