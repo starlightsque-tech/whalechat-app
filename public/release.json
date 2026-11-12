@@ -1,8 +1,8 @@
 {
-  "version": "3.23.1",
-  "build": "2026-11-12T17:45:00Z",
+  "version": "3.24.0",
+  "build": "2026-11-12T19:30:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.23.1 - stricter spot TP/SL validation and spot trading guide.",
-  "releasedAt": "2026-11-12T17:45:00Z",
+  "notes": "WhaleChat 3.24.0 - spot Buy/Sell with atomic TP/SL, plus the Trading Bot Assistant: four subscription tiers, reserved capital, offline trading, auto-stop and admin pricing/speed controls.",
+  "releasedAt": "2026-11-12T19:30:00Z",
   "minimum": "3.0.0"
 }
