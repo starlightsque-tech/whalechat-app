@@ -78,6 +78,36 @@ cooldowns instead of aborting, keeps previously synced yields when a request fai
 Admin status shows WebSocket auth state, live price count, dividend sync, API calls/minute, scheduled-sync state and
 the retry queue.
 
+### API key + secret connection panel
+
+**Admin → Stocks → Market data · Alpaca** is where the connection is configured. It shows the resolved endpoint
+(`https://paper-api.alpaca.markets/v2` for paper keys, `https://api.alpaca.markets/v2` for live keys), fields for the
+**Alpaca API Key ID** and **Secret Key**, environment, feed, refresh interval and the auto-sync schedule. Both fields
+are write-only: a saved key is shown only as a masked id (`AK…9XYZ`) and leaving the fields blank keeps the stored
+keys. `Test Connection & Save` writes the config, reconnects the stream and probes AAPL. Keys are persisted to
+`DATA_DIR/market-config.json` (mode 0600) and Postgres, never to the synced database, and
+`ALPACA_KEY_ID` / `ALPACA_SECRET_KEY` still work as first-boot environment variables.
+
+### Alpaca health widget
+
+The same screen renders a live health card backed by `GET /api/market/health`. It scores seven checks —
+**credentials, REST snapshots, IEX WebSocket, rate budget, scheduled data sync, price coverage and the US session** —
+into a 0–100 score (`healthy` / `degraded` / `at risk` / `offline`) and shows REST latency, last real tick, stream
+ticks, last connection test and server uptime. The card refreshes every 10 seconds while the page is open.
+
+### Override & data sync audit log
+
+Every override change, active toggle, sync run, dividend sync, connection save and connection test is appended to
+`db.marketAudit` (capped at 1000 entries, survives redeploys with the rest of the database) by `market.audit()`.
+Entries record the admin (`@username`), category (`override` / `sync` / `connection`), result, duration and a
+before → after change list — for example `AAPL 0.00% → 7.50%`. Secrets are never logged; only the masked key id.
+
+| Piece | Where | Notes |
+|---|---|---|
+| Log | `db.marketAudit` | Newest first. Written by `market.js`; scheduled syncs are attributed to `scheduler`. |
+| API | `GET /api/market/audit?adminId=…&category=…&limit=…` | Admin only. Returns `entries` + `total`. |
+| UI | Admin → Stocks → *Override & data sync audit log* | Filter by Overrides / Data sync / Connection, load more, export CSV. |
+
 ### Spot Buy / Sell (primary stock flow)
 
 `market.js` owns the spot book. `POST /api/market/spot/buy` accepts `amountUsd` (primary), `amountCoins` or `shares`
