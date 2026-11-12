@@ -431,7 +431,12 @@
     let vals = [];
     const tf = host.getAttribute('data-ltd-chart') || '1M';
     try { vals = LT.seriesWithTrades(tf, me().id) || []; } catch (e) {}
-    if (vals.length < 2) return;
+    if (vals.length < 2) {
+      if (MK.chart && MK.chart.mode === 'portfolio') destroyChart();
+      host.__wcLwc = false;
+      host.classList.remove('wc-chart-host');
+      return;
+    }
     destroyChart();
     try {
       await makeChart(host, {
