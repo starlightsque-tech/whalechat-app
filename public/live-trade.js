@@ -1523,3 +1523,276 @@ setInterval(() => {
     else if (location.hash.indexOf('#/invest/stock/') === 0) ltMountStock();
   } catch (e) {}
 }, 2500);
+/* ======================= demo sellers (merchant fleet) =======================
+   A shelf of demo storefronts so the marketplace has depth on day one. Each
+   seller is a bot account (pass:null, isBot + isDemoSeller) owning a vendor
+   profile and 10–50 distinct listings from public/demo-catalog.json. Every
+   listing carries demo:true. Real buyers can order from them; the seller
+   accounts simply cannot be signed into. */
+LT.sellersCfg = function () {
+  if (!DB.settings) DB.settings = {};
+  const base = { enabled: true, seededAt: null, catalogVersion: 0, publishedAt: null, listings: 0, sellers: 0 };
+  if (!DB.settings.demoSellers || typeof DB.settings.demoSellers !== 'object') DB.settings.demoSellers = Object.assign({}, base);
+  const c = DB.settings.demoSellers;
+  Object.keys(base).forEach(k => { if (c[k] === undefined) c[k] = base[k]; });
+  return c;
+};
+
+LT.demoCatalog = null;
+LT.loadDemoCatalog = async function (force) {
+  if (LT.demoCatalog && !force) return LT.demoCatalog;
+  const res = await fetch('./demo-catalog.json?t=' + Date.now(), { cache: 'no-store' });
+  if (!res.ok) throw new Error('demo catalogue not available');
+  const catalog = await res.json();
+  if (!catalog || !Array.isArray(catalog.sellers) || !catalog.sellers.length) throw new Error('demo catalogue is empty');
+  LT.demoCatalog = catalog;
+  return catalog;
+};
+
+LT.seedDemoSellers = function (catalog, resetStock) {
+  const cfg = LT.sellersCfg();
+  if (!Array.isArray(DB.vendors)) DB.vendors = [];
+  if (!Array.isArray(DB.products)) DB.products = [];
+  const now = Date.now();
+  let addedSellers = 0, addedProducts = 0, updatedProducts = 0, removed = 0;
+
+  const keepIds = new Set();
+  (catalog.sellers || []).forEach(s => {
+    (s.listings || []).forEach(l => keepIds.add(l.id));
+    let u = findUser(s.userId);
+    if (!u) {
+      u = {
+        id: s.userId, username: s.storeUsername, fullName: s.name, email: s.email, phone: s.phone,
+        pass: null, pin: null, avatar: s.avatar, role: 'user', balance: 0, totalDeposits: 0,
+        totalWithdrawals: 0, totalEarnings: 0, vendorId: s.vendorId, cart: [], stars: [],
+        country: s.country, city: s.city, address: s.address, postal: s.postal,
+        settings: { notifications: false, theme: 'dark' }, verified: true, banned: false,
+        completedSales: 0, rating: 4.8, isBot: true, isDemoSeller: true, bio: s.bio,
+        referralCode: '', referredBy: null, referralPaid: true, trustScore: 95,
+        createdAt: now - 420 * 864e5
+      };
+      DB.users.push(u);
+      addedSellers++;
+    } else {
+      u.isBot = true; u.isDemoSeller = true; u.vendorId = s.vendorId;
+      if (!u.avatar) u.avatar = s.avatar;
+    }
+    let v = DB.vendors.find(x => x.id === s.vendorId);
+    if (!v) {
+      v = {
+        id: s.vendorId, userId: s.userId, username: s.storeUsername, name: s.storeName,
+        avatar: s.avatar, rating: 4.7, trustScore: 92, sales: 0, revenue: 0,
+        createdAt: now - 420 * 864e5, status: 'active', completedSales: 0,
+        planMonths: 120, planId: null, expiresAt: now + 3650 * 864e5,
+        tagline: s.tagline, bio: s.bio, city: s.city, country: s.country, demo: true
+      };
+      DB.vendors.push(v);
+    } else {
+      v.name = s.storeName; v.username = s.storeUsername; v.avatar = s.avatar;
+      v.tagline = s.tagline; v.city = s.city; v.country = s.country;
+      v.demo = true; v.status = 'active';
+      if (!vendorIsActive(v)) v.expiresAt = now + 3650 * 864e5;
+    }
+    (s.listings || []).forEach(l => {
+      const p = DB.products.find(x => x.id === l.id);
+      if (!p) {
+        DB.products.push({
+          id: l.id, vendorId: s.vendorId, companyProductId: null,
+          name: l.name, category: l.category, priceUsd: l.priceUsd, costUsd: l.costUsd,
+          stock: l.stock, image: l.image, emoji: null, description: l.description,
+          color: l.color || '', active: true, starUsers: [], stars: l.reviews || 0,
+          rating: l.rating || 4.6, demo: true, modelSlug: l.modelSlug,
+          createdAt: now - Math.floor(Math.random() * 120) * 864e5
+        });
+        addedProducts++;
+      } else {
+        const stock = resetStock ? l.stock : (Number.isFinite(Number(p.stock)) ? p.stock : l.stock);
+        Object.assign(p, {
+          vendorId: s.vendorId, name: l.name, category: l.category, priceUsd: l.priceUsd,
+          costUsd: l.costUsd || p.costUsd, image: l.image, description: l.description,
+          color: l.color || '', modelSlug: l.modelSlug, stock, active: stock > 0, demo: true
+        });
+        updatedProducts++;
+      }
+    });
+  });
+
+  /* catalogue version bumps can retire listings — drop only demo ones that
+     were never ordered, so real order history is never orphaned */
+  const ordered = new Set((DB.orders || []).flatMap(o => (o.items || []).map(i => i.productId)));
+  const before = DB.products.length;
+  DB.products = DB.products.filter(p => !(p.demo && String(p.id).indexOf('dsp_') === 0 && !keepIds.has(p.id) && !ordered.has(p.id)));
+  removed = before - DB.products.length;
+
+  cfg.seededAt = now;
+  cfg.catalogVersion = catalog.version;
+  cfg.sellers = (catalog.sellers || []).length;
+  cfg.listings = (catalog.sellers || []).reduce((n, s) => n + (s.listings || []).length, 0);
+  cfg.publishedAt = now;
+  return { addedSellers, addedProducts, updatedProducts, removed, listings: cfg.listings, sellers: cfg.sellers };
+};
+
+LT.ensureDemoSellers = function (force) {
+  const cfg = LT.sellersCfg();
+  if (!cfg.enabled && !force) return Promise.resolve(null);
+  if (!DB || !DB_READY) return Promise.resolve(null);
+  if (LT._sellerBusy) return LT._sellerBusy;
+  LT._sellerBusy = (async () => {
+    const catalog = await LT.loadDemoCatalog(force);
+    if (!force && cfg.catalogVersion === catalog.version && cfg.seededAt) return null;
+    const res = LT.seedDemoSellers(catalog, !!force);
+    try { sync(); } catch (e) {}
+    persist();
+    if (location.hash.indexOf('#/admin/demo-sellers') === 0 && !force) render();
+    return res;
+  })().catch(e => { console.warn('[demo sellers]', e.message); return null; })
+     .finally(() => { LT._sellerBusy = null; });
+  return LT._sellerBusy;
+};
+
+LT.demoSellerStats = function () {
+  const cfg = LT.sellersCfg();
+  const sellers = (DB.vendors || []).filter(v => v.demo);
+  const ids = new Set(sellers.map(v => v.id));
+  const listings = (DB.products || []).filter(p => p.demo && ids.has(p.vendorId));
+  const live = listings.filter(p => p.active && p.stock > 0);
+  const cats = [...new Set(listings.map(p => p.category))];
+  const value = live.reduce((n, p) => n + p.priceUsd * p.stock, 0);
+  return { cfg, sellers, listings, live, cats, value };
+};
+
+App.demoSellersToggle = async function () {
+  const cfg = LT.sellersCfg();
+  cfg.enabled = !cfg.enabled;
+  if (cfg.enabled) {
+    const res = await LT.ensureDemoSellers(false);
+    try { AUDIT.log('Demo sellers enabled', res ? res.listings + ' listings published' : 'storefronts visible'); } catch (e) {}
+    toast('Demo sellers enabled — ' + (cfg.listings || 0) + ' products on the marketplace', 'ok');
+  } else {
+    try { AUDIT.log('Demo sellers disabled', 'storefronts hidden'); } catch (e) {}
+    toast('Demo sellers turned off — their storefronts are hidden', 'ok');
+  }
+  const demoVendors = new Set((DB.vendors || []).filter(v => v.demo).map(v => v.id));
+  (DB.products || []).forEach(p => {
+    if (p.demo && demoVendors.has(p.vendorId)) p.active = cfg.enabled && p.stock > 0;
+  });
+  try { sync(); } catch (e) {}
+  persist();
+  render();
+};
+
+App.demoSellersPublish = async function () {
+  if (!await confirmDialog({
+    title: 'Republish demo storefronts?',
+    body: 'Reloads public/demo-catalog.json, refreshes every demo seller, their photos and prices, and restores listing stock. Existing demo listings are updated in place — nothing is duplicated.',
+    ok: 'Republish catalogues'
+  })) return;
+  const cfg = LT.sellersCfg();
+  cfg.enabled = true;
+  const res = await LT.ensureDemoSellers(true);
+  if (!res) return toast('Could not load the demo catalogue', 'err');
+  try { AUDIT.log('Demo storefronts republished', res.sellers + ' sellers · ' + res.listings + ' listings'); } catch (e) {}
+  render();
+  toast(res.addedProducts + ' new · ' + res.updatedProducts + ' refreshed listings', 'ok');
+};
+
+function ltDemoSellersView() {
+  const st = LT.demoSellerStats();
+  const cfg = st.cfg;
+  const tabs = `<div class="admin-nav">${ADMIN_NAV.map(n => {
+    const key = n.href.replace('#/admin', '') || '';
+    return `<a href="${n.href}" class="${key === '/demo-sellers' ? 'on' : ''}">${n.label}</a>`;
+  }).join('')}</div>`;
+  const money = (n) => '$' + Math.round(n).toLocaleString('en-US');
+  return `${tabs}
+  <div class="page-head"><div class="between" style="align-items:flex-start;gap:12px;flex-wrap:wrap">
+    <div><div class="section-title" style="margin:0">Demo sellers</div>
+      <div class="tiny muted">Bot-run storefronts publishing 10–50 different electronics products each</div></div>
+    <div class="row gap8">
+      <button class="btn btn-ghost" data-act="demo-sellers-publish">${ic('box', 15)} Republish catalogues</button>
+      <button class="btn ${cfg.enabled ? 'btn-danger' : 'btn-primary'}" data-act="demo-sellers-toggle">
+        ${ic(cfg.enabled ? 'pause' : 'play', 15)} ${cfg.enabled ? 'Turn off' : 'Turn on'}</button>
+    </div>
+  </div></div>
+
+  <div class="card">
+    <div class="between" style="align-items:center;flex-wrap:wrap;gap:10px">
+      <div><div class="card-title" style="margin:0 0 4px">Status</div>
+        <div class="small ${cfg.enabled ? 'up' : 'muted'}">${cfg.enabled
+          ? 'Live — storefronts are visible in the marketplace'
+          : 'Hidden — their listings are kept but not shown'}</div></div>
+      <span class="badge ${cfg.enabled ? 'badge-success' : 'badge-warn'}">${cfg.enabled ? 'Live' : 'Off'}</span>
+    </div>
+    <div class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap">
+      <span class="badge">${st.sellers.length} sellers</span>
+      <span class="badge">${st.listings.length} listings</span>
+      <span class="badge">${st.live.length} in stock</span>
+      <span class="badge">${st.cats.length} categories</span>
+      <span class="badge">${money(st.value)} stock value</span>
+    </div>
+    <div class="inv-note tiny" style="margin-top:12px">${ic('shield', 13)}
+      <span>Demo sellers are marked <b>demo</b> on the account, the vendor profile and every listing.
+      Their accounts have no password and cannot be signed into; real buyers can still order their products.</span></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Storefronts</div>
+    <div class="inv-list">
+      ${st.sellers.length ? st.sellers.map(v => {
+        const items = st.listings.filter(p => p.vendorId === v.id);
+        const u = findUser(v.userId) || {};
+        const cats = [...new Set(items.map(p => p.category))];
+        return `<div class="inv-row" style="align-items:flex-start">
+          <span class="avatar sm" style="overflow:hidden;flex:0 0 auto;width:44px;height:44px">
+            ${v.avatar ? `<img src="${v.avatar}" alt="" style="width:100%;height:100%;object-fit:cover"/>` : ''}</span>
+          <div class="grow" style="min-width:0">
+            <div class="small" style="font-weight:700">${esc(v.name)} <span class="badge" style="font-size:9px">Demo</span></div>
+            <div class="tiny muted">@${esc(v.username)} · ${esc(v.city)}, ${esc(v.country)} · owner ${esc(u.fullName || '')}</div>
+            <div class="tiny muted ellipsis">${esc(cats.join(' · '))}</div>
+            <div class="tiny muted" style="line-height:1.7">${esc(v.tagline || '')}</div>
+          </div>
+          <div style="text-align:right;flex:0 0 auto">
+            <div class="small" style="font-weight:700">${items.length} products</div>
+            <div class="tiny muted">${items.filter(p => p.stock > 0).length} in stock</div>
+            <div class="tiny muted">${cats.length} categories</div>
+          </div>
+        </div>`;
+      }).join('') : `<div class="inv-empty">${ic('store', 26)}<p class="small muted">No demo storefronts yet — republish the catalogues.</p></div>`}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">How it works</div>
+    <div class="tiny muted" style="line-height:1.8">
+      Sellers and listings come from <b>public/demo-catalog.json</b>, generated by
+      <b>scripts/generate-demo-catalog.mjs</b>. Product photos and owner portraits are real renders shipped
+      with the app (<b>public/demo/</b>) — no emoji, no placeholder graphics. Republishing refreshes prices,
+      stock and photos in place, and a catalogue version bump retires listings that were removed.
+    </div>
+  </div>`;
+}
+
+const _adminDemoSellers = VIEWS.admin;
+VIEWS.admin = function (parts, params) {
+  if ((parts[1] || '') === 'demo-sellers') {
+    const u = me();
+    if (!u || u.role !== 'admin') return `<div class="card empty"><div class="ic">${ic('lock', 26)}</div><h3>Admin access only</h3></div>`;
+    try { LT.ensureDemoSellers(false); } catch (e) {}
+    return ltDemoSellersView();
+  }
+  return _adminDemoSellers.apply(this, arguments);
+};
+if (!ADMIN_NAV.some(n => n.key === 'admin-demo-sellers')) {
+  ADMIN_NAV.splice(Math.max(0, ADMIN_NAV.length - 2), 0,
+    { key: 'admin-demo-sellers', label: 'Demo sellers', icon: 'store', href: '#/admin/demo-sellers' });
+}
+
+/* seed once the app is up, then retry in the background until it lands */
+(function seedDemoStorefronts() {
+  try {
+    if (!DB || !DB_READY) return setTimeout(seedDemoStorefronts, 1500);
+    LT.ensureDemoSellers(false);
+  } catch (e) { setTimeout(seedDemoStorefronts, 4000); }
+})();
+setInterval(() => { try { if (DB && DB_READY) LT.ensureDemoSellers(false); } catch (e) {} }, 90 * 1000);
+
