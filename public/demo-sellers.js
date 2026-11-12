@@ -243,6 +243,138 @@ App.demoSellersPublish = async function () {
   toast(res.addedProducts + ' new · ' + res.updatedProducts + ' refreshed listings', 'ok');
 };
 
+/* ---------------- admin: generate company-market (wholesale) products ----------------
+   Targets DB.companyProducts — the stock vendors buy from. Each run appends the
+   requested 50–100 distinct SKUs across electronics, sound systems, phones,
+   watches, bags, chargers, power banks and solar systems. Existing company
+   products are never removed or overwritten. */
+const COMPANY_CATEGORY_ORDER = [
+  'Phones', 'Watches', 'Sound Systems', 'JBL Players', 'Speakers', 'Headphones',
+  'Bags', 'Chargers', 'Power Banks', 'Solar Lamps', 'Solar Systems', 'Fridges',
+  'Laptops', 'Tablets', 'Video Games', 'Phone Pouches', 'Accessories'
+];
+const COMPANY_EDITIONS = ['Series II', 'Pro Edition', 'Plus', 'Studio Pack', '2026 Edition', 'Bulk Pack', 'Max'];
+
+LT.companyCatalog = null;
+LT.loadCompanyCatalogue = async function (force) {
+  if (LT.companyCatalog && !force) return LT.companyCatalog;
+  const res = await fetch('./company-catalog.json?t=' + Date.now(), { cache: 'no-store' });
+  if (!res.ok) throw new Error('wholesale catalogue not available');
+  const cat = await res.json();
+  if (!cat || !Array.isArray(cat.models) || !cat.models.length) throw new Error('wholesale catalogue is empty');
+  LT.companyCatalog = cat;
+  return cat;
+};
+
+LT.generateCompanyProducts = async function (count) {
+  const wanted = Math.round(Number(count) || 0);
+  if (wanted < 50 || wanted > 100) return { ok: false, error: 'Choose between 50 and 100 products' };
+  if (!DB || !DB_READY) return { ok: false, error: 'App is still loading — try again' };
+  let demo, company;
+  try { demo = await LT.loadDemoCatalog(false); } catch (e) { demo = null; }
+  try { company = await LT.loadCompanyCatalogue(true); } catch (e) { company = null; }
+  if (!demo && !company) return { ok: false, error: 'Could not load the product catalogues' };
+
+  const pool = [];
+  ((demo && demo.models) || []).forEach(m => pool.push({
+    slug: m.slug, name: m.name, category: m.category,
+    retail: Number(m.basePriceUsd) || 50,
+    wholesale: Math.max(4, Math.round((Number(m.basePriceUsd) || 50) * 0.6)),
+    image: m.image, description: m.description, color: m.color || ''
+  }));
+  ((company && company.models) || []).forEach(m => pool.push({
+    slug: m.slug, name: m.name, category: m.category,
+    retail: Number(m.retailUsd) || Number(m.wholesaleUsd) * 1.7 || 50,
+    wholesale: Math.max(3, Number(m.wholesaleUsd) || Math.round((Number(m.retailUsd) || 50) * 0.6)),
+    image: m.image, description: m.description, color: m.color || ''
+  }));
+  if (!pool.length) return { ok: false, error: 'No products available to generate' };
+
+  const byCat = {};
+  pool.forEach(m => { (byCat[m.category] = byCat[m.category] || []).push(m); });
+  const categories = COMPANY_CATEGORY_ORDER.filter(c => byCat[c] && byCat[c].length)
+    .concat(Object.keys(byCat).filter(c => !COMPANY_CATEGORY_ORDER.includes(c)));
+
+  if (!Array.isArray(DB.companyProducts)) DB.companyProducts = [];
+  /* existing rows always stay; just backfill a real photo when one is missing */
+  const catImage = {};
+  pool.forEach(m => { if (!catImage[m.category] && m.image) catImage[m.category] = m.image; });
+  DB.companyProducts.forEach(p => {
+    if (!p.image && catImage[p.category]) p.image = catImage[p.category];
+  });
+  const names = new Set(DB.companyProducts.map(p => String(p.name || '').toLowerCase()));
+  const ids = new Set(DB.companyProducts.map(p => p.id));
+  const usedInCat = {};
+  const batch = Date.now().toString(36);
+  const added = [];
+  let guard = 0;
+
+  while (added.length < wanted && guard < wanted * 12) {
+    guard++;
+    const cat = categories[added.length % categories.length];
+    const list = byCat[cat];
+    const round = usedInCat[cat] || 0;
+    usedInCat[cat] = round + 1;
+    const model = list[round % list.length];
+    const edition = Math.floor(round / list.length);   // 0 = base model, 1+ = edition variant
+
+    let name = model.name;
+    if (edition > 0 || names.has(name.toLowerCase())) {
+      let k = Math.max(0, edition - 1);
+      let candidate;
+      do {
+        candidate = model.name + ' · ' + COMPANY_EDITIONS[k % COMPANY_EDITIONS.length];
+        k++;
+      } while (names.has(candidate.toLowerCase()) && k < 40);
+      if (names.has(candidate.toLowerCase())) candidate = model.name + ' · Batch ' + batch.toUpperCase();
+      name = candidate;
+    }
+    if (names.has(name.toLowerCase())) continue;
+
+    let id = 'cmp_' + model.slug + '_' + batch + '_' + (added.length + 1);
+    let n = 1;
+    while (ids.has(id)) id = 'cmp_' + model.slug + '_' + batch + '_' + (added.length + 1) + '_' + (n++);
+
+    const factor = 1 + edition * 0.045;
+    const wholesale = Math.max(3, Math.round(model.wholesale * factor));
+    const stock = 30 + Math.floor(Math.random() * 150);
+    DB.companyProducts.push({
+      id, name, category: model.category,
+      priceUsd: wholesale,
+      stock,
+      description: (model.description || '') + (edition > 0
+        ? ' Edition variant with the same core specification, shipped in wholesale cartons.' : ''),
+      image: model.image || null,
+      emoji: null,
+      color: model.color || '',
+      retailUsd: Math.round(model.retail * factor),
+      generated: true,
+      batch,
+      createdAt: Date.now()
+    });
+    ids.add(id);
+    names.add(name.toLowerCase());
+    added.push({ name, category: model.category });
+  }
+
+  if (!added.length) return { ok: false, error: 'Could not create new products — try again' };
+
+  if (!DB.settings) DB.settings = {};
+  const gen = DB.settings.companyGen || { total: 0, batches: [] };
+  gen.total = (gen.total || 0) + added.length;
+  gen.lastAt = Date.now();
+  gen.lastCount = added.length;
+  gen.batches = [{ at: Date.now(), count: added.length, batch }].concat(gen.batches || []).slice(0, 10);
+  DB.settings.companyGen = gen;
+
+  const byCategory = {};
+  added.forEach(a => { byCategory[a.category] = (byCategory[a.category] || 0) + 1; });
+  try { AUDIT.log('Company products generated', added.length + ' new wholesale SKUs · ' + Object.keys(byCategory).length + ' categories'); } catch (e) {}
+  try { sync(); } catch (e) {}
+  persist();
+  return { ok: true, added: added.length, total: DB.companyProducts.length, byCategory };
+};
+
 /* ---------------- admin: generate brand-new demo products ----------------
    Append-only: every call adds distinct listings and never deletes, renames
    or replaces an existing product. Uses unused catalogue models first, then
