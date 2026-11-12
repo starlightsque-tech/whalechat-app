@@ -12,6 +12,7 @@
    ========================================================================= */
 
 const https = require('https');
+const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -36,6 +37,11 @@ const NY_HOLIDAYS = new Set([
   '2027-07-05', '2027-09-06', '2027-11-25', '2027-12-24'
 ]);
 
+const FINNHUB_REST_BASE = (process.env.FINNHUB_REST_BASE || 'https://finnhub.io').replace(/\/+$/, '');
+const FINNHUB_WS_URL = process.env.FINNHUB_WS_URL || 'wss://ws.finnhub.io';
+const SEED_DELAY_MS = Math.max(0, Number(process.env.FINNHUB_SEED_DELAY_MS) || 1200);
+const FORCE_MARKET_OPEN = process.env.US_MARKET_FORCE_OPEN === '1';
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const round = (v, n) => Math.round(v * Math.pow(10, n)) / Math.pow(10, n);
 
@@ -57,6 +63,7 @@ function nyDateKey(d) {
 }
 
 function usMarketOpen(d) {
+  if (FORCE_MARKET_OPEN) return true;
   const t = d || new Date();
   const c = nyClock(t);
   if (c.weekday === 'Sat' || c.weekday === 'Sun') return false;
@@ -236,7 +243,8 @@ class MarketService {
   /* --------------------------- Finnhub REST ----------------------------- */
   getJSON(url, timeoutMs) {
     return new Promise((resolve, reject) => {
-      const req = https.get(url, {
+      const client = /^http:\/\//i.test(url) ? http : https;
+      const req = client.get(url, {
         timeout: timeoutMs || 8000,
         headers: { 'User-Agent': 'WhaleChat/3.17 market-feed', Accept: 'application/json' }
       }, (res) => {
@@ -258,7 +266,7 @@ class MarketService {
     const key = this.config.apiKey;
     if (!key) return null;
     if (Date.now() < this.rateLimitedUntil) return null;
-    const url = 'https://finnhub.io/api/v1/quote?symbol=' + encodeURIComponent(ticker) + '&token=' + encodeURIComponent(key);
+    const url = FINNHUB_REST_BASE + '/api/v1/quote?symbol=' + encodeURIComponent(ticker) + '&token=' + encodeURIComponent(key);
     try {
       const r = await this.getJSON(url, 9000);
       if (r.status === 429) {
@@ -301,7 +309,7 @@ class MarketService {
         if (q) {
           this.writeQuote(t, q.price, { prevClose: q.prevClose, open: q.open, dayHigh: q.dayHigh, dayLow: q.dayLow, vol: this.quotes[t] ? this.quotes[t].vol : 1000000, source: 'live', real: true });
         }
-        await sleep(1200);                                     // < 60 requests / minute
+        await sleep(SEED_DELAY_MS);                            // default 1.2s < 60 requests / minute
       }
       this.lastError = '';
       console.log('[market] Finnhub seed complete ·', TICKERS.length, 'tickers ·', usMarketOpen() ? 'market open' : 'market closed (using last close)');
@@ -346,7 +354,7 @@ class MarketService {
       return;
     }
     this.closeWS();
-    const url = 'wss://ws.finnhub.io?token=' + encodeURIComponent(this.config.apiKey);
+    const url = FINNHUB_WS_URL + '?token=' + encodeURIComponent(this.config.apiKey);
     let ws;
     try { ws = new WS(url); } catch (e) { this.lastError = 'WebSocket failed: ' + e.message; return; }
     this.ws = ws;
@@ -461,6 +469,7 @@ class MarketService {
     if (!db || !Array.isArray(db.trades)) return 0;
     this.settleLock = true;
     let changed = 0;
+    let trailingChanged = false;
     try {
       const now = Date.now();
       for (const t of db.trades) {
@@ -480,15 +489,34 @@ class MarketService {
           const m = Number(t.slPct) / (100 * lev);
           t.stopLossPrice = round(t.entryPrice * (direction === 'FALL' ? (1 + m) : (1 - m)), 4);
         }
+        /* trailing stop: ratchet behind the best price, never loosen */
+        if (t.trailingActive && Number(t.trailingStopPct) > 0) {
+          const dist = Math.max(0.05, Math.min(50, Number(t.trailingStopPct))) / 100;
+          let stop = Number(t.trailingStopPrice) || Number(t.stopLossPrice) || 0;
+          if (!(stop > 0)) stop = direction === 'FALL' ? t.entryPrice * (1 + dist) : t.entryPrice * (1 - dist);
+          const next = direction === 'FALL' ? q.price * (1 + dist) : q.price * (1 - dist);
+          const tightened = direction === 'FALL' ? Math.min(stop, next) : Math.max(stop, next);
+          const rounded = round(tightened, 4);
+          if (rounded !== round(stop, 4)) {
+            t.trailingStopPrice = rounded;
+            t.stopLossPrice = rounded;
+            trailingChanged = true;
+          } else if (!t.trailingStopPrice) {
+            t.trailingStopPrice = rounded;
+            t.stopLossPrice = rounded;
+            trailingChanged = true;
+          }
+        }
         const tpPrice = Number(t.takeProfitPrice) || 0;
         const slPrice = Number(t.stopLossPrice) || 0;
+        const slReason = t.trailingActive ? 'Trailing Stop Hit' : 'Stop Loss Hit';
         let reason = '';
         if (direction === 'RISE') {
           if (tpPrice > 0 && q.price >= tpPrice) reason = 'Take Profit Hit';
-          else if (slPrice > 0 && q.price <= slPrice) reason = 'Stop Loss Hit';
+          else if (slPrice > 0 && q.price <= slPrice) reason = slReason;
         } else {
           if (tpPrice > 0 && q.price <= tpPrice) reason = 'Take Profit Hit';
-          else if (slPrice > 0 && q.price >= slPrice) reason = 'Stop Loss Hit';
+          else if (slPrice > 0 && q.price >= slPrice) reason = slReason;
         }
         let pnl = 0;
         let pnlCoins = 0;
@@ -506,7 +534,7 @@ class MarketService {
         }
         if (!reason) continue;
         /* absolute TP/SL exits settle on the tick that triggered them */
-        if (reason === 'Take Profit Hit' || reason === 'Stop Loss Hit') {
+        if (reason === 'Take Profit Hit' || reason === 'Stop Loss Hit' || reason === 'Trailing Stop Hit') {
           const move = (q.price - t.entryPrice) / t.entryPrice;
           pnl = (Number(t.capitalCoins) || 0) * lev * move * dir;
           pnl = Math.max(-(Number(t.capitalCoins) || 0), pnl);
@@ -543,6 +571,7 @@ class MarketService {
         db.notifications.unshift({
           id: id('nt_'), userId: u.id,
           title: reason === 'Take Profit Hit' ? 'Take Profit Hit — trade won'
+            : reason === 'Trailing Stop Hit' ? 'Trailing Stop Hit — trade closed'
             : reason === 'Stop Loss Hit' ? 'Stop Loss Hit — trade closed'
             : payout <= 0 ? 'Trade closed — total loss' : pnlCoins >= 0 ? 'Take profit — trade closed' : 'Trade closed at a loss',
           body, link: '#/invest/orders', icon: payout <= 0 ? 'ban' : 'trend', read: false, createdAt: now
@@ -553,6 +582,9 @@ class MarketService {
       if (changed) {
         this.persist();
         try { this.broadcast('change', { rev: null, source: 'market-settlement', at: now }); } catch (e) {}
+      } else if (trailingChanged && (!this._lastTrailPersist || now - this._lastTrailPersist > 30000)) {
+        this._lastTrailPersist = now;
+        this.persist();
       }
     } finally {
       this.settleLock = false;
