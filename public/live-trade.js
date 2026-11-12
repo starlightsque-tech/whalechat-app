@@ -25,10 +25,42 @@ const LT = {
   feePct() { return Math.max(0, Number(this.cfg().feePct) || 0); },
   all(userId) {
     if (!Array.isArray(DB.trades)) DB.trades = [];
-    return DB.trades.filter(t => t.userId === (userId || me().id) && t.type === 'live');
+    const list = DB.trades.filter(t => t.userId === (userId || me().id) && t.type === 'live');
+    list.forEach(t => {
+      if (!t.direction) t.direction = t.side === 'short' ? 'FALL' : 'RISE';
+      if (t.stakeAmount == null) t.stakeAmount = t.capitalCoins;
+    });
+    return list;
   },
   open(userId) { return this.all(userId).filter(t => t.status === 'Open'); },
   closed(userId) { return this.all(userId).filter(t => t.status !== 'Open').sort((a, b) => b.closedAt - a.closedAt); },
+
+  dirOf(t) { return t && t.direction ? t.direction : (t && t.side === 'short' ? 'FALL' : 'RISE'); },
+  tpslOf(t) { return { tp: Number(t && t.takeProfitPrice) || 0, sl: Number(t && t.stopLossPrice) || 0 }; },
+  levelPrice(direction, entry, raw, mode, kind) {
+    const v = Math.abs(Number(raw) || 0);
+    if (!v || !(entry > 0)) return 0;
+    if (mode === 'price') return Math.round(v * 10000) / 10000;
+    const pct = v / 100;
+    const rise = direction === 'RISE';
+    const price = kind === 'tp'
+      ? (rise ? entry * (1 + pct) : entry * (1 - pct))
+      : (rise ? entry * (1 - pct) : entry * (1 + pct));
+    return Math.max(0.0001, Math.round(price * 10000) / 10000);
+  },
+  validateLevels(direction, entry, tp, sl) {
+    if (!(entry > 0)) return 'No live entry price for this symbol';
+    if (tp > 0) {
+      if (direction === 'RISE' && tp <= entry) return 'Take Profit must be above the entry price for a Rise trade';
+      if (direction === 'FALL' && tp >= entry) return 'Take Profit must be below the entry price for a Fall trade';
+    }
+    if (sl > 0) {
+      if (sl <= 0) return 'Stop Loss price must be above zero';
+      if (direction === 'RISE' && sl >= entry) return 'Stop Loss must be below the entry price for a Rise trade';
+      if (direction === 'FALL' && sl <= entry) return 'Stop Loss must be above the entry price for a Fall trade';
+    }
+    return '';
+  },
 
   /* live numbers for a position */
   calc(t) {
@@ -66,9 +98,17 @@ const LT = {
 
     const fee = Math.round(capital * this.feePct() / 100 * 100) / 100;
     const minutes = Math.max(1, Math.min(7 * 24 * 60, Number(o.minutes) || 60));
+    const direction = side === 'short' ? 'FALL' : 'RISE';
+    const tpPrice = Math.max(0, Number(o.tpPrice) || 0);
+    const slPrice = Math.max(0, Number(o.slPrice) || 0);
+    const levelErr = this.validateLevels(direction, q.price, tpPrice, slPrice);
+    if (levelErr) { toast(levelErr, 'err'); return false; }
     const trade = {
-      id: uid('lt'), userId: u.id, type: 'live', ticker, name: s.name, side: side === 'short' ? 'short' : 'long',
-      capitalCoins: capital, entryPrice: q.price, leverage: this.leverage(),
+      id: uid('lt'), userId: u.id, type: 'live', ticker, name: s.name,
+      side: side === 'short' ? 'short' : 'long', direction,
+      capitalCoins: capital, stakeAmount: capital, entryPrice: q.price, leverage: this.leverage(),
+      takeProfitPrice: tpPrice > 0 ? Math.round(tpPrice * 10000) / 10000 : null,
+      stopLossPrice: slPrice > 0 ? Math.round(slPrice * 10000) / 10000 : null,
       tpPct: Math.max(0, Math.min(500, Number(o.tpPct) || 0)),
       slPct: Math.max(0, Math.min(100, Number(o.slPct) || 0)),
       expiresAt: Date.now() + minutes * 60000,
@@ -135,8 +175,17 @@ const LT = {
          cannot miss a payout — avoid paying the same trade twice. */
       if (typeof WC_MARKET !== 'undefined' && typeof WC_MARKET.feedFresh === 'function' && WC_MARKET.feedFresh() && WC_MARKET.feed.quotes && WC_MARKET.feed.quotes[t.ticker]) return;
       const p = this.calc(t);
-      if (t.tpPct > 0 && p.pnlPct >= t.tpPct) return void this.settle(t, 'Take profit target hit');
-      if (t.slPct > 0 && p.pnlPct <= -t.slPct) return void this.settle(t, 'Stop loss hit');
+      const dir = this.dirOf(t);
+      const lv = this.tpslOf(t);
+      if (dir === 'RISE') {
+        if (lv.tp > 0 && p.price >= lv.tp) return void this.settle(t, 'Take Profit Hit');
+        if (lv.sl > 0 && p.price <= lv.sl) return void this.settle(t, 'Stop Loss Hit');
+      } else {
+        if (lv.tp > 0 && p.price <= lv.tp) return void this.settle(t, 'Take Profit Hit');
+        if (lv.sl > 0 && p.price >= lv.sl) return void this.settle(t, 'Stop Loss Hit');
+      }
+      if (t.tpPct > 0 && p.pnlPct >= t.tpPct) return void this.settle(t, 'Take Profit Hit');
+      if (t.slPct > 0 && p.pnlPct <= -t.slPct) return void this.settle(t, 'Stop Loss Hit');
       if (t.expiresAt && Date.now() >= t.expiresAt) return void this.settle(t, 'Time limit reached');
     });
   },
@@ -176,6 +225,11 @@ const LT = {
         <span class="tiny muted">Price <b data-lt-price="${t.id}">${usd(p.price)}</b>
           <span data-lt-move="${t.id}" class="${p.movePct >= 0 ? 'up' : 'down'}">${p.movePct >= 0 ? '▲' : '▼'} ${Math.abs(p.movePct).toFixed(2)}%</span></span>
         <span class="tiny muted" data-lt-left="${t.id}">⏱ ${this.clock(p.left)}</span>
+      </div>
+      <div class="lt-levels">
+        <span class="lt-lvl tp"><i></i>TP <b>${Number(t.takeProfitPrice) > 0 ? usd(t.takeProfitPrice) : '—'}</b></span>
+        <span class="lt-lvl sl"><i></i>SL <b>${Number(t.stopLossPrice) > 0 ? usd(t.stopLossPrice) : '—'}</b></span>
+        <button class="lt-edit" data-act="lt-edit-tpsl" data-id="${t.id}">${ic('edit', 12)} Edit TP/SL</button>
       </div>
       <div class="lt-bar"><i style="width:${Math.min(100, Math.max(0, 50 + p.pnlPct))}%"
         class="${up ? 'up' : down ? 'down' : ''}"></i></div>
@@ -287,6 +341,8 @@ const LT = {
           <button class="btn btn-ghost grow" data-act="lt-sl" data-id="${pos.id}">
             ${ic('down', 15)} Take loss</button>
         </div>
+        <button class="btn btn-soft btn-sm" data-act="lt-edit-tpsl" data-id="${pos.id}" style="width:100%;margin-top:8px">
+          ${ic('edit', 14)} Edit Take Profit / Stop Loss</button>
         <div class="tiny muted center mt6">Profit: capital + gain · Loss: remaining capital · Total loss: nothing returned</div>
       </div>`;
     }
@@ -303,12 +359,37 @@ const LT = {
         <div class="input-wrap"><span class="inv-prefix">WC</span>
           <input class="input" id="ltCapital" type="number" step="1" min="${this.MIN_CAPITAL}" placeholder="0"/></div>
         <div class="tiny muted" id="ltCapitalUsd">≈ $0.00 · balance ${coins(me().balance)} WC</div></div>
-      <div class="row" style="gap:8px">
-        <div class="field grow"><label class="label">Take profit %</label>
-          <input class="input" id="ltTp" type="number" step="1" min="0" placeholder="limit"/></div>
-        <div class="field grow"><label class="label">Take loss %</label>
-          <input class="input" id="ltSl" type="number" step="1" min="0" placeholder="limit"/></div>
+      <div class="lt-tpsl-grid">
+        <div class="lt-level-box">
+          <div class="between"><label class="label">Take Profit <span class="tiny muted">optional</span></label>
+            <div class="lt-modebtns">
+              <button type="button" class="on" data-act="lt-mode" data-k="tp" data-mode="pct">%</button>
+              <button type="button" data-act="lt-mode" data-k="tp" data-mode="price">$</button>
+            </div></div>
+          <div class="input-wrap"><span class="inv-prefix" id="ltTpPrefix">%</span>
+            <input class="input" id="ltTp" type="number" step="0.01" min="0" placeholder="optional"/></div>
+          <div class="lt-quick">
+            <button type="button" data-act="lt-quick" data-k="tp" data-pct="10">+10%</button>
+            <button type="button" data-act="lt-quick" data-k="tp" data-pct="25">+25%</button>
+            <button type="button" data-act="lt-quick" data-k="tp" data-pct="50">+50%</button>
+          </div>
+        </div>
+        <div class="lt-level-box">
+          <div class="between"><label class="label">Stop Loss <span class="tiny muted">optional</span></label>
+            <div class="lt-modebtns">
+              <button type="button" class="on" data-act="lt-mode" data-k="sl" data-mode="pct">%</button>
+              <button type="button" data-act="lt-mode" data-k="sl" data-mode="price">$</button>
+            </div></div>
+          <div class="input-wrap"><span class="inv-prefix" id="ltSlPrefix">%</span>
+            <input class="input" id="ltSl" type="number" step="0.01" min="0" placeholder="optional"/></div>
+          <div class="lt-quick">
+            <button type="button" data-act="lt-quick" data-k="sl" data-pct="10">-10%</button>
+            <button type="button" data-act="lt-quick" data-k="sl" data-pct="25">-25%</button>
+            <button type="button" data-act="lt-quick" data-k="sl" data-pct="50">-50%</button>
+          </div>
+        </div>
       </div>
+      <div class="tiny muted" id="ltTpslHint" style="margin:-2px 0 10px;line-height:1.55">Rise: TP above entry, SL below. Fall: TP below entry, SL above. Leave blank to trade to duration only.</div>
       <div class="field"><label class="label">Trade duration</label>
         <select class="input" id="ltDuration">${this.DURATIONS.map(d => `<option value="${d.m}" ${d.m === 60 ? 'selected' : ''}>${d.label}</option>`).join('')}</select></div>
       <button class="btn btn-primary" data-act="lt-start" data-t="${esc(ticker)}" style="width:100%">
@@ -356,6 +437,28 @@ const LT = {
   @media(min-width:760px){.lt-push-banner{left:auto;right:20px;bottom:20px;max-width:400px}}
   .lt-mini{display:inline-block;width:46px;height:22px;margin:0 6px;vertical-align:middle;opacity:.9;flex:0 0 auto}
   .lt-mini svg{width:100%;height:100%;display:block}
+  .lt-tpsl-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .lt-level-box{border:1px solid var(--border);border-radius:12px;padding:9px;background:var(--surface-2)}
+  .lt-level-box .label{margin-bottom:5px}
+  .lt-modebtns{display:flex;gap:3px}
+  .lt-modebtns button{border:1px solid var(--border);background:var(--surface);color:var(--muted);
+    border-radius:7px;font-size:10px;font-weight:700;padding:2px 7px;cursor:pointer;line-height:1.5}
+  .lt-modebtns button.on{border-color:rgba(46,230,201,.55);color:var(--text);background:rgba(46,230,201,.14)}
+  .lt-quick{display:flex;gap:4px;flex-wrap:wrap;margin-top:6px}
+  .lt-quick button{border:1px solid var(--border);background:var(--surface);color:var(--muted);
+    border-radius:99px;font-size:10px;font-weight:650;padding:3px 7px;cursor:pointer}
+  .lt-quick button:hover{color:var(--text);border-color:var(--border-strong)}
+  .lt-quick button.lt-clear{color:var(--danger)}
+  .lt-levels{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;
+    padding-top:7px;border-top:1px dashed var(--border)}
+  .lt-lvl{font-size:10px;font-weight:700;display:inline-flex;align-items:center;gap:4px;color:var(--muted)}
+  .lt-lvl i{width:7px;height:7px;border-radius:50%;display:inline-block}
+  .lt-lvl.tp i{background:#22c55e} .lt-lvl.sl i{background:#ef4444}
+  .lt-lvl b{color:var(--text);font-variant-numeric:tabular-nums}
+  .lt-edit{margin-left:auto;border:1px solid var(--border);background:var(--surface);
+    color:var(--accent);border-radius:8px;font-size:10px;font-weight:700;padding:3px 6px;cursor:pointer}
+  .lt-lvl-head{display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:13px}
+  @media(max-width:420px){.lt-tpsl-grid{grid-template-columns:1fr}}
   `;
   document.head.appendChild(st);
 })();
@@ -588,6 +691,7 @@ LT.dash = function (params) {
     <div class="inv-chart" id="ltDashChart" data-ltd-chart="${tf}">
       ${s.pos.length ? INV.lineChart(series, { h: 150 }) : `<div class="inv-empty">${ic('trend', 26)}<p class="small muted">Start a trade or buy stock to see performance.</p><a href="#/invest/market" class="btn btn-sm btn-primary">Explore market</a></div>`}
     </div>
+    <div class="tiny muted center wc-feed-notice" data-market-notice="1" style="margin-top:6px">Simulated market data · 24/7</div>
   </div>
 
   <div class="inv-two">
@@ -655,7 +759,7 @@ LT.paintDash = function () {
   const earn = document.querySelector('[data-ltd="earnings"]');
   if (earn) { earn.classList.toggle('up', s.pnl > 0); earn.classList.toggle('down', s.pnl < 0); }
   const chart = document.getElementById('ltDashChart');
-  if (chart) {
+  if (chart && !chart.__wcLwc) {
     const tf = chart.getAttribute('data-ltd-chart') || '1M';
     const series = LT.seriesWithTrades(tf, u.id);
     chart.innerHTML = series.length ? INV.lineChart(series, { h: 150 })
@@ -1396,18 +1500,106 @@ App.ltSide = function (id, ds) {
   document.querySelectorAll('.lt-side-btn').forEach(b => b.classList.toggle('on', b.dataset.side === ds.side));
   document.querySelectorAll('.lt-side-btn').forEach(b => b.dataset.side && b.classList.toggle('on', b.getAttribute('data-side') === ds.side));
 };
+LT.levels = { tp: 'pct', sl: 'pct' };
+
+App.ltMode = function (id, ds) {
+  const k = ds && ds.k === 'sl' ? 'sl' : 'tp';
+  LT.levels[k] = ds && ds.mode === 'price' ? 'price' : 'pct';
+  document.querySelectorAll('[data-act="lt-mode"][data-k="' + k + '"]').forEach(b => {
+    b.classList.toggle('on', b.getAttribute('data-mode') === LT.levels[k]);
+  });
+  const pre = document.getElementById(k === 'tp' ? 'ltTpPrefix' : 'ltSlPrefix');
+  if (pre) pre.textContent = LT.levels[k] === 'price' ? '$' : '%';
+};
+
+App.ltQuick = function (id, ds) {
+  const k = ds && ds.k === 'sl' ? 'sl' : 'tp';
+  const input = document.getElementById(k === 'tp' ? 'ltTp' : 'ltSl');
+  if (input) input.value = Math.abs(Number(ds && ds.pct) || 0) || '';
+  App.ltMode(null, { k, mode: 'pct' });
+};
+
 App.ltStart = function (id, ds) {
   const capEl = document.getElementById('ltCapital');
   const capital = Number(capEl && capEl.value) || 0;
   const sideEl = document.querySelector('.lt-side-btn.on');
   const side = sideEl ? sideEl.getAttribute('data-side') : 'long';
-  const tp = Number((document.getElementById('ltTp') || {}).value) || 0;
-  const sl = Number((document.getElementById('ltSl') || {}).value) || 0;
+  const q = INV.quote(ds.t);
+  if (!q) return toast('No live price for ' + ds.t, 'err');
+  const direction = side === 'short' ? 'FALL' : 'RISE';
+  const tpRaw = Number((document.getElementById('ltTp') || {}).value) || 0;
+  const slRaw = Number((document.getElementById('ltSl') || {}).value) || 0;
+  const tpPrice = LT.levelPrice(direction, q.price, tpRaw, LT.levels.tp, 'tp');
+  const slPrice = LT.levelPrice(direction, q.price, slRaw, LT.levels.sl, 'sl');
+  const err = LT.validateLevels(direction, q.price, tpPrice, slPrice);
+  if (err) return toast(err, 'err');
   const minutes = Number((document.getElementById('ltDuration') || {}).value) || 60;
-  LT.start(side, ds.t, capital, { tpPct: tp, slPct: sl, minutes });
+  LT.start(side, ds.t, capital, { tpPrice, slPrice, minutes });
 };
-App.ltTp = function (id, ds) { const t = DB.trades.find(x => x.id === ds.id); LT.settle(t, 'Take profit — closed manually'); };
-App.ltSl = function (id, ds) { const t = DB.trades.find(x => x.id === ds.id); LT.settle(t, 'Stopped manually'); };
+App.ltTp = function (id, ds) { const t = DB.trades.find(x => x.id === ds.id); LT.settle(t, 'Take Profit Hit'); };
+App.ltSl = function (id, ds) { const t = DB.trades.find(x => x.id === ds.id); LT.settle(t, 'Stop Loss Hit'); };
+
+App.ltEditTpsl = function (id, ds) {
+  const t = DB.trades.find(x => x.id === ds.id);
+  if (!t || t.status !== 'Open') return toast('This trade is already closed', 'err');
+  const dir = LT.dirOf(t);
+  const entry = Number(t.entryPrice) || 0;
+  const { tp, sl } = LT.tpslOf(t);
+  const body = `
+    <div class="lt-lvl-head">
+      <span class="lt-side ${t.side}">${dir === 'RISE' ? 'Rise' : 'Fall'} ${t.leverage}×</span>
+      <b>${esc(t.ticker)}</b><span class="tiny muted">Entry ${usd(entry)}</span>
+    </div>
+    <div class="field"><label class="label">Take Profit price (USD)</label>
+      <input class="input" id="ltEditTp" type="number" step="0.01" min="0" value="${tp || ''}" placeholder="optional"/>
+      <div class="lt-quick">
+        <button type="button" data-act="lt-edit-quick" data-id="${t.id}" data-k="tp" data-pct="10">+10%</button>
+        <button type="button" data-act="lt-edit-quick" data-id="${t.id}" data-k="tp" data-pct="25">+25%</button>
+        <button type="button" data-act="lt-edit-quick" data-id="${t.id}" data-k="tp" data-pct="50">+50%</button>
+        <button type="button" class="lt-clear" data-act="lt-edit-clear" data-id="${t.id}" data-k="tp">Clear</button>
+      </div></div>
+    <div class="field"><label class="label">Stop Loss price (USD)</label>
+      <input class="input" id="ltEditSl" type="number" step="0.01" min="0" value="${sl || ''}" placeholder="optional"/>
+      <div class="lt-quick">
+        <button type="button" data-act="lt-edit-quick" data-id="${t.id}" data-k="sl" data-pct="10">-10%</button>
+        <button type="button" data-act="lt-edit-quick" data-id="${t.id}" data-k="sl" data-pct="25">-25%</button>
+        <button type="button" data-act="lt-edit-quick" data-id="${t.id}" data-k="sl" data-pct="50">-50%</button>
+        <button type="button" class="lt-clear" data-act="lt-edit-clear" data-id="${t.id}" data-k="sl">Clear</button>
+      </div></div>
+    <div class="tiny muted">${dir === 'RISE' ? 'Rise trade: TP must be above entry and SL below entry.' : 'Fall trade: TP must be below entry and SL above entry.'} Changes apply on the next price tick.</div>`;
+  openModal(modalShell('Take Profit / Stop Loss', body,
+    `<button class="btn btn-ghost" data-close style="flex:1">Cancel</button>
+     <button class="btn btn-ghost" id="ltTpClearBoth" style="flex:1">Remove both</button>
+     <button class="btn btn-primary" id="ltTpSave" style="flex:1">Save</button>`), { locked: false });
+  const save = (tpVal, slVal) => {
+    const err = LT.validateLevels(dir, entry, tpVal, slVal);
+    if (err) return toast(err, 'err');
+    t.takeProfitPrice = tpVal > 0 ? Math.round(tpVal * 10000) / 10000 : null;
+    t.stopLossPrice = slVal > 0 ? Math.round(slVal * 10000) / 10000 : null;
+    t.tpPct = 0; t.slPct = 0;
+    closeModal(); try { sync(); } catch (e) {}
+    persist(); toast('TP / SL updated', 'ok'); render();
+  };
+  document.getElementById('ltTpSave').onclick = () => {
+    save(Number(document.getElementById('ltEditTp').value) || 0, Number(document.getElementById('ltEditSl').value) || 0);
+  };
+  document.getElementById('ltTpClearBoth').onclick = () => save(0, 0);
+};
+
+App.ltEditQuick = function (id, ds) {
+  const t = DB.trades.find(x => x.id === ds.id);
+  if (!t) return;
+  const k = ds.k === 'sl' ? 'sl' : 'tp';
+  const dir = LT.dirOf(t);
+  const price = LT.levelPrice(dir, Number(t.entryPrice) || 0, ds.pct, 'pct', k);
+  const input = document.getElementById(k === 'tp' ? 'ltEditTp' : 'ltEditSl');
+  if (input) input.value = price;
+};
+
+App.ltEditClear = function (id, ds) {
+  const input = document.getElementById(ds.k === 'sl' ? 'ltEditSl' : 'ltEditTp');
+  if (input) input.value = '';
+};
 
 /* admin: leverage is what decides how fast a trade can be wiped out */
 App.ltSaveLeverage = function () {
