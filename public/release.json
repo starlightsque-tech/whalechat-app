@@ -1,8 +1,8 @@
 {
   "version": "3.25.0",
-  "build": "2026-11-12T21:30:00Z",
+  "build": "2026-11-13T04:30:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.25.0 - USD spot buying with live WC conversion, dual-currency charts and position banner, bot performance chart, resilient Finnhub price/dividend sync, and WhaleChat share investment plans with live earnings.",
-  "releasedAt": "2026-11-12T21:30:00Z",
+  "notes": "WhaleChat 3.25.0 (restored) - rolled back to the last release before the Alpaca chart: Finnhub live market data + charts, USD spot buying with WC conversion, bots, shares. Build stamp advanced so installed apps pick the rollback up.",
+  "releasedAt": "2026-11-13T04:30:00Z",
   "minimum": "3.0.0"
 }
