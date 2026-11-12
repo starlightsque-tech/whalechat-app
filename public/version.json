@@ -1,8 +1,8 @@
 {
-  "version": "3.13.0",
-  "build": "2026-11-12T08:35:00Z",
+  "version": "3.14.0",
+  "build": "2026-11-12T09:00:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.13.0 - company-market generator (50-100 wholesale SKUs at a time), bags and solar systems categories.",
-  "releasedAt": "2026-11-12T08:35:00Z",
+  "notes": "WhaleChat 3.14.0 - bulk demo users up to 10,000 and per-user demo order generation.",
+  "releasedAt": "2026-11-12T09:00:00Z",
   "minimum": "3.0.0"
 }
