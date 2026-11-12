@@ -164,8 +164,8 @@ class MarketService {
       price: round(price, 4),
       prevClose: Number(meta && meta.prevClose) > 0 ? round(meta.prevClose, 4) : (prev.prevClose || round(price, 4)),
       open: Number(meta && meta.open) > 0 ? round(meta.open, 4) : (prev.open || round(price, 4)),
-      dayHigh: Math.max(prev.dayHigh || price, price),
-      dayLow: Math.min(prev.dayLow || price, price),
+      dayHigh: Math.max(prev.dayHigh || price, Number(meta && meta.dayHigh) || 0, price),
+      dayLow: Math.min(prev.dayLow || price, Number(meta && meta.dayLow) || price, price),
       vol: Number(meta && meta.vol) || prev.vol || 1000000,
       dir: price > (prev.price || price) ? 1 : price < (prev.price || price) ? -1 : 0,
       updatedAt: now,
@@ -264,8 +264,7 @@ class MarketService {
         if (Date.now() < this.rateLimitedUntil) break;
         const q = await this.fetchQuote(t);
         if (q) {
-          this.writeQuote(t, q.price, { prevClose: q.prevClose, open: q.open, vol: this.quotes[t] ? this.quotes[t].vol : 1000000, source: 'live', real: true });
-          this.lastReal[t] = q.price;
+          this.writeQuote(t, q.price, { prevClose: q.prevClose, open: q.open, dayHigh: q.dayHigh, dayLow: q.dayLow, vol: this.quotes[t] ? this.quotes[t].vol : 1000000, source: 'live', real: true });
         }
         await sleep(1200);                                     // < 60 requests / minute
       }
@@ -289,7 +288,7 @@ class MarketService {
         const stale = !q || !realAt || Date.now() - realAt > Math.max(30000, this.config.refreshSec * 2000);
         if (stale) {
           const fresh = await this.fetchQuote(t);
-          if (fresh) this.writeQuote(t, fresh.price, { prevClose: fresh.prevClose, open: fresh.open, vol: q ? q.vol : 1000000, source: 'live', real: true });
+          if (fresh) this.writeQuote(t, fresh.price, { prevClose: fresh.prevClose, open: fresh.open, dayHigh: fresh.dayHigh, dayLow: fresh.dayLow, vol: q ? q.vol : 1000000, source: 'live', real: true });
         }
         await sleep(1200);
       }
