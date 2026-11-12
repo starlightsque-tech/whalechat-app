@@ -333,6 +333,15 @@ async function api(req, res, pathname, query) {
   if (pathname === '/api/market/quotes' && req.method === 'GET') {
     return json(res, 200, market.snapshot());
   }
+  if (pathname === '/api/market/history' && req.method === 'GET') {
+    const raw = (query.get('tickers') || query.get('ticker') || '').toUpperCase();
+    const tickers = raw.split(',').map(t => t.trim()).filter(Boolean).slice(0, 24);
+    const limit = Number(query.get('limit')) || 600;
+    return json(res, 200, {
+      ok: true, at: Date.now(), source: market.source(), notice: market.notice(),
+      status: market.status(), history: market.historyFor(tickers, limit)
+    });
+  }
   if (pathname === '/api/market/status' && req.method === 'GET') {
     return json(res, 200, Object.assign({ ok: true }, market.status()));
   }
