@@ -1,6 +1,6 @@
 {
   "name": "whalechat",
-  "version": "3.2.0",
+  "version": "3.10.0",
   "private": true,
   "description": "WhaleChat \u2014 chat, marketplace and wallet. Web app + sync server + Android/iOS shells.",
   "main": "server.js",
@@ -10,7 +10,9 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "build:mobile": "node scripts/build-mobile.mjs"
+    "build:mobile": "node scripts/build-mobile.mjs",
+    "build": "node scripts/prepare-assets.js",
+    "demo:catalog": "node scripts/generate-demo-catalog.mjs"
   },
   "dependencies": {
     "web-push": "^3.6.7",
