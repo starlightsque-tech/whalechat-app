@@ -732,7 +732,7 @@ App.reactStatus = function (id, ds) {
 /* =========================================================================
    Marketplace, cart, checkout, orders, vendor system
    ========================================================================= */
-const CATEGORIES = ['All', 'Phones', 'Laptops', 'Tablets', 'Headphones', 'Chargers', 'Video Games', 'Phone Pouches', 'Accessories', 'Fridges', 'Solar Lamps', 'Watches', 'Sound Systems', 'JBL Players', 'Speakers', 'Power Banks'];
+const CATEGORIES = ['All', 'Phones', 'Laptops', 'Tablets', 'Headphones', 'Chargers', 'Video Games', 'Phone Pouches', 'Accessories', 'Fridges', 'Solar Lamps', 'Watches', 'Sound Systems', 'JBL Players', 'Speakers', 'Power Banks', 'Bags', 'Solar Systems'];
 let MARKET_FILTER = { cat: 'All', q: '' };
 
 VIEWS.market = function () {
