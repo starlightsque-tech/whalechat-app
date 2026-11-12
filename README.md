@@ -296,6 +296,23 @@ run simply adds another batch.
 Company-only assets live in `public/company/products/*.jpg.b64` and are decoded by the build, so every
 generated product has a real photo.
 
+### Bulk demo users & per-user orders
+
+**Admin → Demo shoppers → Generate demo users** creates between **1 and 10,000** demo shopper accounts
+with realistic names, cities and rotating portrait photos. Records are compact (~210 bytes each) so a
+10,000-user fleet takes about 2 MB; run another batch any time and it continues the numbering without
+duplicating ids or usernames.
+
+**Demo orders** on the same page lets the admin choose **how many demo users place an order**. Each
+selected user gets one simulated order from a demo storefront, dated within the previous three weeks,
+with mixed statuses and a full delivery record (derived on the fly for bulk users). Orders appear in
+order history, the demo activity dashboard and the storefront leaderboard.
+
+Both generators check the projected state size before saving: if a run would exceed this device's
+storage budget it rolls back completely and tells the admin to try a smaller number — nothing is
+partially written. Scheduled shoppers (the 8 named personas) keep their weekly cadence; bulk users
+only order when the admin asks them to.
+
 ### Demo activity dashboard
 
 **Admin → Demo activity** (`#/admin/demo-activity`) is the demo fleet's analytics page: seller /
