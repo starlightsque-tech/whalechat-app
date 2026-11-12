@@ -543,14 +543,32 @@
       </details>
 
       <details class="guide-sec">
-        <summary>2 · Profit and loss</summary>
+        <summary>2 · Profit, loss and worked examples</summary>
         <div class="guide-formula"><code>pnl WC = stake × leverage × price move × direction</code></div>
         <p><code>direction</code> is <b>+1 for Rise</b>, <b>−1 for Fall</b>. Payout is <code>max(0, stake + pnl)</code>.</p>
-        <div class="guide-examples">
-          <div class="guide-example win"><b>Rise +10%</b><span>100 WC · 5×</span><strong>+50 WC</strong></div>
-          <div class="guide-example win"><b>Fall −10%</b><span>100 WC · 5×</span><strong>+50 WC</strong></div>
-          <div class="guide-example loss"><b>Rise −5%</b><span>100 WC · 5×</span><strong>−25 WC</strong></div>
-          <div class="guide-example loss"><b>Wipe-out</b><span>20% adverse · 5×</span><strong>−100 WC</strong></div>
+        <div class="guide-scenarios">
+          <div class="guide-scenario rise">
+            <div class="guide-sc-head"><b>Rise example</b><span>100 WC · 5×</span></div>
+            <div class="guide-kv"><span>Entry</span><b>$100.00</b></div>
+            <div class="guide-kv"><span>Take Profit</span><b>$110.00</b></div>
+            <div class="guide-kv"><span>Stop Loss</span><b>$95.00</b></div>
+            <div class="guide-kv"><span>Trailing</span><b>3%</b></div>
+            <div class="guide-kv"><span>Exit (TSL)</span><b>$104.76</b></div>
+            <div class="guide-outcome win">Win: +23.80 WC · payout 123.80 WC</div>
+            <div class="guide-outcome loss">Loss cap: 20% gap = −100 WC · payout 0</div>
+            <div class="guide-sc-note">Price peaked at $108, then the 3% trail exited before TP.</div>
+          </div>
+          <div class="guide-scenario fall">
+            <div class="guide-sc-head"><b>Fall example</b><span>100 WC · 5×</span></div>
+            <div class="guide-kv"><span>Entry</span><b>$100.00</b></div>
+            <div class="guide-kv"><span>Take Profit</span><b>$90.00</b></div>
+            <div class="guide-kv"><span>Stop Loss</span><b>$105.00</b></div>
+            <div class="guide-kv"><span>Trailing</span><b>3%</b></div>
+            <div class="guide-kv"><span>Exit (TSL)</span><b>$94.76</b></div>
+            <div class="guide-outcome win">Win: +26.20 WC · payout 126.20 WC</div>
+            <div class="guide-outcome loss">Loss cap: 20% gap = −100 WC · payout 0</div>
+            <div class="guide-sc-note">Price fell to $92, then the 3% trail exited before TP.</div>
+          </div>
         </div>
         <p class="guide-tip"><b>Rule of thumb:</b> a leveraged trade is wiped out by a <code>100 ÷ leverage</code>% adverse move. Losses can never exceed the stake.</p>
       </details>
@@ -816,6 +834,16 @@
     .guide-example strong{font-size:12px}
     .guide-example.win{border-color:rgba(34,197,94,.25)} .guide-example.win strong{color:var(--success)}
     .guide-example.loss{border-color:rgba(239,68,68,.25)} .guide-example.loss strong{color:var(--danger)}
+    .guide-scenarios{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:0 12px 10px}
+    .guide-scenario{border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:9px}
+    .guide-sc-head{display:flex;justify-content:space-between;gap:8px;align-items:baseline;margin-bottom:5px}
+    .guide-sc-head b{font-size:11.5px} .guide-sc-head span{font-size:9.5px;color:var(--muted)}
+    .guide-kv{display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px dashed var(--border);font-size:10.5px}
+    .guide-kv span{color:var(--muted)} .guide-kv b{color:var(--text)}
+    .guide-outcome{margin-top:6px;padding:6px 7px;border-radius:7px;font-size:10.5px;line-height:1.45;font-weight:600}
+    .guide-outcome.win{color:var(--success);background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.22)}
+    .guide-outcome.loss{color:var(--danger);background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.20)}
+    .guide-sc-note{font-size:9.5px;color:var(--muted);line-height:1.5;margin-top:4px}
     .guide-table{margin:0 12px 10px;border:1px solid var(--border);border-radius:9px;overflow:hidden}
     .guide-tr{display:grid;grid-template-columns:1.35fr 1fr 1fr;gap:6px;padding:7px 9px;font-size:11px;color:var(--muted);
       border-top:1px solid var(--border)}
@@ -831,7 +859,7 @@
       color:var(--danger);background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.22)}
     @media(max-width:560px){
       .admin-guide .guide-facts{grid-template-columns:1fr 1fr}
-      .guide-examples,.guide-controls{grid-template-columns:1fr}
+      .guide-examples,.guide-controls,.guide-scenarios{grid-template-columns:1fr}
       .guide-sec p,.guide-sec ul,.guide-sec ol{font-size:11.5px}
       .guide-tr{font-size:10.5px;padding:7px}
     }
