@@ -43,6 +43,14 @@ const LT = {
     if (!(y > 0)) return '';
     return `<span class="div-badge">Div ${y.toFixed(2)}%</span>`;
   },
+  dividendEstimateBadge(ticker, stakeWC, minutes, label) {
+    const y = this.dividendYield(ticker);
+    if (!(y > 0)) return '';
+    const bonus = this.dividendBonusFor(ticker, stakeWC, minutes);
+    if (!(bonus > 0)) return '';
+    const text = label || '1d';
+    return `<span class="div-est" title="Estimated ${text} dividend bonus on ${Number(stakeWC) || 0} WC">${text} +${coins(bonus)} WC</span>`;
+  },
 
   cfg() {
     if (!DB) return { leverage: 5 };
@@ -602,6 +610,9 @@ const LT = {
   .lt-lvl small{font-size:9px;color:var(--muted-2);font-weight:600}
   .div-badge{display:inline-flex;align-items:center;font-size:9px;font-weight:700;color:#ffc861;
     border:1px solid rgba(255,200,97,.28);background:rgba(255,200,97,.08);border-radius:99px;padding:1px 5px;white-space:nowrap}
+  .div-est{display:inline-flex;align-items:center;font-size:9px;font-weight:700;color:var(--accent);
+    border:1px solid rgba(46,230,201,.24);background:rgba(46,230,201,.07);border-radius:99px;padding:1px 5px;white-space:nowrap}
+  .div-row{display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-top:2px;min-height:13px}
   .lt-div-est{margin:-2px 0 10px;padding:8px 10px;border-radius:9px;font-size:11px;line-height:1.5;
     color:var(--success);background:rgba(34,197,94,.06);border:1px solid rgba(34,197,94,.18)}
   .lt-div-est.off{color:var(--muted);background:var(--surface-2);border-color:var(--border)}
@@ -896,6 +907,9 @@ LT.positionsHTML = function (userId) {
       <div class="grow" style="min-width:0">
         <div class="small ellipsis" style="font-weight:650">${esc(stock.name)} ${tag}</div>
         <div class="tiny muted">${coins(p.capital)} WC in · now ${coins(p.valueCoins)} WC</div>
+        <div class="div-row">${LT.dividendBadge(p.ticker)}${p.kind === 'trade'
+          ? LT.dividendEstimateBadge(p.ticker, p.capital, Number(p.trade.durationMinutes) || 0, p.trade.durationLabel || 'timer')
+          : LT.dividendEstimateBadge(p.ticker, p.valueCoins || p.capital, 1440, '1d')}</div>
       </div>
       <span class="lt-mini">${INV.spark(p.ticker)}</span>
       <div style="text-align:right">
@@ -1674,6 +1688,7 @@ App.ltSide = function (id, ds) {
 };
 if (typeof INV !== 'undefined') {
   INV.dividendBadge = (t) => LT.dividendBadge(t);
+  INV.dividendEstimate = (t, stake, minutes, label) => LT.dividendEstimateBadge(t, stake, minutes, label);
   INV.dividendYield = (t) => LT.dividendYield(t);
 }
 LT.levels = { tp: 'pct', sl: 'pct' };
