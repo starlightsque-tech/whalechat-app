@@ -799,8 +799,14 @@ class MarketService {
 
   sellSpotInternal(db, holding, price, reason) {
     if (!holding || !(Number(holding.shares) > 0)) return null;
+    /* atomic guard: the position must still be open in the live book. If a manual
+       sell and a TP/SL trigger land in the same instant, only the first call wins
+       and the second sees the position already removed — no double credit. */
+    if (!Array.isArray(db.holdings) || !db.holdings.some((h) => h && h.id === holding.id)) return null;
+    if (holding.closing) return null;
+    holding.closing = true;
     const u = (db.users || []).find((x) => x.id === holding.userId);
-    if (!u) return null;
+    if (!u) { holding.closing = false; return null; }
     const shares = Number(holding.shares);
     const payoutUsd = shares * Number(price);
     const payout = Math.round((payoutUsd / 0.5) * 100) / 100;
