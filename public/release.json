@@ -1,8 +1,8 @@
 {
-  "version": "3.26.0",
-  "build": "2026-11-12T23:40:00Z",
+  "version": "3.27.0",
+  "build": "2026-11-12T23:55:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.26.0 - Alpaca live market data (REST bars + IEX WebSocket), per-stock price overrides, TP/SL + due-time spot settlement, and Alpaca assets/dividend sync.",
-  "releasedAt": "2026-11-12T23:40:00Z",
+  "notes": "WhaleChat 3.27.0 - Alpaca API key + secret connection panel with endpoint display, live Alpaca health widget (credentials, REST, IEX stream, rate budget, scheduled sync, price coverage) and a durable override & data-sync audit log with filters and CSV export.",
+  "releasedAt": "2026-11-12T23:55:00Z",
   "minimum": "3.0.0"
 }
