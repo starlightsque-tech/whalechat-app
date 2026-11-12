@@ -634,8 +634,9 @@ INV.viewOrders = function () {
         <div class="grow" style="min-width:0">
           <div class="small" style="font-weight:650">${t.side === 'buy' ? 'Buy' : 'Sell'} ${esc(t.ticker)} <span class="tiny muted">· ${t.type}</span></div>
           <div class="tiny muted">${t.shares.toFixed(4)} sh @ ${usd(t.priceUsd)} · ${dateLabel(t.createdAt)} ${clockTime(t.createdAt)}</div>
+          ${t.side === 'sell' && t.entryPriceUsd ? `<div class="tiny muted">Entry ${usd(t.entryPriceUsd)} (${coins(usdToCoins(t.entryPriceUsd))} WC) → Exit ${usd(t.exitPriceUsd || t.priceUsd)} (${coins(usdToCoins(t.exitPriceUsd || t.priceUsd))} WC)</div>` : ''}
           <div class="tiny">${t.side === 'buy' ? '−' : '+'}${coins(t.coins)} WC <span class="muted">(${usd(coinsToUsd(t.coins))})</span>
-            ${t.plUsd ? `<span class="${INV.chgClass(t.plUsd)}"> · P/L ${t.plUsd >= 0 ? '+' : '−'}${usd(Math.abs(t.plUsd))}</span>` : ''}</div>
+            ${t.plUsd != null && t.plUsd !== 0 ? `<span class="${INV.chgClass(t.plUsd)}"> · P/L ${t.plUsd >= 0 ? '+' : '−'}${usd(Math.abs(t.plUsd))} (${t.plCoins != null ? (t.plCoins >= 0 ? '+' : '−') + coins(Math.abs(t.plCoins)) + ' WC' : (t.plUsd >= 0 ? '+' : '−') + coins(usdToCoins(Math.abs(t.plUsd))) + ' WC'})</span>` : ''}</div>
         </div>
         <span class="badge ${badge}">${t.status}</span></div>`;
     }).join('')}</div>` : `<div class="inv-empty">${ic('clock', 26)}<p class="small muted">No orders yet. Your completed and pending trades appear here.</p></div>`}
