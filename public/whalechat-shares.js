@@ -212,6 +212,103 @@
     </div>`;
   }
 
+  /* ------------------- investment plan performance (v5 chart) ------------------- */
+  S.perfSel = '__all__';
+
+  function planValueAt(inv, t) {
+    const start = Number(inv.startAt) || 0;
+    const end = Number(inv.endAt) || 0;
+    const amount = Number(inv.amountCoins) || 0;
+    const ret = Number(inv.returnPct) || 0;
+    if (!(amount > 0)) return 0;
+    const p = end > start ? Math.max(0, Math.min(1, (t - start) / (end - start))) : 1;
+    return amount + (amount * ret / 100) * p;
+  }
+
+  function perfPlans() {
+    return ((S.state && S.state.investments) || []).filter((v) => v && Number(v.amountCoins) > 0);
+  }
+
+  function perfSelection() {
+    const all = perfPlans();
+    if (S.perfSel === '__all__') return all;
+    const one = all.filter((v) => String(v.id) === String(S.perfSel));
+    return one.length ? one : all;
+  }
+
+  function perfSeries(plans, now) {
+    if (!plans.length) return [];
+    const start = Math.min.apply(null, plans.map((v) => Number(v.startAt) || now));
+    const invested = plans.reduce((a, v) => a + (Number(v.amountCoins) || 0), 0);
+    const N = 140;
+    const span = Math.max(60000, now - start);
+    const pts = [];
+    for (let i = 0; i <= N; i++) {
+      const t = start + (span * i) / N;
+      const v = plans.reduce((a, p) => a + planValueAt(p, t), 0);
+      pts.push({ t, v: Number.isFinite(v) ? v : invested });
+    }
+    pts[pts.length - 1].t = now;
+    return pts;
+  }
+
+  function perfLive(plans) {
+    const now = Date.now();
+    const invested = plans.reduce((a, v) => a + (Number(v.amountCoins) || 0), 0);
+    const value = plans.reduce((a, v) => a + planValueAt(v, now), 0);
+    const earn = value - invested;
+    const nextEnd = plans.length ? Math.min.apply(null, plans.map((v) => Number(v.endAt) || Infinity)) : 0;
+    return {
+      value, invested, earnCoins: earn,
+      roiPct: invested > 0 ? (earn / invested) * 100 : 0,
+      matures: nextEnd && Number.isFinite(nextEnd) ? when(nextEnd) : '—'
+    };
+  }
+
+  function planPerfHTML() {
+    const plans = perfPlans();
+    if (!plans.length) return '';
+    const pills = ['<button class="pc-pill' + (S.perfSel === '__all__' ? ' on' : '') + '" data-act="shares-perf" data-id="__all__">All plans</button>']
+      .concat(plans.map((v) => '<button class="pc-pill' + (String(S.perfSel) === String(v.id) ? ' on' : '') + '" data-act="shares-perf" data-id="' + escS(v.id) + '">' + escS(v.planName) + '</button>'))
+      .join('');
+    return `<div class="card shares-perfcard" id="sharesPerfCard">
+      <div class="between" style="align-items:flex-start;gap:10px">
+        <div><div class="card-title" style="margin:0">Plan performance · ROI progress</div>
+          <div class="tiny muted" style="margin-top:3px">Principal + accrued profit, updated live every second. Finnhub feeds the market chart; plan ROI is accrued by the server.</div></div>
+        <span class="badge badge-success">Live</span>
+      </div>
+      <div class="shares-perf-pills">${pills}</div>
+      <div class="shares-perf-chart" id="sharesPerfChart"></div>
+      <div class="tiny muted" style="margin-top:6px">Blue dashed line = invested principal · cyan dotted line = target payout at maturity.</div>
+    </div>`;
+  }
+
+  S.mountPerf = function () {
+    const host = document.getElementById('sharesPerfChart');
+    if (!host || !window.WC_PRO_CHART || !WC_PRO_CHART.mountEquity) return;
+    const plans = perfSelection();
+    if (!plans.length) { host.innerHTML = '<div class="shares-chart-empty">No active plans yet.</div>'; return; }
+    const now = Date.now();
+    const live = perfLive(plans);
+    const invested = live.invested;
+    const target = plans.reduce((a, v) => a + (Number(v.amountCoins) || 0) * (1 + (Number(v.returnPct) || 0) / 100), 0);
+    WC_PRO_CHART.mountEquity(host, {
+      key: String(S.perfSel),
+      unit: 'wc',
+      height: 300,
+      points: perfSeries(plans, now),
+      hud: {
+        title: S.perfSel === '__all__' ? 'All plans · ' + plans.length : (plans[0].planName || 'Plan'),
+        matures: live.matures
+      },
+      lines: [
+        { price: invested, color: '#3AA0FF', title: 'INVESTED', style: 2 },
+        { price: target, color: '#00F5D4', title: 'TARGET', style: 1 }
+      ],
+      getLive: () => perfLive(perfSelection())
+    });
+  };
+
   function completedHTML() {
     const list = (S.state && S.state.completed) || [];
     if (!list.length) return '';
@@ -245,6 +342,7 @@
     </div></div>
 
     <div id="sharesLiveMount">${heroHTML()}${marketChartHTML()}${activeMountHTML()}</div>
+    ${planPerfHTML()}
 
     <div class="card" id="sharesPlansCard">
       <div class="between"><div class="card-title" style="margin:0">Investment plans</div>
@@ -431,6 +529,14 @@
       body.appendChild(tr.firstElementChild);
     };
 
+    App.sharesPerf = function (id, ds) {
+      S.perfSel = (ds && ds.id) || '__all__';
+      document.querySelectorAll('[data-act="shares-perf"]').forEach((b) => {
+        b.classList.toggle('on', b.getAttribute('data-id') === S.perfSel);
+      });
+      S.mountPerf();
+    };
+
     App.sharesPlanDel = function (id) {
       const row = document.querySelector('[data-share-plan="' + String(id) + '"]');
       if (row) row.remove();
@@ -530,6 +636,7 @@
     if (live) live.innerHTML = heroHTML() + marketChartHTML() + activeMountHTML();
     const hist = document.getElementById('sharesHistoryMount');
     if (hist) hist.innerHTML = completedHTML();
+    try { S.mountPerf(); } catch (e) {}
   }
 
   function init() {
@@ -546,6 +653,7 @@
             load(true).then(() => {
               const live = document.getElementById('sharesLiveMount');
               if (live && S.state) live.innerHTML = heroHTML() + marketChartHTML() + activeMountHTML();
+              try { S.mountPerf(); } catch (e) {}
             });
           } else if (!S.state) {
             load(false).then(() => { if (S.state && (location.hash || '').startsWith('#/invest') && !onSharesPage()) { try { render(); } catch (e) {} } });
@@ -581,6 +689,8 @@
     .shares-hero-grid b{font-size:12.5px;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .shares-marketcard .shares-price-row{display:flex;justify-content:space-between;align-items:flex-end;gap:10px;margin-top:8px}
     .shares-price{font-size:24px;font-weight:800;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+    .shares-perfcard .shares-perf-pills{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 8px}
+    .shares-perf-chart{min-height:300px;margin-top:2px}
     .shares-chart{margin-top:6px}
     .shares-svg{width:100%;height:auto;display:block;overflow:visible}
     .shares-axis{fill:#63798a;font-size:7.5px;font-variant-numeric:tabular-nums}
