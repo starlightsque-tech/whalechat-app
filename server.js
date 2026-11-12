@@ -115,16 +115,14 @@ function ensureTradingAssets() {
   db.stocks.forEach((s) => {
     if (!s || !s.ticker) return;
     if (!s.assetClass) { s.assetClass = 'us'; changed = true; }
-    if (!s.alpacaSymbol) { s.alpacaSymbol = String(s.ticker).toUpperCase(); changed = true; }
+    if (!s.finnhubSymbol) { s.finnhubSymbol = String(s.ticker).toUpperCase(); changed = true; }
     if (!s.displayTicker) { s.displayTicker = String(s.ticker).toUpperCase(); changed = true; }
-    if (!s.exchange) { s.exchange = 'US'; changed = true; }
-    if (!s.currency) { s.currency = 'USD'; changed = true; }
-    if (s.overridePct == null) { s.overridePct = 0; changed = true; }
-    if (s.assetClass === 'forex' || s.assetClass === 'crypto' || s.assetClass === 'global') { s.assetClass = 'us'; changed = true; }
+    if (!s.exchange) { s.exchange = s.assetClass === 'forex' ? 'OANDA' : s.assetClass === 'crypto' ? 'Binance' : 'US'; changed = true; }
+    if (!s.currency) { s.currency = s.assetClass === 'crypto' ? 'USDT' : 'USD'; changed = true; }
   });
   DEFAULT_ASSETS.forEach((a) => {
     if (!db.stocks.some((s) => String(s.ticker).toUpperCase() === String(a.ticker).toUpperCase())) {
-      db.stocks.push(Object.assign({ id: 'st_' + String(a.ticker).toLowerCase().replace(/[^a-z0-9]/g, ''), price: 0, prevClose: 0, div: 0, overridePct: 0, paused: false, custom: false, createdAt: Date.now() }, a));
+      db.stocks.push(Object.assign({ id: 'st_' + String(a.ticker).toLowerCase().replace(/[^a-z0-9]/g, ''), price: 0, prevClose: 0, div: 0, paused: false, custom: false, createdAt: Date.now() }, a));
       changed = true;
     }
   });
@@ -136,8 +134,8 @@ function ensureTradingAssets() {
   return changed;
 }
 
-/* Durable market-feed config: Alpaca keys live in Postgres (not in the synced
-   app state), so a redeploy cannot silently drop live market data. */
+/* Durable market-feed config: the Finnhub key lives in Postgres (not in the
+   synced app state), so a redeploy cannot silently drop Hybrid mode. */
 async function ensureMarketConfigTable() {
   if (!pool) return;
   await pool.query('create table if not exists whalechat_market_config (id int primary key, config jsonb not null, updated_at timestamptz not null default now())');
@@ -375,12 +373,6 @@ async function api(req, res, pathname, query) {
     if (!body || !body.db || !Array.isArray(body.db.users)) return json(res, 400, { ok: false, error: 'invalid_db' });
     store.db = body.db; store.rev = Math.max(1, Number(body.rev) || 1); store.updatedAt = Date.now();
     ensureTradingAssets();
-    setImmediate(() => {
-      try {
-        market.onAssetsChanged();
-        if (market.configured()) { market.seedFromAlpaca(); market.syncDividends(); }
-      } catch (e) { console.error('[market] bootstrap after init:', e.message); }
-    });
     persistNow(); console.log('[db] initialised · users:', store.db.users.length);
     return json(res, 200, { ok: true, rev: store.rev });
   }
@@ -407,7 +399,7 @@ async function api(req, res, pathname, query) {
     req.on('close', () => { clearInterval(ping); clients.delete(res); });
     return;
   }
-  // --- market data (Alpaca keys stay server-side) -----------------------
+  // --- market data (Finnhub stays server-side) -------------------------
   if (pathname === '/api/market/quotes' && req.method === 'GET') {
     return json(res, 200, market.snapshot());
   }
@@ -423,32 +415,6 @@ async function api(req, res, pathname, query) {
   if (pathname === '/api/market/status' && req.method === 'GET') {
     return json(res, 200, Object.assign({ ok: true }, market.status()));
   }
-  if (pathname === '/api/market/health' && req.method === 'GET') {
-    return json(res, 200, market.health());
-  }
-  if (pathname === '/api/market/audit' && req.method === 'GET') {
-    const adminId = query.get('adminId') || '';
-    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === adminId && u.role === 'admin') : null;
-    if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
-    const db = store.db || {};
-    const total = Array.isArray(db.marketAudit) ? db.marketAudit.length : 0;
-    return json(res, 200, {
-      ok: true,
-      at: Date.now(),
-      total,
-      entries: market.auditList(Number(query.get('limit')) || 100, query.get('category') || 'all')
-    });
-  }
-  if (pathname === '/api/market/bars' && req.method === 'GET') {
-    const ticker = String(query.get('ticker') || query.get('symbol') || '').toUpperCase();
-    if (!ticker) return json(res, 400, { ok: false, error: 'ticker_required' });
-    const limit = Math.max(30, Math.min(2000, Number(query.get('limit')) || 600));
-    const timeframe = String(query.get('timeframe') || '1Min');
-    try {
-      const bars = await market.fetchBars(ticker, limit, timeframe);
-      return json(res, 200, { ok: true, ticker, timeframe, feed: market.config.feed, bars, source: bars.length ? 'alpaca' : 'empty' });
-    } catch (e) { return json(res, 200, { ok: false, error: e.message, ticker, bars: [] }); }
-  }
   if (pathname === '/api/market/config' && req.method === 'GET') {
     const adminId = query.get('adminId') || '';
     const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === adminId && u.role === 'admin') : null;
@@ -459,43 +425,14 @@ async function api(req, res, pathname, query) {
     const body = await readBody(req);
     const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === body.adminId && u.role === 'admin') : null;
     if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
-    const mode = body.mode === 'live' ? 'live' : 'paper';
+    const mode = body.mode === 'hybrid' ? 'hybrid' : 'simulated';
     const refreshSec = Math.min(300, Math.max(5, Math.round(Number(body.refreshSec) || 15)));
-    const keyId = typeof body.keyId === 'string' ? body.keyId.trim() : '';
-    const secret = typeof body.secret === 'string' ? body.secret.trim() : '';
-    const hasKeys = (keyId && secret) || market.configured();
-    if (!hasKeys && body.clearKeys !== true) {
-      return json(res, 400, { ok: false, error: 'keys_required', message: 'Add your Alpaca API Key ID and Secret Key' });
+    if (mode === 'hybrid' && !body.apiKey && !market.config.apiKey) {
+      return json(res, 400, { ok: false, error: 'api_key_required', message: 'Add a Finnhub API key before enabling Hybrid mode' });
     }
-    const before = market.rawConfig();
-    const saved = market.saveConfig({
-      mode, refreshSec, keyId, secret,
-      feed: body.feed, syncEnabled: body.syncEnabled, syncIntervalMin: body.syncIntervalMin,
-      clearKeys: body.clearKeys === true || body.clearKey === true
-    });
-    saveMarketConfig(market.rawConfig()).then((ok) => { if (ok) console.log('[market] Alpaca config persisted to Postgres'); });
-    /* audit the connection change — never the secret values themselves */
-    const changes = [];
-    if (before.mode !== saved.mode) changes.push({ field: 'mode', from: before.mode, to: saved.mode });
-    if (before.feed !== saved.feed) changes.push({ field: 'feed', from: before.feed, to: saved.feed });
-    if (Number(before.refreshSec) !== Number(saved.refreshSec)) changes.push({ field: 'refreshSec', from: Number(before.refreshSec), to: Number(saved.refreshSec) });
-    if (!!before.syncEnabled !== !!saved.syncEnabled) changes.push({ field: 'autoSync', from: !!before.syncEnabled, to: !!saved.syncEnabled });
-    if (Number(before.syncIntervalMin) !== Number(saved.syncIntervalMin)) changes.push({ field: 'syncIntervalMin', from: Number(before.syncIntervalMin), to: Number(saved.syncIntervalMin) });
-    const keysCleared = body.clearKeys === true || body.clearKey === true;
-    if (keysCleared) changes.push({ field: 'apiKeys', from: 'saved', to: 'cleared' });
-    else if (keyId || secret) changes.push({ field: 'apiKeys', from: before.keyId ? 'saved' : 'none', to: 'updated' });
-    const keyNote = keysCleared ? 'keys cleared'
-      : saved.hasKeys ? ('keys ' + (keyId || secret ? 'updated' : 'saved') + (saved.keyIdMasked ? ' (' + saved.keyIdMasked + ')' : ''))
-      : 'no keys';
-    if (changes.length) {
-      market.audit('connection.saved', {
-        category: 'connection', actor: '@' + admin.username, actorId: admin.id,
-        target: 'Alpaca · ' + String(saved.mode) + ' / ' + String(saved.feed).toUpperCase(),
-        summary: 'Connection saved · ' + keyNote + ' · refresh ' + saved.refreshSec + 's · auto-sync ' + (saved.syncEnabled ? saved.syncIntervalMin + 'min' : 'off'),
-        changes
-      });
-    }
-    console.log('[market] Alpaca config saved by @' + admin.username + ' · mode', saved.mode, '· refresh', saved.refreshSec + 's', '· keys', saved.hasKeys ? 'set' : 'cleared', '· sync', saved.syncEnabled ? saved.syncIntervalMin + 'min' : 'off');
+    const saved = market.saveConfig({ mode, refreshSec, apiKey: body.apiKey, clearKey: body.clearKey === true });
+    saveMarketConfig(market.rawConfig()).then((ok) => { if (ok) console.log('[market] config persisted to Postgres'); });
+    console.log('[market] config saved by @' + admin.username + ' · mode', saved.mode, '· refresh', saved.refreshSec + 's', '· key', saved.hasKey ? 'set' : 'cleared');
     return json(res, 200, saved);
   }
   if (pathname === '/api/market/spot/buy' && req.method === 'POST') {
@@ -601,32 +538,17 @@ async function api(req, res, pathname, query) {
     const body = await readBody(req);
     const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === body.adminId && u.role === 'admin') : null;
     if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
-    if (!market.configured()) return json(res, 400, { ok: false, error: 'Add your Alpaca API keys first' });
-    /* run in the background so the admin screen stays responsive */
+    if (!market.config.apiKey) return json(res, 400, { ok: false, error: 'Add a Finnhub API key first' });
+    /* run in the background: the shared rate limiter finishes the whole
+       catalogue even when Finnhub returns a 429 mid-run. */
     (async () => {
       try {
-        const status = await market.syncAll(true, { name: '@' + admin.username, id: admin.id });
-        console.log('[market] full Alpaca sync finished · assets', status.assetCounts, '· prices', status.seed, '· dividends', status.dividends);
-      } catch (e) { console.error('[market] full Alpaca sync failed:', e.message); }
+        await market.seedFromFinnhub();
+        await market.syncDividends(true);
+        console.log('[market] full sync finished ·', market.status().seed, market.dividendStatus());
+      } catch (e) { console.error('[market] full sync failed:', e.message); }
     })();
-    return json(res, 200, { ok: true, started: true, message: 'Syncing Alpaca assets, prices and dividends in the background' });
-  }
-  if (pathname === '/api/market/admin/stocks' && req.method === 'GET') {
-    const adminId = query.get('adminId') || '';
-    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === adminId && u.role === 'admin') : null;
-    if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
-    return json(res, 200, { ok: true, stocks: market.adminStockTable() });
-  }
-  if (pathname === '/api/market/admin/stocks' && req.method === 'POST') {
-    const body = await readBody(req);
-    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === body.adminId && u.role === 'admin') : null;
-    if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
-    try {
-      const result = market.saveStockSettings(Array.isArray(body.updates) ? body.updates : [], { name: '@' + admin.username, id: admin.id });
-      store.rev += 1; store.updatedAt = Date.now(); persist();
-      try { broadcast('change', { rev: store.rev, source: 'market-overrides', at: store.updatedAt }); } catch (e) {}
-      return json(res, 200, { ok: true, stocks: result, rev: store.rev });
-    } catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+    return json(res, 200, { ok: true, started: true, message: 'Syncing live prices + dividends in the background' });
   }
   if (pathname === '/api/market/search' && req.method === 'GET') {
     const adminId = query.get('adminId') || '';
@@ -650,16 +572,16 @@ async function api(req, res, pathname, query) {
     const body = await readBody(req);
     const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === body.adminId && u.role === 'admin') : null;
     if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
-    const status = await market.syncDividends(true, { name: '@' + admin.username, id: admin.id }, false);
+    const status = await market.syncDividends(true);
     return json(res, 200, { ok: true, status });
   }
   if (pathname === '/api/market/test' && req.method === 'POST') {
     const body = await readBody(req);
     const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === body.adminId && u.role === 'admin') : null;
     if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
-    if (!market.configured()) return json(res, 400, { ok: false, error: 'no_keys', message: 'Save your Alpaca API keys first' });
-    const test = await market.testConnection({ name: '@' + admin.username, id: admin.id });
-    return json(res, 200, Object.assign({ ok: !!test.ok, price: test.price || null, symbol: 'AAPL', message: test.message, status: market.status() }, test));
+    if (!market.config.apiKey) return json(res, 400, { ok: false, error: 'no_key', message: 'Save a Finnhub API key first' });
+    const q = await market.fetchQuote('AAPL');
+    return json(res, 200, { ok: !!q, price: q ? q.price : null, symbol: 'AAPL', status: market.status(), message: q ? 'Finnhub connection OK' : (market.lastError || 'Finnhub did not return a quote') });
   }
   // --- bonus claim (atomic one-time code) -------------------------------
   if (pathname === '/api/bonus/claim' && req.method === 'POST') {
@@ -853,7 +775,7 @@ server.headersTimeout = 70000;
   const durableMarket = await loadMarketConfig();
   if (durableMarket) {
     market.hydrateConfig(durableMarket);
-    console.log('[market] restored durable Alpaca config · env', durableMarket.mode || 'paper', '· keys', durableMarket.keyId ? 'set' : 'not set');
+    console.log('[market] restored durable config · mode', durableMarket.mode || 'simulated', '· key', durableMarket.apiKey ? 'set' : 'not set');
   }
   market.start();
   bots.startTimers();
