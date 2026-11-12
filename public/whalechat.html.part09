@@ -316,7 +316,7 @@ INV.viewStock = function (rawTicker, params) {
       </div>
     </div>
     <div class="inv-chart" data-chart="${s.ticker}|${tf}|${mode}">${chart}</div>
-    <div class="tiny muted center wc-feed-notice" data-market-notice="1" style="margin-top:4px">Simulated market data · 24/7</div>
+    <div class="tiny muted center wc-feed-notice" data-market-notice="1" style="margin-top:4px">Real-time market chart</div>
   </div>
 
   <div class="inv-two">
