@@ -173,6 +173,12 @@
       const el = document.getElementById(id);
       if (el) el.addEventListener('input', S.preview);
     });
+    const dueSel = document.getElementById('spotDue');
+    const dueCustom = document.getElementById('spotDueCustom');
+    if (dueSel && dueCustom) {
+      dueSel.addEventListener('change', () => { if (Number(dueSel.value) > 0) dueCustom.value = ''; });
+      dueCustom.addEventListener('change', () => { if (dueCustom.value) dueSel.value = '0'; });
+    }
     S.preview();
   }
 
