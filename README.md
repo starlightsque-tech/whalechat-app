@@ -1,4 +1,4 @@
-# WhaleChat 3.23.1 — web app + mobile apps
+# WhaleChat 3.24.0 — web app + mobile apps
 
 WhaleChat is a social + marketplace + wallet product built as a single-page app with a
 Node sync server and native Android/iOS shells.
@@ -69,6 +69,42 @@ and `secondsVisible: true` and per-tick `series.update()` — no reloads.
 TP/SL can be entered as a **percentage**, an exact **USD price**, or a **WC amount** target. Trailing stops
 ratchet behind favourable price movement and only tighten. Open-trade cards and closed-trade history show the
 levels that were set, and the chart's `Entry` / `TP` / `TSL` lines follow a trailing stop as it moves.
+
+### Spot Buy / Sell (primary stock flow)
+
+`market.js` owns the spot book. `POST /api/market/spot/buy` accepts `amountCoins` **or** `shares` and executes at the
+current live quote: the cost is deducted from the wallet immediately and a position is recorded with symbol, entry
+price, quantity, invested capital and optional TP/SL. `POST /api/market/spot/sell` closes the whole position at the
+live price and credits `quantity × price` back in WC. Every fill is written to `trades`, `txs` and notifications.
+`settleSpot()` runs once per second: when the live price crosses TP (`>=`) or SL (`<=`) the backend sells the
+position and credits the payout even if every browser is closed. `sellSpotInternal()` re-checks that the position
+is still present in the live book and sets a per-position `closing` flag, so a manual sell and a TP/SL trigger in
+the same millisecond cannot double-credit: the first caller closes it, the second sees it gone and returns.
+
+### Trading Bot Assistant
+
+`bots.js` is a server-side bot service (`BotService`) started next to the market worker. It stores everything in
+the synced database — no client timer is involved, so bots keep trading while users are offline or the app is closed.
+
+| Piece | Where | Notes |
+|---|---|---|
+| Tiers | `db.botTiers` | Low 45% / Medium 50% / Premium 70% / High-Performance 85% simulated accuracy. Default prices $20 / $50 / $120 / $250 per month. |
+| Admin settings | `db.botSettings` | Default offline trade interval, minimum allocation, auto-stop threshold, stake %, win %, loss %. |
+| Subscriptions | `db.botSubscriptions` | One record per user + tier with `billingCycle` (`daily`, `weekly`, `monthly`, `one_time`) and `expiresAt`. |
+| Sessions | `db.botSessions` | Reserved capital, live pool, per-trade log, profit/loss totals, interval and status. |
+
+The subscription fee is deducted from the WC balance at purchase (`priceUsd × 2 = WC`, 1 WC = $0.50). Starting a
+bot **reserves** the allocation by moving it out of the available balance into `poolCoins`, so it cannot be spent on
+manual trades. The worker ticks every 10 seconds and each session trades on its own minute interval; a trade picks a
+random listed symbol, resolves win/loss against the tier accuracy, and moves the pool by the configured win/loss %.
+When the pool falls to the auto-stop threshold, the subscription expires, or the user presses **Stop Bot**, the
+remaining pool is credited back to the available balance with a `bot-return` transaction. Admins can edit tier price,
+billing cycle, accuracy, enabled state, a per-tier speed override, and the global offline trade interval from
+**Admin → Stocks → Trading bots · pricing & speed**.
+
+API: `GET /api/bots/state?userId=`, `POST /api/bots/subscribe`, `POST /api/bots/start`, `POST /api/bots/stop`,
+`GET /api/bots/admin?adminId=`, `POST /api/bots/admin/config`. The UI lives in `public/trading-bots.js` and is
+injected as the `wc-trading-bots` module at build time (route `#/invest/bots`).
 
 Environment variables (optional, useful for first boot): `FINNHUB_API_KEY`, `FINNHUB_MODE=hybrid`.
 For provider testing only: `FINNHUB_REST_BASE`, `FINNHUB_WS_URL`, `FINNHUB_SEED_DELAY_MS`, `US_MARKET_FORCE_OPEN=1`.
