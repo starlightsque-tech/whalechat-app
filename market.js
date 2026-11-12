@@ -249,7 +249,8 @@ class MarketService {
       const drift = (anchor - q.price) * 0.015;                 // gently pull back to the real close
       const vol = Math.max(0.0004, Math.min(0.0022, 0.00055 + Math.abs(anchor) / 500000));
       const shock = (Math.random() - 0.5) * 2 * vol;
-      let next = q.price * (1 + shock) + drift * q.price;
+      /* drift is already an absolute price amount — never multiply it by price again */
+      let next = q.price * (1 + shock) + drift;
       if (!Number.isFinite(next) || next <= 0) next = q.price;
       this.writeQuote(t, next, { prevClose: q.prevClose, open: q.open, vol: q.vol + Math.floor(Math.random() * 9000), source: 'simulated', real: false });
     });
