@@ -56,7 +56,8 @@ if (!parts.length) {
 /* 3. app modules owned by the repo ------------------------------------------- */
 const MODULES = [
   { file: 'tawk-control.js', marker: 'wc-tawk-control' },
-  { file: 'live-trade.js', marker: 'wc-live-trade' }
+  { file: 'live-trade.js', marker: 'wc-live-trade' },
+  { file: 'demo-sellers.js', marker: 'wc-demo-sellers' }
 ];
 try {
   let page = fs.readFileSync(APP, 'utf8');
