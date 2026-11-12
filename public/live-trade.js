@@ -167,6 +167,7 @@ const LT = {
       `${direction === 'FALL' ? 'Fall' : 'Rise'} ${ticker} with ${coins(capital)} WC at ${usd(q.price)}${tpPrice ? ' · TP ' + usd(tpPrice) : ''}${trailPct ? ' · trailing ' + trailPct + '%' : (slPrice ? ' · SL ' + usd(slPrice) : '')} — closes in ${minutes} min.`,
       '#/invest/orders', 'trend');
     persist(); toast('Trade started — tracking live', 'ok'); render();
+    try { window.dispatchEvent(new CustomEvent('wc:trade-opened', { detail: { ticker, id: trade.id } })); } catch (e) {}
     return true;
   },
 
@@ -209,6 +210,7 @@ const LT = {
     try { sync(); } catch (e) {}
     persist();
     render();
+    try { window.dispatchEvent(new CustomEvent('wc:trade-closed', { detail: { ticker: t.ticker, id: t.id } })); } catch (e) {}
     return true;
   },
 
@@ -773,8 +775,9 @@ LT.dash = function (params) {
 
   <div class="card inv-chartcard">
     <div class="between" style="align-items:center">
-      <div><div class="card-title" style="margin:0">Portfolio performance</div>
-        <div class="tiny muted">${s.pos.length ? tf + ' · live' : 'No positions yet'}</div></div>
+      <div><div class="card-title" style="margin:0;display:flex;align-items:center;gap:7px">Portfolio performance
+        ${s.pos.length ? '<span class="lt-live-badge"><i></i>LIVE</span>' : ''}</div>
+        <div class="tiny muted">${s.pos.length ? tf + ' · live performance' : 'No positions yet'}</div></div>
       ${INV.seg(tf)}
     </div>
     <div class="inv-chart" id="ltDashChart" data-ltd-chart="${tf}">
