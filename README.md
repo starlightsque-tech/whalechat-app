@@ -56,6 +56,12 @@ the server keeps producing smooth micro-ticks from the **last real Finnhub close
 Live trades on covered symbols are also settled by the backend every few seconds (take-profit, stop-loss, duration expiry),
 so Whale Coin payouts and notifications happen even if every browser tab is closed.
 
+Every Rise/Fall trade can carry optional **Take Profit (TP)** and **Stop Loss (SL)** levels, entered as a
+percentage move or an exact USD target price. The trade form validates the side (Rise: TP above entry, SL
+below; Fall: TP below entry, SL above), open trades can edit or clear their levels from Active Trades, and
+the chart draws `Entry` / `TP` / `SL` price lines with `createPriceLine()` until the trade closes. The same
+lightweight-charts baseline view is used on the portfolio performance card, with the live/OTC mode notice.
+
 The stock detail chart uses TradingView **lightweight-charts** `BaselineSeries` loaded from unpkg. Its baseline is the exact
 trade entry price for an open Rise/Fall position (green above / red below, inverted for Short), with `timeVisible: true`
 and `secondsVisible: true` and per-tick `series.update()` — no reloads.
