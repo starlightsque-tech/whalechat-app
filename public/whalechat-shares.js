@@ -151,7 +151,7 @@
     return `<div class="shares-hero">
       <div class="between" style="align-items:flex-start">
         <div><div class="tiny muted">Total earnings from WhaleChat shares</div>
-          <div class="shares-earn">+<span data-share-earn-big>${tinyNum(s.totalEarnedCoins)}</span> <span class="shares-earn-unit">WC</span></div>
+          <div class="shares-earn">+<span data-share-earn-big data-share-hero-earn data-completed="${num(s.completedProfitCoins, 6)}">${tinyNum(s.totalEarnedCoins)}</span> <span class="shares-earn-unit">WC</span></div>
           <div class="tiny muted">≈ <span data-share-earn-usd>${money(s.totalEarnedUsd)}</span> accrued + matured</div></div>
         <span class="badge badge-success">Live</span>
       </div>
@@ -190,8 +190,8 @@
       </div>
       <div class="shares-inv-grid">
         <div><span>Invested</span><b>${both(v.amountCoins)}</b></div>
-        <div><span>Earnings</span><b class="up" data-share-inv-earn>+${bothEarn(v.accruedCoins)}</b></div>
-        <div><span>Current value</span><b>${both(v.currentValueCoins)}</b></div>
+        <div><span>Earnings</span><b class="up" data-share-inv-earn data-start="${v.startAt}" data-end="${v.endAt}" data-amount="${v.amountCoins}" data-ret="${v.returnPct}" data-value="${v.amountCoins}">+${bothEarn(v.accruedCoins)}</b></div>
+        <div><span>Current value</span><b data-share-inv-value data-start="${v.startAt}" data-end="${v.endAt}" data-amount="${v.amountCoins}" data-ret="${v.returnPct}">${both(v.currentValueCoins)}</b></div>
         <div><span>Target profit</span><b>+${bothEarn(v.targetProfitCoins)}</b></div>
       </div>
       <div class="shares-progress"><i style="width:${Math.max(0, Math.min(100, Number(v.progressPct) || 0))}%"></i></div>
@@ -491,6 +491,38 @@
     return true;
   }
 
+  /* live earning counter — recalculates once per second between server polls */
+  function tickEarnings() {
+    if (!onSharesPage()) return;
+    const now = Date.now();
+    let hero = 0;
+    document.querySelectorAll('[data-share-inv-earn]').forEach((el) => {
+      const start = Number(el.getAttribute('data-start')) || 0;
+      const end = Number(el.getAttribute('data-end')) || 0;
+      const amount = Number(el.getAttribute('data-amount')) || 0;
+      const ret = Number(el.getAttribute('data-ret')) || 0;
+      if (!(end > start) || !(amount > 0)) return;
+      const target = amount * ret / 100;
+      const elapsed = Math.max(0, Math.min(end - start, now - start));
+      const accrued = target * (elapsed / (end - start));
+      hero += accrued;
+      el.textContent = '+' + bothEarn(accrued);
+      const val = document.querySelector('[data-share-inv-value][data-start="' + start + '"]');
+      if (val) val.textContent = both(amount + accrued);
+    });
+    const heroEl = document.querySelector('[data-share-hero-earn]');
+    if (heroEl) {
+      const completed = Number(heroEl.getAttribute('data-completed')) || 0;
+      heroEl.textContent = tinyNum(hero + completed);
+      const usdEl = document.querySelector('[data-share-earn-usd]');
+      if (usdEl) usdEl.textContent = money((hero + completed) * 0.5);
+      const big = document.querySelector('[data-share-earn-big]');
+      if (big) big.textContent = tinyNum(hero + completed);
+      const stat = document.querySelector('[data-share-earn]');
+      if (stat) stat.textContent = '+' + tinyNum(hero + completed) + ' WC';
+    }
+  }
+
   function refreshLiveMount() {
     if (!S.state || !onSharesPage()) return;
     const live = document.getElementById('sharesLiveMount');
@@ -529,6 +561,7 @@
       if (!onSharesPage() || document.hidden) return;
       load(true).then(() => refreshLiveMount());
     }, 10000);
+    setInterval(tickEarnings, 1000);
   }
 
   (function styles() {
