@@ -898,6 +898,10 @@ VIEWS.vendor = function (parts, params) {
         <b class="small">${coins(st.paidCoins)} WC</b></div>
       <div class="between mt6"><span class="tiny muted">Wallet balance</span>
         <b class="small">${coins(st.balance)} WC</b></div>
+      <div class="between mt6"><span class="tiny muted">Storefront views</span>
+        <b class="small">${(Number(v.views) || 0).toLocaleString('en-US')}</b></div>
+      <div class="between mt6"><span class="tiny muted">View-to-sale conversion</span>
+        <b class="small">${(Number(v.views) || 0) ? ((st.units / Number(v.views)) * 100).toFixed(1) + '%' : '—'}</b></div>
       ${st.demoOrders ? `<div class="between mt6"><span class="tiny muted">Of which demo shoppers</span>
         <b class="tiny">${st.demoOrders} order${st.demoOrders === 1 ? '' : 's'} · ${usd(st.demoUsd)} <span class="muted">(simulated, not real revenue)</span></b></div>` : ''}
     </div>` + ltVendorInvestCard(v);
