@@ -174,7 +174,7 @@ const LT = {
     if (capital > u.balance) { toast('Not enough Whale Coin — top up your wallet', 'err'); return false; }
     if (INV.paused && INV.paused(ticker)) { toast(ticker + ' trading is paused', 'err'); return false; }
     const q = INV.quote(ticker);
-    if (!q || !(Number(q.price) > 0)) { toast('No live Alpaca quote for this stock yet', 'err'); return false; }
+    if (!q || !(Number(q.price) > 0)) { toast('No live Finnhub quote for this asset yet', 'err'); return false; }
 
     const fee = Math.round(capital * this.feePct() / 100 * 100) / 100;
     const minutes = Math.max(1, Math.min(7 * 24 * 60, Number(o.minutes) || 60));
@@ -294,7 +294,7 @@ const LT = {
     if (!DB || !DB.trades) return;
     this.open().forEach(t => {
       this.updateTrailing(t);
-      /* Alpaca-covered symbols are settled by the backend so a closed browser
+      /* Finnhub-covered symbols are settled by the backend so a closed browser
          cannot miss a payout — avoid paying the same trade twice. */
       if (typeof WC_MARKET !== 'undefined' && typeof WC_MARKET.feedFresh === 'function' && WC_MARKET.feedFresh() && WC_MARKET.feed.quotes && WC_MARKET.feed.quotes[t.ticker]) return;
       const p = this.calc(t);
@@ -894,7 +894,7 @@ LT.dash = function (params) {
     </div>
   </div>
 
-  <div class="card inv-note">${ic('shield', 14)} <span class="tiny">Prices stream from Alpaca (IEX). When the US market is closed Alpaca holds the last real print. Values include live trades and holdings at 1 WC = $0.50.</span></div>`;
+  <div class="card inv-note">${ic('shield', 14)} <span class="tiny">Prices stream from Finnhub. Crypto trades 24/7, Forex 24/5, and closed stock exchanges hold their last real print. Values include live trades and holdings at 1 WC = $0.50.</span></div>`;
 };
 
 function usd_LT(n) { return '$' + (Math.round((Number(n) || 0) * 100) / 100).toFixed(2); }
