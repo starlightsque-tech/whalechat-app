@@ -1,8 +1,8 @@
 {
-  "version": "3.28.0",
-  "build": "2026-11-13T01:10:00Z",
+  "version": "3.29.0",
+  "build": "2026-11-13T02:05:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.28.0 - Finnhub real-time stock chart (full-height, real candles + live ticks), Sell and Take Profit/Loss controls below the chart, and a live Trade value / Earnings-Losses overlay replacing Position value.",
-  "releasedAt": "2026-11-13T01:10:00Z",
+  "notes": "WhaleChat 3.29.0 - TradingView real-time stock chart wired to the traded symbol, with the live Trade value / Earnings overlay and Sell + Take Profit/Loss controls underneath; Finnhub candles remain the automatic fallback.",
+  "releasedAt": "2026-11-13T02:05:00Z",
   "minimum": "3.0.0"
 }
