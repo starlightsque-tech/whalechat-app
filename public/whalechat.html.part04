@@ -785,7 +785,7 @@ function productCard(p, u) {
     </a>
     <div class="product-body">
       <a href="#/product/${p.id}" class="product-name">${esc(p.name)}</a>
-      <div class="stars-row">${vUser ? `<span class="ellipsis" style="max-width:86px">${esc(vUser.username)}</span><span style="opacity:.5">·</span>` : ''}
+      <div class="stars-row">${v ? `<a href="#/store/${v.id}" class="ellipsis" style="max-width:104px;color:var(--accent);font-weight:650;text-decoration:none" title="Visit ${esc(v.name)}">${esc(v.name)}</a><span style="opacity:.5">·</span>` : ''}
         <span style="color:var(--gold)">★</span> ${(v ? v.rating : 5).toFixed(1)} <span style="opacity:.5">·</span> ${v ? `Trust ${v.trustScore}` : ''}</div>
       <div class="between mt6" style="align-items:flex-end">
         <div><div class="price">${coins(p.priceUsd / COIN_USD)} <span class="tiny muted">WC</span></div><div class="tiny muted">${usd(p.priceUsd)}</div></div>
@@ -848,12 +848,12 @@ VIEWS.product = function (parts) {
             <span class="muted">Whale Coin</span>
           </div>
           <div class="small muted mt6">≈ ${usd(p.priceUsd)} USD · 1 WC = $0.50</div>
-          ${vUser ? `<div class="divider"></div>
-            <div class="row gap10">
+          ${vUser && v ? `<div class="divider"></div>
+            <a href="#/store/${v.id}" class="row gap10" style="color:inherit;text-decoration:none">
               ${avatarHTML(vUser, 'sm')}
-              <div class="grow"><div class="small" style="font-weight:600">${esc(vUser.fullName)}</div><div class="tiny muted">@${esc(vUser.username)} · Trust ${v.trustScore}/100</div></div>
-              <button class="btn-icon" data-act="view-profile" data-id="${vUser.id}" style="width:34px;height:34px">${ic('chat', 15)}</button>
-            </div>` : ''}
+              <div class="grow"><div class="small" style="font-weight:600">${esc(v.name)}</div><div class="tiny muted">${esc(vUser.fullName)} · Trust ${v.trustScore}/100</div></div>
+              <span class="btn btn-ghost btn-xs">${ic('store', 12)} Visit store</span>
+            </a>` : ''}
           <div class="divider"></div>
           <div class="between">
             <div class="small muted">Starred by</div>
