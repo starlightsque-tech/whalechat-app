@@ -1,8 +1,8 @@
 {
-  "version": "3.23.0",
-  "build": "2026-11-12T17:25:00Z",
+  "version": "3.23.1",
+  "build": "2026-11-12T17:45:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.23.0 - spot Buy/Sell orders with atomic backend TP/SL execution, active position cards and order history.",
-  "releasedAt": "2026-11-12T17:25:00Z",
+  "notes": "WhaleChat 3.23.1 - stricter spot TP/SL validation and spot trading guide.",
+  "releasedAt": "2026-11-12T17:45:00Z",
   "minimum": "3.0.0"
 }
