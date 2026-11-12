@@ -63,6 +63,7 @@ const MODULES = [
   { file: 'spot-orders.js', marker: 'wc-spot-orders' },
   { file: 'market-live.js', marker: 'wc-market-live' },
   { file: 'trading-bots.js', marker: 'wc-trading-bots' },
+  { file: 'whalechat-shares.js', marker: 'wc-whalechat-shares' },
   { file: 'demo-sellers.js', marker: 'wc-demo-sellers' },
   { file: 'support.js', marker: 'wc-support' }
 ];
