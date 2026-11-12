@@ -20,6 +20,19 @@ let nodemailer = null;
 try { nodemailer = require('nodemailer'); } catch (e) { nodemailer = null; }
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+const MAIL_CFG_FILE = path.join(DATA_DIR, 'mail.json');
+function applyRuntimeMail() {
+  try {
+    const c = JSON.parse(fs.readFileSync(MAIL_CFG_FILE, 'utf8'));
+    if (c.brevoKey) cfg.brevoKey = c.brevoKey;
+    if (c.resendKey) cfg.resendKey = c.resendKey;
+    if (c.from) cfg.from = c.from;
+    if (c.fromName) cfg.fromName = c.fromName;
+    if (c.host) cfg.host = c.host;
+    if (c.port) cfg.port = Number(c.port);
+  } catch (e) {}
+}
+
 const OUTBOX = path.join(DATA_DIR, 'outbox.json');
 const SENT = path.join(DATA_DIR, 'email-sent.json');
 
@@ -32,10 +45,17 @@ const cfg = {
   resendKey: process.env.RESEND_API_KEY || '',
   resendFrom: process.env.RESEND_FROM || '',
   brevoKey: process.env.BREVO_API_KEY || '',
-  from: process.env.MAIL_FROM || process.env.SMTP_USER || process.env.OUTLOOK_EMAIL || 'onboarding@resend.dev',
+  /* wc-verified-sender */ from: (function () {
+    var want = String(process.env.MAIL_FROM || '').trim().toLowerCase();
+    var verified = 'whalechat1@gmail.com';
+    if (want && want === verified) return process.env.MAIL_FROM;
+    if (want) console.warn('[mail] MAIL_FROM ' + want + ' is not a verified Brevo sender - using ' + verified);
+    return verified;
+  })(),
   fromName: process.env.MAIL_FROM_NAME || 'WhaleChat'
 };
 function provider() {
+  applyRuntimeMail();
   if (cfg.brevoKey) return 'brevo';
   if (cfg.resendKey) return 'resend';
   if (cfg.user && cfg.pass) return 'smtp';
@@ -49,6 +69,7 @@ let transport = null;
 let timer = null;
 
 function configured() {
+  applyRuntimeMail();
   if (cfg.brevoKey) return !!cfg.from;
   if (cfg.resendKey) return !!cfg.from;
   return !!(nodemailer && cfg.user && cfg.pass && cfg.from);
