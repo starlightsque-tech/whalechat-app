@@ -104,6 +104,26 @@ class MarketService {
   }
 
   /* ------------------------------- config ------------------------------- */
+  rawConfig() { return { mode: this.config.mode, apiKey: this.config.apiKey, refreshSec: this.config.refreshSec }; }
+
+  writeConfigFile() {
+    try {
+      fs.mkdirSync(this.dataDir, { recursive: true });
+      fs.writeFileSync(this.configFile, JSON.stringify(this.rawConfig(), null, 2), { mode: 0o600 });
+      try { fs.chmodSync(this.configFile, 0o600); } catch (e) {}
+    } catch (e) { this.lastError = 'Could not save market config: ' + e.message; }
+  }
+
+  /* Restore config from durable storage (Postgres) before start(). */
+  hydrateConfig(cfg) {
+    if (!cfg || typeof cfg !== 'object') return false;
+    if (cfg.mode === 'hybrid' || cfg.mode === 'simulated') this.config.mode = cfg.mode;
+    if (typeof cfg.apiKey === 'string') this.config.apiKey = cfg.apiKey.trim();
+    if (cfg.refreshSec != null) this.config.refreshSec = Math.min(300, Math.max(5, Math.round(Number(cfg.refreshSec) || 15)));
+    this.writeConfigFile();
+    return true;
+  }
+
   loadConfig() {
     try {
       const raw = JSON.parse(fs.readFileSync(this.configFile, 'utf8'));
@@ -128,11 +148,7 @@ class MarketService {
     if (next.clearKey === true) cfg.apiKey = '';
     if (next.refreshSec != null) cfg.refreshSec = Math.min(300, Math.max(5, Math.round(Number(next.refreshSec) || 15)));
     this.config = cfg;
-    try {
-      fs.mkdirSync(this.dataDir, { recursive: true });
-      fs.writeFileSync(this.configFile, JSON.stringify(cfg, null, 2), { mode: 0o600 });
-      try { fs.chmodSync(this.configFile, 0o600); } catch (e) {}
-    } catch (e) { this.lastError = 'Could not save market config: ' + e.message; }
+    this.writeConfigFile();
     this.restart();
     return this.publicConfig();
   }
