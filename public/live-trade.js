@@ -174,7 +174,7 @@ const LT = {
     if (capital > u.balance) { toast('Not enough Whale Coin — top up your wallet', 'err'); return false; }
     if (INV.paused && INV.paused(ticker)) { toast(ticker + ' trading is paused', 'err'); return false; }
     const q = INV.quote(ticker);
-    if (!q) return false;
+    if (!q || !(Number(q.price) > 0)) { toast('No live Finnhub quote for this asset yet', 'err'); return false; }
 
     const fee = Math.round(capital * this.feePct() / 100 * 100) / 100;
     const minutes = Math.max(1, Math.min(7 * 24 * 60, Number(o.minutes) || 60));
