@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "note": "Source of truth for the demo seller fleet. scripts/generate-demo-catalog.mjs turns this into public/demo-catalog.json and the committed .jpg.b64 images. Bump version whenever products or sellers change so installed apps re-seed.",
   "sellers": [
     {
@@ -453,6 +453,311 @@
       "color": "Dark grey",
       "description": "24000mAh laptop power bank with 65W USB-C PD output, a 30W second port, an LED battery readout and a braided USB-C cable. Charges a 13-inch laptop to 50% in 45 minutes.",
       "prompt": "65W dark grey laptop power bank with two USB-C ports, LED battery indicator and braided cable, three-quarter front view"
+    }
+  ],
+  "extraModels": [
+    {
+      "slug": "fridge-compact-silver",
+      "name": "FrostLine 180L Under-Counter Fridge",
+      "category": "Fridges",
+      "basePriceUsd": 429,
+      "color": "Stainless steel",
+      "description": "180L under-counter refrigerator with a stainless-steel door, 4-star freezer compartment, reversible hinge and adjustable glass shelves. 85 × 60 × 60 cm.",
+      "tier": "extra"
+    },
+    {
+      "slug": "fridge-smart-inverter",
+      "name": "FrostLine 450L Inverter Top-Freezer",
+      "category": "Fridges",
+      "basePriceUsd": 749,
+      "color": "Silver",
+      "description": "450L top-freezer fridge with an inverter compressor, multi-airflow cooling, humidity-controlled crisper and a 10-year compressor warranty. 175 × 70 × 68 cm.",
+      "tier": "extra"
+    },
+    {
+      "slug": "fridge-graphite-french",
+      "name": "FrostLine 610L French Door · Graphite",
+      "category": "Fridges",
+      "basePriceUsd": 1299,
+      "color": "Graphite steel",
+      "description": "Graphite-edition 610L French-door fridge with twin doors, a full-width freezer drawer, inverter compressor, plumbed water dispenser and fingerprint-resistant finish.",
+      "deriveFrom": "fridge-french-door",
+      "derive": {
+        "flip": true,
+        "crop": 1.05,
+        "grade": "warm"
+      },
+      "tier": "extra"
+    },
+    {
+      "slug": "solar-bollard",
+      "name": "SolarGlo Bollard Path Light",
+      "category": "Solar Lamps",
+      "basePriceUsd": 29,
+      "color": "Black / warm white",
+      "description": "Solar bollard path light with a warm LED band, integrated panel cap, dusk-to-dawn sensor and a 60cm stake. IP65 rated for year-round outdoor use.",
+      "deriveFrom": "solar-garden-lantern",
+      "derive": {
+        "flip": true,
+        "crop": 1.08,
+        "grade": "warm"
+      },
+      "tier": "extra"
+    },
+    {
+      "slug": "solar-wall-lamp",
+      "name": "SolarMax Wall Light 40W",
+      "category": "Solar Lamps",
+      "basePriceUsd": 39,
+      "color": "Black",
+      "description": "40W solar wall light with a curved bracket, frosted warm LED panel, integrated panel and 6000mAh battery. Motion sensor and IP66 rating.",
+      "deriveFrom": "solar-floodlight",
+      "derive": {
+        "flip": true,
+        "crop": 1.04,
+        "grade": "cool"
+      },
+      "tier": "extra"
+    },
+    {
+      "slug": "phone-green-compact",
+      "name": "Nova A5 Compact 5G",
+      "category": "Phones",
+      "basePriceUsd": 199,
+      "color": "Sage green",
+      "description": "Compact 6.1-inch 90Hz AMOLED phone with a 50MP dual camera, 128GB storage, 8GB RAM, 4500mAh battery and 33W fast charging.",
+      "deriveFrom": "phone-blue-midrange",
+      "derive": {
+        "flip": true,
+        "crop": 1.06,
+        "grade": "cool"
+      },
+      "tier": "extra"
+    },
+    {
+      "slug": "phone-gaming",
+      "name": "Raptor Gaming Phone 5G",
+      "category": "Phones",
+      "basePriceUsd": 499,
+      "color": "Black / red",
+      "description": "6.8-inch 165Hz gaming phone with shoulder triggers, vapour-chamber cooling, 12GB RAM, 256GB storage, 6000mAh battery and 65W charging.",
+      "deriveFrom": "phone-rugged",
+      "derive": {
+        "flip": true,
+        "crop": 1.05,
+        "grade": "warm"
+      },
+      "tier": "extra"
+    },
+    {
+      "slug": "watch-hybrid",
+      "name": "Pulse Hybrid Classic",
+      "category": "Watches",
+      "basePriceUsd": 229,
+      "color": "Silver / brown leather",
+      "description": "Hybrid smartwatch with physical hands, a hidden OLED display, heart-rate and sleep tracking, notifications and a 14-day battery. 5ATM water resistant.",
+      "deriveFrom": "watch-round-amoled",
+      "derive": {
+        "flip": true,
+        "crop": 1.03,
+        "grade": "warm"
+      },
+      "tier": "extra"
+    },
+    {
+      "slug": "watch-kids",
+      "name": "Pulse Kids GPS Watch",
+      "category": "Watches",
+      "basePriceUsd": 99,
+      "color": "Blue",
+      "description": "Kids GPS watch with one-touch calling, geofence alerts, SOS button, step tracking and a 5-day battery. Splash-proof silicone strap.",
+      "deriveFrom": "watch-square",
+      "derive": {
+        "flip": true,
+        "crop": 1.07,
+        "grade": "cool"
+      },
+      "tier": "extra"
+    },
+    {
+      "slug": "sound-system-bar51",
+      "name": "Arena Bar 5.1 Soundbar System",
+      "category": "Sound Systems",
+      "basePriceUsd": 379,
+      "color": "Black",
+      "description": "5.1 soundbar system with a wireless subwoofer and two rear speakers, 280W output, Dolby Digital, HDMI eARC and Bluetooth 5.3.",
+      "deriveFrom": "sound-system-home-theatre",
+      "derive": {
+        "flip": true,
+        "crop": 1.05,
+        "grade": "cool"
+      },
+      "tier": "extra"
+    },
+    {
+      "slug": "sound-system-receiver",
+      "name": "Studio 400 Stereo Receiver Set",
+      "category": "Sound Systems",
+      "basePriceUsd": 449,
+      "color": "Silver / walnut",
+      "description": "Stereo receiver set with a 2 × 100W amplifier, two walnut speakers, phono input, optical and Bluetooth. Built-in FM/DAB tuner and remote.",
+      "deriveFrom": "sound-system-hifi",
+      "derive": {
+        "flip": true,
+        "crop": 1.03,
+        "grade": "warm"
+      },
+      "tier": "extra"
+    },
+    {
+      "slug": "jbl-stage320",
+      "name": "JBL Stage 320 Party Speaker",
+      "category": "JBL Players",
+      "basePriceUsd": 399,
+      "color": "Black / orange",
+      "description": "320W party speaker with dual woofers, orange LED light rings, 12-hour battery, Bluetooth 5.3, mic and guitar inputs and a wheeled trolley handle.",
+      "deriveFrom": "jbl-partybox",
+      "derive": {
+        "flip": true,
+        "crop": 1.06,
+        "grade": "warm"
+      },
+      "tier": "extra"
+    },
+    {
+      "slug": "jbl-bar51",
+      "name": "JBL Bar 5.1 Soundbar",
+      "category": "JBL Players",
+      "basePriceUsd": 449,
+      "color": "Black",
+      "description": "5.1-channel soundbar with detachable wireless rear speakers, a 10-inch subwoofer, 550W output, Dolby Digital and HDMI eARC.",
+      "deriveFrom": "speaker-soundbar",
+      "derive": {
+        "flip": true,
+        "crop": 1.04,
+        "grade": "cool"
+      },
+      "tier": "extra"
+    },
+    {
+      "slug": "charger-magsafe",
+      "name": "MagDock 15W Wireless Pad",
+      "category": "Chargers",
+      "basePriceUsd": 39,
+      "color": "Matte black",
+      "description": "15W magnetic wireless charging pad with a braided USB-C cable, aluminium body, over-heat protection and support for phone and earbuds charging.",
+      "deriveFrom": "charger-wireless-3in1",
+      "derive": {
+        "flip": true,
+        "crop": 1.07,
+        "grade": "cool"
+      },
+      "tier": "extra"
+    },
+    {
+      "slug": "charger-gan-65",
+      "name": "Volt 65W GaN Charger",
+      "category": "Chargers",
+      "basePriceUsd": 45,
+      "color": "White",
+      "description": "65W GaN wall charger with two USB-C ports and one USB-A, folding prongs and PD 3.0 / QC 4+ support. Charges a laptop or phone at full speed.",
+      "deriveFrom": "charger-gan-100w",
+      "derive": {
+        "flip": true,
+        "crop": 1.05,
+        "grade": "warm"
+      },
+      "tier": "extra"
+    },
+    {
+      "slug": "headphones-studio",
+      "name": "Aura Studio Wired Headphones",
+      "category": "Headphones",
+      "basePriceUsd": 119,
+      "color": "Black",
+      "description": "Wired studio headphones with 45mm drivers, a detachable coiled cable, swivel earcups and a foldable headband. 32Ω, 3.5mm and 6.3mm adapters included.",
+      "deriveFrom": "headphones-over-ear",
+      "derive": {
+        "flip": true,
+        "crop": 1.04,
+        "grade": "cool"
+      },
+      "tier": "extra"
+    },
+    {
+      "slug": "earbuds-sport",
+      "name": "Aura Sport Buds",
+      "category": "Headphones",
+      "basePriceUsd": 79,
+      "color": "Black / lime",
+      "description": "Sport earbuds with ear hooks, IP67 sweat resistance, 10-hour battery, 30 hours with the case, ambient mode and a secure-fit design for running.",
+      "deriveFrom": "earbuds-anc",
+      "derive": {
+        "flip": true,
+        "crop": 1.08,
+        "grade": "warm"
+      },
+      "tier": "extra"
+    },
+    {
+      "slug": "speaker-outdoor",
+      "name": "Outdoor Patio Speakers (Pair)",
+      "category": "Speakers",
+      "basePriceUsd": 179,
+      "color": "Grey",
+      "description": "Pair of weather-resistant outdoor speakers with 5.25-inch woofers, UV-resistant cabinets, 80W handling and adjustable mounting brackets. IP55 rated.",
+      "deriveFrom": "speaker-bookshelf-pair",
+      "derive": {
+        "flip": true,
+        "crop": 1.05,
+        "grade": "cool"
+      },
+      "tier": "extra"
+    },
+    {
+      "slug": "speaker-mini",
+      "name": "Echo Mini Smart Speaker",
+      "category": "Speakers",
+      "basePriceUsd": 59,
+      "color": "Charcoal grey",
+      "description": "Compact smart speaker with a 15W driver, far-field microphones, Wi-Fi and Bluetooth, voice assistant support and a fabric-wrapped body.",
+      "deriveFrom": "speaker-smart",
+      "derive": {
+        "flip": true,
+        "crop": 1.06,
+        "grade": "warm"
+      },
+      "tier": "extra"
+    },
+    {
+      "slug": "powerbank-5000",
+      "name": "SlimCard 5K Mini Power Bank",
+      "category": "Power Banks",
+      "basePriceUsd": 19,
+      "color": "Pale blue",
+      "description": "5000mAh credit-card-sized power bank with 18W USB-C PD, a built-in kickstand and four LED indicators. Weighs just 110g.",
+      "deriveFrom": "powerbank-slim-10000",
+      "derive": {
+        "flip": true,
+        "crop": 1.07,
+        "grade": "cool"
+      },
+      "tier": "extra"
+    },
+    {
+      "slug": "powerbank-ac",
+      "name": "PowerStation 300 AC Outlet Bank",
+      "category": "Power Banks",
+      "basePriceUsd": 149,
+      "color": "Dark grey",
+      "description": "300W AC outlet power station with a 26800mAh battery, pure sine-wave inverter, USB-C PD 60W, two AC sockets and an LED emergency light.",
+      "deriveFrom": "powerbank-20000",
+      "derive": {
+        "flip": true,
+        "crop": 1.04,
+        "grade": "warm"
+      },
+      "tier": "extra"
     }
   ]
 }
