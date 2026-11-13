@@ -17,6 +17,7 @@
   MK.chartLoading = null;
   MK.adminLoaded = false;
   MK.historyCache = {};
+  MK.smooth = {};
 
   const LWC_URL = 'https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js';
 
@@ -39,43 +40,115 @@
   }
 
   /* ------------------------------ feed polling ------------------------------ */
+  /* ---- smooth price interpolation -----------------------------------------
+     The feed updates every ~2.5s. Instead of snapping the chart and every price
+     label, animate from the previously displayed price to the new tick over a
+     short ease-out window. The last chart point is updated in place, so the
+     line glides instead of jumping. */
+  function smoothEase(t) { return 1 - Math.pow(1 - t, 3); }
+
+  function paintSmoothed(ticker) {
+    const q = INV.live[ticker];
+    if (!q) return;
+    const t = ticker.replace(/["\\]/g, '');
+    const priceTxt = INV.priceText ? INV.priceText(ticker, q.price) : ('$' + (Number(q.price) || 0).toFixed(2));
+    document.querySelectorAll('[data-lv="price:' + t + '"]').forEach((el) => { el.textContent = priceTxt; });
+    document.querySelectorAll('[data-lv="wc:' + t + '"]').forEach((el) => { el.textContent = coins(usdToCoins(q.price)) + ' WC'; });
+    document.querySelectorAll('[data-lv="pct:' + t + '"]').forEach((el) => {
+      const c = Number(q.changePct) || 0;
+      el.textContent = (c >= 0 ? '+' : '') + c.toFixed(2) + '%';
+      el.classList.remove('up', 'down');
+      if (c > 0) el.classList.add('up'); else if (c < 0) el.classList.add('down');
+    });
+  }
+
+  function animateQuote(ticker, from, to) {
+    if (!(to > 0)) return;
+    const st = MK.smooth[ticker] || (MK.smooth[ticker] = { raf: 0 });
+    if (st.raf) cancelAnimationFrame(st.raf);
+    if (!(from > 0) || Math.abs(to - from) < 1e-9) {
+      st.raf = 0;
+      const live = INV.live[ticker];
+      if (live) { live.price = to; const pc = Number(live.prevClose) || to; live.changeUsd = to - pc; live.changePct = pc ? ((to - pc) / pc) * 100 : 0; }
+      const s = INV.stock(ticker); if (s) s.price = to;
+      paintSmoothed(ticker);
+      return;
+    }
+    const started = performance.now();
+    const dur = 850;
+    let lastDom = 0;
+    const step = (ts) => {
+      const t = Math.min(1, (ts - started) / dur);
+      const p = from + (to - from) * smoothEase(t);
+      const live = INV.live[ticker];
+      if (live) {
+        live.price = p;
+        const pc = Number(live.prevClose) || p;
+        live.changeUsd = p - pc;
+        live.changePct = pc ? ((p - pc) / pc) * 100 : 0;
+      }
+      const s = INV.stock(ticker);
+      if (s) s.price = p;
+      const cached = INV.seriesCache && INV.seriesCache[ticker + '::1D'];
+      if (cached && cached.length) cached[cached.length - 1] = p;
+      const c = MK.chart;
+      if (c && c.series && c.lastTime) {
+        if (c.mode === 'stock' && c.ticker === ticker) {
+          try { c.series.update({ time: c.lastTime, value: p }); } catch (e) {}
+        } else if (c.mode === 'portfolio') {
+          try { const sum = LT.summary(me().id); c.series.update({ time: c.lastTime, value: sum.valueCoins }); } catch (e) {}
+        }
+      }
+      if (ts - lastDom > 90) { lastDom = ts; paintSmoothed(ticker); }
+      if (t < 1) st.raf = requestAnimationFrame(step);
+      else { st.raf = 0; paintSmoothed(ticker); }
+    };
+    st.raf = requestAnimationFrame(step);
+  }
+
   function applyQuotes(data) {
     if (!data || !data.ok || !data.quotes || typeof INV === 'undefined') return;
     if (typeof DB === 'undefined' || !DB) return;
     MK.feed = data;
     const now = Date.now();
+    const moved = [];
     Object.keys(data.quotes).forEach((ticker) => {
       const q = data.quotes[ticker];
       if (!q || !(Number(q.price) > 0)) return;
       const prev = INV.live[ticker];
+      const to = Number(q.price);
+      const from = prev && Number(prev.price) > 0 ? Number(prev.price) : to;
+      const prevClose = Number(q.prevClose) || to;
       INV.live[ticker] = {
-        price: Number(q.price),
-        prevClose: Number(q.prevClose) || Number(q.price),
-        open: Number(q.open) || Number(q.price),
-        dayHigh: Number(q.dayHigh) || Number(q.price),
-        dayLow: Number(q.dayLow) || Number(q.price),
-        changePct: Number(q.changePct) || 0,
-        changeUsd: Number(q.changeUsd) || 0,
+        price: from,
+        prevClose,
+        open: Number(q.open) || to,
+        dayHigh: Number(q.dayHigh) || to,
+        dayLow: Number(q.dayLow) || to,
+        changePct: prevClose ? ((from - prevClose) / prevClose) * 100 : 0,
+        changeUsd: from - prevClose,
         vol: Number(q.vol) || 0,
-        dir: prev ? (q.price > prev.price ? 1 : q.price < prev.price ? -1 : 0) : (Number(q.dir) || 0),
+        dir: prev ? (to > from ? 1 : to < from ? -1 : 0) : (Number(q.dir) || 0),
         updatedAt: Number(q.updatedAt) || now,
         source: q.source || data.source,
         feed: true
       };
       const s = INV.stock(ticker);
       if (s) {
-        s.price = Number(q.price);
-        s.prevClose = Number(q.prevClose) || s.prevClose;
+        s.price = from;
+        s.prevClose = prevClose || s.prevClose;
       }
       const key = ticker + '::1D';
       const cached = INV.seriesCache && INV.seriesCache[key];
-      if (cached && cached.length) cached[cached.length - 1] = Number(q.price);
+      if (cached && cached.length) cached[cached.length - 1] = from;
+      if (Math.abs(to - from) > 1e-9) moved.push({ ticker, from, to });
     });
     try { INV.paint(); } catch (e) {}
     try { if (typeof LT !== 'undefined' && LT.paint) LT.paint(); } catch (e) {}
     paintNotice();
     paintAdminStatus();
     updateChart();
+    moved.forEach((m) => animateQuote(m.ticker, m.from, m.to));
     try { checkSettledToasts(); } catch (e) {}
   }
 
