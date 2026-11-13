@@ -1,8 +1,8 @@
 {
-  "version": "3.28.0",
-  "build": "2026-11-13T11:34:54Z",
+  "version": "3.29.0",
+  "build": "2026-11-13T11:48:03Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.28.0 - shareable username-only stock portfolio links with safe manager access, plus higher-contrast larger text.",
-  "releasedAt": "2026-11-13T11:34:54Z",
+  "notes": "WhaleChat 3.29.0 - shared-portfolio audit trail and 24/7 simulated price movement/history for all stocks.",
+  "releasedAt": "2026-11-13T11:48:03Z",
   "minimum": "3.0.0"
 }
