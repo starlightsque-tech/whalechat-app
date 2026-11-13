@@ -38,6 +38,7 @@
   const LWC_VERSION = '5.3.0';
   const LWC_URL = 'https://unpkg.com/lightweight-charts@' + LWC_VERSION + '/dist/lightweight-charts.standalone.production.js';
   const STYLE_KEY = 'wc_terminal_style';
+  const DEFAULT_STYLE = 'deriv';
 
   /* ------------------------------------------------------------------ utils */
   const usd = (v, d) => '$' + (Number(v) || 0).toLocaleString('en-US', { minimumFractionDigits: d == null ? 2 : d, maximumFractionDigits: d == null ? 2 : d });
@@ -54,6 +55,17 @@
   /* ----------------------------------------------------------------- themes */
   /* Each theme = CSS variables (injected stylesheet) + lightweight-charts options. */
   const THEMES = {
+    deriv: {
+      label: 'Deriv (reference)', hint: 'Reference layout · thin line, blue live price, tick ticket',
+      up: '#26a69a', down: '#ef5350', accent: '#2962ff',
+      chart: {
+        bg: '#0e0e0e', grid: 'rgba(255,255,255,.028)', gridV: 'rgba(255,255,255,.022)',
+        text: '#787b86', border: 'rgba(255,255,255,.05)', crosshair: 'rgba(209,212,220,.45)',
+        crossLabel: '#2b3139', fontSize: 11, lineWidth: 2, areaAlpha: 0.05, mode: 'line',
+        font: "'Inter', -apple-system, 'Segoe UI', Roboto, sans-serif",
+        lineNeutral: '#d1d4dc', priceLine: '#2962ff'
+      }
+    },
     obsidian: {
       label: 'Obsidian', hint: 'Reference layout · charcoal + steel blue',
       up: '#26a69a', down: '#ef5350', accent: '#4a9eff',
@@ -100,7 +112,15 @@
       }
     }
   };
-  const THEME_ORDER = ['obsidian', 'aurora', 'carbon', 'glass', 'neon'];
+  const THEME_ORDER = ['deriv', 'obsidian', 'aurora', 'carbon', 'glass', 'neon'];
+
+  const TOOL_SVG = {
+    line: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 17l5-6 4 3 4-7 5 4"/><path d="M3 21h18"/></svg>',
+    candle: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="5" y="8" width="4" height="9" rx="1"/><path d="M7 4v4M7 17v3"/><rect x="15" y="5" width="4" height="8" rx="1"/><path d="M17 2v3M17 13v4"/></svg>',
+    ind: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 16l4-5 3 3 4-7 5 6"/><circle cx="8" cy="11" r="1.4"/><circle cx="15" cy="7" r="1.4"/></svg>',
+    alert: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3a5 5 0 0 1 5 5v4l2 3H5l2-3V8a5 5 0 0 1 5-5z"/><path d="M10 19a2 2 0 0 0 4 0"/></svg>',
+    shot: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="6" width="18" height="13" rx="2"/><circle cx="12" cy="12.5" r="3.2"/><path d="M8 6l1.5-2h5L16 6"/></svg>'
+  };
 
   /* ------------------------------------------------------------------- CSS */
   const CSS = `
@@ -112,6 +132,15 @@
  background:var(--bg);color:var(--text);font-family:var(--font);font-size:var(--fs);line-height:1.45;
  border-radius:var(--r);padding:12px;overflow:hidden;letter-spacing:-.005em}
 .wt *{box-sizing:border-box}
+.wt.solo{grid-template-columns:minmax(0,1fr)}
+.wt .wt-eqhead{display:flex;flex-direction:column;gap:1px;padding:2px 2px 2px 4px}
+.wt .wt-eqhead b{font-size:13.5px;font-weight:700}
+.wt .wt-eqhead span{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+.wt .wt-feedtag{font-size:10px;letter-spacing:.06em;text-transform:uppercase;font-weight:700;color:var(--dim);
+ padding:5px 8px;border-radius:7px;border:1px solid var(--line);background:var(--panel2)}
+.wt .wt-feedtag.live{color:var(--up);border-color:color-mix(in srgb,var(--up) 32%,transparent);
+ background:color-mix(in srgb,var(--up) 9%,transparent)}
+.wt .wt-feedtag.sim{color:#e0b341;border-color:rgba(224,179,65,.3);background:rgba(224,179,65,.08)}
 .wt button{font-family:inherit;font-size:inherit;color:inherit;background:none;border:0;cursor:pointer;letter-spacing:inherit}
 .wt input,.wt select{font-family:inherit;font-size:inherit;color:inherit;background:none;border:0;outline:none}
 .wt .wt-main{display:flex;flex-direction:column;min-width:0;gap:10px}
@@ -249,6 +278,96 @@
 .wt .wt-foot{display:flex;justify-content:space-between;align-items:center;font-size:10.5px;color:var(--dim2);padding:0 2px}
 .wt .wt-foot .bal{color:var(--dim);font-variant-numeric:tabular-nums}
 /* -------------------------------------------------------------- variants */
+/* DERIV — the reference design: near-black canvas, thin line, blue dashed live
+   price, icon rail on the left, tick-trade ticket on the right. */
+.wt.th-deriv{--bg:#0d0d0d;--panel:#141414;--panel2:#1b1b1b;--line:rgba(255,255,255,.06);
+ --line2:rgba(255,255,255,.11);--text:#d1d4dc;--dim:#787b86;--dim2:#5c6069;
+ --up:#26a69a;--down:#ef5350;--accent:#2962ff;--r:10px;--r-sm:8px;--btnR:8px;--fs:13px;
+ --hud:rgba(24,26,32,.96);--shadow:none;background:#0d0d0d;gap:10px;padding:10px}
+.wt.th-deriv .wt-head{background:#101010;border-color:rgba(255,255,255,.05);padding:9px 11px}
+.wt.th-deriv .wt-sym{background:transparent;border-color:transparent;padding:4px 8px 4px 4px}
+.wt.th-deriv .wt-sym:hover{border-color:rgba(255,255,255,.12);background:#191919}
+.wt.th-deriv .wt-logo{width:28px;height:28px;border-radius:6px;color:#fff;
+ background:linear-gradient(135deg,#2b3139,#1f242b);box-shadow:inset 0 0 0 1px rgba(255,255,255,.08);font-size:10px}
+.wt.th-deriv .wt-symtxt b{font-size:13px;font-weight:600;color:#e6e9ef}
+.wt.th-deriv .wt-symtxt span{font-size:10px;text-transform:none;letter-spacing:0;color:#787b86}
+.wt.th-deriv .wt-price b{font-size:22px;font-weight:600;letter-spacing:-.01em}
+.wt.th-deriv .wt-price .wt-chg{background:transparent;padding:0;font-size:12px;font-weight:500}
+.wt.th-deriv .wt-price .wt-chg.up{color:#26a69a}
+.wt.th-deriv .wt-price .wt-chg.down{color:#ef5350}
+.wt.th-deriv .wt-pills{background:#161616;border-color:rgba(255,255,255,.05)}
+.wt.th-deriv .wt-pill{font-weight:500;color:#787b86;border-radius:6px}
+.wt.th-deriv .wt-pill.on{background:#2b3139;color:#e6e9ef}
+.wt.th-deriv .wt-live{background:rgba(38,166,154,.08);border-color:rgba(38,166,154,.22);font-weight:600;letter-spacing:.06em}
+.wt.th-deriv .wt-stage{border-color:rgba(255,255,255,.05);border-radius:8px}
+.wt.th-deriv .wt-tip{background:#181a20;border-color:rgba(255,255,255,.09);border-radius:6px;box-shadow:0 10px 26px rgba(0,0,0,.5);min-width:168px}
+.wt.th-deriv .wt-tip .t{color:#b9bec7;font-size:10.5px}
+.wt.th-deriv .wt-tip .p{font-size:13px;font-weight:600;color:#e6e9ef}
+.wt.th-deriv .wt-tip .d{font-size:10.5px;font-weight:500}
+.wt.th-deriv .wt-zoom{border-color:rgba(255,255,255,.09);background:#16181d;border-radius:6px;bottom:34px}
+.wt.th-deriv .wt-zoom button{color:#b9bec7}
+.wt.th-deriv .wt-zoom button:hover{background:#23272e;color:#fff}
+/* icon rail, top-left of the canvas */
+.wt .wt-tools{position:absolute;left:8px;top:8px;z-index:5;display:none;flex-direction:column;gap:2px;
+ padding:3px;border-radius:7px;border:1px solid rgba(255,255,255,.07);background:rgba(20,20,20,.82);backdrop-filter:blur(6px)}
+.wt.th-deriv .wt-tools{display:flex}
+.wt .wt-tools button{width:26px;height:26px;display:grid;place-items:center;border-radius:5px;color:#8b8f98;transition:.14s}
+.wt .wt-tools button:hover{background:#23272e;color:#e6e9ef}
+.wt .wt-tools button.on{background:#2b3139;color:#e6e9ef}
+.wt .wt-tools svg{width:14px;height:14px}
+.wt.th-deriv .wt-hud{left:44px;top:8px;border-radius:6px;border-color:rgba(255,255,255,.08);background:#16181d}
+.wt.th-deriv .wt-legend{top:9px;right:96px;color:#6a6d76;font-size:9.5px}
+/* ticket */
+.wt.th-deriv .wt-card{background:#111;border-color:rgba(255,255,255,.05);border-radius:8px;padding:11px}
+.wt.th-deriv .wt-cardhead h4{color:#e6e9ef;font-size:11.5px;letter-spacing:0;text-transform:none;font-weight:600}
+.wt.th-deriv .wt-seg{background:#1b1b1b;border-color:rgba(255,255,255,.05);border-radius:6px;gap:2px;padding:2px}
+.wt.th-deriv .wt-seg button{border-radius:5px;font-weight:500;color:#9aa0a9;padding:7px}
+.wt.th-deriv .wt-seg button.on[data-side=long]{background:#2b3139;color:#fff;box-shadow:none}
+.wt.th-deriv .wt-seg button.on[data-side=short]{background:#2b3139;color:#fff;box-shadow:none}
+.wt.th-deriv .wt-input{border-color:rgba(255,255,255,.09);background:#1b1b1b;border-radius:6px}
+.wt.th-deriv .wt-chips button{background:#161616;border-color:rgba(255,255,255,.07);border-radius:5px;color:#9aa0a9}
+.wt.th-deriv .wt-tp{border:0;background:transparent;padding:3px 0;min-height:34px;border-radius:0}
+.wt.th-deriv .wt-tp .lab{color:#c3c7cf;font-weight:500;font-size:12px}
+.wt.th-deriv .wt-tp .sw{background:#2b3139;width:26px;height:14px}
+.wt.th-deriv .wt-tp .sw i{width:10px;height:10px}
+.wt.th-deriv .wt-tp.on .sw{background:#26a69a}
+.wt.th-deriv .wt-tp.on .sw i{left:14px}
+.wt.th-deriv .wt-tp input{width:44px;color:#e6e9ef;font-weight:500}
+.wt.th-deriv .wt-tp .pct{color:#787b86}
+.wt.th-deriv .wt-tp .pxl{color:#5c6069}
+.wt.th-deriv .wt-go{border-radius:6px;font-weight:600;font-size:13px;padding:12px;
+ background:#26a69a;color:#04120e;box-shadow:none;letter-spacing:0}
+.wt.th-deriv .wt-go[data-side=short]{background:#ef5350;color:#fff}
+.wt.th-deriv .wt-go:hover{filter:brightness(1.06)}
+.wt.th-deriv .wt-sum .row{font-size:11px;color:#787b86}
+.wt.th-deriv .wt-exec button{background:#151515;border:1px solid rgba(255,255,255,.08);color:#b9bec7;
+ box-shadow:none;border-radius:6px;font-weight:600}
+.wt.th-deriv .wt-buy{color:#0b1a17;border-color:rgba(38,166,154,.55);background:#26a69a}
+.wt.th-deriv .wt-sell{color:#fff;border-color:rgba(239,83,80,.55);background:#ef5350}
+.wt.th-deriv .wt-buy:hover,.wt.th-deriv .wt-sell:hover{filter:brightness(1.08)}
+.wt.th-deriv .wt-buy:disabled,.wt.th-deriv .wt-sell:disabled{opacity:.5;filter:none;color:#787b86;border-color:rgba(255,255,255,.08)}
+.wt.th-deriv .wt-pos .plbig b{font-size:20px}
+/* reference-only ticket rows */
+.wt .wt-derivonly{display:none}
+.wt.th-deriv .wt-derivonly{display:block}
+.wt.th-deriv .wt-derivonly.wt-drow{display:flex}
+.wt.th-deriv .wt-derivonly.wt-dhint{display:flex}
+.wt .wt-dtab{display:none;gap:6px;margin-bottom:2px}
+.wt.th-deriv .wt-dtab{display:flex;flex-direction:column;gap:6px}
+.wt .wt-dtabs{display:grid;grid-template-columns:1fr 1fr;gap:2px;padding:2px;background:#1b1b1b;border-radius:6px}
+.wt .wt-dtabs button{padding:6px;border-radius:5px;font-size:11.5px;font-weight:500;color:#9aa0a9}
+.wt .wt-dtabs button.on{background:#2b3139;color:#fff}
+.wt .wt-dperiod{width:100%;padding:7px 8px;border-radius:6px;background:#1b1b1b;border:1px solid rgba(255,255,255,.07);
+ font-size:11.5px;color:#c3c7cf;appearance:none;cursor:pointer}
+.wt .wt-dperiod option{background:#1b1b1b}
+.wt .wt-drow{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-top:1px solid rgba(255,255,255,.05);
+ font-size:12px;color:#c3c7cf}
+.wt .wt-drow .lab{display:flex;align-items:baseline;gap:6px;white-space:nowrap}
+.wt .wt-drow .lab .sub{font-size:10.5px;color:#5c6069}
+.wt .wt-drow b{font-weight:500;color:#e6e9ef}
+.wt .wt-drow .sub{color:#787b86;font-size:10.5px}
+.wt .wt-dhint{font-size:9.5px;color:#5c6069;margin-top:5px;display:flex;justify-content:space-between;gap:10px;white-space:nowrap}
+.wt .wt-dnote{font-size:10.5px;color:#787b86;margin-top:8px;line-height:1.4}
 /* AURORA */
 .wt.th-aurora{--bg:#05080f;--panel:rgba(14,22,38,.72);--panel2:rgba(20,32,52,.6);--line:rgba(110,170,255,.13);
  --line2:rgba(110,170,255,.22);--dim:#8ba4c8;--dim2:#5f7794;--hud:rgba(9,16,28,.88);--accent:#4be1ff;--r:18px;
@@ -320,6 +439,147 @@
     return loadLWC._p;
   }
 
+  /* ---------------------------------------------------- Finnhub trade stream
+     One shared socket for the whole page: trade charts, the terminal and the
+     portfolio performance card all multiplex over it. 50 symbols max (Finnhub
+     free tier), automatic exponential-backoff reconnect, resubscribe on open,
+     stale-socket watchdog and a clean close() for unmount. */
+  class FinnhubStream {
+    constructor(opts) {
+      this.url = (opts && opts.url) || '';
+      this.max = (opts && opts.maxSymbols) || 50;
+      this.alias = Object.assign({}, (opts && opts.symbolMap) || {});   /* appTicker -> Finnhub symbol */
+      this.reverse = {};
+      Object.keys(this.alias).forEach((k) => { this.reverse[String(this.alias[k]).toUpperCase()] = k; });
+      this.maxBackoff = 30000;
+      this.subs = new Map();          /* symbol -> Set(callback) */
+      this.ws = null;
+      this.status = 'connecting';
+      this.attempt = 0;
+      this.lastMsgAt = 0;
+      this.lastTickAt = 0;
+      this.ticks = 0;
+      this._statusCbs = new Set();
+      this._timers = new Set();
+      this._closed = false;
+      this._open();
+      this._watch = setInterval(() => this._watchdog(), 20000);
+    }
+
+    _emit(status, extra) {
+      this.status = status;
+      this._statusCbs.forEach((cb) => { try { cb(status, extra || {}); } catch (e) {} });
+    }
+
+    onStatus(cb) { this._statusCbs.add(cb); try { cb(this.status, {}); } catch (e) {} return () => this._statusCbs.delete(cb); }
+
+    _open() {
+      if (this._closed || !this.url) return;
+      let ws;
+      try { ws = new WebSocket(this.url); } catch (e) { this._schedule('error'); return; }
+      this.ws = ws;
+      this._emit(this.attempt ? 'reconnecting' : 'connecting', { attempt: this.attempt });
+
+      ws.onopen = () => {
+        if (this.ws !== ws) return;
+        this.attempt = 0;
+        this.lastMsgAt = Date.now();
+        this._emit('live', {});
+        this._flush();
+      };
+
+      ws.onmessage = (ev) => {
+        if (this.ws !== ws) return;
+        this.lastMsgAt = Date.now();
+        let msg;
+        try { msg = JSON.parse(typeof ev.data === 'string' ? ev.data : ''); } catch (e) { return; }
+        if (!msg || msg.type !== 'trade' || !Array.isArray(msg.data)) return;
+        msg.data.forEach((tr) => {
+          const raw = String(tr.s || '').toUpperCase();
+          const sym = this.reverse[raw] || raw;
+          const set = this.subs.get(sym);
+          if (!set || !set.size) return;
+          const price = Number(tr.p);
+          if (!(price > 0)) return;
+          this.ticks++;
+          this.lastTickAt = Date.now();
+          const tick = { time: (Number(tr.t) || Date.now()) / 1000, price, volume: Number(tr.v) || 0 };
+          set.forEach((cb) => { try { cb(tick); } catch (e) {} });
+        });
+      };
+
+      ws.onerror = () => { if (this.ws === ws) this._emit('error', {}); };
+      ws.onclose = () => { if (this.ws === ws) { this.ws = null; if (!this._closed) this._schedule('close'); } };
+    }
+
+    _schedule(reason) {
+      if (this._closed) return;
+      this.attempt = Math.min(this.attempt + 1, 8);
+      const wait = Math.min(this.maxBackoff, 800 * Math.pow(1.7, this.attempt - 1)) + Math.random() * 500;
+      this._emit('reconnecting', { attempt: this.attempt, retryIn: Math.round(wait), reason });
+      const t = setTimeout(() => { this._timers.delete(t); this._open(); }, wait);
+      this._timers.add(t);
+    }
+
+    _watchdog() {
+      if (this._closed) return;
+      if (!this.ws || this.ws.readyState !== 1) return;
+      const idle = Date.now() - (this.lastMsgAt || 0);
+      if (idle > 180000) {          /* market closed or socket wedged — rebuild it */
+        try { this.ws.close(); } catch (e) {}
+        this.ws = null;
+        this._schedule('stale');
+      }
+    }
+
+    _flush() {
+      if (!this.ws || this.ws.readyState !== 1) return;
+      this.subs.forEach((set, sym) => {
+        if (!set.size) return;
+        try { this.ws.send(JSON.stringify({ type: 'subscribe', symbol: this.alias[sym] || sym })); } catch (e) {}
+      });
+    }
+
+    subscribe(symbol, cb) {
+      const sym = String(symbol || '').toUpperCase();
+      if (!sym) return () => {};
+      let set = this.subs.get(sym);
+      const isNew = !set || !set.size;
+      if (!set) { set = new Set(); this.subs.set(sym, set); }
+      if (isNew && this.subs.size > this.max) {
+        this.subs.delete(sym);
+        return () => {};
+      }
+      set.add(cb);
+      if (isNew && this.ws && this.ws.readyState === 1) {
+        try { this.ws.send(JSON.stringify({ type: 'subscribe', symbol: this.alias[sym] || sym })); } catch (e) {}
+      }
+      return () => {
+        const s2 = this.subs.get(sym);
+        if (!s2) return;
+        s2.delete(cb);
+        if (!s2.size) {
+          this.subs.delete(sym);
+          if (this.ws && this.ws.readyState === 1) {
+            try { this.ws.send(JSON.stringify({ type: 'unsubscribe', symbol: this.alias[sym] || sym })); } catch (e) {}
+          }
+        }
+      };
+    }
+
+    close() {
+      this._closed = true;
+      clearInterval(this._watch);
+      this._timers.forEach((t) => clearTimeout(t));
+      this._timers.clear();
+      try { if (this.ws) { this.ws.onopen = this.ws.onclose = this.ws.onmessage = this.ws.onerror = null; this.ws.close(); } } catch (e) {}
+      this.ws = null;
+      this.subs.clear();
+      this._emit('closed', {});
+      if (T._fh === this) T._fh = null;
+    }
+  }
+
   /* -------------------------------------------------------- local simulator */
   /* Deterministic-ish walk that keeps the app demo alive when no adapter is given. */
   const UNIVERSE = [
@@ -349,9 +609,13 @@
     for (let t = start; t <= now; t += step) {
       mom = mom * 0.9 + (rnd() - 0.5) * vol;
       p = p + theta * (base - p) + mom + Math.sin(t / 2600) * vol * 0.35;
-      out.push({ time: t, value: Math.round(p * 100) / 100 });
+      out.push({ time: t, value: p });
     }
-    out[out.length - 1].value = Math.round((out[out.length - 1].value + base) / 2 * 100) / 100;
+    /* remove any residual drift linearly so the last bar is exactly `base` */
+    const gap = base - out[out.length - 1].value;
+    for (let i = 0; i < out.length; i++) {
+      out[i].value = Math.round((out[i].value + gap * (i / Math.max(1, out.length - 1))) * 100) / 100;
+    }
     return out;
   }
 
@@ -360,11 +624,15 @@
     constructor(host, opts) {
       this.host = host;
       this.o = Object.assign({
-        symbol: 'AAPL', theme: 'obsidian', timeframe: '5m', mode: null,
+        symbol: 'AAPL', theme: DEFAULT_STYLE, timeframe: '5m', mode: null,
         symbols: null, adapter: null, simulate: true, balance: 10000,
-        showExec: true, compact: false, storage: true, onNotify: null
+        showExec: true, compact: false, storage: true, onNotify: null,
+        kind: 'price', feed: null, feedLabel: '', equityLabel: 'Portfolio performance',
+        equityUnit: '', timeframes: null
       }, opts || {});
-      this.theme = THEMES[this.o.theme] ? this.o.theme : 'obsidian';
+      this.theme = THEMES[this.o.theme] ? this.o.theme : DEFAULT_STYLE;
+      this.tfs = (Array.isArray(this.o.timeframes) && this.o.timeframes.length) ? this.o.timeframes.slice() : ['1m', '5m', '15m', '1H', '1D'];
+      if (this.tfs.indexOf(this.o.timeframe) < 0) this.o.timeframe = this.tfs[Math.min(1, this.tfs.length - 1)];
       this.adapter = this.o.adapter || null;
       this.sim = !this.adapter;
       this.symbol = String(this.o.symbol || 'AAPL').toUpperCase();
@@ -411,7 +679,7 @@
             </div>
             <div class="wt-headspacer"></div>
             <div class="wt-pills" data-wt="tfpills">
-              ${['1m', '5m', '15m', '1H', '1D'].map((x) => `<button class="wt-pill ${x === this.o.timeframe ? 'on' : ''}" data-tf="${x}">${x}</button>`).join('')}
+              ${this.tfs.map((x) => `<button class="wt-pill ${x === this.o.timeframe ? 'on' : ''}" data-tf="${x}">${x}</button>`).join('')}
             </div>
             <div class="wt-pills" data-wt="modepills">
               <button class="wt-pill ${this.mode === 'line' ? 'on' : ''}" data-mode="line">Line</button>
@@ -426,6 +694,13 @@
           <div class="wt-stage" data-wt="stage">
             <div class="wt-chart" data-wt="chart"></div>
             <div class="wt-legend" data-wt="legend"></div>
+            <div class="wt-tools">
+              <button data-tool="line" title="Line chart">${TOOL_SVG.line}</button>
+              <button data-tool="candle" title="Candlestick">${TOOL_SVG.candle}</button>
+              <button data-tool="ind" title="Indicators">${TOOL_SVG.ind}</button>
+              <button data-tool="alert" title="Alert">${TOOL_SVG.alert}</button>
+              <button data-tool="shot" title="Save image">${TOOL_SVG.shot}</button>
+            </div>
             <div class="wt-hud" data-wt="hud"></div>
             <div class="wt-tip" data-wt="tip"></div>
             <div class="wt-zoom">
@@ -443,7 +718,10 @@
           </div>` : ''}
           <div class="wt-foot">
             <span data-wt="foot">Streaming · lightweight-charts v${LWC_VERSION}</span>
-            <span class="bal">Balance <b data-wt="bal">${usd(this.balance)}</b></span>
+            <span style="display:flex;align-items:center;gap:8px">
+              <span class="wt-feedtag ${this.o.feed ? 'live' : 'sim'}" data-wt="feed">${this.o.feed ? 'Finnhub · live' : (this.sim ? 'Simulated feed' : 'Live feed')}</span>
+              <span class="bal">${this.o.kind === 'equity' ? '' : 'Balance <b data-wt="bal">' + usd(this.balance) + '</b>'}</span>
+            </span>
           </div>
         </div>
 
@@ -454,16 +732,29 @@
               <button data-side="long" class="on">Buy / Long</button>
               <button data-side="short">Buy / Short</button>
             </div>
+            <div class="wt-derivonly wt-dtab">
+              <div class="wt-dtabs">
+                <button class="on" data-ticktab="ticks">Ticks</button>
+                <button data-ticktab="minutes">Minutes</button>
+              </div>
+              <select class="wt-dperiod" data-tickperiod>
+                <option>1 Tick</option><option>2 Ticks</option><option>3 Ticks</option>
+                <option>4 Ticks</option><option selected>5 Ticks</option><option>10 Ticks</option>
+              </select>
+            </div>
             <div class="wt-field">
               <label>Amount (USD)</label>
               <div class="wt-input"><span>$</span><input data-wt="amount" type="number" min="1" step="1" value="100" inputmode="decimal"/><span data-wt="qty">0.4300 sh</span></div>
               <div class="wt-chips">${[25, 50, 100, 250].map((v) => `<button data-amt="${v}">$${v}</button>`).join('')}</div>
+              <div class="wt-derivonly wt-dhint"><span>Min $1.00</span><span data-wt="maxstake">Max $25,000.00</span></div>
             </div>
+            <div class="wt-derivonly wt-drow"><span class="lab">Barrier <i class="sub">spot</i></span><b data-wt="barrier">—</b></div>
             <div class="wt-tp" data-tp="tp"><span class="lab"><i class="sw"><i></i></i>Take profit</span>
               <span class="val"><span class="inrow"><input data-wt="tp" type="number" min="0" step="0.1" value="1.5"/><span class="pct">%</span></span><small class="pxl" data-wt="tpx">target off</small></span></div>
             <div class="wt-tp" data-tp="sl"><span class="lab"><i class="sw"><i></i></i>Stop loss</span>
               <span class="val"><span class="inrow"><input data-wt="sl" type="number" min="0" step="0.1" value="0.8"/><span class="pct">%</span></span><small class="pxl" data-wt="slx">stop off</small></span></div>
             <button class="wt-go" data-wt="go" data-side="long">Buy / Long ${this.symbol}</button>
+            <div class="wt-derivonly wt-dnote" data-wt="dnote">Trades fill at the live market price. Take profit and stop loss close the position automatically.</div>
             <div class="wt-sum">
               <div class="row"><span>Entry (live)</span><b data-wt="entrypx">—-</b></div>
               <div class="row"><span>Est. fees</span><b data-wt="fee">$0.00</b></div>
@@ -504,6 +795,17 @@
         psl: this.$('psl'), postat: this.$('postat'), bal: this.$('bal'), bp: this.$('bp'),
         entrypx: this.$('entrypx'), fee: this.$('fee'), foot: this.$('foot')
       };
+      if (this.o.kind === 'equity') {
+        root.classList.add('solo');
+        const sym = root.querySelector('.wt-sym');
+        if (sym) sym.replaceWith(el('div', 'wt-eqhead',
+          '<span>' + esc(this.o.equityLabel) + '</span><b>Total value' + (this.o.equityUnit ? ' · ' + esc(this.o.equityUnit) : '') + '</b>'));
+        const side = root.querySelector('.wt-side'); if (side) side.remove();
+        const exec = root.querySelector('.wt-exec'); if (exec) exec.remove();
+        const mp = root.querySelector('[data-wt="modepills"]'); if (mp) mp.remove();
+        const hints = root.querySelector('[data-wt="sidehint"]'); if (hints) hints.remove();
+        const balEl = root.querySelector('.bal'); if (balEl) balEl.remove();
+      }
       this._paintChrome();
     }
 
@@ -518,6 +820,17 @@
     _bind() {
       const r = this.root;
       r.addEventListener('click', (e) => {
+        const tool = e.target.closest('[data-tool]');
+        if (tool) { this._tool(tool.getAttribute('data-tool'), tool); return; }
+        const tab = e.target.closest('[data-ticktab]');
+        if (tab) {
+          this.root.querySelectorAll('[data-ticktab]').forEach((b) => b.classList.toggle('on', b === tab));
+          const p = this.root.querySelector('[data-tickperiod]');
+          if (p) p.innerHTML = tab.getAttribute('data-ticktab') === 'ticks'
+            ? '<option>1 Tick</option><option>2 Ticks</option><option>3 Ticks</option><option>4 Ticks</option><option selected>5 Ticks</option><option>10 Ticks</option>'
+            : '<option>1 Minute</option><option>2 Minutes</option><option>3 Minutes</option><option selected>5 Minutes</option><option>15 Minutes</option>';
+          return;
+        }
         const z = e.target.closest('[data-zoom]');
         if (z) { this._zoom(z.getAttribute('data-zoom')); return; }
         const tf = e.target.closest('[data-tf]');
@@ -653,14 +966,19 @@
       const th = THEMES[this.theme];
       const up = this.dir >= 0;
       const col = up ? th.up : th.down;
-      const a = THEMES[this.theme].chart.areaAlpha;
+      const a = th.chart.areaAlpha;
+      const priceLine = th.chart.priceLine || col;
+      /* the reference keeps the tape neutral and only highlights the live
+         segment; themes without `lineNeutral` tint the whole line instead */
+      const neutral = th.chart.lineNeutral;
+      const line = neutral || col;
       return {
-        lineColor: col,
-        topColor: hexA(col, Math.min(0.55, a * 1.9)),
-        bottomColor: hexA(col, 0.008),
-        crosshairMarkerBackgroundColor: col,
-        priceLineColor: col,
-        lastValueColor: col
+        lineColor: line,
+        topColor: hexA(neutral || col, neutral ? 0.10 : Math.min(0.55, a * 1.9)),
+        bottomColor: hexA(neutral || col, neutral ? 0.005 : 0.008),
+        crosshairMarkerBackgroundColor: neutral ? priceLine : col,
+        priceLineColor: priceLine,
+        lastValueColor: priceLine
       };
     }
 
@@ -738,7 +1056,10 @@
       const sym = this.symbol;
       const tf = this.o.timeframe;
       let pts = null;
-      if (this.adapter && typeof this.adapter.history === 'function') {
+      if (this.o.kind === 'equity' && this.adapter && typeof this.adapter.equity === 'function') {
+        try { pts = await this.adapter.equity(tf); } catch (e) { pts = null; }
+      }
+      if ((!pts || !pts.length) && this.adapter && typeof this.adapter.history === 'function') {
         try { pts = await this.adapter.history(sym, tf); } catch (e) { pts = null; }
       }
       if (!pts || !pts.length) {
@@ -754,7 +1075,7 @@
       this.points = clean;
       this.sessionOpen = clean[0] ? clean[0].value : 0;
       this._stats = null;
-      if (this.adapter && typeof this.adapter.stats === 'function') {
+      if (this.o.kind !== 'equity' && this.adapter && typeof this.adapter.stats === 'function') {
         try { this._stats = await this.adapter.stats(sym); } catch (e) { this._stats = null; }
         if (this.destroyed || this.symbol !== sym) return;
         if (this._stats && this._stats.open > 0) this.sessionOpen = this._stats.open;
@@ -793,6 +1114,24 @@
 
     /* ------------------------------------------------------------ live feed */
     _startFeed() {
+      if (this.o.feed) {
+        this._unsub = this.o.feed.subscribe(this.symbol, (tick) => this.pushTick(tick));
+        this.o.feed.onStatus((st) => {
+          if (st === 'live') this.setFeedStatus('Finnhub · live', 'live');
+          else if (st === 'reconnecting') this.setFeedStatus('reconnecting…', 'sim');
+          else if (st === 'error') this.setFeedStatus('stream error', 'sim');
+        });
+        return;
+      }
+      if (this.o.kind === 'equity' && this.adapter && typeof this.adapter.liveValue === 'function') {
+        this._eqTimer = setInterval(async () => {
+          if (this.destroyed) return;
+          let v = 0;
+          try { v = Number(await this.adapter.liveValue()); } catch (e) { v = 0; }
+          if (v > 0) this.pushTick({ time: Date.now() / 1000, price: v });
+        }, 2500);
+        return;
+      }
       if (this.adapter && typeof this.adapter.subscribe === 'function') {
         this._unsub = this.adapter.subscribe(this.symbol, (tick) => this.pushTick(tick));
         return;
@@ -910,13 +1249,14 @@
           }));
         } catch (e) {}
       };
-      add(p.entry, th.accent, 'ENTRY', 2);
+      add(p.entry, th.chart.lineNeutral || th.accent, 'ENTRY', 2);
       if (p.tp) add(p.tp, th.up, 'TP', 1);
       if (p.sl) add(p.sl, th.down, 'SL', 1);
     }
 
     _paintPosition() {
       const p = this.position, E = this.els;
+      if (!E.pos) return;
       const th = THEMES[this.theme];
       if (!p) {
         E.pos.classList.remove('on'); E.noPos.style.display = '';
@@ -958,6 +1298,7 @@
     }
 
     _sync() {
+      if (this.o.kind === 'equity' || !this.els.amount) { this._paintPosition(); return; }
       const amt = Number(this.els.amount.value) || 0;
       const px = this.lastPrice || 0;
       const th = THEMES[this.theme];
@@ -978,6 +1319,10 @@
         this.root.querySelector('[data-tp="tp"]').classList.toggle('on', !!this.position.tp);
         this.root.querySelector('[data-tp="sl"]').classList.toggle('on', !!this.position.sl);
       }
+      const barrier = this.root.querySelector('[data-wt="barrier"]');
+      if (barrier) barrier.textContent = px > 0 ? this._fmtPrice(px) : '—';
+      const maxStake = this.root.querySelector('[data-wt="maxstake"]');
+      if (maxStake) maxStake.textContent = 'Max ' + usd(Math.max(0, this.balance));
       if (this.els.go) {
         this.els.go.dataset.side = side;
         this.els.go.textContent = side === 'long' ? 'Buy / Long ' + this.symbol : 'Buy / Short ' + this.symbol;
@@ -996,6 +1341,7 @@
     _setSide(side) {
       this._side = side;
       const seg = this.root.querySelector('.wt-seg');
+      if (!seg) return;
       seg.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.getAttribute('data-side') === side));
       const tpc = this.root.querySelector('[data-tp="tp"]');
       const slc = this.root.querySelector('[data-tp="sl"]');
@@ -1069,6 +1415,26 @@
     }
 
     /* ------------------------------------------------------------- controls */
+    _tool(kind, btn) {
+      if (kind === 'line' || kind === 'candle') {
+        this._setMode(kind);
+        this.root.querySelectorAll('[data-tool]').forEach((b) => b.classList.remove('on'));
+        if (btn) btn.classList.add('on');
+        return;
+      }
+      if (kind === 'shot') {
+        try {
+          const c = this.chartHost.querySelector('canvas');
+          const url = c.toDataURL('image/png');
+          const a = document.createElement('a');
+          a.href = url; a.download = this.symbol + '-chart.png'; a.click();
+        } catch (e) { this._notify('Screenshot unavailable', 'err'); }
+        return;
+      }
+      if (kind === 'alert') { this._notify('Alert set at ' + this._fmtPrice(this.lastPrice), 'ok'); return; }
+      if (kind === 'ind') { this._notify('Indicators: coming to this layout', 'ok'); return; }
+    }
+
     _zoom(kind) {
       if (!this.chart) return;
       const ts = this.chart.timeScale();
@@ -1100,6 +1466,7 @@
       this.root.querySelectorAll('[data-mode]').forEach((b) => b.classList.toggle('on', b.getAttribute('data-mode') === mode));
       this._teardownSeries();
       this._bar = null; this._barTime = 0;
+      this.root.querySelectorAll('[data-tool]').forEach((b) => b.classList.toggle('on', b.getAttribute('data-tool') === mode));
       this._attachSeries();
       this._setData();
       try { this.chart.timeScale().fitContent(); } catch (e) {}
@@ -1132,6 +1499,12 @@
     }
 
     /* ---------------------------------------------------------------- misc */
+    setFeedStatus(label, tone) {
+      const f = this.els.feed;
+      if (!f) return;
+      f.textContent = label;
+      f.className = 'wt-feedtag ' + (tone || '');
+    }
     setBalance(v) { this.balance = Number(v) || 0; this._sync(); }
     setPosition(p) {
       this.position = p ? Object.assign({}, p) : null;
@@ -1147,7 +1520,9 @@
     destroy() {
       this.destroyed = true;
       clearTimeout(this._feedTimer);
+      clearInterval(this._eqTimer);
       if (typeof this._unsub === 'function') { try { this._unsub(); } catch (e) {} }
+      if (typeof this._unsubStatus === 'function') { try { this._unsubStatus(); } catch (e) {} }
       try { this._ro.disconnect(); } catch (e) {}
       try { if (this.chart) this.chart.remove(); } catch (e) {}
       this.chart = null;
@@ -1218,14 +1593,21 @@
     themes: THEME_ORDER,
     themeMeta: THEMES,
     Terminal: Terminal,
+    FinnhubStream: FinnhubStream,
     instances: [],
+    /* one socket per page, shared by every chart */
+    stream(opts) {
+      if (!T._fh) T._fh = new FinnhubStream(opts || {});
+      return T._fh;
+    },
+    closeStream() { if (T._fh) { try { T._fh.close(); } catch (e) {} T._fh = null; } },
     mount(host, opts) {
       if (!host) throw new Error('WC_TERMINAL.mount needs a host element');
       const inst = new Terminal(host, opts);
       T.instances.push(inst);
       return inst;
     },
-    get style() { try { return localStorage.getItem(STYLE_KEY) || 'obsidian'; } catch (e) { return 'obsidian'; } },
+    get style() { try { return localStorage.getItem(STYLE_KEY) || DEFAULT_STYLE; } catch (e) { return DEFAULT_STYLE; } },
     setStyle(name) {
       if (!THEMES[name]) return;
       try { localStorage.setItem(STYLE_KEY, name); } catch (e) {}
