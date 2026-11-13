@@ -108,16 +108,44 @@ injected by `scripts/prepare-assets.js`, so `npm run build` is the only step nee
 | Order panel | Buy / Long ↔ Buy / Short, USD amount with quick chips, TP/SL switches with % and computed target prices, live preview of entry, fees and buying power |
 | Execution | Ticketed button in the panel **and** BUY / SELL buttons under the chart; SELL is disabled with no position |
 | Position | Dashed ENTRY / TP / SL price lines, chart HUD (side, entry, now, unrealised P&L) and a position card with a close-at-market button |
-| Styles | Five shipped looks — `obsidian` (reference layout), `aurora` (neon glass), `carbon` (candles + volume, mono), `glass` (frosted), `neon` (HUD/scanlines). The choice persists in `localStorage` (`wc_terminal_style`) and can be changed from the picker in the terminal header |
+| Styles | Six shipped looks — `deriv` (**the reference design, default**), `obsidian` (charcoal + steel blue), `aurora` (neon glass), `carbon` (candles + volume, mono), `glass` (frosted), `neon` (HUD/scanlines). The choice persists in `localStorage` (`wc_terminal_style`) and can be changed from the picker in the terminal header |
 
-The `obsidian` style is the default and mirrors the reference layout: charcoal canvas, thin
-price line, right price scale with a labelled live badge, bottom time scale and a right-hand
-ticket.
+The default `deriv` style reproduces the reference screenshot: near-black canvas with a thin
+neutral price line, a **blue dashed live price line with a matching badge**, dashed entry line,
+icon rail top-left (line/candles/alert/screenshot), bottom-left zoom cluster and the tick ticket
+(`Ticks | Minutes`, period select, Long/Short, Barrier · spot, stake with min/max, take profit and
+stop loss, mint **Long** CTA). Only the live segment and the badge change colour with the tape —
+green on an up-tick, red on a down-tick — so the chart stays calm like the reference while still
+signalling direction.
 
-**Data + orders.** With the adapter (`wc-terminal-app.js`) the terminal reads history from
-`GET /api/market/history`, quotes from the app quote feed (`INV.quote`, which the backend fills from
-Finnhub and the 24/7 OTC fallback), buys through `POST /api/market/spot/buy` and closes through
-`POST /api/market/spot/sell`, so TP/SL keep being enforced by the server-side spot worker. Short
+### Direct Finnhub WebSocket (tick-by-tick)
+
+`GET /api/market/stream` returns the browser stream descriptor. When the admin runs hybrid mode
+the response is `{ enabled: true, url: "wss://ws.finnhub.io?token=…", symbolMap, maxSymbols: 50 }`;
+otherwise `enabled: false` and the terminal falls back to the app quote feed and then to its own
+simulator. `FINNHUB_BROWSER_STREAM=off` (env) or `clientStream:false` in `market-config.json`
+disables handing the key to browsers.
+
+`WC_TERMINAL.stream()` keeps **one socket per page**. Every terminal — stock chart, live-trade
+chart, portfolio performance — subscribes through it:
+
+* per-symbol ref counting with `subscribe` / `unsubscribe` frames (Finnhub caps free keys at 50)
+* `trade` frames are dispatched straight into `pushTick()` (time, price, volume) — no polling
+* exponential backoff reconnect (0.8s → 30s, jittered) with `attempt` counter and status events
+* resubscribe of every live symbol on `open`; `online` event forces an immediate retry
+* 180 s stale watchdog rebuilds a wedged/quiet socket (market closed)
+* full teardown on `beforeunload` and per-terminal unsubscribe on unmount
+
+`symbolMap` translates app tickers to Finnhub symbols (e.g. `BTCUSD → BINANCE:BTCUSDT`), so
+crypto/forex assets stream on the same socket.
+
+**Data + orders.** With the adapter (`wc-terminal-app.js`) the terminal backfills from
+`GET /api/market/history`, streams ticks from the direct Finnhub socket above, buys through
+`POST /api/market/spot/buy` and closes through `POST /api/market/spot/sell`, so TP/SL keep being
+enforced by the server-side spot worker.
+The same component also renders the **portfolio performance** cards (Invest dashboard and the
+live-trade dashboard) in `kind:'equity'` mode — chart-only layout, holdings-weighted equity curve
+plus 2.5 s live value ticks — and the compact live-trade chart on the trade page. Short
 tickets are rejected with a clear message until the spot book supports them. Without an adapter
 (standalone demo) the module runs its own smooth simulator.
 
