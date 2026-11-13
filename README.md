@@ -1,4 +1,4 @@
-# WhaleChat 3.22.2 — web app + mobile apps
+# WhaleChat 3.23.0 — web app + mobile apps
 
 WhaleChat is a social + marketplace + wallet product built as a single-page app with a
 Node sync server and native Android/iOS shells.
@@ -79,6 +79,77 @@ For provider testing only: `FINNHUB_REST_BASE`, `FINNHUB_WS_URL`, `FINNHUB_SEED_
 FINNHUB_API_KEY=your_key node scripts/verify-finnhub.js
 npm run verify:finnhub          # same, uses FINNHUB_API_KEY from the environment
 ```
+
+## Stock trading flows (Rise/Fall + Spot) — 3.23.0
+
+Every listed stock has **two independent flows** on the same live Finnhub quote:
+
+1. **Rise / Fall (leveraged, existing)** — stake, direction, duration, optional TP/SL,
+   trailing stop; settled server-side by `market.js`.
+2. **Spot investment (new)** — buy real shares at the live market price and sell them
+   back at the live market price.
+
+### Spot buy / sell
+
+`POST /api/market/spot/buy` accepts `userId`, `ticker` and **one** of
+`amountCoins` (WC), `amountUsd`, or `shares`, plus optional `tpPrice` / `slPrice`.
+
+* Execution price is the current live Finnhub quote (plus the per-stock admin margin below).
+* The total cost is deducted from the wallet in the same synchronous step that stores the
+  position, so a failed request can never leave a free position behind.
+* A position records `Symbol`, `Entry Price`, `Quantity`, `Invested Capital`,
+  `Take Profit Price` and `Stop Loss Price` in `db.holdings` (`kind: "spot"`).
+* Every buy is written to `db.trades` (`type: "spot"`, `status: "Completed"`).
+
+`POST /api/market/spot/sell` with `userId` + `ticker` closes the position at the current
+live price: `payout WC = quantity × live USD ÷ 0.50` (1 WC = $0.50). The payout is
+credited to the wallet and the sell is written to Order History (`#/invest/orders`).
+
+`POST /api/market/spot/tpsl` updates or clears (`0`) the TP/SL levels on an open position.
+
+### Automated Take Profit / Stop Loss
+
+`spot.js` runs a 1-second worker:
+
+* **Take Profit** — `live price >= takeProfitPrice` → market sell.
+* **Stop Loss** — `live price <= stopLossPrice` → market sell.
+
+The sell path is a **fully synchronous critical section**: it re-reads the position,
+removes (or trims) it, then credits the wallet. A manual sell racing the TP/SL worker
+therefore cannot double-credit — the loser sees `No open position`. Notifications and
+transaction records are created for every automated exit.
+
+### Admin profit margin per stock
+
+Admin → **Stocks** → the **%** button (or Add/Edit stock) sets `profitPct` per stock
+(0–100%). It is added to the **live Finnhub price on buys** — the platform's profit on
+that stock — while every chart, quote, TP/SL check and sell keeps using the raw live
+market price. Finnhub remains the only price source for all real stocks.
+
+### Trading bots (restored)
+
+`bots.js` + `public/trading-bots.js` provide the four bot tiers, admin-editable pricing,
+subscriptions, reserved capital and a server-side worker that keeps trading while the app
+is closed. Admin → Stocks includes the bot configuration panel. Endpoints:
+`/api/bots/state`, `/api/bots/subscribe`, `/api/bots/start`, `/api/bots/stop`,
+`/api/bots/admin`, `/api/bots/admin/config`.
+
+### WhaleChat share investment portfolio (restored)
+
+`shares.js` + `public/whalechat-shares.js` provide admin-defined investment plans
+(min/max, duration, % return), real-time accrual, automatic maturity payout and the
+`#/invest/shares` dashboard, plus a summary card on the Invest dashboard. Endpoints:
+`/api/shares/state`, `/api/shares/invest`, `/api/shares/admin`, `/api/shares/admin/plans`.
+
+### Local verification
+
+```bash
+node scripts/prepare-assets.js   # assemble whalechat.html + inject the modules
+PORT=8091 DATA_DIR=/tmp/wcdata node server.js
+```
+
+The backend exposes `/api/market/spot/positions?userId=…` for a quick position/worker
+status check, and `/api/health` reports the market feed and service state.
 
 ## Run locally
 
