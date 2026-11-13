@@ -1,4 +1,4 @@
-# WhaleChat 3.26.1 — web app + mobile apps
+# WhaleChat 3.27.0 — web app + mobile apps
 
 WhaleChat is a social + marketplace + wallet product built as a single-page app with a
 Node sync server and native Android/iOS shells.
@@ -265,6 +265,20 @@ displayed price from the previous tick to the new tick over an 850 ms ease-out w
 last point of the active lightweight-chart (stock chart and portfolio chart) is updated in
 place, and price/percentage labels are repainted at ~10 fps, so the trade view moves
 smoothly while server settlement and TP/SL continue to use the authoritative quote.
+
+## Desktop / Mobile view
+
+The app now opens in **Desktop view by default** and has a view switch:
+
+* **Topbar button** — monitor/phone icon, switches between views.
+* **Sidebar button** — “Switch to mobile view” / “Switch to desktop view”.
+* Choice is remembered per device in `localStorage` (`wc.viewMode`).
+
+**Desktop view on a phone** sets the viewport to a 1280px layout width, so the real desktop
+UI (sidebar, wide grids) is used and scaled to the screen. **Mobile view** uses the normal
+responsive layout; on a desktop screen it frames the app in a centred 480px phone-style
+column with the bottom navigation. Toggling on a phone reloads once so the new viewport
+width applies cleanly. Both modes dispatch resize events so charts re-measure.
 
 ## Run locally
 
