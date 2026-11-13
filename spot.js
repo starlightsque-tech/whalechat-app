@@ -7,10 +7,12 @@
      is stored with symbol, entry price, quantity, invested capital and
      optional Take Profit / Stop Loss targets.
    • On close (manual, TP or SL) the user is paid the admin-configured profit
-     rate for that stock, locked when the position was opened:
-       payout = invested capital + (invested capital × profit rate / 100)
-     credited to the wallet and moved to Order History. Live Finnhub prices
-     are shown and used for TP/SL triggers only — they do not change payout.
+     rate for that stock, locked when the position was opened, applied to the
+     position's current value (capital + live market gain):
+       profit payout = (invested capital + market gain) × profit rate / 100
+       total credit  = invested capital + profit payout
+     Live Finnhub prices feed the market gain and TP/SL; the admin rate is the
+     multiplier that turns that value into the user's profit.
    • A background worker checks every open position once per second against
      the shared backend quote cache. The critical section below is fully
      synchronous, and a position is removed before the payout is credited,
@@ -115,11 +117,20 @@ class SpotService {
     return this.adminPct(db, h && h.ticker);
   }
 
-  /** Payout on close = invested capital + the exact admin profit rate. */
-  payoutFor(investedCoins, ratePct) {
+  /** Payout on close = capital + (capital + market gain) × admin rate.
+      e.g. capital 100, gain 1.2, rate 10% → profit 10.12, credit 110.12. */
+  payoutFor(investedCoins, ratePct, marketGainCoins) {
     const basis = Math.max(0, Number(investedCoins) || 0);
-    const profit = round(basis * (Math.max(0, Number(ratePct) || 0) / 100), 2);
-    return { costBasis: round(basis, 2), profitCoins: profit, payoutCoins: round(basis + profit, 2) };
+    const gain = Number(marketGainCoins) || 0;
+    const base = Math.max(0, basis + gain);
+    const profit = round(base * (Math.max(0, Number(ratePct) || 0) / 100), 2);
+    return {
+      costBasis: round(basis, 2),
+      marketGain: round(gain, 2),
+      baseCoins: round(base, 2),
+      profitCoins: profit,
+      payoutCoins: round(basis + profit, 2)
+    };
   }
 
   holding(db, userId, ticker) {
@@ -151,18 +162,19 @@ class SpotService {
     const entry = Number(h.avgPrice) || 0;
     const invested = Number(h.investedCoins) || round(shares * entry * COINS_PER_USD, 2);
     const ratePct = this.rateFor(db, h);
-    const locked = this.payoutFor(invested, ratePct);
-    /* market value is display-only; the payout is fixed by the admin rate */
+    const marketGain = round(shares * ((live || entry) - entry) * COINS_PER_USD, 2);
+    const locked = this.payoutFor(invested, ratePct, marketGain);
     const marketValueCoins = round(shares * (live || entry) * COINS_PER_USD, 2);
     return {
       id: h.id, userId: h.userId, ticker: h.ticker,
       symbol: h.ticker, entryPrice: entry, quantity: shares, shares,
       investedCoins: invested, investedUsd: round(invested * 0.5, 2),
-      livePrice: live, marketPriceUsd: live, marketValueCoins,
+      livePrice: live, marketPriceUsd: live, marketValueCoins, marketGainCoins: marketGain,
       valueCoins: locked.payoutCoins,
       profitPct: ratePct, adminProfitPct: ratePct,
       profitCoins: locked.profitCoins,
       payoutCoins: locked.payoutCoins,
+      payoutBaseCoins: locked.baseCoins,
       pnlCoins: locked.profitCoins,
       pnlPct: ratePct,
       takeProfitPrice: Number(h.takeProfitPrice) || 0,
@@ -301,7 +313,8 @@ class SpotService {
       ? totalInvested
       : round(totalInvested * (shares / totalShares), 2);
     const ratePct = this.rateFor(db, h);
-    const locked = this.payoutFor(soldBasis, ratePct);
+    const marketGain = round(shares * (price - entry) * COINS_PER_USD, 2);
+    const locked = this.payoutFor(soldBasis, ratePct, marketGain);
     const payout = locked.payoutCoins;
     const costBasis = locked.costBasis;
     const plCoins = locked.profitCoins;
@@ -328,7 +341,7 @@ class SpotService {
         id: nid('tr'), userId, ticker, name: (this.stock(db, ticker) || {}).name || ticker,
         side: 'sell', type: 'spot', status: 'Completed',
         shares, priceUsd: price, marketPriceUsd: price,
-        entryPriceUsd: entry, payoutPct: ratePct,
+        entryPriceUsd: entry, payoutPct: ratePct, marketGainCoins: marketGain,
         coins: payout, feeCoins: 0,
         plUsd: round(plCoins * 0.5, 2), plCoins,
         closeReason: reason,
@@ -342,7 +355,7 @@ class SpotService {
       });
       this.notify(db, userId,
         reason === 'Take Profit Hit' ? 'Take Profit Hit — position closed' : reason === 'Stop Loss Hit' ? 'Stop Loss Hit — position closed' : 'Sell order filled',
-        `${shares.toFixed(6)} ${ticker} closed. ${payout.toFixed(2)} WC credited (invested ${costBasis.toFixed(2)} WC + ${ratePct}% profit = +${plCoins.toFixed(2)} WC). Live market price was $${price.toFixed(4)}.`,
+        `${shares.toFixed(6)} ${ticker} closed. ${payout.toFixed(2)} WC credited (capital ${costBasis.toFixed(2)} WC + ${ratePct}% of capital+gain = +${plCoins.toFixed(2)} WC profit). Live market price was $${price.toFixed(4)}.`,
         'check');
       this.settledTotal += 1;
       this.changed('spot-sell');
