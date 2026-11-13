@@ -439,7 +439,12 @@
   function portfolioSig() {
     try {
       if (typeof LT === 'undefined' || !LT.positions) return '';
-      return (LT.positions(me().id) || []).map((p) => [p.kind, p.ticker, p.trade ? p.trade.id : (p.holding ? p.holding.id : '')].join(':')).join('|');
+      const rows = (LT.positions(me().id) || []).map((p) => [p.kind, p.ticker, p.trade ? p.trade.id : (p.holding ? p.holding.id : '')].join(':'));
+      try {
+        const b = window.WC_BOTS && WC_BOTS.state && WC_BOTS.state.session;
+        if (b) rows.push(['bot', b.id, b.poolCoins, b.tradeCount, b.status].join(':'));
+      } catch (e) {}
+      return rows.join('|');
     } catch (e) { return ''; }
   }
   MK.portfolioSig = '';
