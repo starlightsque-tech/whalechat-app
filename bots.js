@@ -421,7 +421,8 @@ class BotService {
     pool = Math.round((pool + pnl) * 100) / 100;
     if (pool < 0) pool = 0;
 
-    const stocks = (db.stocks || []).filter((x) => x && x.ticker && x.assetClass !== 'forex');
+    const classes = (db.invest && db.invest.classes) || {};
+    const stocks = (db.stocks || []).filter((x) => x && x.ticker && classes[x.assetClass || 'us'] !== false);
     const pick = stocks.length ? stocks[Math.floor(Math.random() * stocks.length)] : null;
     const ticker = pick ? String(pick.ticker) : 'BTCUSDT';
     let quote = null;
