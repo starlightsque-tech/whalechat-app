@@ -1,4 +1,4 @@
-# WhaleChat 3.23.3 — web app + mobile apps
+# WhaleChat 3.24.0 — web app + mobile apps
 
 WhaleChat is a social + marketplace + wallet product built as a single-page app with a
 Node sync server and native Android/iOS shells.
@@ -124,6 +124,33 @@ The sell path is a **fully synchronous critical section**: it re-reads the posit
 removes (or trims) it, then credits the wallet. A manual sell racing the TP/SL worker
 therefore cannot double-credit — the loser sees `No open position`. Notifications and
 transaction records are created for every automated exit.
+
+### Live trade controls & bot performance (3.24.0)
+
+**Take Profit is a skim, not a close.** When a trade's TP level is reached (or the user
+presses **Take profit** while the trade is in profit):
+
+* the open profit is credited to the wallet immediately,
+* the position is re-based to the current price,
+* the consumed TP level is cleared,
+* the trade **keeps running** until the timer expires, the stop loss is hit, or the user
+  presses **Stop trade**.
+
+The **Take profit** button is disabled unless the trade is currently in profit. The new
+middle **Stop trade** button closes the trade immediately and returns capital + open P/L.
+**Take loss** is disabled unless the trade is currently losing; pressing it (or an
+automatically hit stop loss) closes the trade.
+
+Manual take-profit uses `POST /api/market/trade/take-profit`, which performs the skim
+server-side so a click racing the settlement worker cannot double-credit. The backend
+worker also skims automatically on TP hits while the app is closed.
+
+**Bot performance on the portfolio chart.** The main Invest → Portfolio performance chart
+now includes the running trading bot's equity: it starts at the allocated capital and
+steps with every simulated bot trade. The hero totals (portfolio value, invested,
+earnings), allocation donut and positions list include a “Trading Bot” row, and the bot
+card shows live P/L, trade count and the latest bot trade. The dashboard polls bot state
+every 8 seconds so the chart, earnings and activities stay current.
 
 ### Bulk profit rate per market type
 
