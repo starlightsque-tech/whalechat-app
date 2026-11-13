@@ -1,8 +1,8 @@
 {
-  "version": "3.29.1",
-  "build": "2026-11-13T12:50:47Z",
+  "version": "3.30.0",
+  "build": "2026-11-13T14:30:00Z",
   "file": "whalechat.html",
-  "notes": "Bots: admin identities and avatars, hot assistants, account-health chart, accuracy-based stamina and cooldown.",
-  "releasedAt": "2026-11-13T12:50:47.560Z",
+  "notes": "WhaleChat 3.30.0 — bot profiles with default profile pictures, health engine (score/energy/stamina/drawdown + cooling countdown), dedicated bot performance page with equity curve, and the Lightweight Charts v5 pro chart across stock, portfolio and investment-plan views.",
+  "releasedAt": "2026-11-13T14:30:00Z",
   "minimum": "3.0.0"
 }
