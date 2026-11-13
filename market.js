@@ -215,11 +215,17 @@ class MarketService {
         if (typeof raw.clientStream === 'boolean') this.config.clientStream = raw.clientStream;
       }
     } catch (e) { /* first run */ }
-    if (!this.config.apiKey && process.env.FINNHUB_API_KEY) {
-      this.config.apiKey = String(process.env.FINNHUB_API_KEY).trim();
-    }
-    if (this.config.mode !== 'hybrid' && process.env.FINNHUB_MODE === 'hybrid' && this.config.apiKey) {
-      this.config.mode = 'hybrid';
+    const envKey = String(process.env.FINNHUB_API_KEY || '').trim();
+    const envMode = String(process.env.FINNHUB_MODE || '').toLowerCase();
+    if (envKey) {
+      /* deploy environment wins: FINNHUB_API_KEY turns the feed live */
+      this.config.apiKey = envKey;
+      this.keySource = 'env';
+      if (envMode !== 'simulated') this.config.mode = 'hybrid';
+    } else if (this.config.apiKey) {
+      this.keySource = 'stored';
+    } else {
+      this.keySource = 'none';
     }
     if (String(process.env.FINNHUB_BROWSER_STREAM || '').toLowerCase() === 'off') this.config.clientStream = false;
   }
@@ -251,6 +257,10 @@ class MarketService {
       symbolMap: enabled ? list.reduce((m, a) => { if (a && a.ticker && a.finnhubSymbol) m[a.ticker] = a.finnhubSymbol; return m; }, {}) : {},
       maxSymbols: 50,
       source: this.source(),
+      keySource: this.keySource || (this.config.apiKey ? 'stored' : 'none'),
+      wsConnected: !!this.wsConnected,
+      lastTickAt: this.lastWsTickAt || this.lastTickAt || null,
+      marketOpen: usMarketOpen(),
       at: Date.now()
     };
   }
@@ -262,6 +272,7 @@ class MarketService {
       mode: this.config.mode,
       refreshSec: this.config.refreshSec,
       hasKey: !!key,
+      keySource: this.keySource || (key ? 'stored' : 'none'),
       keyMasked: key ? (key.slice(0, 4) + '…' + key.slice(-4)) : '',
       clientStream: this.config.clientStream !== false,
       status: this.status()
@@ -677,6 +688,7 @@ class MarketService {
       mode: this.config.mode,
       refreshSec: this.config.refreshSec,
       hasKey: !!this.config.apiKey,
+      keySource: this.keySource || (this.config.apiKey ? 'stored' : 'none'),
       marketOpen: usMarketOpen(),
       source: this.source(),
       notice: this.notice(),
