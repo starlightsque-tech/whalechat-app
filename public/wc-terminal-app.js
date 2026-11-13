@@ -92,26 +92,9 @@
     const raw = (d && d.history && d.history[ticker]) || [];
     let pts = raw.map((p) => ({ time: Math.floor((Number(p.t) || 0) / 1000), value: Number(p.p) || 0 }))
       .filter((p) => p.time > 0 && p.value > 0);
-    const need = { '1m': 1800, '5m': 6 * 3600, '15m': 24 * 3600, '1H': 7 * 86400, '1D': 30 * 86400 }[tf] || 6 * 3600;
-    const span = pts.length > 1 ? pts[pts.length - 1].time - pts[0].time : 0;
-    if (pts.length < 120 || span < need * 0.35) {
-      /* too thin to draw (no Finnhub candles, market closed or a just-booted
-         server) — synthesise
-         a drift-corrected walk so the tape still lands exactly on the live price */
-      const live = price(ticker) || 100;
-      const now = Math.floor(Date.now() / 1000);
-      const step = { '1m': 10, '5m': 30, '15m': 60, '1H': 180, '1D': 900 }[tf] || 30;
-      const n = 320;
-      const walk = [0];
-      for (let i = 1; i < n; i++) walk.push(walk[i - 1] + (Math.random() - 0.5) * live * 0.0022);
-      const drift = walk[n - 1];
-      pts = [];
-      for (let i = 0; i < n; i++) {
-        const v = live + walk[i] - drift * (i / (n - 1));
-        pts.push({ time: now - (n - 1 - i) * step, value: Math.round(v * 100) / 100 });
-      }
-      pts[pts.length - 1].value = live;
-    }
+    /* LIVE ONLY: when Finnhub has not delivered candles yet the chart shows an
+       empty state instead of a synthetic walk. Nothing is invented. */
+    if (pts.length < 2) return [];
     const clean = [];
     pts.sort((a, b) => a.time - b.time).forEach((p) => {
       if (!clean.length || p.time > clean[clean.length - 1].time) clean.push(p);
@@ -173,13 +156,7 @@
     const key = EQ_WINDOW[tf] ? tf : '1M';
     const hist = EQ_TO_HIST[key] || '1H';
     const hs = holdingsList();
-    if (!hs.length) {
-      const v = portfolioValue();
-      return [
-        { time: Math.floor(Date.now() / 1000) - 600, value: v },
-        { time: Math.floor(Date.now() / 1000), value: v }
-      ];
-    }
+    if (!hs.length) return [];
     const series = await Promise.all(hs.map(async (h) => {
       let pts = [];
       try { pts = await history(h.ticker, hist); } catch (e) { pts = []; }
@@ -232,6 +209,15 @@
   }
   function liveValue() { return portfolioValue(); }
 
+  /* invested capital + live value for the equity chart's reference line */
+  function equityMeta() {
+    try {
+      const hs = holdingsList();
+      const cost = hs.reduce((a, h) => a + (Number(h.shares) || 0) * (Number(h.avgPrice) || 0), 0);
+      return { cost, value: portfolioValue() };
+    } catch (e) { return null; }
+  }
+
   /* ------------------------------------------------------------------ orders */
   function position(ticker) {
     try {
@@ -272,7 +258,7 @@
     try { const u = me(); return u ? Math.max(0, Number(u.balance) || 0) * 0.5 : 0; } catch (e) { return 0; }
   }
 
-  A.adapter = { history, subscribe: pollFeed, symbols, stats, position, buy, sell, balance, equity, liveValue };
+  A.adapter = { history, subscribe: pollFeed, symbols, stats, position, buy, sell, balance, equity, liveValue, equityMeta };
 
   /* ---------------------------------------------------------------- styling */
   (function styleOnce() {
