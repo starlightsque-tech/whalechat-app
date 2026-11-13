@@ -84,7 +84,8 @@
     INV.CATS = ['All', 'US Stocks', 'Global Stocks', 'Forex', 'Crypto'];
     if (!INV.marketCat || ['Top Gainers', 'Top Losers', 'Most Traded', 'Trending', 'Technology', 'Crypto', 'Dividend', 'New'].includes(INV.marketCat)) INV.marketCat = 'All';
     INV.marketFiltered = function () {
-      let list = INV.stocks();
+      /* only asset classes the admin has switched on for the app */
+      let list = (typeof INV.visibleStocks === 'function') ? INV.visibleStocks() : INV.stocks();
       const q = String(INV.marketQuery || '').trim().toLowerCase();
       if (q) list = list.filter((s) => [s.ticker, s.displayTicker, s.name, s.sector].some((v) => String(v || '').toLowerCase().includes(q)));
       const map = { 'US Stocks': 'us', 'Global Stocks': 'global', 'Forex': 'forex', 'Crypto': 'crypto' };
