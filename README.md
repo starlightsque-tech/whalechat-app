@@ -1,4 +1,4 @@
-# WhaleChat 3.24.1 — web app + mobile apps
+# WhaleChat 3.24.2 — web app + mobile apps
 
 WhaleChat is a social + marketplace + wallet product built as a single-page app with a
 Node sync server and native Android/iOS shells.
@@ -165,6 +165,20 @@ Admin → **Stocks** → **Bulk profit rate by market type**: pick **US Stocks**
 * The bulk rate is also stored as `db.invest.classRates[type]`, so **newly listed stocks inherit it**.
 * A single stock can still override the class rate in Add/Edit stock (leave the field blank to inherit).
 * Existing open positions keep their locked rate; only new buys use the new rate.
+
+### Rise / Fall direction semantics
+
+* **Rise (long):** profit while the chart moves **up** (green zone above entry), loss while it
+  moves **down** (red zone). P&L = stake × leverage × % move × +1.
+* **Fall (short):** profit while the chart moves **down** (green zone below entry), loss while
+  it moves **up** (red zone). P&L = stake × leverage × % move × −1.
+* The stock chart baseline colours are inverted for Fall trades, so green always means the
+  user's profit zone and red means the loss zone.
+* The order ticket, active-trade card and stock chart now state the prediction explicitly
+  (“Rise — profit while price rises” / “Fall — profit while price falls”) with the live P&L.
+* Direction is authoritative (`trade.direction`), so both the browser fallback and the
+  server settlement apply the same sign; a wrong prediction loses in proportion to the move
+  (loss capped at the stake).
 
 ### Asset-class visibility (admin)
 
