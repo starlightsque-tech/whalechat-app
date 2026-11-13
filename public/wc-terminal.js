@@ -822,9 +822,9 @@
     }
 
     _universe() {
-      if (this.adapter && Array.isArray(this.adapter.symbols) && this.adapter.symbols.length) {
-        return this.adapter.symbols.map((s) => typeof s === 'string' ? { ticker: s, name: s, base: 0 } : s);
-      }
+      const norm = (list) => list.map((s) => (typeof s === 'string' ? { ticker: s, name: s, base: 0 } : s));
+      if (Array.isArray(this.o.symbols) && this.o.symbols.length) return norm(this.o.symbols);
+      if (this.adapter && Array.isArray(this.adapter.symbols) && this.adapter.symbols.length) return norm(this.adapter.symbols);
       return UNIVERSE;
     }
 
@@ -1571,6 +1571,7 @@
       await this._loadHistory();
       this._startFeed();
       this._renderPriceLines();
+      if (typeof this.o.onSymbolChange === 'function') { try { this.o.onSymbolChange(sym); } catch (e) {} }
     }
 
     /* ---------------------------------------------------------------- misc */
