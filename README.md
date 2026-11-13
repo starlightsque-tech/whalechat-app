@@ -1,4 +1,4 @@
-# WhaleChat 3.24.2 — web app + mobile apps
+# WhaleChat 3.25.0 — web app + mobile apps
 
 WhaleChat is a social + marketplace + wallet product built as a single-page app with a
 Node sync server and native Android/iOS shells.
@@ -208,6 +208,25 @@ subscriptions, reserved capital and a server-side worker that keeps trading whil
 is closed. Admin → Stocks includes the bot configuration panel. Endpoints:
 `/api/bots/state`, `/api/bots/subscribe`, `/api/bots/start`, `/api/bots/stop`,
 `/api/bots/admin`, `/api/bots/admin/config`.
+
+### Auto Secure Take Profit (bot tool)
+
+A dedicated bot tool users can subscribe to (default **$20 / month → 40 WC**, stored in
+`db.botSettings.autoSecurePriceUsd` / `autoSecureCycle`). While enabled it watches every open
+live trade server-side — even with every app closed — and whenever meaningful profit is
+available it **secures** it:
+
+* the profit is written to `trade.securedProfits` (amount, price, timestamp) and the
+  position is re-based, so the secured amount cannot be lost by later price movement,
+* **nothing is credited yet**; the trade keeps running,
+* if a TP level triggers while Auto Secure is on, that profit is queued the same way
+  instead of being auto-credited,
+* the user sees a **Secured profits** card on the Invest dashboard and Orders page and
+  presses **Take profit** on each entry to credit it (`POST /api/market/secure-profit/claim`).
+
+Endpoints: `/api/bots/auto-secure/subscribe`, `/api/bots/auto-secure/toggle`,
+`/api/market/secure-profit/claim`. The bot secures at most every 8 seconds per trade and
+only when the open profit is at least max(0.5 WC, 1% of the trade capital).
 
 ### WhaleChat share investment portfolio (restored)
 
