@@ -210,7 +210,9 @@ is closed. Admin → Stocks includes the bot configuration panel. Endpoints:
 `/api/bots/admin`, `/api/bots/admin/config`.
 
 **Bot profiles, health engine and performance page (3.30.0).** Every tier is a full trading
-identity with a profile picture (`public/bots/*.jpg`, admin-overridable with an uploaded photo):
+identity with a profile picture (`public/bots/*.jpg`, admin-overridable with an uploaded photo or https URL).
+Admins can also press **Add new bot** in **Admin → Stocks → Trading bots** to create extra tiers — set the name,
+@username, photo, accuracy, price and billing cycle, then save; the bot appears in the marketplace for users to subscribe.
 
 - `#/bots` — all bot identities as cards (avatar, `@username`, accuracy, price, HOT/Owned).
 - `#/bots/<tierId>` — profile page: large picture, accuracy, subscription state, health, energy,
