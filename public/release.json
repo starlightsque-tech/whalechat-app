@@ -1,8 +1,8 @@
 {
-  "version": "3.23.2",
-  "build": "2026-11-13T08:54:36Z",
+  "version": "3.23.3",
+  "build": "2026-11-13T08:58:26Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.23.2 - admin can show/hide US, global, Forex and Crypto markets for the whole app.",
-  "releasedAt": "2026-11-13T08:54:36Z",
+  "notes": "WhaleChat 3.23.3 - bulk profit-rate assignment by market type (US, global, Forex, crypto) with inheritance for new stocks.",
+  "releasedAt": "2026-11-13T08:58:26Z",
   "minimum": "3.0.0"
 }
