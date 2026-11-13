@@ -66,7 +66,9 @@ const MODULES = [
   { file: 'whalechat-shares.js', marker: 'wc-whalechat-shares' },
   { file: 'demo-sellers.js', marker: 'wc-demo-sellers' },
   { file: 'support.js', marker: 'wc-support' },
-  { file: 'pro-chart.js', marker: 'wc-pro-chart' }
+  { file: 'pro-chart.js', marker: 'wc-pro-chart' },
+  { file: 'wc-terminal.js', marker: 'wc-trade-terminal' },
+  { file: 'wc-terminal-app.js', marker: 'wc-trade-terminal-app' }
 ];
 try {
   let page = fs.readFileSync(APP, 'utf8');
