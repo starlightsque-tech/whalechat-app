@@ -6,22 +6,24 @@
      total cost is deducted from the WC wallet immediately and the position
      is stored with symbol, entry price, quantity, invested capital and
      optional Take Profit / Stop Loss targets.
-   • Selling (manual, TP or SL) sells the whole position at the current live
-     market price: payout = quantity × live price, credited to the wallet,
-     and the trade is moved to Order History.
+   • On close (manual, TP or SL) the user is paid the admin-configured profit
+     rate for that stock, locked when the position was opened:
+       payout = invested capital + (invested capital × profit rate / 100)
+     credited to the wallet and moved to Order History. Live Finnhub prices
+     are shown and used for TP/SL triggers only — they do not change payout.
    • A background worker checks every open position once per second against
      the shared backend quote cache. The critical section below is fully
      synchronous, and a position is removed before the payout is credited,
      so a manual sell racing a TP/SL tick can never credit twice.
-   • Admins can set a profit margin (%) per stock. It is added to the live
-     Finnhub price when a user buys (the platform's edge) while every chart,
-     quote and TP/SL check keeps using the raw live market price.
+   • Admins set a profit rate (%) per stock in Admin → Stocks. The rate is
+     locked on each position at purchase and paid exactly on close; the real
+     Finnhub feed keeps streaming for display and TP/SL level checks.
    ========================================================================= */
 
 const crypto = require('crypto');
 
 const COINS_PER_USD = 2;                 // 1 WC = $0.50
-const MAX_PCT = 100;                     // admin margin cap (%)
+const MAX_PCT = 500;                     // admin profit-rate cap (%)
 const round = (v, n) => Math.round((Number(v) || 0) * Math.pow(10, n)) / Math.pow(10, n);
 function nid(prefix) { return prefix + Date.now().toString(36) + crypto.randomBytes(3).toString('hex'); }
 
@@ -72,7 +74,7 @@ class SpotService {
     return p > 0 ? round(p, 6) : 0;
   }
 
-  /* Admin profit margin (%) for one stock. Read from the synced catalogue so
+  /* Admin profit rate (%) for one stock. Read from the synced catalogue so
      admins can edit it in Admin → Stocks and every device sees the same value. */
   adminPct(db, ticker) {
     const s = this.stock(db, ticker);
@@ -81,12 +83,25 @@ class SpotService {
     return Math.min(MAX_PCT, round(n, 4));
   }
 
-  /** Live Finnhub price + the admin margin applied to a purchase. */
+  /** Live Finnhub price (display/TP-SL only) + the locked profit rate. */
   pricing(db, ticker) {
     const live = this.livePrice(ticker);
     const pct = this.adminPct(db, ticker);
-    const exec = live > 0 ? round(live * (1 + pct / 100), 6) : 0;
-    return { live, pct, exec };
+    return { live, pct, exec: live };
+  }
+
+  /** Profit rate locked on a position; falls back to the stock's current rate. */
+  rateFor(db, h) {
+    const locked = Number(h && h.profitPct);
+    if (Number.isFinite(locked) && locked >= 0) return Math.min(MAX_PCT, round(locked, 4));
+    return this.adminPct(db, h && h.ticker);
+  }
+
+  /** Payout on close = invested capital + the exact admin profit rate. */
+  payoutFor(investedCoins, ratePct) {
+    const basis = Math.max(0, Number(investedCoins) || 0);
+    const profit = round(basis * (Math.max(0, Number(ratePct) || 0) / 100), 2);
+    return { costBasis: round(basis, 2), profitCoins: profit, payoutCoins: round(basis + profit, 2) };
   }
 
   holding(db, userId, ticker) {
@@ -112,21 +127,28 @@ class SpotService {
   }
 
   positionView(h, priceOverride) {
+    const db = this.getDb && this.getDb();
     const live = priceOverride != null ? Number(priceOverride) : this.livePrice(h.ticker);
     const shares = Number(h.shares) || 0;
     const entry = Number(h.avgPrice) || 0;
     const invested = Number(h.investedCoins) || round(shares * entry * COINS_PER_USD, 2);
-    const valueCoins = round(shares * (live || entry) * COINS_PER_USD, 2);
-    const pnlCoins = round(valueCoins - invested, 2);
+    const ratePct = this.rateFor(db, h);
+    const locked = this.payoutFor(invested, ratePct);
+    /* market value is display-only; the payout is fixed by the admin rate */
+    const marketValueCoins = round(shares * (live || entry) * COINS_PER_USD, 2);
     return {
       id: h.id, userId: h.userId, ticker: h.ticker,
       symbol: h.ticker, entryPrice: entry, quantity: shares, shares,
       investedCoins: invested, investedUsd: round(invested * 0.5, 2),
-      livePrice: live, marketPriceUsd: live,
-      valueCoins, pnlCoins, pnlPct: invested ? round((pnlCoins / invested) * 100, 2) : 0,
+      livePrice: live, marketPriceUsd: live, marketValueCoins,
+      valueCoins: locked.payoutCoins,
+      profitPct: ratePct, adminProfitPct: ratePct,
+      profitCoins: locked.profitCoins,
+      payoutCoins: locked.payoutCoins,
+      pnlCoins: locked.profitCoins,
+      pnlPct: ratePct,
       takeProfitPrice: Number(h.takeProfitPrice) || 0,
       stopLossPrice: Number(h.stopLossPrice) || 0,
-      adminProfitPct: Number(h.adminProfitPct) || 0,
       openedAt: h.createdAt || h.entryAt || null, updatedAt: h.updatedAt || null
     };
   }
@@ -152,6 +174,7 @@ class SpotService {
 
     const { live, pct, exec } = this.pricing(db, ticker);
     if (!(live > 0) || !(exec > 0)) throw new Error('Waiting for a live market price — try again in a moment');
+    /* execution is the raw live Finnhub price; the admin rate only affects payout */
 
     let amountUsd = Number(opts.amountUsd);
     if (!(amountUsd > 0) && Number(opts.amountCoins) > 0) amountUsd = Number(opts.amountCoins) * 0.5;
@@ -171,8 +194,8 @@ class SpotService {
 
     const tp = Number(opts.tpPrice) || 0;
     const sl = Number(opts.slPrice) || 0;
-    if (tp > 0 && tp <= exec) throw new Error('Take Profit must be above the execution price');
-    if (sl > 0 && sl >= exec) throw new Error('Stop Loss must be below the execution price');
+    if (tp > 0 && tp <= exec) throw new Error('Take Profit must be above the current market price');
+    if (sl > 0 && sl >= exec) throw new Error('Stop Loss must be below the current market price');
 
     /* --- critical section: fully synchronous, no awaits ------------------- */
     u.balance = round((Number(u.balance) || 0) - investedCoins, 2);
@@ -188,6 +211,8 @@ class SpotService {
       h.investedCoins = round(prevInvested + investedCoins, 2);
       h.investedUsd = round((Number(h.investedCoins) || 0) * 0.5, 2);
       h.adminProfitPct = pct;
+      h.profitPct = pct;
+      h.marketPriceUsd = live;
       h.updatedAt = now;
       if (tp > 0) h.takeProfitPrice = round(tp, 6);
       if (sl > 0) h.stopLossPrice = round(sl, 6);
@@ -199,7 +224,7 @@ class SpotService {
         investedCoins, investedUsd: round(investedUsd, 2),
         takeProfitPrice: tp > 0 ? round(tp, 6) : 0,
         stopLossPrice: sl > 0 ? round(sl, 6) : 0,
-        adminProfitPct: pct, marketPriceUsd: live,
+        adminProfitPct: pct, profitPct: pct, marketPriceUsd: live,
         kind: 'spot', status: 'open',
         createdAt: now, updatedAt: now
       };
@@ -210,7 +235,7 @@ class SpotService {
       id: nid('tr'), userId, ticker, name: s.name || ticker,
       side: 'buy', type: 'spot', status: 'Completed',
       shares, priceUsd: exec, marketPriceUsd: live,
-      adminProfitPct: pct, coins: investedCoins, feeCoins: 0,
+      adminProfitPct: pct, profitPct: pct, payoutPct: pct, coins: investedCoins, feeCoins: 0,
       takeProfitPrice: h.takeProfitPrice || 0, stopLossPrice: h.stopLossPrice || 0,
       plUsd: 0, plCoins: 0, createdAt: now
     };
@@ -221,7 +246,7 @@ class SpotService {
       orderId: order.id, ticker, shares, priceUsd: exec, marketPriceUsd: live, adminProfitPct: pct
     });
     this.notify(db, userId, 'Buy order filled',
-      `${shares.toFixed(6)} ${ticker} bought at $${exec.toFixed(4)} · ${investedCoins.toFixed(2)} WC deducted from your balance.`,
+      `${shares.toFixed(6)} ${ticker} bought at $${exec.toFixed(4)} · ${investedCoins.toFixed(2)} WC deducted. On close this position pays a locked ${pct}% profit (${round(investedCoins * pct / 100, 2).toFixed(2)} WC).`,
       'trend');
     /* ---------------------------------------------------------------------- */
 
@@ -251,9 +276,16 @@ class SpotService {
     if (!(shares > 0)) throw new Error('Nothing to sell');
 
     const entry = Number(h.avgPrice) || 0;
-    const payout = round(shares * price * COINS_PER_USD, 2);
-    const costBasis = round(shares * entry * COINS_PER_USD, 2);
-    const plCoins = round(payout - costBasis, 2);
+    const totalInvested = Number(h.investedCoins) || round(totalShares * entry * COINS_PER_USD, 2);
+    /* basis for the shares being sold (whole position = full invested capital) */
+    const soldBasis = shares >= totalShares - 1e-9
+      ? totalInvested
+      : round(totalInvested * (shares / totalShares), 2);
+    const ratePct = this.rateFor(db, h);
+    const locked = this.payoutFor(soldBasis, ratePct);
+    const payout = locked.payoutCoins;
+    const costBasis = locked.costBasis;
+    const plCoins = locked.profitCoins;
     const reason = String(opts.reason || 'Manual sell');
 
     /* --- critical section: remove/trim the position BEFORE crediting ----- */
@@ -277,7 +309,8 @@ class SpotService {
         id: nid('tr'), userId, ticker, name: (this.stock(db, ticker) || {}).name || ticker,
         side: 'sell', type: 'spot', status: 'Completed',
         shares, priceUsd: price, marketPriceUsd: price,
-        entryPriceUsd: entry, coins: payout, feeCoins: 0,
+        entryPriceUsd: entry, payoutPct: ratePct,
+        coins: payout, feeCoins: 0,
         plUsd: round(plCoins * 0.5, 2), plCoins,
         closeReason: reason,
         openedAt: h.createdAt || null, createdAt: now, closedAt: now
@@ -285,16 +318,16 @@ class SpotService {
       db.trades.unshift(order);
       if (db.trades.length > 3000) db.trades.length = 3000;
 
-      this.tx(db, userId, `${reason} · sold ${shares.toFixed(6)} ${ticker} @ $${price.toFixed(4)}`, payout, 'spot-sell', {
-        orderId: order.id, ticker, shares, priceUsd: price, entryPriceUsd: entry, plCoins, reason
+      this.tx(db, userId, `${reason} · sold ${shares.toFixed(6)} ${ticker} · ${ratePct}% profit paid`, payout, 'spot-sell', {
+        orderId: order.id, ticker, shares, marketPriceUsd: price, entryPriceUsd: entry, profitPct: ratePct, plCoins, reason
       });
       this.notify(db, userId,
-        reason === 'Take Profit Hit' ? 'Take Profit Hit — position sold' : reason === 'Stop Loss Hit' ? 'Stop Loss Hit — position sold' : 'Sell order filled',
-        `${shares.toFixed(6)} ${ticker} sold at $${price.toFixed(4)}. ${payout.toFixed(2)} WC credited (${plCoins >= 0 ? '+' : '−'}${Math.abs(plCoins).toFixed(2)} WC P/L).`,
-        reason === 'Stop Loss Hit' ? 'down' : 'check');
+        reason === 'Take Profit Hit' ? 'Take Profit Hit — position closed' : reason === 'Stop Loss Hit' ? 'Stop Loss Hit — position closed' : 'Sell order filled',
+        `${shares.toFixed(6)} ${ticker} closed. ${payout.toFixed(2)} WC credited (invested ${costBasis.toFixed(2)} WC + ${ratePct}% profit = +${plCoins.toFixed(2)} WC). Live market price was $${price.toFixed(4)}.`,
+        'check');
       this.settledTotal += 1;
       this.changed('spot-sell');
-      return { ok: true, order, payout, plCoins, balance: u.balance, reason };
+      return { ok: true, order, payout, plCoins, profitPct: ratePct, balance: u.balance, reason };
     } catch (e) {
       /* roll back so a failed bookkeeping step can never lose the position */
       u.balance = prevBalance;
@@ -330,7 +363,7 @@ class SpotService {
     const s = this.stock(db, ticker);
     if (!s) throw new Error('Stock not found');
     const n = Number(pct);
-    if (!Number.isFinite(n) || n < 0 || n > MAX_PCT) throw new Error(`Profit margin must be between 0 and ${MAX_PCT}%`);
+    if (!Number.isFinite(n) || n < 0 || n > MAX_PCT) throw new Error(`Profit rate must be between 0 and ${MAX_PCT}%`);
     s.profitPct = round(n, 4);
     s.updatedAt = Date.now();
     this.changed('spot-admin-pct');
