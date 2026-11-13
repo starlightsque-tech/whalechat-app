@@ -1,8 +1,8 @@
 {
-  "version": "3.25.0",
-  "build": "2026-11-13T09:00:00Z",
+  "version": "3.26.0",
+  "build": "2026-11-13T10:00:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.25.0 (restored) + Pro Chart: Lightweight Charts v5 for stock trading, portfolio performance and WhaleChat investment-plan ROI progress with live accrual, invested/target lines and per-plan switching.",
-  "releasedAt": "2026-11-13T09:00:00Z",
+  "notes": "WhaleChat 3.26.0 — TradeView terminal: Deriv-style dark real-time chart with gradient area/candles, floating crosshair tooltip, live price badge, zoom controls, Long/Short ticket with TP/SL, entry/TP/SL price lines and live P&L, in five selectable styles.",
+  "releasedAt": "2026-11-13T10:00:00Z",
   "minimum": "3.0.0"
 }
