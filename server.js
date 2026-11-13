@@ -38,7 +38,8 @@ const bots = new BotService({
   getDb: () => store.db,
   persist: () => persist(),
   broadcast: (event, data) => { try { broadcast(event, data); } catch (e) {} },
-  getQuote: (ticker) => market.quotes[String(ticker || '').toUpperCase()] || null
+  getQuote: (ticker) => market.quotes[String(ticker || '').toUpperCase()] || null,
+  market
 });
 const shares = new ShareService({
   getDb: () => store.db,
@@ -655,6 +656,17 @@ async function api(req, res, pathname, query) {
     } catch (e) { return json(res, 400, { ok: false, error: e.message }); }
   }
 
+  // --- auto-secure profit claims (bot-secured take profit) ---
+  if (pathname === '/api/market/secure-profit/claim' && req.method === 'POST') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    const body = await readBody(req);
+    const owner = (store.db.users || []).find((u) => u && u.id === body.userId);
+    if (!owner) return json(res, 400, { ok: false, error: 'User not found' });
+    try {
+      return json(res, 200, market.claimSecuredProfit(String(body.userId), String(body.tradeId || ''), String(body.profitId || '')));
+    } catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+
   // --- live trades: manual take profit skims profit and keeps running ---
   if (pathname === '/api/market/trade/take-profit' && req.method === 'POST') {
     if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
@@ -718,6 +730,19 @@ async function api(req, res, pathname, query) {
     try { return json(res, 200, bots.adminState()); }
     catch (e) { return json(res, 400, { ok: false, error: e.message }); }
   }
+  if (pathname === '/api/bots/auto-secure/subscribe' && req.method === 'POST') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    const body = await readBody(req);
+    try { return json(res, 200, bots.subscribeAutoSecure(body)); }
+    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+  if (pathname === '/api/bots/auto-secure/toggle' && req.method === 'POST') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    const body = await readBody(req);
+    try { return json(res, 200, bots.toggleAutoSecure(body)); }
+    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+
   if (pathname === '/api/bots/subscribe' && req.method === 'POST') {
     if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
     const body = await readBody(req);
