@@ -754,7 +754,7 @@ class MarketService {
     const dir = direction === 'FALL' ? -1 : 1;
     const entry = Number(t.entryPrice);
     if (!(entry > 0)) return 0;
-    if (t.lastSecureAt && now - Number(t.lastSecureAt) < 3000) return 0;
+    if (t.lastSecureAt && now - Number(t.lastSecureAt) < 1000) return 0;
     const move = (q.price - entry) / entry;
     const profit = round(Math.max(0, (Number(t.capitalCoins) || 0) * lev * move * dir), 2);
     if (!(profit > 0)) return 0;
@@ -804,7 +804,7 @@ class MarketService {
     const q = this.quotes[t.ticker];
     if (!q || !(Number(q.price) > 0)) return 0;
     const now = Date.now();
-    if (t.lastSecureAt && now - Number(t.lastSecureAt) < 8000) return 0;
+    if (t.lastSecureAt && now - Number(t.lastSecureAt) < 2000) return 0;
     const lev = Math.max(1, Math.min(20, Number(t.leverage) || 1));
     const direction = t.direction || (t.side === 'short' ? 'FALL' : 'RISE');
     const dir = direction === 'FALL' ? -1 : 1;
@@ -812,8 +812,8 @@ class MarketService {
     if (!(entry > 0)) return 0;
     const move = (q.price - entry) / entry;
     const available = round(Math.max(0, (Number(t.capitalCoins) || 0) * lev * move * dir), 2);
-    const threshold = Math.max(0.5, round((Number(t.capitalCoins) || 0) * 0.01, 2));
-    if (available < threshold) return 0;
+    /* secure even small profits immediately — 0.01 WC is the bookkeeping floor */
+    if (!(available >= 0.01)) return 0;
     const secured = this.secureProfit(t, q, db, now, 'Auto Secure', false);
     if (secured > 0) {
       this.persist();
