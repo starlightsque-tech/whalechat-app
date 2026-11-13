@@ -1,8 +1,8 @@
 {
-  "version": "3.26.0",
-  "build": "2026-11-13T10:00:00Z",
+  "version": "3.22.2",
+  "build": "2026-11-12T16:50:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.26.0 — TradeView terminal: Deriv-style dark real-time chart with gradient area/candles, floating crosshair tooltip, live price badge, zoom controls, Long/Short ticket with TP/SL, entry/TP/SL price lines and live P&L, in five selectable styles.",
-  "releasedAt": "2026-11-13T10:00:00Z",
+  "notes": "WhaleChat 3.22.2 - admin market-copy cleanup for live-only Finnhub mode.",
+  "releasedAt": "2026-11-12T16:50:00Z",
   "minimum": "3.0.0"
 }
