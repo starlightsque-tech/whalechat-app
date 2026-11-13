@@ -145,7 +145,8 @@ const LT = {
   /* live numbers for a position */
   calc(t) {
     const q = INV.quote(t.ticker) || { price: t.entryPrice };
-    const dir = t.side === 'short' ? -1 : 1;
+    /* direction is authoritative: FALL profits when price falls, RISE when it rises */
+    const dir = this.dirOf(t) === 'FALL' ? -1 : 1;
     const move = t.entryPrice ? (q.price - t.entryPrice) / t.entryPrice : 0;
     let pnlCoins = t.capitalCoins * (t.leverage || 1) * move * dir;
     pnlCoins = Math.max(-t.capitalCoins, pnlCoins);          /* never lose more than the stake */
@@ -376,7 +377,8 @@ const LT = {
         ${INV.logoHTML(s, 32)}
         <div class="grow" style="min-width:0">
           <div class="small" style="font-weight:700">${esc(this.label(t.ticker))}
-            <span class="lt-side ${t.side}">${dirLabel} ${t.leverage}×</span></div>
+            <span class="lt-side ${t.side}">${dirLabel} ${t.leverage}×</span>
+            <span class="tiny ${up ? 'up' : down ? 'down' : 'muted'}" data-lt-dirhint="${t.id}">${t.side === 'short' ? 'profit while price falls' : 'profit while price rises'}</span></div>
           <div class="tiny muted">${coins(t.capitalCoins)} WC · entry ${this.px(t.ticker, t.entryPrice)}</div>
         </div>
         <span class="lt-mini">${INV.spark(t.ticker)}</span>
@@ -400,6 +402,11 @@ const LT = {
       </div>
       <div class="lt-bar"><i style="width:${Math.min(100, Math.max(0, 50 + p.pnlPct))}%"
         class="${up ? 'up' : down ? 'down' : ''}"></i></div>
+      <div class="tiny ${up ? 'up' : down ? 'down' : 'muted'}" style="margin-top:7px;line-height:1.5">
+        ${t.side === 'short'
+          ? `▼ Fall prediction — the chart falling is your profit zone (green); the chart rising is your loss zone (red). Now ${p.pnlCoins >= 0 ? '+' : '−'}${coins(Math.abs(p.pnlCoins))} WC.`
+          : `▲ Rise prediction — the chart rising is your profit zone (green); the chart falling is your loss zone (red). Now ${p.pnlCoins >= 0 ? '+' : '−'}${coins(Math.abs(p.pnlCoins))} WC.`}
+      </div>
       <div class="row lt-action-row" style="gap:6px;margin-top:9px">
         <button class="btn btn-sm btn-primary grow" data-act="lt-tp" data-id="${t.id}" data-lt-tp-btn="${t.id}" ${p.pnlCoins > 0 ? '' : 'disabled'} title="${p.pnlCoins > 0 ? 'Take the open profit and keep the trade running' : 'No profit to take yet'}">
           ${ic('trend', 13)} Take profit <span data-lt-tp-amt="${t.id}">${p.pnlCoins > 0 ? '(+' + coins(p.pnlCoins) + ')' : ''}</span></button>
@@ -459,6 +466,9 @@ const LT = {
       document.querySelectorAll('[data-lt-sl="' + t.id + '"] b').forEach(el => {
         el.textContent = Number(t.stopLossPrice) > 0 ? usd(t.stopLossPrice) : '—';
       });
+      document.querySelectorAll('[data-lt-dirhint="' + t.id + '"]').forEach((el) => {
+        el.textContent = t.side === 'short' ? 'profit while price falls' : 'profit while price rises';
+      });
       const ret = document.querySelector('[data-lt="' + t.id + '"] .tiny.muted.center');
       if (ret) ret.textContent = (Number(t.profitTakenCoins) > 0 ? 'Profit already taken: +' + coins(t.profitTakenCoins) + ' WC · ' : '') + 'Returns ' + coins(p.payoutCoins) + ' WC if stopped now';
       document.querySelectorAll('[data-lt-tp-btn="' + t.id + '"]').forEach((b) => {
@@ -477,9 +487,29 @@ const LT = {
       });
     });
     this.paintEarnings();
+    this.paintChartHint();
   },
 
   /* the hero "Earnings" figure follows the live trades, not old holdings */
+  paintChartHint() {
+    const el = document.querySelector('[data-lt-chart-hint]');
+    if (!el) return;
+    const m = (location.hash || '').match(/^#\/invest\/stock\/([A-Z0-9._]+)/i);
+    if (!m) { el.textContent = ''; return; }
+    const ticker = m[1].toUpperCase();
+    const pos = this.open().find(t => t.ticker === ticker);
+    if (!pos) {
+      el.innerHTML = '<span class="muted">Green = price up · Red = price down. Open a Rise or Fall trade to see your profit zone.</span>';
+      return;
+    }
+    const p = this.calc(pos);
+    const up = p.pnlCoins >= 0;
+    el.className = 'tiny center ' + (up ? 'up' : 'down');
+    el.innerHTML = pos.side === 'short'
+      ? `<b>▼ Fall trade</b> · falling chart = <b>green profit zone</b>, rising chart = <b>red loss zone</b> · now ${up ? '+' : '−'}${coins(Math.abs(p.pnlCoins))} WC`
+      : `<b>▲ Rise trade</b> · rising chart = <b>green profit zone</b>, falling chart = <b>red loss zone</b> · now ${up ? '+' : '−'}${coins(Math.abs(p.pnlCoins))} WC`;
+  },
+
   paintEarnings() {
     const el = document.querySelector('[data-lv="pv-earn"]');
     if (!el) return;
@@ -547,6 +577,9 @@ const LT = {
       <div class="lt-side-pick">
         <button class="lt-side-btn on" data-act="lt-side" data-side="long">▲ Rise (price up)</button>
         <button class="lt-side-btn" data-act="lt-side" data-side="short">▼ Fall (price down)</button>
+      </div>
+      <div class="tiny muted" id="ltSideHint" style="margin:-4px 0 10px;line-height:1.5">
+        ▲ <b>Rise:</b> you profit when the chart moves up and lose when it moves down.
       </div>
       <div class="field"><label class="label">Capital (Whale Coin)</label>
         <div class="input-wrap"><span class="inv-prefix">WC</span>
@@ -1810,8 +1843,13 @@ function ltPushBanner() {
 
 /* ---------------- actions ---------------- */
 App.ltSide = function (id, ds) {
-  document.querySelectorAll('.lt-side-btn').forEach(b => b.classList.toggle('on', b.dataset.side === ds.side));
   document.querySelectorAll('.lt-side-btn').forEach(b => b.dataset.side && b.classList.toggle('on', b.getAttribute('data-side') === ds.side));
+  const hint = document.getElementById('ltSideHint');
+  if (hint) {
+    hint.innerHTML = ds.side === 'short'
+      ? '▼ <b>Fall:</b> you profit when the chart moves down and lose when it moves up.'
+      : '▲ <b>Rise:</b> you profit when the chart moves up and lose when it moves down.';
+  }
   LT.previewTargets();
 };
 if (typeof INV !== 'undefined') {
