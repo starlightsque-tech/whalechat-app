@@ -1,8 +1,8 @@
 {
-  "version": "3.27.0",
-  "build": "2026-11-13T11:24:39Z",
+  "version": "3.28.0",
+  "build": "2026-11-13T11:34:54Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.27.0 - desktop view by default with a desktop/mobile view switch.",
-  "releasedAt": "2026-11-13T11:24:39Z",
+  "notes": "WhaleChat 3.28.0 - shareable username-only stock portfolio links with safe manager access, plus higher-contrast larger text.",
+  "releasedAt": "2026-11-13T11:34:54Z",
   "minimum": "3.0.0"
 }
