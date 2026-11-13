@@ -1,8 +1,8 @@
 {
-  "version": "3.22.2",
-  "build": "2026-11-12T16:50:00Z",
+  "version": "3.23.0",
+  "build": "2026-11-13T08:33:55Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.22.2 - admin market-copy cleanup for live-only Finnhub mode.",
-  "releasedAt": "2026-11-12T16:50:00Z",
+  "notes": "WhaleChat 3.23.0 - spot stock investing with automated TP/SL, per-stock admin profit margins, trading bots and WhaleChat share portfolio restored.",
+  "releasedAt": "2026-11-13T08:33:55Z",
   "minimum": "3.0.0"
 }
