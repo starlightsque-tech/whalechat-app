@@ -1,8 +1,8 @@
 {
-  "version": "3.25.0",
-  "build": "2026-11-13T10:21:26Z",
+  "version": "3.26.0",
+  "build": "2026-11-13T10:34:13Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.25.0 - Auto Secure Take Profit bot tool: queues secured profit while offline for one-by-one claims.",
-  "releasedAt": "2026-11-13T10:21:26Z",
+  "notes": "WhaleChat 3.26.0 - live secured-profit totals, Claim all, and admin Auto Secure pricing/revenue controls.",
+  "releasedAt": "2026-11-13T10:34:13Z",
   "minimum": "3.0.0"
 }
