@@ -1,4 +1,4 @@
-# WhaleChat 3.28.0 — web app + mobile apps
+# WhaleChat 3.29.0 — web app + mobile apps
 
 WhaleChat is a social + marketplace + wallet product built as a single-page app with a
 Node sync server and native Android/iOS shells.
@@ -265,6 +265,28 @@ displayed price from the previous tick to the new tick over an 850 ms ease-out w
 last point of the active lightweight-chart (stock chart and portfolio chart) is updated in
 place, and price/percentage labels are repainted at ~10 fps, so the trade view moves
 smoothly while server settlement and TP/SL continue to use the authoritative quote.
+
+## Shared portfolio audit trail
+
+While a manager is inside a shared portfolio link, every action is recorded in
+`db.portfolioAudit` (synced to the server) and shown in a **Portfolio activity** card on the
+Invest dashboard for the owner:
+
+* live trade opened / closed / take-profit / stop / secured-profit claim,
+* spot stock buy / sell / TP-SL updates,
+* WhaleChat investment plan purchases,
+* bot subscribe / start / stop and Auto Secure subscribe / toggle.
+
+Entries store the owner, the action, a short detail, the manager label and a timestamp, so the
+owner can review exactly what was done through the shared link.
+
+## Market movement for every stock
+
+When Finnhub ticks are unavailable (no API key, market closed, rate limit or a quiet
+WebSocket) the backend now generates a **24/7 fallback tick every 2 seconds** for every
+asset class and seeds an intraday history tail. US stocks and global stocks therefore always
+have a price, volume and a moving trade-view chart; real Finnhub prints take over the moment
+they arrive. Symbols with no stored price get a deterministic base price.
 
 ## Shared stock portfolio (username-only manager access)
 
