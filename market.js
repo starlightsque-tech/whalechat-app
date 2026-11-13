@@ -130,7 +130,7 @@ class MarketService {
     this.persist = opts.persist || (() => {});
     this.broadcast = opts.broadcast || (() => {});
     this.configFile = path.join(this.dataDir, 'market-config.json');
-    this.config = { mode: 'simulated', apiKey: '', refreshSec: 15 };
+    this.config = { mode: 'simulated', apiKey: '', refreshSec: 15, clientStream: true };
     this.quotes = {};
     this.assets = [];
     this.byFinnhub = new Map();
@@ -184,7 +184,7 @@ class MarketService {
   }
 
   /* ------------------------------- config ------------------------------- */
-  rawConfig() { return { mode: this.config.mode, apiKey: this.config.apiKey, refreshSec: this.config.refreshSec }; }
+  rawConfig() { return { mode: this.config.mode, apiKey: this.config.apiKey, refreshSec: this.config.refreshSec, clientStream: this.config.clientStream !== false }; }
 
   writeConfigFile() {
     try {
@@ -200,6 +200,7 @@ class MarketService {
     if (cfg.mode === 'hybrid' || cfg.mode === 'simulated') this.config.mode = cfg.mode;
     if (typeof cfg.apiKey === 'string') this.config.apiKey = cfg.apiKey.trim();
     if (cfg.refreshSec != null) this.config.refreshSec = Math.min(300, Math.max(5, Math.round(Number(cfg.refreshSec) || 15)));
+    if (typeof cfg.clientStream === 'boolean') this.config.clientStream = cfg.clientStream;
     this.writeConfigFile();
     return true;
   }
@@ -211,6 +212,7 @@ class MarketService {
         this.config.mode = raw.mode === 'hybrid' ? 'hybrid' : 'simulated';
         this.config.apiKey = typeof raw.apiKey === 'string' ? raw.apiKey.trim() : '';
         this.config.refreshSec = Math.min(300, Math.max(5, Number(raw.refreshSec) || 15));
+        if (typeof raw.clientStream === 'boolean') this.config.clientStream = raw.clientStream;
       }
     } catch (e) { /* first run */ }
     if (!this.config.apiKey && process.env.FINNHUB_API_KEY) {
@@ -219,6 +221,7 @@ class MarketService {
     if (this.config.mode !== 'hybrid' && process.env.FINNHUB_MODE === 'hybrid' && this.config.apiKey) {
       this.config.mode = 'hybrid';
     }
+    if (String(process.env.FINNHUB_BROWSER_STREAM || '').toLowerCase() === 'off') this.config.clientStream = false;
   }
 
   saveConfig(next) {
@@ -233,6 +236,25 @@ class MarketService {
     return this.publicConfig();
   }
 
+  /* Browser trade stream: the terminal connects straight to wss://ws.finnhub.io.
+     The key is Finnhub's public client token; it is only handed out when the
+     admin keeps `clientStream` enabled (env FINNHUB_BROWSER_STREAM=off disables). */
+  streamInfo() {
+    const enabled = this.config.mode === 'hybrid' && !!this.config.apiKey && this.config.clientStream !== false;
+    const list = (this.assetList ? this.assetList() : []) || [];
+    return {
+      ok: true,
+      enabled,
+      token: enabled ? this.config.apiKey : '',
+      url: enabled ? (FINNHUB_WS_URL + '?token=' + encodeURIComponent(this.config.apiKey)) : '',
+      symbols: enabled ? list.map((a) => a.finnhubSymbol).filter(Boolean).slice(0, 50) : [],
+      symbolMap: enabled ? list.reduce((m, a) => { if (a && a.ticker && a.finnhubSymbol) m[a.ticker] = a.finnhubSymbol; return m; }, {}) : {},
+      maxSymbols: 50,
+      source: this.source(),
+      at: Date.now()
+    };
+  }
+
   publicConfig() {
     const key = this.config.apiKey;
     return {
@@ -241,6 +263,7 @@ class MarketService {
       refreshSec: this.config.refreshSec,
       hasKey: !!key,
       keyMasked: key ? (key.slice(0, 4) + '…' + key.slice(-4)) : '',
+      clientStream: this.config.clientStream !== false,
       status: this.status()
     };
   }
