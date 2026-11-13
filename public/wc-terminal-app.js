@@ -264,6 +264,16 @@
       '.inv-chart[data-wc-terminal][data-wc-kind=equity] .wt-stage,.inv-chart[data-wc-terminal][data-wc-kind=compact] .wt-stage{min-height:240px}' +
       '.inv-chartcard:has([data-wc-terminal]) .inv-seg{display:none}' +
       '.inv-chartcard:has([data-wc-terminal]) [data-market-notice]{display:none}' +
+      '.wc-live-banner{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:10px 0 12px;padding:9px 12px;' +
+      'border-radius:10px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.04);' +
+      'font:600 12px Inter,-apple-system,Segoe UI,Roboto,sans-serif;color:#8b949e}' +
+      '.wc-live-banner.live{border-color:rgba(38,166,154,.35);background:rgba(38,166,154,.07);color:#26a69a}' +
+      '.wc-live-banner.wait{border-color:rgba(224,179,65,.35);background:rgba(224,179,65,.07);color:#d9a832}' +
+      '.wc-live-banner.down{border-color:rgba(239,83,80,.35);background:rgba(239,83,80,.07);color:#ef5350}' +
+      '.wc-live-banner .wc-dot{width:7px;height:7px;border-radius:50%;background:currentColor;box-shadow:0 0 0 3px color-mix(in srgb,currentColor 18%,transparent)}' +
+      '.wc-live-banner b{color:inherit;font-weight:700}' +
+      '.wc-live-banner .wc-b-sub{color:#8b949e;font-weight:500}' +
+      '.wc-live-banner .wc-b-right{margin-left:auto;color:#6d7a88;font-weight:500;font-size:11px}' +
       '@media(max-width:820px){.inv-chart[data-wc-terminal]{min-height:0}.inv-chart[data-wc-terminal] .wt{min-height:0}}';
     document.head.appendChild(st);
   })();
@@ -373,13 +383,100 @@
     });
   }
 
+  /* ------------------------------------------------ live data status banner
+     Invest dashboard: Finnhub connection state, live symbol count and the age
+     of the last real tick. Turns amber/red the moment the feed goes quiet. */
+  function ago(ts) {
+    if (!ts) return 'never';
+    const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+    if (s < 5) return 'just now';
+    if (s < 60) return s + 's ago';
+    const m = Math.floor(s / 60);
+    return m + 'm ' + (s % 60) + 's ago';
+  }
+
+  function feedSnapshot() {
+    const inst = A.streamInst;
+    const feed = (window.WC_MARKET && WC_MARKET.feed) || null;
+    const quotes = (feed && feed.quotes) || {};
+    const live = Object.keys(quotes).filter((k) => {
+      const q = quotes[k];
+      return q && (q.real || q.live) && Number(q.price) > 0;
+    }).length;
+    let lastTick = 0;
+    Object.keys(quotes).forEach((k) => {
+      const q = quotes[k];
+      if (q && (q.real || q.live)) lastTick = Math.max(lastTick, Number(q.updatedAt) || 0);
+    });
+    if (inst && inst.lastTickAt) lastTick = Math.max(lastTick, inst.lastTickAt);
+    return {
+      status: inst ? inst.status : (A.feedMode === 'finnhub' ? 'connecting' : 'offline'),
+      symbols: inst && inst.subs ? inst.subs.size : live,
+      live,
+      lastTick,
+      wsTicks: inst ? inst.ticks : 0,
+      source: inst ? 'WebSocket' : (A.feedMode === 'app-feed' ? 'Backend bridge' : 'none'),
+      marketOpen: !!(feed && feed.marketOpen),
+      notice: (feed && feed.notice) || ''
+    };
+  }
+
+  function bannerHTML() {
+    return '<span class="wc-dot"></span>' +
+      '<span><b>Finnhub</b> <span class="wc-b-sub" data-b="state">connecting…</span></span>' +
+      '<span class="wc-b-sub" data-b="symtext">· 0 symbols live</span>' +
+      '<span class="wc-b-sub">· last tick <b data-b="tick">never</b></span>' +
+      '<span class="wc-b-sub" data-b="notice"></span>' +
+      '<span class="wc-b-right" data-b="source"></span>';
+  }
+
+  function paintBanner() {
+    const banners = document.querySelectorAll('[data-wc-live-banner]');
+    if (!banners.length) return;
+    const fs = feedSnapshot();
+    const quiet = fs.lastTick ? Date.now() - fs.lastTick : Infinity;
+    let cls = 'live', state = 'connected';
+    if (quiet > 60000) { cls = 'down'; state = fs.status === 'live' ? 'stream open · no ticks' : 'offline'; }
+    else if (quiet > 20000 || fs.status === 'reconnecting' || fs.status === 'connecting') { cls = 'wait'; state = 'reconnecting…'; }
+    banners.forEach((b) => {
+      b.className = 'wc-live-banner ' + cls;
+      const set = (k, v) => { const n = b.querySelector('[data-b="' + k + '"]'); if (n) n.textContent = v; };
+      set('state', state);
+      const symEl = b.querySelector('[data-b="symtext"]');
+      if (symEl) symEl.textContent = quiet > 60000
+        ? '· no ticks · ' + (fs.live || 0) + ' symbols last known'
+        : '· ' + (fs.symbols || fs.live || 0) + ' symbols live';
+      set('tick', ago(fs.lastTick));
+      set('notice', fs.notice ? '· ' + fs.notice : '');
+      set('source', fs.source + (fs.wsTicks ? ' · ' + fs.wsTicks + ' ticks' : ''));
+    });
+  }
+
+  function ensureBanner() {
+    const hero = document.querySelector('.inv-hero');
+    if (!hero) return;
+    const dash = document.querySelector('.inv-chartcard');
+    if (!dash) return;
+    let banner = document.querySelector('[data-wc-live-banner]');
+    if (!banner || !document.body.contains(banner)) {
+      banner = document.createElement('div');
+      banner.setAttribute('data-wc-live-banner', '1');
+      banner.className = 'wc-live-banner';
+      banner.innerHTML = bannerHTML();
+      const anchor = document.querySelector('.inv-actions');
+      if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(banner, anchor.nextSibling);
+      else dash.parentNode.insertBefore(banner, dash);
+    }
+    paintBanner();
+  }
+
   let scheduled = false;
   function schedule() {
     if (!A.ready || scheduled) return;
     scheduled = true;
     setTimeout(() => {
       scheduled = false;
-      try { sweep(); mountAll(); } catch (e) { console.error('[tradeview] mount pass failed', e); }
+      try { sweep(); mountAll(); ensureBanner(); paintBanner(); } catch (e) { console.error('[tradeview] mount pass failed', e); }
     }, 260);
   }
 
@@ -398,4 +495,5 @@
   }, 5000);
 
   initStream();
+  setInterval(() => { try { paintBanner(); } catch (e) {} }, 1000);
 })();
