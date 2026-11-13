@@ -15,6 +15,9 @@
       var m = document.querySelector('meta[name="viewport"]');
       if (m) m.setAttribute('content', 'width=1280, user-scalable=yes, viewport-fit=cover');
     }
+    var pf = (location.hash || '').match(/^#\/portfolio\/([A-Za-z0-9_-]+)/i);
+    if (!pf) { try { var qt = new URLSearchParams(location.search).get('portfolio'); if (qt) pf = [0, qt]; } catch (e) {} }
+    if (pf && pf[1]) sessionStorage.setItem('wc.pfToken', pf[1]);
   } catch (e) {}
 })();
 </script>
