@@ -1979,6 +1979,11 @@ function ltMountStock() {
   const ticker = m[1].toUpperCase();
   const content = document.getElementById('content');
   if (!content || document.getElementById('ltTicketMount')) return;
+  try {
+    const st = INV.stock(ticker);
+    const admin = me() && me().role === 'admin';
+    if (st && INV.classEnabled && INV.classOf && !INV.classEnabled(INV.classOf(st)) && !admin) return;
+  } catch (e) {}
 
   const host = document.createElement('div');
   host.id = 'ltTicketMount';
