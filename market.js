@@ -130,7 +130,7 @@ class MarketService {
     this.persist = opts.persist || (() => {});
     this.broadcast = opts.broadcast || (() => {});
     this.configFile = path.join(this.dataDir, 'market-config.json');
-    this.config = { mode: 'simulated', apiKey: '', refreshSec: 15, clientStream: true };
+    this.config = { mode: 'simulated', apiKey: '', refreshSec: 15 };
     this.quotes = {};
     this.assets = [];
     this.byFinnhub = new Map();
@@ -156,35 +156,10 @@ class MarketService {
     this.dividendFetched = 0;
     this.timers = [];
     this.settleLock = false;
-    /* Finnhub free tier is 60 calls/minute. Keep a rolling window so seeding,
-       dividend sync and polling share one budget instead of tripping 429s. */
-    this.apiCalls = [];
-    this.maxCallsPerMin = Math.max(20, Math.min(59, Number(process.env.FINNHUB_MAX_CALLS_PER_MIN) || 55));
-    this.seedOk = 0;
-    this.seedFailed = [];
-    this.dividendFailed = [];
-    this.dividendAttempted = 0;
-    this.dividendRetryTimer = null;
-  }
-
-  /* --------------------------- Finnhub call budget ----------------------- */
-  async reserveApiCall() {
-    for (let guard = 0; guard < 30; guard++) {
-      const now = Date.now();
-      this.apiCalls = this.apiCalls.filter((t) => now - t < 60000);
-      if (this.apiCalls.length < this.maxCallsPerMin) { this.apiCalls.push(now); return; }
-      const wait = Math.max(250, 60000 - (now - this.apiCalls[0]) + 120);
-      await sleep(wait);
-    }
-  }
-
-  async waitForCooldown() {
-    const left = this.rateLimitedUntil - Date.now();
-    if (left > 0) await sleep(Math.min(90000, left + 400));
   }
 
   /* ------------------------------- config ------------------------------- */
-  rawConfig() { return { mode: this.config.mode, apiKey: this.config.apiKey, refreshSec: this.config.refreshSec, clientStream: this.config.clientStream !== false }; }
+  rawConfig() { return { mode: this.config.mode, apiKey: this.config.apiKey, refreshSec: this.config.refreshSec }; }
 
   writeConfigFile() {
     try {
@@ -200,7 +175,6 @@ class MarketService {
     if (cfg.mode === 'hybrid' || cfg.mode === 'simulated') this.config.mode = cfg.mode;
     if (typeof cfg.apiKey === 'string') this.config.apiKey = cfg.apiKey.trim();
     if (cfg.refreshSec != null) this.config.refreshSec = Math.min(300, Math.max(5, Math.round(Number(cfg.refreshSec) || 15)));
-    if (typeof cfg.clientStream === 'boolean') this.config.clientStream = cfg.clientStream;
     this.writeConfigFile();
     return true;
   }
@@ -212,22 +186,14 @@ class MarketService {
         this.config.mode = raw.mode === 'hybrid' ? 'hybrid' : 'simulated';
         this.config.apiKey = typeof raw.apiKey === 'string' ? raw.apiKey.trim() : '';
         this.config.refreshSec = Math.min(300, Math.max(5, Number(raw.refreshSec) || 15));
-        if (typeof raw.clientStream === 'boolean') this.config.clientStream = raw.clientStream;
       }
     } catch (e) { /* first run */ }
-    const envKey = String(process.env.FINNHUB_API_KEY || '').trim();
-    const envMode = String(process.env.FINNHUB_MODE || '').toLowerCase();
-    if (envKey) {
-      /* deploy environment wins: FINNHUB_API_KEY turns the feed live */
-      this.config.apiKey = envKey;
-      this.keySource = 'env';
-      if (envMode !== 'simulated') this.config.mode = 'hybrid';
-    } else if (this.config.apiKey) {
-      this.keySource = 'stored';
-    } else {
-      this.keySource = 'none';
+    if (!this.config.apiKey && process.env.FINNHUB_API_KEY) {
+      this.config.apiKey = String(process.env.FINNHUB_API_KEY).trim();
     }
-    if (String(process.env.FINNHUB_BROWSER_STREAM || '').toLowerCase() === 'off') this.config.clientStream = false;
+    if (this.config.mode !== 'hybrid' && process.env.FINNHUB_MODE === 'hybrid' && this.config.apiKey) {
+      this.config.mode = 'hybrid';
+    }
   }
 
   saveConfig(next) {
@@ -242,29 +208,6 @@ class MarketService {
     return this.publicConfig();
   }
 
-  /* Browser trade stream: the terminal connects straight to wss://ws.finnhub.io.
-     The key is Finnhub's public client token; it is only handed out when the
-     admin keeps `clientStream` enabled (env FINNHUB_BROWSER_STREAM=off disables). */
-  streamInfo() {
-    const enabled = this.config.mode === 'hybrid' && !!this.config.apiKey && this.config.clientStream !== false;
-    const list = (this.assetList ? this.assetList() : []) || [];
-    return {
-      ok: true,
-      enabled,
-      token: enabled ? this.config.apiKey : '',
-      url: enabled ? (FINNHUB_WS_URL + '?token=' + encodeURIComponent(this.config.apiKey)) : '',
-      symbols: enabled ? list.map((a) => a.finnhubSymbol).filter(Boolean).slice(0, 50) : [],
-      symbolMap: enabled ? list.reduce((m, a) => { if (a && a.ticker && a.finnhubSymbol) m[a.ticker] = a.finnhubSymbol; return m; }, {}) : {},
-      maxSymbols: 50,
-      source: this.source(),
-      keySource: this.keySource || (this.config.apiKey ? 'stored' : 'none'),
-      wsConnected: !!this.wsConnected,
-      lastTickAt: this.lastWsTickAt || this.lastTickAt || null,
-      marketOpen: usMarketOpen(),
-      at: Date.now()
-    };
-  }
-
   publicConfig() {
     const key = this.config.apiKey;
     return {
@@ -272,9 +215,7 @@ class MarketService {
       mode: this.config.mode,
       refreshSec: this.config.refreshSec,
       hasKey: !!key,
-      keySource: this.keySource || (key ? 'stored' : 'none'),
       keyMasked: key ? (key.slice(0, 4) + '…' + key.slice(-4)) : '',
-      clientStream: this.config.clientStream !== false,
       status: this.status()
     };
   }
@@ -305,18 +246,19 @@ class MarketService {
     return out;
   }
 
-  /* Live-only: a ticker has NO quote until Finnhub actually sends one. Nothing
-     is seeded from the catalogue, so the app can never display an invented price. */
   seedBaseQuotes() {
+    const now = Date.now();
     this.refreshAssets();
     this.assetList().forEach((a) => {
       if (this.quotes[a.ticker]) return;
+      const price = Number(a.price) || 0;
       this.quotes[a.ticker] = {
-        ticker: a.ticker, price: 0, prevClose: 0, open: 0,
-        dayHigh: 0, dayLow: 0,
+        ticker: a.ticker, price, prevClose: price, open: price,
+        dayHigh: price, dayLow: price,
         changePct: 0, changeUsd: 0, vol: 0,
-        dir: 0, updatedAt: 0, source: 'waiting', real: false, live: false
+        dir: 0, updatedAt: now, source: 'cached', real: false
       };
+      if (price > 0) this.recordHistory(a.ticker, price, now, 'cached', false);
     });
   }
 
@@ -349,8 +291,7 @@ class MarketService {
       dir: price > (prev.price || price) ? 1 : price < (prev.price || price) ? -1 : 0,
       updatedAt: now,
       source: (meta && meta.source) || 'live',
-      real: !!(meta && meta.real),
-      live: !!(meta && meta.real)
+      real: !!(meta && meta.real)
     };
     q.changeUsd = round(q.price - q.prevClose, 4);
     q.changePct = q.prevClose ? round((q.changeUsd / q.prevClose) * 100, 4) : 0;
@@ -376,34 +317,6 @@ class MarketService {
     if (arr.length > 3000) arr.splice(0, arr.length - 3000);
   }
 
-  /* Recorded real ticks survive restarts so candles are continuous. */
-  historyFile() { return path.join(this.dataDir, 'market-history.json'); }
-
-  loadHistoryFile() {
-    try {
-      const raw = JSON.parse(fs.readFileSync(this.historyFile(), 'utf8'));
-      if (raw && typeof raw === 'object') {
-        Object.keys(raw).forEach((t) => {
-          const arr = Array.isArray(raw[t]) ? raw[t].filter((p) => p && p.t > 0 && p.p > 0 && p.real) : [];
-          if (arr.length) this.history[t] = arr.slice(-1200);
-        });
-        console.log('[market] restored real tick history for', Object.keys(this.history).length, 'symbols');
-      }
-    } catch (e) { /* first run */ }
-  }
-
-  saveHistoryFile() {
-    try {
-      fs.mkdirSync(this.dataDir, { recursive: true });
-      const out = {};
-      Object.keys(this.history).forEach((t) => {
-        const real = (this.history[t] || []).filter((p) => p && p.real);
-        if (real.length) out[t] = real.slice(-1200);
-      });
-      fs.writeFileSync(this.historyFile(), JSON.stringify(out));
-    } catch (e) { this.lastError = 'history persist: ' + e.message; }
-  }
-
   historyFor(tickers, limit) {
     const out = {};
     const n = Math.max(10, Math.min(3000, Number(limit) || 600));
@@ -417,12 +330,11 @@ class MarketService {
     const now = Date.now();
     if (now - this._lastSettleAt < 500) return;
     this._lastSettleAt = now;
-    try { this.settleTrades(); this.settleSpot(); } catch (e) { this.lastError = e.message; }
+    try { this.settleTrades(); } catch (e) { this.lastError = e.message; }
   }
 
   /* --------------------------- Finnhub REST ----------------------------- */
-  async getJSON(url, timeoutMs) {
-    await this.reserveApiCall();
+  getJSON(url, timeoutMs) {
     return new Promise((resolve, reject) => {
       const client = /^http:\/\//i.test(url) ? http : https;
       const req = client.get(url, {
@@ -452,7 +364,7 @@ class MarketService {
       const r = await this.getJSON(url, 9000);
       if (r.status === 429) {
         this.rateLimitedUntil = Date.now() + 60 * 1000;
-        this.lastError = 'Finnhub rate limit hit — waiting for the next live poll';
+        this.lastError = 'Finnhub rate limit hit — falling back to 24/7 simulated ticks';
         return null;
       }
       if (r.status !== 200 || !r.data) {
@@ -482,32 +394,19 @@ class MarketService {
   async seedFromFinnhub() {
     if (this.seeding || !this.config.apiKey) return;
     this.seeding = true;
-    this.seedOk = 0;
-    this.seedFailed = [];
     try {
-      const assets = this.assetList().slice().sort((a, b) => {
-        const rank = (x) => (x.assetClass === 'us' ? 0 : x.assetClass === 'global' ? 1 : 2);
-        return rank(a) - rank(b);
-      });
+      const assets = this.assetList();
       for (const a of assets) {
         if (this.stopped) break;
-        /* never abort the whole catalogue because one symbol failed */
-        await this.waitForCooldown();
-        const existing = this.quotes[a.ticker];
-        const realAt = this.lastRealTime[a.ticker] || 0;
-        if (existing && existing.real && Date.now() - realAt < 120000) { this.seedOk++; continue; }
+        if (Date.now() < this.rateLimitedUntil) break;
         const q = await this.fetchQuote(a.finnhubSymbol);
         if (q) {
           this.writeQuote(a.ticker, q.price, { prevClose: q.prevClose, open: q.open, dayHigh: q.dayHigh, dayLow: q.dayLow, vol: 0, source: 'live', real: true });
-          this.seedOk++;
-        } else {
-          this.seedFailed.push(a.ticker);
-          if (Date.now() < this.rateLimitedUntil) await this.waitForCooldown();
         }
-        await sleep(SEED_DELAY_MS);                            // shared limiter still caps the minute
+        await sleep(SEED_DELAY_MS);                            // default 1.2s < 60 requests / minute
       }
-      if (!this.seedFailed.length) this.lastError = '';
-      console.log('[market] Finnhub seed complete ·', this.seedOk + '/' + assets.length, 'assets live ·', usMarketOpen() ? 'market open' : 'market closed', this.seedFailed.length ? '· failed: ' + this.seedFailed.join(',') : '');
+      this.lastError = '';
+      console.log('[market] Finnhub seed complete ·', assets.length, 'assets ·', usMarketOpen() ? 'market open' : 'market closed');
     } finally {
       this.seeding = false;
     }
@@ -519,10 +418,8 @@ class MarketService {
     this.polling = true;
     try {
       for (const a of this.assetList()) {
-        if (this.stopped) break;
         const wsFresh = this.wsConnected && this.lastWsTickAt && Date.now() - this.lastWsTickAt < 45000;
-        if (wsFresh) break;                                  // websocket is already streaming every symbol
-        await this.waitForCooldown();
+        if (this.stopped || wsFresh) break;
         const t = a.ticker;
         const q = this.quotes[t];
         const realAt = this.lastRealTime[t] || 0;
@@ -530,9 +427,8 @@ class MarketService {
         if (stale) {
           const fresh = await this.fetchQuote(a.finnhubSymbol);
           if (fresh) this.writeQuote(t, fresh.price, { prevClose: fresh.prevClose, open: fresh.open, dayHigh: fresh.dayHigh, dayLow: fresh.dayLow, vol: q ? q.vol : 0, source: 'live', real: true });
-          else if (Date.now() < this.rateLimitedUntil) await this.waitForCooldown();
         }
-        await sleep(SEED_DELAY_MS);
+        await sleep(1200);
       }
     } finally {
       this.polling = false;
@@ -635,9 +531,6 @@ class MarketService {
 
   connectWS() {
     if (this.stopped || this.config.mode !== 'hybrid' || !this.config.apiKey) return;
-    /* A free Finnhub key allows one live socket. When browser streaming is on the
-       browsers own that socket; the server keeps REST polling for settlement. */
-    if (this.config.clientStream !== false) { this.wsMode = 'browser'; return; }
     const WS = this.wsClass();
     if (!WS) {
       this.lastError = 'WebSocket client unavailable — REST polling + simulation active';
@@ -702,17 +595,12 @@ class MarketService {
   fallbackReason() {
     if (this.config.mode !== 'hybrid' || !this.config.apiKey) return 'no-finnhub';
     if (Date.now() < this.rateLimitedUntil) return 'rate-limit';
-    if (!usMarketOpen()) return 'market-closed';
     return '';
   }
 
   notice() {
-    if (this.config.mode !== 'hybrid' || !this.config.apiKey) return 'Live prices unavailable — connect Finnhub in Admin → Markets';
-    const fresh = this.lastRealAt && Date.now() - this.lastRealAt < 90000;
-    if (fresh) return 'Live market data via Finnhub';
-    if (Date.now() < this.rateLimitedUntil) return 'Finnhub rate limit — real prices resume shortly';
-    if (!usMarketOpen()) return 'Market closed — showing the last real Finnhub prices';
-    return 'Live market data via Finnhub';
+    if (this.config.mode === 'hybrid' && this.config.apiKey) return 'Live market data via Finnhub';
+    return 'Connect Finnhub in Admin → Markets';
   }
 
   source() {
@@ -724,13 +612,11 @@ class MarketService {
       mode: this.config.mode,
       refreshSec: this.config.refreshSec,
       hasKey: !!this.config.apiKey,
-      keySource: this.keySource || (this.config.apiKey ? 'stored' : 'none'),
       marketOpen: usMarketOpen(),
       source: this.source(),
       notice: this.notice(),
       fallbackReason: this.fallbackReason(),
       wsConnected: this.wsConnected,
-      wsMode: this.wsMode || 'server',
       wsTicks: this.wsTicks,
       lastRealAt: this.lastRealAt || null,
       realTickers: Object.keys(this.lastReal).length,
@@ -742,9 +628,6 @@ class MarketService {
       assetCounts: this.assetClasses(),
       unpriced: this.assetList().filter((a) => !(this.quotes[a.ticker] && this.quotes[a.ticker].price > 0)).length,
       dividends: this.dividendStatus(),
-      seed: { live: this.seedOk || 0, failed: (this.seedFailed || []).length, failedTickers: (this.seedFailed || []).slice(0, 20), running: !!this.seeding },
-      apiCallsLastMin: (this.apiCalls || []).filter((t) => Date.now() - t < 60000).length,
-      apiBudgetPerMin: this.maxCallsPerMin,
       startedAt: this.startedAt
     };
   }
@@ -757,8 +640,6 @@ class MarketService {
       marketOpen: usMarketOpen(),
       notice: this.notice(),
       status: this.status(),
-      liveOnly: true,
-      liveCount: Object.keys(this.quotes).filter((t) => this.quotes[t] && this.quotes[t].real && this.quotes[t].price > 0).length,
       quotes: this.quotes
     };
   }
@@ -819,56 +700,28 @@ class MarketService {
   async syncDividends(manual) {
     if (this.syncingDividends) return this.dividendStatus();
     this.syncingDividends = true;
-    const db = this.getDb && this.getDb();
-    const prior = (db && db.invest && db.invest.dividendYields) || {};
     const fallback = this.fallbackDividendMap();
-    /* start from what we already know, so a failed fetch never downgrades a
-       previously synced live yield to a fallback value */
-    const map = Object.assign({}, fallback, prior);
-    const previousSource = this.dividendSource || (db && db.invest && db.invest.dividendSource) || '';
-    let source = previousSource === 'finnhub' ? 'finnhub' : 'fallback';
+    const map = Object.assign({}, fallback);
+    let source = 'fallback';
     let fetched = 0;
-    let failed = 0;
-    this.dividendFailed = [];
-    this.dividendAttempted = 0;
     try {
       const stockAssets = this.assetList().filter((a) => a.assetClass === 'us' || a.assetClass === 'global');
-      this.dividendAttempted = stockAssets.length;
       if (this.config.mode === 'hybrid' && this.config.apiKey) {
         for (const a of stockAssets) {
-          if (this.stopped) break;
-          /* wait out a cooldown instead of aborting the remaining symbols */
-          await this.waitForCooldown();
+          if (this.stopped || Date.now() < this.rateLimitedUntil) break;
           const v = await this.fetchDividendYield(a.finnhubSymbol);
-          if (v != null) { map[a.ticker] = v; fetched++; }
-          else {
-            failed++;
-            this.dividendFailed.push(a.ticker);
-            if (Date.now() < this.rateLimitedUntil) await this.waitForCooldown();
-          }
-          await sleep(Math.max(SEED_DELAY_MS, 1600));
+          if (v != null) { map[a.ticker] = v; fetched++; } else { map[a.ticker] = fallback[a.ticker] || 0; }
+          await sleep(SEED_DELAY_MS);                       // default 1.2s spacing
         }
-        if (fetched > 0) source = 'finnhub';
+        source = fetched ? 'finnhub' : 'fallback';
       }
       this.assetList().filter((a) => a.assetClass === 'forex' || a.assetClass === 'crypto').forEach((a) => { map[a.ticker] = 0; });
       this.applyDividendMap(map, source, fetched);
-      console.log('[market] dividends synced ·', source, '·', fetched + '/' + stockAssets.length, 'live', failed ? '· retrying ' + failed + ' later' : '');
-      if (failed && !this.stopped) this.scheduleDividendRetry();
+      console.log('[market] dividends synced ·', source, '·', fetched, 'live /', stockAssets.length, 'stock assets');
     } finally {
       this.syncingDividends = false;
     }
     return this.dividendStatus();
-  }
-
-  scheduleDividendRetry() {
-    if (this.dividendRetryTimer) return;
-    const wait = Math.max(120000, this.rateLimitedUntil - Date.now() + 5000);
-    this.dividendRetryTimer = setTimeout(() => {
-      this.dividendRetryTimer = null;
-      if (this.stopped) return;
-      this.syncDividends(true).catch((e) => { this.lastError = 'Dividend retry failed: ' + e.message; });
-    }, wait);
-    if (this.dividendRetryTimer.unref) this.dividendRetryTimer.unref();
   }
 
   dividendStatus() {
@@ -876,177 +729,9 @@ class MarketService {
       syncedAt: this.dividendSyncedAt || null,
       source: this.dividendSource || 'fallback',
       live: this.dividendFetched || 0,
-      attempted: this.dividendAttempted || 0,
-      failed: (this.dividendFailed || []).length,
-      failedTickers: (this.dividendFailed || []).slice(0, 20),
       tickers: this.assetList().filter((a) => a.assetClass === 'us' || a.assetClass === 'global').length,
       syncing: this.syncingDividends
     };
-  }
-
-  /* ------------------------- spot buy / sell ---------------------------- */
-  spotQuote(ticker) {
-    const q = this.quotes[String(ticker || '').toUpperCase()];
-    return q && Number(q.price) > 0 ? q : null;
-  }
-
-  buySpot(opts) {
-    const db = this.getDb && this.getDb();
-    if (!db) throw new Error('Database not ready');
-    const userId = String(opts.userId || '');
-    const ticker = String(opts.ticker || '').toUpperCase();
-    const u = (db.users || []).find((x) => x.id === userId);
-    if (!u) throw new Error('User not found');
-    const q = this.spotQuote(ticker);
-    if (!q) throw new Error('No live Finnhub quote for this asset yet');
-    const stock = (db.stocks || []).find((s) => s.ticker === ticker);
-    if ((db.invest && db.invest.paused && db.invest.paused[ticker]) || (stock && stock.paused)) throw new Error('Trading is paused for this asset');
-    let qty = Number(opts.shares) || 0;
-    /* USD amount is the primary input: USD / live price = shares, and
-       WC cost is always USD / 0.50 (1 WC = $0.50). */
-    if (!(qty > 0) && Number(opts.amountUsd) > 0) qty = Number(opts.amountUsd) / q.price;
-    if (!(qty > 0) && Number(opts.amountCoins) > 0) qty = (Number(opts.amountCoins) * 0.5) / q.price;
-    qty = Math.round(qty * 1e8) / 1e8;
-    if (!(qty > 0)) throw new Error('Enter an investment amount or quantity');
-    const costUsd = Math.round(qty * q.price * 100) / 100;
-    const cost = Math.round((costUsd / 0.5) * 100) / 100;
-    if (!(cost > 0)) throw new Error('Order value is too small');
-    if ((Number(u.balance) || 0) < cost) throw new Error('Not enough WC — top up your wallet');
-    const tp = Number(opts.tpPrice) || 0;
-    const sl = Number(opts.slPrice) || 0;
-    if (tp > 0 && tp <= q.price) throw new Error('Take Profit must be above the current price');
-    if (sl > 0 && sl >= q.price) throw new Error('Stop Loss must be below the current price');
-    u.balance = Math.round((Number(u.balance) - cost) * 100) / 100;
-    db.holdings = db.holdings || [];
-    let holding = db.holdings.find((h) => h.userId === userId && h.ticker === ticker);
-    if (holding) {
-      const oldShares = Number(holding.shares) || 0;
-      const newShares = oldShares + qty;
-      holding.avgPrice = Math.round(((oldShares * (Number(holding.avgPrice) || q.price)) + qty * q.price) / newShares * 10000) / 10000;
-      holding.shares = newShares;
-      holding.investedCoins = Math.round(((Number(holding.investedCoins) || 0) + cost) * 100) / 100;
-      holding.investedUsd = Math.round(((Number(holding.investedUsd) || ((oldShares * (Number(holding.avgPrice) || q.price)))) + costUsd) * 100) / 100;
-      holding.entryPriceUsd = round(holding.avgPrice, 4);
-      holding.wcRate = 0.5;
-      if (tp > 0) holding.takeProfitPrice = round(tp, 4);
-      if (sl > 0) holding.stopLossPrice = round(sl, 4);
-      holding.updatedAt = Date.now();
-    } else {
-      holding = {
-        id: id('hd'), userId, ticker, shares: qty, avgPrice: round(q.price, 4),
-        entryPriceUsd: round(q.price, 4), investedCoins: cost, investedUsd: costUsd, wcRate: 0.5,
-        takeProfitPrice: tp > 0 ? round(tp, 4) : null,
-        stopLossPrice: sl > 0 ? round(sl, 4) : null, createdAt: Date.now(), updatedAt: Date.now()
-      };
-      db.holdings.push(holding);
-    }
-    const order = {
-      id: id('tr'), userId, ticker, name: (db.stocks || []).find((s) => s.ticker === ticker)?.name || ticker,
-      side: 'buy', shares: qty, priceUsd: round(q.price, 4), entryPriceUsd: round(q.price, 4),
-      coins: cost, investedUsd: costUsd, wcRate: 0.5, feeCoins: 0,
-      type: 'market', status: 'Completed', plUsd: 0, reason: 'Market buy', createdAt: Date.now()
-    };
-    db.trades = db.trades || []; db.trades.unshift(order);
-    db.txs = db.txs || [];
-    db.txs.unshift({ id: id('tx_'), userId, type: 'stock-buy', label: `Bought ${qty} ${ticker} @ $${round(q.price, 4)}`, coins: -cost, meta: { ticker, shares: qty, priceUsd: q.price, spot: true }, createdAt: Date.now() });
-    db.notifications = db.notifications || [];
-    db.notifications.unshift({ id: id('nt_'), userId, title: 'Purchase complete', body: `Bought ${qty} ${ticker} @ $${round(q.price, 4)} · ${cost} WC`, link: '#/invest/stock/' + ticker, icon: 'trend', read: false, createdAt: Date.now() });
-    this.persist();
-    try { this.broadcast('change', { rev: null, source: 'spot-buy', at: Date.now() }); } catch (e) {}
-    return { holding, order, cost };
-  }
-
-  sellSpotInternal(db, holding, price, reason) {
-    if (!holding || !(Number(holding.shares) > 0)) return null;
-    /* atomic guard: the position must still be open in the live book. If a manual
-       sell and a TP/SL trigger land in the same instant, only the first call wins
-       and the second sees the position already removed — no double credit. */
-    if (!Array.isArray(db.holdings) || !db.holdings.some((h) => h && h.id === holding.id)) return null;
-    if (holding.closing) return null;
-    holding.closing = true;
-    const u = (db.users || []).find((x) => x.id === holding.userId);
-    if (!u) { holding.closing = false; return null; }
-    const shares = Number(holding.shares);
-    const payoutUsd = Math.round(shares * Number(price) * 100) / 100;
-    const payout = Math.round((payoutUsd / 0.5) * 100) / 100;
-    u.balance = Math.round((Number(u.balance) + payout) * 100) / 100;
-    const entryPriceUsd = Number(holding.avgPrice) || Number(price);
-    const plUsd = Math.round((Number(price) - entryPriceUsd) * shares * 100) / 100;
-    const plCoins = Math.round((plUsd / 0.5) * 100) / 100;
-    db.holdings = (db.holdings || []).filter((h) => h.id !== holding.id);
-    const order = {
-      id: id('tr'), userId: holding.userId, ticker: holding.ticker, name: (db.stocks || []).find((s) => s.ticker === holding.ticker)?.name || holding.ticker,
-      side: 'sell', shares, priceUsd: round(price, 4), entryPriceUsd: round(entryPriceUsd, 4), exitPriceUsd: round(price, 4),
-      coins: payout, payoutUsd, plCoins, wcRate: 0.5, feeCoins: 0,
-      type: 'market', status: 'Completed', plUsd, reason, createdAt: Date.now()
-    };
-    db.trades = db.trades || []; db.trades.unshift(order);
-    db.txs = db.txs || [];
-    db.txs.unshift({ id: id('tx_'), userId: u.id, type: 'stock-sell', label: `Sold ${shares} ${holding.ticker} @ $${round(price, 4)} · ${reason}`, coins: payout, meta: { ticker: holding.ticker, shares, priceUsd: price, entryPriceUsd, plUsd, plCoins, payoutUsd, spot: true, reason }, createdAt: Date.now() });
-    db.notifications = db.notifications || [];
-    db.notifications.unshift({ id: id('nt_'), userId: u.id, title: reason, body: `Sold ${shares} ${holding.ticker} @ $${round(price, 4)} · ${payout} WC credited (${plUsd >= 0 ? '+' : '−'}$${Math.abs(plUsd).toFixed(2)} / ${plCoins >= 0 ? '+' : '−'}${Math.abs(plCoins).toFixed(2)} WC).`, link: '#/invest/orders', icon: reason === 'Take Profit Hit' ? 'trend' : 'ban', read: false, createdAt: Date.now() });
-    return { order, payout, plUsd };
-  }
-
-  sellSpot(opts) {
-    const db = this.getDb && this.getDb();
-    if (!db) throw new Error('Database not ready');
-    const userId = String(opts.userId || '');
-    const ticker = String(opts.ticker || '').toUpperCase();
-    const holding = (db.holdings || []).find((h) => h.userId === userId && h.ticker === ticker);
-    if (!holding) throw new Error('No open position for this asset');
-    const q = this.spotQuote(ticker);
-    if (!q) throw new Error('No live Finnhub quote for this asset yet');
-    const out = this.sellSpotInternal(db, holding, q.price, 'Manual sell');
-    if (!out) throw new Error('Could not sell this position');
-    this.persist();
-    try { this.broadcast('change', { rev: null, source: 'spot-sell', at: Date.now() }); } catch (e) {}
-    return out;
-  }
-
-  updateSpotTpsl(opts) {
-    const db = this.getDb && this.getDb();
-    if (!db) throw new Error('Database not ready');
-    const holding = (db.holdings || []).find((h) => h.userId === String(opts.userId || '') && h.ticker === String(opts.ticker || '').toUpperCase());
-    if (!holding) throw new Error('No open position for this asset');
-    const q = this.spotQuote(holding.ticker);
-    if (!q) throw new Error('No live Finnhub quote for this asset yet');
-    const tp = Number(opts.tpPrice) || 0;
-    const sl = Number(opts.slPrice) || 0;
-    const entry = Number(holding.avgPrice) || q.price;
-    if (tp > 0 && tp <= entry) throw new Error('Take Profit must be above the position entry price');
-    if (sl > 0 && sl >= entry) throw new Error('Stop Loss must be below the position entry price');
-    holding.takeProfitPrice = tp > 0 ? round(tp, 4) : null;
-    holding.stopLossPrice = sl > 0 ? round(sl, 4) : null;
-    holding.updatedAt = Date.now();
-    this.persist();
-    try { this.broadcast('change', { rev: null, source: 'spot-tpsl', at: Date.now() }); } catch (e) {}
-    return holding;
-  }
-
-  settleSpot() {
-    const db = this.getDb && this.getDb();
-    if (!db || !Array.isArray(db.holdings)) return 0;
-    let changed = 0;
-    for (const h of db.holdings.slice()) {
-      if (!h || !(Number(h.shares) > 0)) continue;
-      const tp = Number(h.takeProfitPrice) || 0;
-      const sl = Number(h.stopLossPrice) || 0;
-      if (!tp && !sl) continue;
-      const q = this.quotes[h.ticker];
-      if (!q || !(q.price > 0)) continue;
-      let reason = '';
-      if (tp > 0 && q.price >= tp) reason = 'Take Profit Hit';
-      else if (sl > 0 && q.price <= sl) reason = 'Stop Loss Hit';
-      if (!reason) continue;
-      if (this.sellSpotInternal(db, h, q.price, reason)) changed++;
-    }
-    if (changed) {
-      this.persist();
-      try { this.broadcast('change', { rev: null, source: 'spot-settlement', at: Date.now() }); } catch (e) {}
-      console.log('[market] settled', changed, 'spot position(s) on TP/SL');
-    }
-    return changed;
   }
 
   /* --------------------------- settlement ------------------------------- */
@@ -1227,13 +912,12 @@ class MarketService {
     this.refreshAssets();
     this.seedBaseQuotes();
     /* TP/SL checks run every second so a level hit is settled immediately */
-    this.timers.push(setInterval(() => { try { this.settleTrades(); this.settleSpot(); } catch (e) { this.lastError = e.message; } }, 1000));
+    this.timers.push(setInterval(() => { try { this.settleTrades(); } catch (e) { this.lastError = e.message; } }, 1000));
     this.timers.push(setInterval(() => {
       try {
         if (this.config.mode === 'hybrid' && this.config.apiKey) this.pollCycle();
       } catch (e) { this.lastError = e.message; }
     }, Math.max(5000, this.config.refreshSec * 1000)));
-    this.timers.push(setInterval(() => { try { this.saveHistoryFile(); } catch (e) {} }, 30000));
     /* make fallback yields available immediately, then refresh from Finnhub */
     this.applyDividendMap(this.fallbackDividendMap(), 'fallback', 0);
     this.timers.push(setInterval(() => { this.syncDividends().catch((e) => { this.lastError = e.message; }); }, 24 * 3600 * 1000));
@@ -1249,12 +933,10 @@ class MarketService {
   stopTimers() {
     this.timers.forEach((t) => clearInterval(t));
     this.timers = [];
-    if (this.dividendRetryTimer) { clearTimeout(this.dividendRetryTimer); this.dividendRetryTimer = null; }
   }
 
   start() {
     this.loadConfig();
-    this.loadHistoryFile();
     this.seedBaseQuotes();
     this.restart().catch((e) => { this.lastError = e.message; });
     console.log('[market] mode:', this.config.mode, '· refresh:', this.config.refreshSec + 's', '· key:', this.config.apiKey ? 'set' : 'not set');
@@ -1263,7 +945,6 @@ class MarketService {
   stop() {
     this.stopped = true;
     this.stopTimers();
-    try { this.saveHistoryFile(); } catch (e) {}
     this.closeWS();
   }
 }
