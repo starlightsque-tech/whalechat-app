@@ -179,8 +179,8 @@ class BotService {
     if (!(feeCoins > 0)) throw nextError('This tool is not priced yet');
     if ((Number(u.balance) || 0) < feeCoins) throw nextError(`Not enough WC — the Auto Secure tool costs ${feeCoins.toFixed(2)} WC ($${priceUsd.toFixed(2)})`);
     const now = Date.now();
-    const cycle = this.settings().autoSecureCycle || 'monthly';
-    const ms = this.cycleMs(cycle) || CYCLE_MS.monthly;
+    const cycle = Object.prototype.hasOwnProperty.call(CYCLE_MS, this.settings().autoSecureCycle) ? this.settings().autoSecureCycle : 'monthly';
+    const ms = CYCLE_MS[cycle];
     u.balance = round(Number(u.balance) - feeCoins, 2);
     const old = (db.autoSecureSubs || []).find((s) => s && s.userId === userId);
     const sub = old || { id: nid('as_'), userId };
@@ -404,16 +404,36 @@ class BotService {
     if (!db) throw nextError('Database not ready');
     this.ensureDefaults(db);
     const sessions = db.botSessions || [];
+    const autoSubs = (db.autoSecureSubs || []);
+    const autoActive = autoSubs.filter((s) => s && s.status === 'active');
+    const autoRevenue = round((db.txs || [])
+      .filter((t) => t && t.type === 'auto-secure-subscription')
+      .reduce((a, t) => a - (Number(t.coins) || 0), 0), 2);
+    let securedOpen = 0;
+    (db.trades || []).forEach((t) => {
+      (t.securedProfits || []).forEach((p) => { if (p && !p.claimed) securedOpen = round(securedOpen + (Number(p.coins) || 0), 2); });
+    });
     return {
       ok: true,
       tiers: this.tiers(),
       settings: this.settings(),
       cycleOptions: Object.keys(CYCLE_MS),
+      autoSecure: {
+        priceUsd: Number(this.settings().autoSecurePriceUsd) || 20,
+        billingCycle: this.settings().autoSecureCycle || 'monthly',
+        activeSubs: autoActive.length,
+        enabledSubs: autoActive.filter((s) => s.enabled !== false).length,
+        revenueCoins: autoRevenue,
+        revenueUsd: round(autoRevenue * 0.5, 2),
+        securedPendingCoins: securedOpen
+      },
       stats: {
         subscriptions: (db.botSubscriptions || []).filter((s) => s.status === 'active').length,
         running: sessions.filter((s) => s.status === 'running').length,
         reservedCoins: round(sessions.filter((s) => s.status === 'running' || s.status === 'paused').reduce((a, s) => a + (Number(s.poolCoins) || 0), 0), 2),
         revenueCoins: round((db.txs || []).filter((t) => t.type === 'bot-subscription').reduce((a, t) => a - (Number(t.coins) || 0), 0), 2),
+        autoSecureRevenueCoins: autoRevenue,
+        autoSecureSubs: autoActive.length,
         sessions: sessions.length
       }
     };
@@ -444,6 +464,10 @@ class BotService {
       if (opts.settings.stakePct != null) s.stakePct = clamp(opts.settings.stakePct, 1, 100, s.stakePct);
       if (opts.settings.winPct != null) s.winPct = clamp(opts.settings.winPct, 0.1, 100, s.winPct);
       if (opts.settings.lossPct != null) s.lossPct = clamp(opts.settings.lossPct, 0.1, 100, s.lossPct);
+      if (opts.settings.autoSecurePriceUsd != null) s.autoSecurePriceUsd = clamp(opts.settings.autoSecurePriceUsd, 0, 100000, s.autoSecurePriceUsd);
+      if (opts.settings.autoSecureCycle != null && Object.prototype.hasOwnProperty.call(CYCLE_MS, opts.settings.autoSecureCycle)) {
+        s.autoSecureCycle = opts.settings.autoSecureCycle;
+      }
     }
     this.changed('bot-admin-config');
     return this.adminState();
