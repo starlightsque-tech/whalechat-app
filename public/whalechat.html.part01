@@ -5,6 +5,19 @@
 <script async src="https://www.googletagmanager.com/gtm.js?id=GTM-5WNCBL8N"></script><script>window.dataLayer = window.dataLayer || [];function gtag(){dataLayer.push(arguments);}gtag('js', new Date());</script>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<script>
+/* WhaleChat view mode — default desktop, remembered per device */
+(function () {
+  try {
+    var mode = localStorage.getItem('wc.viewMode') || 'desktop';
+    document.documentElement.setAttribute('data-wc-view', mode);
+    if (mode === 'desktop' && ((window.screen && window.screen.width) || window.innerWidth) < 1024) {
+      var m = document.querySelector('meta[name="viewport"]');
+      if (m) m.setAttribute('content', 'width=1280, user-scalable=yes, viewport-fit=cover');
+    }
+  } catch (e) {}
+})();
+</script>
 <meta name="theme-color" content="#04101a" />
 <title>WhaleChat — Chat, shop and get paid</title>
 <meta name="description" content="WhaleChat brings your conversations, your store and your wallet together — with referral rewards for every friend you invite." />
@@ -678,7 +691,9 @@ const ICONS = {
   ban:'<circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/>',
   filter:'<path d="M22 3H2l8 9.46V19l4 2v-8.54z"/>',
   bookmark:'<path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>',
-  key:'<circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.5 12.5 9-9M17 5l2.5 2.5M14 8l2.5 2.5"/>'
+  key:'<circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.5 12.5 9-9M17 5l2.5 2.5M14 8l2.5 2.5"/>',
+  monitor:'<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>',
+  smartphone:'<rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/>'
 };
 
 function ic(name, size = 20, cls = '') {
