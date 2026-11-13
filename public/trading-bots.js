@@ -632,6 +632,62 @@
     </div>`;
   }
 
+  function resizeBotAvatar(file, max, quality) {
+    return new Promise((resolve, reject) => {
+      try {
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => {
+          try {
+            let w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+            const r = Math.min(1, max / Math.max(w, h));
+            w = Math.max(1, Math.round(w * r)); h = Math.max(1, Math.round(h * r));
+            const c = document.createElement('canvas');
+            c.width = w; c.height = h;
+            c.getContext('2d').drawImage(img, 0, 0, w, h);
+            URL.revokeObjectURL(url);
+            resolve(c.toDataURL('image/jpeg', quality));
+          } catch (e) { URL.revokeObjectURL(url); reject(e); }
+        };
+        img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not read image')); };
+        img.src = url;
+      } catch (e) { reject(e); }
+    });
+  }
+
+  function botInitials(name, username) {
+    return escB(String(username || name || '?').replace(/[^a-zA-Z0-9]/g, '').slice(0, 2).toUpperCase() || '?');
+  }
+
+  function botTierRow(t) {
+    const isNew = !t || !t.id;
+    const id = isNew ? '' : t.id;
+    const av = t && t.avatar ? String(t.avatar) : '';
+    const url = /^https?:\/\//i.test(av) ? av : '';
+    return `<tr data-bot-tier="${escB(id)}" data-bot-custom="${t && t.custom ? '1' : '0'}">
+      <td style="font-weight:650;min-width:190px">
+        <div class="row" style="gap:6px;align-items:center;margin-bottom:5px">
+          <span class="bot-av" data-bot-av>${av ? `<img src="${escB(av)}" alt=""/>` : botInitials(t && t.name, t && t.username)}</span>
+          <label class="btn btn-xs btn-ghost" style="cursor:pointer">Upload<input type="file" accept="image/*" data-f="avatarFile" style="display:none" onchange="App.botAvatarPick(this)"/></label>
+          <button type="button" class="btn btn-xs btn-ghost" data-act="bot-avatar-remove">Remove</button>
+        </div>
+        <input class="input bot-mini" data-f="name" value="${escB(t ? t.name : '')}" placeholder="Bot name" style="margin-bottom:4px;width:100%"/>
+        <input class="input bot-mini" data-f="username" value="${escB(t ? t.username || '' : '')}" placeholder="username" style="margin-bottom:4px;width:100%"/>
+        <input class="input bot-mini" data-f="avatarUrl" value="${escB(url)}" placeholder="or https:// image URL" style="width:100%"/>
+        <div class="tiny muted" style="margin-top:3px">${t ? 'ID: ' + escB(t.id) + ' · ' + num(t.priceUsd * 2) + ' WC' : 'New bot — not saved yet'}</div>
+      </td>
+      <td><b>${t ? Number(t.subscribers) || 0 : 0}</b></td>
+      <td><label class="checkline" style="margin:0"><input type="checkbox" data-f="hot" ${t && t.hot ? 'checked' : ''}/></label></td>
+      <td><input class="input bot-mini" data-f="accuracy" type="number" min="1" max="100" step="1" value="${t ? t.accuracy : 50}"/></td>
+      <td><input class="input bot-mini" data-f="priceUsd" type="number" min="0" step="0.01" value="${t ? t.priceUsd : 20}"/></td>
+      <td><select class="input bot-mini" data-f="billingCycle">
+        ${['daily', 'weekly', 'monthly', 'one_time'].map((c) => `<option value="${c}" ${(t ? t.billingCycle : 'monthly') === c ? 'selected' : ''}>${c.replace('_', '-')}</option>`).join('')}
+      </select></td>
+      <td><input class="input bot-mini" data-f="intervalMin" type="number" min="0" max="10080" step="1" value="${t ? (Number(t.intervalMin) || 0) : 0}" placeholder="global"/></td>
+      <td><label class="checkline" style="margin:0"><input type="checkbox" data-f="enabled" ${!t || t.enabled !== false ? 'checked' : ''}/></label></td>
+    </tr>`;
+  }
+
   function adminBodyHTML(a) {
     if (!a) return '<div class="tiny muted" style="margin-top:10px">Could not load bot configuration.</div>';
     const s = a.settings || {};
@@ -642,27 +698,12 @@
         <div><span>Reserved capital</span><b>${num(a.stats.reservedCoins)} WC</b></div>
         <div><span>Subscription revenue</span><b>${num(a.stats.revenueCoins)} WC</b></div>
       </div>
-      <div class="table-wrap"><table class="tbl bot-admin-table"><thead><tr><th>Tier &amp; identity</th><th>Hot</th><th>Accuracy %</th><th>Price (USD)</th><th>Billing cycle</th><th>Speed override (min)</th><th>Live</th></tr></thead><tbody>
-        ${a.tiers.map((t) => `<tr data-bot-tier="${escB(t.id)}">
-          <td style="font-weight:650">
-            <div class="row" style="gap:6px;align-items:center">
-              <span class="bot-av" data-bot-av>${t.avatar ? `<img src="${t.avatar}" alt=""/>` : escB(String(t.username || t.name || '?').slice(0,2).toUpperCase())}</span>
-              <label class="btn btn-xs btn-ghost" style="cursor:pointer">photo<input type="file" accept="image/*" data-f="avatarFile" style="display:none" onchange="App.botAvatarPick(this)"/></label>
-            </div>
-            <div style="margin-top:4px">${escB(t.name)}</div>
-            <input class="input bot-mini" data-f="username" value="${escB(t.username || '')}" placeholder="username" style="margin-top:4px"/>
-            <div class="tiny muted">${num(t.priceUsd * 2)} WC</div>
-          </td>
-          <td><label class="checkline" style="margin:0"><input type="checkbox" data-f="hot" ${t.hot ? 'checked' : ''}/></label></td>
-          <td><input class="input bot-mini" data-f="accuracy" type="number" min="1" max="100" step="1" value="${t.accuracy}"/></td>
-          <td><input class="input bot-mini" data-f="priceUsd" type="number" min="0" step="0.01" value="${t.priceUsd}"/></td>
-          <td><select class="input bot-mini" data-f="billingCycle">
-            ${['daily', 'weekly', 'monthly', 'one_time'].map((c) => `<option value="${c}" ${t.billingCycle === c ? 'selected' : ''}>${c.replace('_', '-')}</option>`).join('')}
-          </select></td>
-          <td><input class="input bot-mini" data-f="intervalMin" type="number" min="0" max="10080" step="1" value="${Number(t.intervalMin) || 0}" placeholder="global"/></td>
-          <td><label class="checkline" style="margin:0"><input type="checkbox" data-f="enabled" ${t.enabled !== false ? 'checked' : ''}/></label></td>
-        </tr>`).join('')}
-      </tbody></table></div>
+      <div class="table-wrap"><table class="tbl bot-admin-table"><thead><tr><th>Tier &amp; identity</th><th>Subs</th><th>Hot</th><th>Accuracy %</th><th>Price (USD)</th><th>Billing cycle</th><th>Speed override (min)</th><th>Live</th></tr></thead>
+        <tbody id="botAdminRows">${a.tiers.map(botTierRow).join('')}</tbody></table></div>
+      <div class="row" style="gap:8px;margin-top:9px;flex-wrap:wrap">
+        <button class="btn btn-soft btn-sm" data-act="bot-admin-add">${ic('plus', 13)} Add new bot</button>
+        <span class="tiny muted" style="align-self:center">New bots appear in the marketplace for users to subscribe.</span>
+      </div>
       <div class="bot-admin-grid">
         <div class="field"><label class="label">Offline trade speed (default)</label>
           <select class="input" id="botCfgInterval">${intervals.map(([v, l]) => `<option value="${v}" ${Number(s.intervalMin) === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
@@ -697,7 +738,14 @@
     const body = document.getElementById('botAdminBody');
     if (!body) return;
     const a = await loadAdmin(force);
-    if (body.isConnected) body.innerHTML = adminBodyHTML(a);
+    if (!body.isConnected) return;
+    body.innerHTML = adminBodyHTML(a);
+    /* avatar data URLs stay in dataset (not repeated in the HTML attributes) */
+    body.querySelectorAll('[data-bot-tier]').forEach((row) => {
+      const id = row.getAttribute('data-bot-tier');
+      const tier = ((a && a.tiers) || []).find((t) => t && t.id === id);
+      row.dataset.avatar = tier && tier.avatar ? String(tier.avatar) : '';
+    });
   }
 
   /* -------------------------------- actions -------------------------------- */
@@ -765,13 +813,51 @@
     App.botAvatarPick = async function (input) {
       const f = input.files && input.files[0];
       if (!f) return;
+      const row = input.closest('[data-bot-tier]');
       try {
-        const c = await compressImage(f, 128, 0.82);
-        const d = await fileToDataURL(c);
-        const row = input.closest('[data-bot-tier]');
-        if (row) { row.dataset.avatar = d; const av = row.querySelector('[data-bot-av]'); if (av) av.innerHTML = `<img src="${d}" alt=""/>`; }
-        tmsg('Avatar ready — press Save changes to publish it', 'ok');
-      } catch (e) { tmsg('Could not read that image', 'err'); }
+        let c = await compressImage(f, 160, 0.8);
+        let d = await fileToDataURL(c);
+        if (d.length > 380000) {
+          try { d = await resizeBotAvatar(f, 128, 0.78); } catch (e) { d = ''; }
+        }
+        if (!d || d.length > 380000) {
+          try { d = await resizeBotAvatar(f, 80, 0.6); } catch (e) { d = ''; }
+        }
+        if (!d || d.length > 380000) return tmsg('That image is too large — choose a smaller photo', 'err');
+        if (!/^data:image\//i.test(d)) return tmsg('That file is not a readable image', 'err');
+        if (row) {
+          row.dataset.avatar = d;
+          const urlEl = row.querySelector('[data-f="avatarUrl"]');
+          if (urlEl) urlEl.value = '';
+          const av = row.querySelector('[data-bot-av]');
+          if (av) av.innerHTML = `<img src="${d}" alt=""/>`;
+        }
+        tmsg('Photo ready — press Save bot settings to publish it', 'ok');
+      } catch (e) { tmsg('Could not read that image: ' + e.message, 'err'); }
+    };
+
+    App.botAvatarRemove = function (id, ds, ev) {
+      const row = ev && ev.target ? ev.target.closest('[data-bot-tier]') : null;
+      if (!row) return;
+      row.dataset.avatar = '';
+      const av = row.querySelector('[data-bot-av]');
+      const nameEl = row.querySelector('[data-f="name"]');
+      if (av) av.textContent = botInitials(nameEl ? nameEl.value : '', row.querySelector('[data-f="username"]') ? row.querySelector('[data-f="username"]').value : '');
+      const urlEl = row.querySelector('[data-f="avatarUrl"]');
+      if (urlEl) urlEl.value = '';
+    };
+
+    App.botAdminAdd = function () {
+      const body = document.getElementById('botAdminRows');
+      if (!body) return tmsg('Reload the bot admin panel first', 'err');
+      const tbody = document.createElement('tbody');
+      tbody.innerHTML = botTierRow(null);
+      const row = tbody.firstElementChild;
+      row.dataset.avatar = '';
+      body.appendChild(row);
+      const name = row.querySelector('[data-f="name"]');
+      if (name) name.focus();
+      tmsg('New bot row added — set a name, accuracy and price, then save', 'ok');
     };
 
     App.botCool = async function () {
@@ -850,11 +936,15 @@
       const tiers = [];
       document.querySelectorAll('[data-bot-tier]').forEach((row) => {
         const get = (f) => row.querySelector('[data-f="' + f + '"]');
+        let avatar = row.dataset.avatar;
+        const urlInput = get('avatarUrl');
+        if (urlInput && urlInput.value.trim()) avatar = urlInput.value.trim();
         tiers.push({
           id: row.getAttribute('data-bot-tier'),
+          name: (get('name') || {}).value || '',
           username: (get('username') || {}).value || '',
           hot: !!((get('hot') || {}).checked),
-          avatar: row.dataset.avatar || undefined,
+          avatar: avatar === undefined ? undefined : avatar,
           accuracy: Number(get('accuracy').value),
           priceUsd: Number(get('priceUsd').value),
           billingCycle: get('billingCycle').value,
@@ -879,7 +969,7 @@
         B.admin = r.data; B.adminLoadedAt = Date.now();
         B.loadedAt = 0;
         mountAdmin(true);
-        tmsg('Bot pricing and speed saved', 'ok');
+        tmsg('Bot catalogue saved — profile pictures and new bots are live', 'ok');
       } catch (e) { tmsg('Save failed: ' + e.message, 'err'); }
     };
   }
