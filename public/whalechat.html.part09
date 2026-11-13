@@ -211,6 +211,24 @@ INV.visibleStocks = function () {
 INV.visibleCats = function () {
   return ['All'].concat(INV.CLASS_LIST.filter((c) => INV.classEnabled(c.key)).map((c) => c.label));
 };
+INV.classRates = function () {
+  const inv = INV.db();
+  if (!inv.classRates || typeof inv.classRates !== 'object') inv.classRates = {};
+  return inv.classRates;
+};
+INV.classRate = function (key) {
+  const r = Number(INV.classRates()[key]);
+  return Number.isFinite(r) && r >= 0 ? Math.min(500, r) : null;
+};
+/* a stock's own override wins; otherwise the market-type rate applies */
+INV.effectiveProfitPct = function (value) {
+  const s = (value && typeof value === 'object') ? value : INV.stock(value);
+  if (!s) return 0;
+  const n = Number(s.profitPct);
+  if (Number.isFinite(n) && n >= 0) return Math.min(500, n);
+  const r = INV.classRate(INV.classOf(s));
+  return r == null ? 0 : r;
+};
 
 INV.marketFiltered = function () {
   let list = INV.visibleStocks();
@@ -741,6 +759,36 @@ INV.viewAdminStocks = function () {
     <div class="tiny muted mt6">US Stocks = US exchange listings · Global = London/Frankfurt/Tokyo/Toronto · Forex = OANDA pairs · Crypto = Binance pairs.</div>
   </div>
 
+  <div class="card" id="classRateCard">
+    <div class="card-title">Bulk profit rate by market type</div>
+    <div class="tiny muted" style="line-height:1.65;margin-bottom:10px">
+      Pick a market type and one ROI payout. Every stock in that type is updated immediately, and newly listed
+      stocks of that type inherit the same rate until you override an individual stock. Example: <b>Crypto + 1.5%</b>
+      makes every crypto pair pay exactly 1.5% profit on close.
+    </div>
+    <div class="row" style="gap:8px;align-items:flex-end;flex-wrap:wrap">
+      <div class="field grow" style="margin:0;min-width:170px"><label class="label">Market type</label>
+        <select class="input" id="classRateType">
+          ${INV.CLASS_LIST.map(c => {
+            const count = INV.stocks().filter(s => INV.classOf(s) === c.key).length;
+            const rate = INV.classRate(c.key);
+            return `<option value="${c.key}">${c.label} · ${count} stock${count === 1 ? '' : 's'}${rate != null ? ' · ' + rate + '%' : ''}</option>`;
+          }).join('')}
+          <option value="all">All market types</option>
+        </select></div>
+      <div class="field" style="margin:0;width:150px"><label class="label">Profit rate (%)</label>
+        <input class="input" id="classRatePct" type="number" step="0.01" min="0" max="500" placeholder="1.5"/></div>
+      <button class="btn btn-primary" data-act="inv-admin-class-rate">Apply to all stocks</button>
+    </div>
+    <div class="row" style="gap:6px;margin-top:9px;flex-wrap:wrap">
+      ${INV.CLASS_LIST.map(c => {
+        const rate = INV.classRate(c.key);
+        return `<span class="badge ${rate != null ? 'badge-success' : 'badge-warn'}">${c.label}: ${rate != null ? rate + '%' : 'per-stock'}</span>`;
+      }).join('')}
+    </div>
+    <div class="tiny muted mt6">Live Finnhub prices remain display/TP-SL only. 0% = capital back on close. Max 500%.</div>
+  </div>
+
   <div class="card">
     <div class="card-title">Catalogue</div>
     <div class="table-wrap"><table class="inv-table">
@@ -754,7 +802,7 @@ INV.viewAdminStocks = function () {
           <td class="muted">${esc(s.sector || '—')}</td>
           <td class="num"><span data-lv="price:${s.ticker}">${INV.priceText ? INV.priceText(s.ticker, q.price) : usd(q.price)}</span></td>
           <td class="num ${INV.chgClass(Number(q.changePct) || 0)}">${(Number(q.changePct) || 0) >= 0 ? '+' : ''}${(Number(q.changePct) || 0).toFixed(2)}%</td>
-          <td class="num"><b class="${Number(s.profitPct) > 0 ? 'up' : 'muted'}">${Number(s.profitPct) > 0 ? Number(s.profitPct) + '%' : '—'}</b></td>
+          <td class="num"><b class="${INV.effectiveProfitPct(s) > 0 ? 'up' : 'muted'}">${INV.effectiveProfitPct(s) > 0 ? INV.effectiveProfitPct(s) + '%' : '—'}</b></td>
           <td><span class="badge ${paused ? 'badge-warn' : 'badge-success'}">${paused ? 'Paused' : 'Live'}</span></td>
           <td class="row" style="gap:4px;justify-content:flex-end">
             <button class="btn btn-xs btn-ghost" data-act="inv-admin-profit" data-t="${s.ticker}">${ic('tag', 13)}</button>
@@ -801,9 +849,9 @@ INV.stockFormHTML = function (s) {
     <div class="field grow"><label class="label">Price (USD)</label><input class="input" id="sfPrice" type="number" step="0.01" value="${x.price != null ? x.price : ''}"/></div>
     <div class="field grow"><label class="label">P/E</label><input class="input" id="sfPe" type="number" step="0.1" value="${x.pe != null ? x.pe : 0}"/></div>
   </div>
-  <div class="field"><label class="label">User profit rate (%)</label>
-    <input class="input" id="sfProfitPct" type="number" step="0.01" min="0" max="500" value="${x.profitPct != null ? x.profitPct : 0}" placeholder="0"/>
-    <div class="tiny muted mt6">Locked on each new buy and paid exactly when the position closes. Live Finnhub prices are display-only.</div></div>
+  <div class="field"><label class="label">User profit rate override (%)</label>
+    <input class="input" id="sfProfitPct" type="number" step="0.01" min="0" max="500" value="${x && x.profitPct != null ? x.profitPct : ''}" placeholder="${x ? 'inherited ' + INV.effectiveProfitPct(x) + '%' : 'market-type rate'}"/>
+    <div class="tiny muted mt6">Leave blank to inherit the market-type rate. An override applies to this stock only. Paid exactly on close; Finnhub prices are display-only.</div></div>
   <div class="row" style="gap:8px">
     <div class="field grow"><label class="label">Market cap ($B)</label><input class="input" id="sfMcap" type="number" step="1" value="${x.mcap != null ? x.mcap : 0}"/></div>
     <div class="field grow"><label class="label">Dividend (%)</label><input class="input" id="sfDiv" type="number" step="0.01" value="${x.div != null ? x.div : 0}"/></div>
@@ -828,16 +876,19 @@ App.invAdminAdd = function () {
     const price = Number(document.getElementById('sfPrice').value);
     if (!ticker || !name || !(price > 0)) return toast('Ticker, name and a price are required', 'err');
     if (INV.stock(ticker)) return toast('That ticker already exists', 'err');
-    DB.stocks.push({
+    const rawPct = (document.getElementById('sfProfitPct') || {}).value;
+    const rec = {
       id: 'st_' + ticker.toLowerCase(), ticker, name, sector: document.getElementById('sfSector').value.trim() || 'Other',
       price, prevClose: price, pe: Number(document.getElementById('sfPe').value) || 0,
       mcap: Number(document.getElementById('sfMcap').value) || 0, div: Number(document.getElementById('sfDiv').value) || 0,
       ceo: document.getElementById('sfCeo').value.trim(), website: document.getElementById('sfWeb').value.trim(),
       about: document.getElementById('sfAbout').value.trim(), color: '#3aa0ff',
       crypto: document.getElementById('sfCrypto').checked, isNew: document.getElementById('sfNew').checked,
-      profitPct: Math.max(0, Math.min(500, Number((document.getElementById('sfProfitPct') || {}).value) || 0)),
+      assetClass: document.getElementById('sfCrypto').checked ? 'crypto' : 'us',
       paused: false, custom: true, createdAt: Date.now()
-    });
+    };
+    if (rawPct !== '' && rawPct != null) rec.profitPct = Math.max(0, Math.min(500, Number(rawPct) || 0));
+    DB.stocks.push(rec);
     INV.live[ticker] = null; INV.seriesCache = {};
     closeModal(); persist(); toast(`${ticker} listed`, 'ok'); render();
   };
@@ -860,7 +911,9 @@ App.invAdminEdit = function (id, ds) {
     s.about = document.getElementById('sfAbout').value.trim();
     s.crypto = document.getElementById('sfCrypto').checked;
     s.isNew = document.getElementById('sfNew').checked;
-    s.profitPct = Math.max(0, Math.min(500, Number((document.getElementById('sfProfitPct') || {}).value) || 0));
+    const rawPct = (document.getElementById('sfProfitPct') || {}).value;
+    if (rawPct === '' || rawPct == null) delete s.profitPct;
+    else s.profitPct = Math.max(0, Math.min(500, Number(rawPct) || 0));
     INV.seriesCache = {};
     closeModal(); persist(); toast('Stock updated', 'ok'); render();
   };
@@ -883,7 +936,7 @@ App.invAdminProfit = function (id, ds) {
     <div class="tiny muted" style="margin-bottom:10px;line-height:1.6">Live Finnhub price ${INV.priceText ? INV.priceText(s.ticker, INV.quote(s.ticker).price) : usd(INV.quote(s.ticker).price)} stays display-only.
       The rate below is locked when a user buys ${esc(s.ticker)} and paid exactly on close.</div>
     <div class="field"><label class="label">User profit rate (%)</label>
-      <input class="input" id="sfProfitPctInline" type="number" step="0.01" min="0" max="500" value="${Number(s.profitPct) || 0}"/></div>
+      <input class="input" id="sfProfitPctInline" type="number" step="0.01" min="0" max="500" value="${INV.effectiveProfitPct(s)}"/></div>
     <div class="tiny muted">Payout = invested + (invested × rate). 0% = capital back · max 500%.</div>`,
     `<button class="btn btn-ghost" data-close style="flex:1">Cancel</button>
      <button class="btn btn-primary" id="profitPctSave" style="flex:1">Save</button>`), { locked: false });
@@ -893,6 +946,28 @@ App.invAdminProfit = function (id, ds) {
     s.profitPct = Math.round(v * 100) / 100;
     closeModal(); persist(); toast(`${s.ticker} profit rate set to ${s.profitPct}%`, 'ok'); render();
   };
+};
+App.invAdminClassRate = function () {
+  const sel = document.getElementById('classRateType');
+  const inp = document.getElementById('classRatePct');
+  const cls = (sel && sel.value) || 'us';
+  const pct = Number(inp && inp.value);
+  if (!isFinite(pct) || pct < 0 || pct > 500) return toast('Enter a profit rate between 0 and 500%', 'err');
+  const rate = Math.round(pct * 100) / 100;
+  const rates = INV.classRates();
+  const keys = cls === 'all' ? INV.CLASS_LIST.map(c => c.key) : [cls];
+  let count = 0;
+  keys.forEach((key) => { rates[key] = rate; });
+  DB.stocks.forEach((s) => {
+    if (!s || keys.indexOf(INV.classOf(s)) === -1) return;
+    s.profitPct = rate;
+    s.updatedAt = Date.now();
+    count++;
+  });
+  persist();
+  const label = cls === 'all' ? 'All markets' : ((INV.CLASS_LIST.find(c => c.key === cls) || {}).label || cls);
+  toast(`${count} ${label} stock${count === 1 ? '' : 's'} set to ${rate}% profit on close`, 'ok');
+  render();
 };
 App.invAdminClass = function (id, ds) {
   const key = String(ds.cls || '').toLowerCase();
