@@ -736,8 +736,9 @@ INV.viewAdminStocks = function () {
     <div class="card-title">Stock profit rate</div>
     <div class="tiny muted" style="line-height:1.65;margin-bottom:8px">
       Set the profit rate users earn per stock with the <b>%</b> button in the catalogue. The rate is locked when a
-      user buys and paid exactly when the position closes: <b>payout = invested capital + (invested × rate)</b>.
-      Finnhub live prices keep streaming for display, charts and TP/SL triggers — they do not change the payout.
+      user buys and paid exactly when the position closes:
+      <b>profit = (invested capital + market gain) × rate</b>, credited together with the invested capital.
+      Finnhub live prices drive the market gain and TP/SL; the admin rate multiplies that value.
     </div>
     <div class="tiny muted">0% = users get their capital back on close. Max 500%. Changes apply to new positions.</div>
   </div>
@@ -937,7 +938,7 @@ App.invAdminProfit = function (id, ds) {
       The rate below is locked when a user buys ${esc(s.ticker)} and paid exactly on close.</div>
     <div class="field"><label class="label">User profit rate (%)</label>
       <input class="input" id="sfProfitPctInline" type="number" step="0.01" min="0" max="500" value="${INV.effectiveProfitPct(s)}"/></div>
-    <div class="tiny muted">Payout = invested + (invested × rate). 0% = capital back · max 500%.</div>`,
+    <div class="tiny muted">Profit = (capital + market gain) × rate; capital is returned too. 0% = capital back · max 500%.</div>`,
     `<button class="btn btn-ghost" data-close style="flex:1">Cancel</button>
      <button class="btn btn-primary" id="profitPctSave" style="flex:1">Save</button>`), { locked: false });
   document.getElementById('profitPctSave').onclick = () => {
