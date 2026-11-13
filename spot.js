@@ -90,7 +90,13 @@ class SpotService {
      admins can edit it in Admin → Stocks and every device sees the same value. */
   adminPct(db, ticker) {
     const s = this.stock(db, ticker);
-    const n = Number(s && s.profitPct);
+    let n = Number(s && s.profitPct);
+    if (!Number.isFinite(n) || n < 0) {
+      /* inherit the admin's bulk rate for this market type */
+      const cls = (s && s.assetClass) || 'us';
+      const rates = (db.invest && db.invest.classRates) || {};
+      n = Number(rates[cls]);
+    }
     if (!Number.isFinite(n) || n < 0) return 0;
     return Math.min(MAX_PCT, round(n, 4));
   }
