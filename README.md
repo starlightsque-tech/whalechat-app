@@ -1,4 +1,4 @@
-# WhaleChat 3.23.2 — web app + mobile apps
+# WhaleChat 3.23.3 — web app + mobile apps
 
 WhaleChat is a social + marketplace + wallet product built as a single-page app with a
 Node sync server and native Android/iOS shells.
@@ -124,6 +124,17 @@ The sell path is a **fully synchronous critical section**: it re-reads the posit
 removes (or trims) it, then credits the wallet. A manual sell racing the TP/SL worker
 therefore cannot double-credit — the loser sees `No open position`. Notifications and
 transaction records are created for every automated exit.
+
+### Bulk profit rate per market type
+
+Admin → **Stocks** → **Bulk profit rate by market type**: pick **US Stocks**, **Global Stocks**,
+**Forex**, **Crypto** (or **All market types**), enter an ROI percentage and press
+**Apply to all stocks**. Every stock in that type gets `profitPct` immediately — e.g.
+*Crypto + 1.5%* makes every crypto pair pay exactly 1.5% profit on close.
+
+* The bulk rate is also stored as `db.invest.classRates[type]`, so **newly listed stocks inherit it**.
+* A single stock can still override the class rate in Add/Edit stock (leave the field blank to inherit).
+* Existing open positions keep their locked rate; only new buys use the new rate.
 
 ### Asset-class visibility (admin)
 
