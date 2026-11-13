@@ -687,9 +687,19 @@ INV.viewAdminStocks = function () {
   </div>
 
   <div class="card">
+    <div class="card-title">Stock profit margin</div>
+    <div class="tiny muted" style="line-height:1.65;margin-bottom:8px">
+      Set a profit percentage per stock with the <b>%</b> button in the catalogue. The margin is added to the
+      <b>live Finnhub price</b> when a user buys, so it is the platform's profit on that stock. Charts, quotes and
+      TP/SL checks always keep using the raw live market price — the feed and real stocks never change.
+    </div>
+    <div class="tiny muted">0% = users trade at the exact live market price. Max 100%.</div>
+  </div>
+
+  <div class="card">
     <div class="card-title">Catalogue</div>
     <div class="table-wrap"><table class="inv-table">
-      <thead><tr><th>Symbol</th><th>Company</th><th>Sector</th><th class="num">Price</th><th class="num">24h</th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th>Symbol</th><th>Company</th><th>Sector</th><th class="num">Price</th><th class="num">24h</th><th class="num">Profit %</th><th>Status</th><th></th></tr></thead>
       <tbody>${stocks.map(s => {
         const q = INV.quote(s.ticker);
         const paused = INV.paused(s.ticker);
@@ -699,8 +709,10 @@ INV.viewAdminStocks = function () {
           <td class="muted">${esc(s.sector || '—')}</td>
           <td class="num"><span data-lv="price:${s.ticker}">${INV.priceText ? INV.priceText(s.ticker, q.price) : usd(q.price)}</span></td>
           <td class="num ${INV.chgClass(Number(q.changePct) || 0)}">${(Number(q.changePct) || 0) >= 0 ? '+' : ''}${(Number(q.changePct) || 0).toFixed(2)}%</td>
+          <td class="num"><b class="${Number(s.profitPct) > 0 ? 'up' : 'muted'}">${Number(s.profitPct) > 0 ? Number(s.profitPct) + '%' : '—'}</b></td>
           <td><span class="badge ${paused ? 'badge-warn' : 'badge-success'}">${paused ? 'Paused' : 'Live'}</span></td>
           <td class="row" style="gap:4px;justify-content:flex-end">
+            <button class="btn btn-xs btn-ghost" data-act="inv-admin-profit" data-t="${s.ticker}">${ic('tag', 13)}</button>
             <button class="btn btn-xs btn-ghost" data-act="inv-admin-pause" data-t="${s.ticker}">${paused ? 'Resume' : 'Pause'}</button>
             <button class="btn btn-xs btn-ghost" data-act="inv-admin-edit" data-t="${s.ticker}">${ic('edit', 13)}</button>
             <button class="btn btn-xs btn-ghost" data-act="inv-admin-del" data-t="${s.ticker}" style="color:var(--danger)">${ic('trash', 13)}</button>
@@ -744,6 +756,9 @@ INV.stockFormHTML = function (s) {
     <div class="field grow"><label class="label">Price (USD)</label><input class="input" id="sfPrice" type="number" step="0.01" value="${x.price != null ? x.price : ''}"/></div>
     <div class="field grow"><label class="label">P/E</label><input class="input" id="sfPe" type="number" step="0.1" value="${x.pe != null ? x.pe : 0}"/></div>
   </div>
+  <div class="field"><label class="label">Admin profit margin (%)</label>
+    <input class="input" id="sfProfitPct" type="number" step="0.01" min="0" max="100" value="${x.profitPct != null ? x.profitPct : 0}" placeholder="0"/>
+    <div class="tiny muted mt6">Added to the live Finnhub price on buys for this stock. Real market prices stay unchanged.</div></div>
   <div class="row" style="gap:8px">
     <div class="field grow"><label class="label">Market cap ($B)</label><input class="input" id="sfMcap" type="number" step="1" value="${x.mcap != null ? x.mcap : 0}"/></div>
     <div class="field grow"><label class="label">Dividend (%)</label><input class="input" id="sfDiv" type="number" step="0.01" value="${x.div != null ? x.div : 0}"/></div>
@@ -775,6 +790,7 @@ App.invAdminAdd = function () {
       ceo: document.getElementById('sfCeo').value.trim(), website: document.getElementById('sfWeb').value.trim(),
       about: document.getElementById('sfAbout').value.trim(), color: '#3aa0ff',
       crypto: document.getElementById('sfCrypto').checked, isNew: document.getElementById('sfNew').checked,
+      profitPct: Math.max(0, Math.min(100, Number((document.getElementById('sfProfitPct') || {}).value) || 0)),
       paused: false, custom: true, createdAt: Date.now()
     });
     INV.live[ticker] = null; INV.seriesCache = {};
@@ -799,6 +815,7 @@ App.invAdminEdit = function (id, ds) {
     s.about = document.getElementById('sfAbout').value.trim();
     s.crypto = document.getElementById('sfCrypto').checked;
     s.isNew = document.getElementById('sfNew').checked;
+    s.profitPct = Math.max(0, Math.min(100, Number((document.getElementById('sfProfitPct') || {}).value) || 0));
     INV.seriesCache = {};
     closeModal(); persist(); toast('Stock updated', 'ok'); render();
   };
@@ -813,6 +830,23 @@ App.invAdminDel = function (id, ds) {
     DB.stocks = DB.stocks.filter(x => x.ticker !== s.ticker);
     delete INV.live[s.ticker];
     closeModal(); persist(); toast(`${s.ticker} removed`, 'ok'); render();
+  };
+};
+App.invAdminProfit = function (id, ds) {
+  const s = INV.stock(ds.t); if (!s) return;
+  openModal(modalShell(`Stock profit · ${s.ticker}`, `
+    <div class="tiny muted" style="margin-bottom:10px;line-height:1.6">Live Finnhub price stays ${INV.priceText ? INV.priceText(s.ticker, INV.quote(s.ticker).price) : usd(INV.quote(s.ticker).price)}.
+      The profit percentage below is added to the price a user pays when buying ${esc(s.ticker)}.</div>
+    <div class="field"><label class="label">Admin profit margin (%)</label>
+      <input class="input" id="sfProfitPctInline" type="number" step="0.01" min="0" max="100" value="${Number(s.profitPct) || 0}"/></div>
+    <div class="tiny muted">0% = exact live market price · max 100%.</div>`,
+    `<button class="btn btn-ghost" data-close style="flex:1">Cancel</button>
+     <button class="btn btn-primary" id="profitPctSave" style="flex:1">Save</button>`), { locked: false });
+  document.getElementById('profitPctSave').onclick = () => {
+    const v = Number(document.getElementById('sfProfitPctInline').value);
+    if (!isFinite(v) || v < 0 || v > 100) return toast('Enter a profit between 0 and 100%', 'err');
+    s.profitPct = Math.round(v * 100) / 100;
+    closeModal(); persist(); toast(`${s.ticker} profit margin set to ${s.profitPct}%`, 'ok'); render();
   };
 };
 App.invAdminPause = function (id, ds) {
