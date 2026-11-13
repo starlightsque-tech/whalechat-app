@@ -1,8 +1,8 @@
 {
-  "version": "3.29.0",
-  "build": "2026-11-13T11:48:03Z",
+  "version": "3.29.1",
+  "build": "2026-11-13T12:50:47Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.29.0 - shared-portfolio audit trail and 24/7 simulated price movement/history for all stocks.",
-  "releasedAt": "2026-11-13T11:48:03Z",
+  "notes": "Bots: admin identities and avatars, hot assistants, account-health chart, accuracy-based stamina and cooldown.",
+  "releasedAt": "2026-11-13T12:50:47.560Z",
   "minimum": "3.0.0"
 }
