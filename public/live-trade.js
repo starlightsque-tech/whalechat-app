@@ -415,6 +415,12 @@ const LT = {
         <button class="btn btn-sm btn-ghost grow" data-act="lt-sl" data-id="${t.id}" data-lt-sl-btn="${t.id}" ${p.pnlCoins < 0 ? '' : 'disabled'} title="${p.pnlCoins < 0 ? 'Close the trade at a loss now' : 'Only available while the trade is losing'}">
           ${ic('down', 13)} Take loss <span data-lt-sl-amt="${t.id}">${p.pnlCoins < 0 ? '(−' + coins(Math.abs(p.pnlCoins)) + ')' : ''}</span></button>
       </div>
+      ${(() => {
+        const pending = (t.securedProfits || []).filter((x) => x && !x.claimed);
+        if (!pending.length) return '';
+        const sum = pending.reduce((a, x) => a + (Number(x.coins) || 0), 0);
+        return `<div class="tiny up" style="margin-top:6px">${pending.length} secured profit${pending.length === 1 ? '' : 's'} · <b>${coins(sum)} WC</b> pending claim — see Secured profits below</div>`;
+      })()}
       <div class="tiny muted center" style="margin-top:6px">${Number(t.profitTakenCoins) > 0 ? `Profit already taken: <b class="up">+${coins(t.profitTakenCoins)} WC</b> · ` : ''}Returns ${coins(p.payoutCoins)} WC if stopped now</div>
       ${Number(t.dividendBonus) > 0 ? `<div class="tiny center lt-div-line">+${coins(t.dividendBonus)} WC dividend at timer</div>` : ''}
     </div>`;
@@ -435,6 +441,12 @@ const LT = {
           ${lost ? 'Total loss — nothing returned' : (win ? '+' : '') + coins(pnl) + ' WC P/L'} ·
           returned ${coins(t.payoutCoins || 0)} WC</div>
         ${Number(t.dividendCoins) > 0 ? `<div class="tiny up">+${coins(t.dividendCoins)} WC dividend credited</div>` : ''}
+        ${(() => {
+          const p = (t.securedProfits || []).filter((x) => x && !x.claimed);
+          if (!p.length) return '';
+          const sum = p.reduce((a, x) => a + (Number(x.coins) || 0), 0);
+          return `<div class="tiny up">${p.length} secured profit${p.length === 1 ? '' : 's'} · ${coins(sum)} WC awaiting claim</div>`;
+        })()}
       </div>
       <span class="badge ${win ? 'badge-success' : lost ? 'badge-danger' : 'badge-warn'}">
         ${lost ? 'Lost' : win ? 'Profit' : 'Flat'}</span></div>`;
@@ -522,6 +534,44 @@ const LT = {
     const cell = el.parentElement;
     const label = cell && cell.querySelector('.tiny.muted');
     if (label) label.textContent = pos.length ? 'Active trade earnings' : 'Earnings';
+  },
+
+  /* ---------------- secured profits (auto secure bot) ---------------- */
+  securedEntries(userId) {
+    const out = [];
+    (DB.trades || []).forEach((t) => {
+      if (!t || t.userId !== userId) return;
+      (t.securedProfits || []).forEach((p) => {
+        if (p && !p.claimed) out.push({ trade: t, profit: p });
+      });
+    });
+    return out.sort((a, b) => (Number(b.profit.at) || 0) - (Number(a.profit.at) || 0));
+  },
+
+  securedBlock(userId) {
+    const list = this.securedEntries(userId || me().id);
+    if (!list.length) return '';
+    const total = list.reduce((sum, x) => sum + (Number(x.profit.coins) || 0), 0);
+    const rows = list.map(({ trade, profit }) => `<div class="inv-row" style="align-items:center;gap:8px">
+      <div class="grow" style="min-width:0">
+        <div class="small" style="font-weight:650">${esc(this.label(trade.ticker))}
+          <span class="tiny muted">· ${trade.side === 'short' ? 'Fall' : 'Rise'} ${trade.leverage}× · secured ${clockTime(profit.at)}</span></div>
+        <div class="tiny muted">Secured at ${this.px(trade.ticker, profit.price)}${trade.status === 'Open' ? ' · trade still running' : ' · trade closed'}</div>
+      </div>
+      <div style="text-align:right">
+        <div class="small up" style="font-weight:700">+${coins(profit.coins)} WC</div>
+        <button class="btn btn-xs btn-primary" data-act="lt-claim-profit" data-trade="${trade.id}" data-profit="${profit.id}">Take profit</button>
+      </div>
+    </div>`).join('');
+    return `<div class="card" id="ltSecured">
+      <div class="between"><div class="card-title" style="margin:0">Secured profits
+        <span class="badge badge-success" style="margin-left:6px">${list.length}</span></div>
+        <span class="tiny up">${coins(total)} WC pending</span></div>
+      <div class="tiny muted" style="margin:4px 0 8px;line-height:1.6">
+        The Auto Secure bot locked these profits while you were away. Press <b>Take profit</b> on each entry to credit it to your balance.
+      </div>
+      <div class="inv-list">${rows}</div>
+    </div>`;
   },
 
   /* ---------------- mounts ---------------- */
@@ -1980,6 +2030,39 @@ App.ltTp = async function (id, ds) {
   }
   LT.takeProfit(t, 'Take Profit Taken');
 };
+App.ltClaimProfit = async function (id, ds) {
+  const tradeId = ds.trade;
+  const profitId = ds.profit;
+  const t = (DB.trades || []).find((x) => x && x.id === tradeId);
+  const rec = t && (t.securedProfits || []).find((x) => x && x.id === profitId);
+  if (!t || !rec) return toast('That secured profit was not found', 'err');
+  if (rec.claimed) return toast('This profit has already been claimed', 'err');
+  if (typeof Remote !== 'undefined' && Remote && Remote.enabled) {
+    try {
+      const r = await Remote.fetchJSON('/api/market/secure-profit/claim', {
+        method: 'POST',
+        body: JSON.stringify({ userId: me().id, tradeId, profitId })
+      }, 8000);
+      if (r.res && r.res.ok && r.data && r.data.ok) {
+        await Remote.refresh(true);
+        toast(`Take profit claimed — +${coins(Number(r.data.coins) || 0)} WC credited`, 'ok');
+        return;
+      }
+      if (r.data && r.data.error) return toast(r.data.error, 'err');
+    } catch (e) { /* fall through to local */ }
+  }
+  const u = findUser(t.userId);
+  if (!u) return toast('User not found', 'err');
+  u.balance = Math.round(((Number(u.balance) || 0) + (Number(rec.coins) || 0)) * 100) / 100;
+  rec.claimed = true;
+  rec.claimedAt = Date.now();
+  tx(u.id, 'secured-profit-claim', `Secured profit claimed · ${t.ticker} · +${coins(rec.coins)} WC`, rec.coins,
+    { tradeId: t.id, profitId: rec.id });
+  notify(u.id, 'Secured profit credited', `+${coins(rec.coins)} WC from ${t.ticker} was added to your balance.`, '#/wallet', 'check');
+  persist(); render();
+  toast(`Take profit claimed — +${coins(rec.coins)} WC credited`, 'ok');
+};
+
 async function ltManualClose(t, action, reason) {
   if (typeof Remote !== 'undefined' && Remote && Remote.enabled) {
     try {
@@ -2159,7 +2242,7 @@ VIEWS.admin = function (parts, params) {
 function ltMountDashboard() {
   if (!document.querySelector('.inv-hero')) return;
   if (document.getElementById('ltActiveMount')) return;
-  const block = LT.activeBlock();
+  const block = LT.securedBlock(me().id) + LT.activeBlock();
   if (!block) return;
   const host = document.createElement('div');
   host.id = 'ltActiveMount';
@@ -2177,7 +2260,7 @@ function ltMountOrders() {
   if (document.getElementById('ltOrdersMount')) return;
   const host = document.createElement('div');
   host.id = 'ltOrdersMount';
-  host.innerHTML = LT.activeBlock() + LT.closedBlock();
+  host.innerHTML = LT.securedBlock(me().id) + LT.activeBlock() + LT.closedBlock();
   if (!host.innerHTML.trim()) return;
   head.parentNode.insertBefore(host, head.nextSibling);
 }
