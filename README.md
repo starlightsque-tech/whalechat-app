@@ -92,6 +92,38 @@ uses only the v5 API — `chart.addSeries(CandlestickSeries | BaselineSeries | A
 The stock page mounts the stock view, the Invest dashboard portfolio card and the Live-trade
 dashboard (`#ltDashChart`) mount the portfolio equity view with the same component.
 
+### TradeView terminal (dark Deriv-style chart)
+
+`public/wc-terminal.js` (marker `wc-trade-terminal`) is a self-contained trade terminal
+(engine + CSS, no build step) rendered with **lightweight-charts v5**. `public/wc-terminal-app.js`
+(`wc-trade-terminal-app`) mounts it on the stock page and feeds it real app data. Both files are
+injected by `scripts/prepare-assets.js`, so `npm run build` is the only step needed.
+
+| Area | Behaviour |
+|---|---|
+| Asset header | Ticker dropdown (all listed stocks), live price, day change (USD + %) with ▲/▼, timeframe pills, Line ↔ Candles, LIVE pill, style picker |
+| Canvas | Gradient area (or candles + volume), ultra-subtle grid, monospace axis, crosshair with a floating timestamp/price/Δ tooltip |
+| Live price | Solid price line + axis badge that recolours green on an up-tick and red on a down-tick; the last ~40 ticks get a glow overlay so the "active segment" flips colour |
+| Zoom | Floating + / − / ⌖ controls in the bottom-left of the canvas (logical-range zoom, fit-to-content) |
+| Order panel | Buy / Long ↔ Buy / Short, USD amount with quick chips, TP/SL switches with % and computed target prices, live preview of entry, fees and buying power |
+| Execution | Ticketed button in the panel **and** BUY / SELL buttons under the chart; SELL is disabled with no position |
+| Position | Dashed ENTRY / TP / SL price lines, chart HUD (side, entry, now, unrealised P&L) and a position card with a close-at-market button |
+| Styles | Five shipped looks — `obsidian` (reference layout), `aurora` (neon glass), `carbon` (candles + volume, mono), `glass` (frosted), `neon` (HUD/scanlines). The choice persists in `localStorage` (`wc_terminal_style`) and can be changed from the picker in the terminal header |
+
+The `obsidian` style is the default and mirrors the reference layout: charcoal canvas, thin
+price line, right price scale with a labelled live badge, bottom time scale and a right-hand
+ticket.
+
+**Data + orders.** With the adapter (`wc-terminal-app.js`) the terminal reads history from
+`GET /api/market/history`, quotes from the app quote feed (`INV.quote`, which the backend fills from
+Finnhub and the 24/7 OTC fallback), buys through `POST /api/market/spot/buy` and closes through
+`POST /api/market/spot/sell`, so TP/SL keep being enforced by the server-side spot worker. Short
+tickets are rejected with a clear message until the spot book supports them. Without an adapter
+(standalone demo) the module runs its own smooth simulator.
+
+**Standalone demo.** `files/whalechat-tradeview.html` in the workspace is a generated showcase page
+that inlines the module and lets you switch between all five styles or view them side by side.
+
 ### Spot Buy / Sell (primary stock flow)
 
 `market.js` owns the spot book. `POST /api/market/spot/buy` accepts `amountUsd` (primary), `amountCoins` or `shares`
