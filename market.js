@@ -735,6 +735,118 @@ class MarketService {
   }
 
   /* --------------------------- settlement ------------------------------- */
+  /* Take Profit is a skim: credit only the open profit, re-base the position,
+     clear the consumed TP level and keep the trade open. Returns profit credited. */
+  skimProfit(t, q, db, now, reason) {
+    if (!t || t.status !== 'Open' || !q) return 0;
+    const u = (db.users || []).find((x) => x.id === t.userId);
+    if (!u) return 0;
+    const lev = Math.max(1, Math.min(20, Number(t.leverage) || 1));
+    const direction = t.direction || (t.side === 'short' ? 'FALL' : 'RISE');
+    const dir = direction === 'FALL' ? -1 : 1;
+    const entry = Number(t.entryPrice);
+    if (!(entry > 0)) return 0;
+    /* a click and a tick must never take the same profit twice */
+    if (t.lastProfitAt && now - Number(t.lastProfitAt) < 4000) return 0;
+    const move = (q.price - entry) / entry;
+    const profit = round(Math.max(0, (Number(t.capitalCoins) || 0) * lev * move * dir), 2);
+    if (!(profit > 0)) return 0;
+    if (!t.initialEntryPrice) t.initialEntryPrice = entry;
+    u.balance = round((Number(u.balance) || 0) + profit, 2);
+    t.profitTakenCoins = round((Number(t.profitTakenCoins) || 0) + profit, 2);
+    t.entryPrice = round(q.price, 6);
+    t.lastProfitAt = now;
+    t.lastProfitPrice = q.price;
+    t.takeProfitPrice = 0;
+    t.takeProfitWc = null;
+    t.takeProfitMode = 'PRICE';
+    t.tpPct = 0;
+    t.profitTakenCount = (Number(t.profitTakenCount) || 0) + 1;
+    if (t.trailingActive && Number(t.trailingStopPct) > 0) {
+      const dist = Math.max(0.05, Math.min(50, Number(t.trailingStopPct))) / 100;
+      const stop = direction === 'FALL' ? q.price * (1 + dist) : q.price * (1 - dist);
+      t.trailingStopPrice = round(stop, 6);
+      t.stopLossPrice = t.trailingStopPrice;
+    }
+    db.txs = db.txs || [];
+    db.txs.unshift({
+      id: id('tx_'), userId: u.id, type: 'trade-profit',
+      label: `${reason || 'Take Profit'} · ${t.ticker} · +${profit} WC taken, trade continues`,
+      coins: profit, meta: { tradeId: t.id, pnlCoins: profit, price: q.price, continues: true, server: true }, createdAt: now
+    });
+    db.notifications = db.notifications || [];
+    db.notifications.unshift({
+      id: id('nt_'), userId: u.id, title: 'Profit taken — trade continues',
+      body: `${t.ticker}: +${profit} WC credited to your balance. The trade is still running — it closes on stop loss, at the timer, or when you press Stop trade.`,
+      link: '#/invest/orders', icon: 'trend', read: false, createdAt: now
+    });
+    console.log('[market] TP skim', t.ticker, 'for', u.username, '· +', profit, 'WC · trade continues');
+    return profit;
+  }
+
+  /* Manual stop / take-loss: server-authoritative close so it cannot double-credit. */
+  closeTradeManual(userId, tradeId, reason) {
+    const db = this.getDb && this.getDb();
+    if (!db) throw new Error('Database not ready');
+    const t = (db.trades || []).find((x) => x && x.id === tradeId && x.userId === userId && x.type === 'live' && x.status === 'Open');
+    if (!t) throw new Error('That trade is not open');
+    const q = this.quotes[t.ticker];
+    if (!q || !(Number(q.price) > 0)) throw new Error('Waiting for a live quote — try again in a moment');
+    const u = (db.users || []).find((x) => x.id === userId);
+    if (!u) throw new Error('User not found');
+    const now = Date.now();
+    const lev = Math.max(1, Math.min(20, Number(t.leverage) || 1));
+    const direction = t.direction || (t.side === 'short' ? 'FALL' : 'RISE');
+    const dir = direction === 'FALL' ? -1 : 1;
+    const move = (q.price - t.entryPrice) / t.entryPrice;
+    const pnlCoins = round(Math.max(-(Number(t.capitalCoins) || 0), (Number(t.capitalCoins) || 0) * lev * move * dir), 2);
+    const payout = Math.max(0, round((Number(t.capitalCoins) || 0) + pnlCoins, 2));
+    u.balance = round((Number(u.balance) || 0) + payout, 2);
+    t.status = 'Completed';
+    t.closedAt = now;
+    t.closeReason = reason || 'Stopped by user';
+    t.exitPrice = q.price;
+    t.pnlCoins = pnlCoins;
+    t.pnlUsd = round(pnlCoins * 0.5, 2);
+    t.payoutCoins = payout;
+    t.result = payout <= 0 ? 'loss' : pnlCoins > 0 ? 'profit' : 'flat';
+    t.settledBy = 'server-manual';
+    db.txs = db.txs || [];
+    db.txs.unshift({
+      id: id('tx_'), userId, type: 'trade-close',
+      label: `${t.ticker} trade ${t.closeReason} · ${payout ? '+' + payout + ' WC returned' : 'total loss'}`,
+      coins: payout, meta: { tradeId: t.id, pnlCoins, reason: t.closeReason, server: true }, createdAt: now
+    });
+    db.notifications = db.notifications || [];
+    db.notifications.unshift({
+      id: id('nt_'), userId, title: t.closeReason === 'Stop Loss Hit' ? 'Take loss — trade closed' : 'Trade stopped',
+      body: payout <= 0
+        ? `${t.ticker} closed with a total loss. Nothing was returned.`
+        : pnlCoins >= 0
+          ? `${t.ticker} closed with +${pnlCoins} WC profit. ${payout} WC credited.`
+          : `${t.ticker} closed with −${Math.abs(pnlCoins)} WC. ${payout} WC of capital returned.`,
+      link: '#/invest/orders', icon: payout <= 0 ? 'ban' : 'check', read: false, createdAt: now
+    });
+    this.persist();
+    try { this.broadcast('change', { rev: null, source: 'manual-trade-close', at: now }); } catch (e) {}
+    return { ok: true, payout, pnlCoins, reason: t.closeReason, balance: u.balance };
+  }
+
+  /* Manual Take Profit button: server-authoritative, cannot double-credit. */
+  takeProfitTrade(userId, tradeId) {
+    const db = this.getDb && this.getDb();
+    if (!db) throw new Error('Database not ready');
+    const t = (db.trades || []).find((x) => x && x.id === tradeId && x.userId === userId && x.type === 'live' && x.status === 'Open');
+    if (!t) throw new Error('That trade is not open');
+    const q = this.quotes[t.ticker];
+    if (!q || !(Number(q.price) > 0)) throw new Error('Waiting for a live quote — try again in a moment');
+    const profit = this.skimProfit(t, q, db, Date.now(), 'Take Profit Taken');
+    if (!(profit > 0)) throw new Error('No profit to take yet');
+    this.persist();
+    try { this.broadcast('change', { rev: null, source: 'manual-take-profit', at: Date.now() }); } catch (e) {}
+    return { ok: true, profit, trade: t, balance: ((db.users || []).find((x) => x.id === userId) || {}).balance };
+  }
+
   settleTrades() {
     if (this.settleLock) return 0;
     const db = this.getDb && this.getDb();
@@ -805,8 +917,14 @@ class MarketService {
           else if (Number(t.expiresAt) && now >= Number(t.expiresAt)) reason = 'Time limit reached';
         }
         if (!reason) continue;
-        /* absolute TP/SL exits settle on the tick that triggered them */
-        if (reason === 'Take Profit Hit' || reason === 'Stop Loss Hit' || reason === 'Trailing Stop Hit') {
+        /* Take Profit does NOT close the trade — it pays the open profit and continues */
+        if (reason === 'Take Profit Hit') {
+          const skimmed = this.skimProfit(t, q, db, now, 'Take Profit Hit');
+          if (skimmed > 0) changed++;
+          continue;
+        }
+        /* absolute SL exits settle on the tick that triggered them */
+        if (reason === 'Stop Loss Hit' || reason === 'Trailing Stop Hit') {
           const move = (q.price - t.entryPrice) / t.entryPrice;
           pnl = (Number(t.capitalCoins) || 0) * lev * move * dir;
           pnl = Math.max(-(Number(t.capitalCoins) || 0), pnl);
