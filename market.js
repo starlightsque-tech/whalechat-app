@@ -376,6 +376,34 @@ class MarketService {
     if (arr.length > 3000) arr.splice(0, arr.length - 3000);
   }
 
+  /* Recorded real ticks survive restarts so candles are continuous. */
+  historyFile() { return path.join(this.dataDir, 'market-history.json'); }
+
+  loadHistoryFile() {
+    try {
+      const raw = JSON.parse(fs.readFileSync(this.historyFile(), 'utf8'));
+      if (raw && typeof raw === 'object') {
+        Object.keys(raw).forEach((t) => {
+          const arr = Array.isArray(raw[t]) ? raw[t].filter((p) => p && p.t > 0 && p.p > 0 && p.real) : [];
+          if (arr.length) this.history[t] = arr.slice(-1200);
+        });
+        console.log('[market] restored real tick history for', Object.keys(this.history).length, 'symbols');
+      }
+    } catch (e) { /* first run */ }
+  }
+
+  saveHistoryFile() {
+    try {
+      fs.mkdirSync(this.dataDir, { recursive: true });
+      const out = {};
+      Object.keys(this.history).forEach((t) => {
+        const real = (this.history[t] || []).filter((p) => p && p.real);
+        if (real.length) out[t] = real.slice(-1200);
+      });
+      fs.writeFileSync(this.historyFile(), JSON.stringify(out));
+    } catch (e) { this.lastError = 'history persist: ' + e.message; }
+  }
+
   historyFor(tickers, limit) {
     const out = {};
     const n = Math.max(10, Math.min(3000, Number(limit) || 600));
@@ -457,7 +485,10 @@ class MarketService {
     this.seedOk = 0;
     this.seedFailed = [];
     try {
-      const assets = this.assetList();
+      const assets = this.assetList().slice().sort((a, b) => {
+        const rank = (x) => (x.assetClass === 'us' ? 0 : x.assetClass === 'global' ? 1 : 2);
+        return rank(a) - rank(b);
+      });
       for (const a of assets) {
         if (this.stopped) break;
         /* never abort the whole catalogue because one symbol failed */
@@ -604,6 +635,9 @@ class MarketService {
 
   connectWS() {
     if (this.stopped || this.config.mode !== 'hybrid' || !this.config.apiKey) return;
+    /* A free Finnhub key allows one live socket. When browser streaming is on the
+       browsers own that socket; the server keeps REST polling for settlement. */
+    if (this.config.clientStream !== false) { this.wsMode = 'browser'; return; }
     const WS = this.wsClass();
     if (!WS) {
       this.lastError = 'WebSocket client unavailable — REST polling + simulation active';
@@ -694,6 +728,7 @@ class MarketService {
       notice: this.notice(),
       fallbackReason: this.fallbackReason(),
       wsConnected: this.wsConnected,
+      wsMode: this.wsMode || 'server',
       wsTicks: this.wsTicks,
       lastRealAt: this.lastRealAt || null,
       realTickers: Object.keys(this.lastReal).length,
@@ -1196,6 +1231,7 @@ class MarketService {
         if (this.config.mode === 'hybrid' && this.config.apiKey) this.pollCycle();
       } catch (e) { this.lastError = e.message; }
     }, Math.max(5000, this.config.refreshSec * 1000)));
+    this.timers.push(setInterval(() => { try { this.saveHistoryFile(); } catch (e) {} }, 30000));
     /* make fallback yields available immediately, then refresh from Finnhub */
     this.applyDividendMap(this.fallbackDividendMap(), 'fallback', 0);
     this.timers.push(setInterval(() => { this.syncDividends().catch((e) => { this.lastError = e.message; }); }, 24 * 3600 * 1000));
@@ -1216,6 +1252,7 @@ class MarketService {
 
   start() {
     this.loadConfig();
+    this.loadHistoryFile();
     this.seedBaseQuotes();
     this.restart().catch((e) => { this.lastError = e.message; });
     console.log('[market] mode:', this.config.mode, '· refresh:', this.config.refreshSec + 's', '· key:', this.config.apiKey ? 'set' : 'not set');
@@ -1224,6 +1261,7 @@ class MarketService {
   stop() {
     this.stopped = true;
     this.stopTimers();
+    try { this.saveHistoryFile(); } catch (e) {}
     this.closeWS();
   }
 }
