@@ -231,8 +231,8 @@
         <span class="badge ${on ? 'badge-success' : a.active ? 'badge-warn' : ''}">${on ? 'ON' : a.active ? 'OFF' : 'Not subscribed'}</span>
       </div>
       <div class="bot-autosecure-grid">
-        <div><span class="tiny muted">Secured profits</span><b>${num(a.securedCoins)} WC</b></div>
-        <div><span class="tiny muted">Entries to claim</span><b>${num(a.securedCount, 0)}</b></div>
+        <div><span class="tiny muted">Secured profits</span><b><span data-bot-secured>${num(a.securedCoins)}</span> WC</b></div>
+        <div><span class="tiny muted">Entries to claim</span><b data-bot-secured-count>${num(a.securedCount, 0)}</b></div>
         <div><span class="tiny muted">Tool price</span><b>${num(a.priceCoins)} WC / ${escB(a.billedAs || 'monthly')}</b></div>
         <div><span class="tiny muted">Expires</span><b>${a.expiresAt ? when(a.expiresAt) : '—'}</b></div>
       </div>
@@ -303,7 +303,8 @@
         ${statusBadge(sess)}
       </div>
       ${s && s.autoSecure && s.autoSecure.active ? `<div class="tiny ${s.autoSecure.enabled ? 'up' : 'muted'}" style="margin-top:6px">
-        ${s.autoSecure.enabled ? 'Auto Secure ON' : 'Auto Secure paused'} · ${num(s.autoSecure.securedCoins)} WC secured${s.autoSecure.securedCount ? ` · ${s.autoSecure.securedCount} claim${s.autoSecure.securedCount === 1 ? '' : 's'}` : ''}
+        ${s.autoSecure.enabled ? 'Auto Secure ON' : 'Auto Secure paused'} · <b data-bot-secured>${num(s.autoSecure.securedCoins)}</b> WC secured ·
+        <span data-bot-secured-count>${s.autoSecure.securedCount}</span> to claim
       </div>` : ''}
       ${running ? `<div class="row" style="gap:8px;margin-top:7px;flex-wrap:wrap">
         <span class="tiny ${Number(sess.profitCoins) >= 0 ? 'up' : 'down'}"><b>${Number(sess.profitCoins) >= 0 ? '+' : '−'}${num(Math.abs(Number(sess.profitCoins) || 0))} WC</b> bot P/L</span>
@@ -362,6 +363,14 @@
           <input class="input" id="botCfgWin" type="number" min="0.1" step="0.1" value="${s.winPct}"/></div>
         <div class="field"><label class="label">Loss on a loss (% of stake)</label>
           <input class="input" id="botCfgLoss" type="number" min="0.1" step="0.1" value="${s.lossPct}"/></div>
+        <div class="field"><label class="label">Auto Secure price (USD)</label>
+          <input class="input" id="botCfgAutoPrice" type="number" min="0" step="0.01" value="${Number((a.autoSecure || {}).priceUsd != null ? a.autoSecure.priceUsd : s.autoSecurePriceUsd) || 20}"/>
+          <div class="tiny muted" style="margin-top:4px">Charged as ${num((Number((a.autoSecure || {}).priceUsd) || Number(s.autoSecurePriceUsd) || 20) * 2)} WC (1 WC = $0.50).</div></div>
+        <div class="field"><label class="label">Auto Secure billing cycle</label>
+          <select class="input" id="botCfgAutoCycle">
+            ${['daily', 'weekly', 'monthly', 'one_time'].map((c) => `<option value="${c}" ${((a.autoSecure || {}).billingCycle || s.autoSecureCycle) === c ? 'selected' : ''}>${c.replace('_', '-')}</option>`).join('')}
+          </select>
+          <div class="tiny muted" style="margin-top:4px">Applies to new subscriptions and renewals.</div></div>
       </div>
       <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
         <button class="btn btn-primary" data-act="bot-admin-save">${ic('check', 14)} Save bot settings</button>
@@ -515,7 +524,9 @@
         minPoolPct: val('botCfgMinPool', 10),
         stakePct: val('botCfgStake', 20),
         winPct: val('botCfgWin', 4),
-        lossPct: val('botCfgLoss', 6)
+        lossPct: val('botCfgLoss', 6),
+        autoSecurePriceUsd: val('botCfgAutoPrice', 20),
+        autoSecureCycle: (document.getElementById('botCfgAutoCycle') || {}).value || 'monthly'
       };
       try {
         const r = await api('/api/bots/admin/config', { method: 'POST', body: JSON.stringify({ adminId: uidNow(), tiers, settings }) }, 20000);
@@ -581,6 +592,13 @@
     if (pool && B.state) pool.textContent = num(s.poolCoins) + ' WC';
   }
 
+  function paintAutoSecure() {
+    const a = B.state && B.state.autoSecure;
+    if (!a) return;
+    document.querySelectorAll('[data-bot-secured]').forEach((el) => { el.textContent = num(a.securedCoins); });
+    document.querySelectorAll('[data-bot-secured-count]').forEach((el) => { el.textContent = num(a.securedCount, 0); });
+  }
+
   function init() {
     let tries = 0;
     const iv = setInterval(() => {
@@ -614,6 +632,7 @@
       }
     }, 200);
     setInterval(paintCountdown, 1000);
+    setInterval(paintAutoSecure, 1000);
     /* keep the main Invest dashboard's portfolio chart in sync with the bot */
     setInterval(async () => {
       if (document.hidden) return;
