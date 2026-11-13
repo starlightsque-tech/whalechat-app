@@ -294,19 +294,18 @@ class MarketService {
     return out;
   }
 
+  /* Live-only: a ticker has NO quote until Finnhub actually sends one. Nothing
+     is seeded from the catalogue, so the app can never display an invented price. */
   seedBaseQuotes() {
-    const now = Date.now();
     this.refreshAssets();
     this.assetList().forEach((a) => {
       if (this.quotes[a.ticker]) return;
-      const price = Number(a.price) || 0;
       this.quotes[a.ticker] = {
-        ticker: a.ticker, price, prevClose: price, open: price,
-        dayHigh: price, dayLow: price,
+        ticker: a.ticker, price: 0, prevClose: 0, open: 0,
+        dayHigh: 0, dayLow: 0,
         changePct: 0, changeUsd: 0, vol: 0,
-        dir: 0, updatedAt: now, source: 'cached', real: false
+        dir: 0, updatedAt: 0, source: 'waiting', real: false, live: false
       };
-      if (price > 0) this.recordHistory(a.ticker, price, now, 'cached', false);
     });
   }
 
@@ -339,7 +338,8 @@ class MarketService {
       dir: price > (prev.price || price) ? 1 : price < (prev.price || price) ? -1 : 0,
       updatedAt: now,
       source: (meta && meta.source) || 'live',
-      real: !!(meta && meta.real)
+      real: !!(meta && meta.real),
+      live: !!(meta && meta.real)
     };
     q.changeUsd = round(q.price - q.prevClose, 4);
     q.changePct = q.prevClose ? round((q.changeUsd / q.prevClose) * 100, 4) : 0;
@@ -413,7 +413,7 @@ class MarketService {
       const r = await this.getJSON(url, 9000);
       if (r.status === 429) {
         this.rateLimitedUntil = Date.now() + 60 * 1000;
-        this.lastError = 'Finnhub rate limit hit — falling back to 24/7 simulated ticks';
+        this.lastError = 'Finnhub rate limit hit — waiting for the next live poll';
         return null;
       }
       if (r.status !== 200 || !r.data) {
@@ -657,12 +657,15 @@ class MarketService {
   fallbackReason() {
     if (this.config.mode !== 'hybrid' || !this.config.apiKey) return 'no-finnhub';
     if (Date.now() < this.rateLimitedUntil) return 'rate-limit';
+    if (!usMarketOpen()) return 'market-closed';
     return '';
   }
 
   notice() {
-    if (this.config.mode === 'hybrid' && this.config.apiKey) return 'Live market data via Finnhub';
-    return 'Connect Finnhub in Admin → Markets';
+    if (this.config.mode !== 'hybrid' || !this.config.apiKey) return 'Live prices unavailable — connect Finnhub in Admin → Markets';
+    if (Date.now() < this.rateLimitedUntil) return 'Finnhub rate limit — real prices resume shortly';
+    if (!usMarketOpen()) return 'Market closed — showing the last real Finnhub prices';
+    return 'Live market data via Finnhub';
   }
 
   source() {
@@ -705,6 +708,8 @@ class MarketService {
       marketOpen: usMarketOpen(),
       notice: this.notice(),
       status: this.status(),
+      liveOnly: true,
+      liveCount: Object.keys(this.quotes).filter((t) => this.quotes[t] && this.quotes[t].real && this.quotes[t].price > 0).length,
       quotes: this.quotes
     };
   }
