@@ -656,6 +656,16 @@ async function api(req, res, pathname, query) {
     } catch (e) { return json(res, 400, { ok: false, error: e.message }); }
   }
 
+  if (pathname === '/api/market/secure-profit/claim-all' && req.method === 'POST') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    const body = await readBody(req);
+    const owner = (store.db.users || []).find((u) => u && u.id === body.userId);
+    if (!owner) return json(res, 400, { ok: false, error: 'User not found' });
+    try {
+      return json(res, 200, market.claimAllSecuredProfits(String(body.userId)));
+    } catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+
   // --- auto-secure profit claims (bot-secured take profit) ---
   if (pathname === '/api/market/secure-profit/claim' && req.method === 'POST') {
     if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
