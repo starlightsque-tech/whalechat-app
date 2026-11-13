@@ -108,10 +108,14 @@
       </div>
       <div class="spot-tpsl-edit" id="spotTpSlEditor" hidden data-t="${escSpot(ticker)}">
         <div class="row" style="gap:8px">
-          <div class="field grow" style="margin:0"><label class="label">Take Profit price</label>
-            <input class="input" id="spotInlineTp" type="number" step="0.01" min="0" value="${Number(h.takeProfitPrice) > 0 ? h.takeProfitPrice : ''}" placeholder="optional"/></div>
-          <div class="field grow" style="margin:0"><label class="label">Stop Loss price</label>
-            <input class="input" id="spotInlineSl" type="number" step="0.01" min="0" value="${Number(h.stopLossPrice) > 0 ? h.stopLossPrice : ''}" placeholder="optional"/></div>
+          <div class="field grow" style="margin:0">
+            <label class="label between" style="gap:6px"><span>Take Profit price</span>
+              <span class="tiny muted" style="display:flex;gap:4px;align-items:center">on <input type="checkbox" id="spotPosTpOn" ${Number(h.takeProfitPrice) > 0 ? 'checked' : ''} style="accent-color:var(--accent)"/></span></label>
+            <input class="input" id="spotInlineTp" type="number" step="0.01" min="0" value="${Number(h.takeProfitPrice) > 0 ? h.takeProfitPrice : ''}" placeholder="optional" ${Number(h.takeProfitPrice) > 0 ? '' : 'disabled'}/></div>
+          <div class="field grow" style="margin:0">
+            <label class="label between" style="gap:6px"><span>Stop Loss price</span>
+              <span class="tiny muted" style="display:flex;gap:4px;align-items:center">on <input type="checkbox" id="spotPosSlOn" ${Number(h.stopLossPrice) > 0 ? 'checked' : ''} style="accent-color:var(--accent)"/></span></label>
+            <input class="input" id="spotInlineSl" type="number" step="0.01" min="0" value="${Number(h.stopLossPrice) > 0 ? h.stopLossPrice : ''}" placeholder="optional" ${Number(h.stopLossPrice) > 0 ? '' : 'disabled'}/></div>
         </div>
         <div class="row" style="gap:8px;margin-top:8px">
           <button class="btn btn-sm btn-primary grow" data-act="spot-save-tpsl" data-t="${escSpot(ticker)}">Save TP / SL</button>
@@ -283,8 +287,10 @@
 
     App.spotSaveTpsl = async function (id, ds) {
       const ticker = ds.t || S.ticker;
-      const tp = Number((document.getElementById('spotInlineTp') || {}).value) || 0;
-      const sl = Number((document.getElementById('spotInlineSl') || {}).value) || 0;
+      const tpOn = document.getElementById('spotPosTpOn');
+      const slOn = document.getElementById('spotPosSlOn');
+      const tp = (tpOn && !tpOn.checked) ? 0 : Number((document.getElementById('spotInlineTp') || {}).value) || 0;
+      const sl = (slOn && !slOn.checked) ? 0 : Number((document.getElementById('spotInlineSl') || {}).value) || 0;
       try {
         const r = await apiJSON('/api/market/spot/tpsl', { method: 'POST', body: JSON.stringify({ userId: me().id, ticker, tpPrice: tp, slPrice: sl }) }, 20000);
         if (!r.res || !r.res.ok || !r.data || !r.data.ok) return tmsg((r.data && r.data.error) || 'Update failed', 'err');
@@ -305,7 +311,16 @@
       const ed = document.getElementById('spotTpSlEditor');
       if (!ed) return;
       ed.hidden = !ed.hidden;
-      if (!ed.hidden) { const i = document.getElementById('spotInlineTp'); if (i) i.focus(); }
+      if (ed.hidden) return;
+      [['spotPosTpOn', 'spotInlineTp'], ['spotPosSlOn', 'spotInlineSl']].forEach(([cbId, inId]) => {
+        const cb = document.getElementById(cbId);
+        const input = document.getElementById(inId);
+        if (!cb || !input) return;
+        const sync = () => { input.disabled = !cb.checked; if (!cb.checked) input.value = ''; };
+        if (!cb.__spBound) { cb.addEventListener('change', sync); cb.__spBound = true; }
+        sync();
+      });
+      const i = document.getElementById('spotInlineTp'); if (i && !i.disabled) i.focus();
     };
 
     App.spotEdit = function (id, ds) {
