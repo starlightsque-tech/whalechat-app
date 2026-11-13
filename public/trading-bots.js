@@ -221,6 +221,35 @@
     </div>`;
   }
 
+  function autoSecureHTML() {
+    const a = (B.state && B.state.autoSecure) || { active: false, enabled: false, priceCoins: 40, billedAs: 'monthly', securedCount: 0, securedCoins: 0 };
+    const on = a.active && a.enabled;
+    return `<div class="card" id="botAutoCard">
+      <div class="between" style="align-items:flex-start;gap:10px">
+        <div><div class="card-title" style="margin:0">Auto Secure Take Profit</div>
+          <div class="tiny muted" style="margin-top:3px">Bot tool · watches every active trade and locks available profit even while you are offline.</div></div>
+        <span class="badge ${on ? 'badge-success' : a.active ? 'badge-warn' : ''}">${on ? 'ON' : a.active ? 'OFF' : 'Not subscribed'}</span>
+      </div>
+      <div class="bot-autosecure-grid">
+        <div><span class="tiny muted">Secured profits</span><b>${num(a.securedCoins)} WC</b></div>
+        <div><span class="tiny muted">Entries to claim</span><b>${num(a.securedCount, 0)}</b></div>
+        <div><span class="tiny muted">Tool price</span><b>${num(a.priceCoins)} WC / ${escB(a.billedAs || 'monthly')}</b></div>
+        <div><span class="tiny muted">Expires</span><b>${a.expiresAt ? when(a.expiresAt) : '—'}</b></div>
+      </div>
+      <div class="tiny muted" style="margin-top:8px;line-height:1.6">
+        When profit is available the bot secures it and re-bases the trade so it cannot be lost. Secured profit is <b>not credited automatically</b> —
+        open <b>Orders</b> and press <b>Take profit</b> on each secured entry to add it to your balance.
+      </div>
+      <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
+        ${a.active
+          ? `<button class="btn btn-sm ${on ? 'btn-ghost' : 'btn-primary'}" data-act="bot-auto-toggle">${on ? 'Turn off auto secure' : 'Turn on auto secure'}</button>
+             <button class="btn btn-sm btn-ghost" data-act="bot-auto-subscribe">Renew tool</button>`
+          : `<button class="btn btn-sm btn-primary" data-act="bot-auto-subscribe">Subscribe · ${num(a.priceCoins)} WC / ${escB(a.billedAs || 'monthly')}</button>`}
+        ${a.securedCount ? `<a class="btn btn-sm btn-soft" href="#/invest/orders">Claim secured profit</a>` : ''}
+      </div>
+    </div>`;
+  }
+
   B.view = function () {
     if (!B.state) {
       load(false).then(() => { if (B.state) render(); });
@@ -245,6 +274,8 @@
     </div></div>
 
     <div id="botSessionMount">${sessionHTML(B.state.session)}</div>
+
+    ${autoSecureHTML()}
 
     <div class="card" id="botMarketCard">
       <div class="between"><div class="card-title" style="margin:0">Bot marketplace</div>
@@ -271,6 +302,9 @@
         </div>
         ${statusBadge(sess)}
       </div>
+      ${s && s.autoSecure && s.autoSecure.active ? `<div class="tiny ${s.autoSecure.enabled ? 'up' : 'muted'}" style="margin-top:6px">
+        ${s.autoSecure.enabled ? 'Auto Secure ON' : 'Auto Secure paused'} · ${num(s.autoSecure.securedCoins)} WC secured${s.autoSecure.securedCount ? ` · ${s.autoSecure.securedCount} claim${s.autoSecure.securedCount === 1 ? '' : 's'}` : ''}
+      </div>` : ''}
       ${running ? `<div class="row" style="gap:8px;margin-top:7px;flex-wrap:wrap">
         <span class="tiny ${Number(sess.profitCoins) >= 0 ? 'up' : 'down'}"><b>${Number(sess.profitCoins) >= 0 ? '+' : '−'}${num(Math.abs(Number(sess.profitCoins) || 0))} WC</b> bot P/L</span>
         <span class="tiny muted">${num(sess.tradeCount)} trade${Number(sess.tradeCount) === 1 ? '' : 's'}</span>
@@ -423,6 +457,39 @@
         tmsg(num(r.data.returnedCoins) + ' WC returned to your balance', 'ok');
         render();
       } catch (e) { tmsg('Could not stop bot: ' + e.message, 'err'); }
+    };
+
+    App.botAutoSubscribe = async function () {
+      if (typeof Remote === 'undefined' || !Remote.enabled) return tmsg('Connect the sync server to subscribe', 'err');
+      const a = (B.state && B.state.autoSecure) || {};
+      if (typeof confirmDialog === 'function') {
+        const ok = await confirmDialog({
+          title: 'Subscribe to Auto Secure Take Profit?',
+          body: `${num(a.priceCoins)} WC will be deducted from your balance (${money(a.priceUsd)} / ${escB(a.billedAs || 'monthly')}). The bot will secure profit on your active trades even while you are offline.`,
+          ok: 'Subscribe'
+        });
+        if (!ok) return;
+      }
+      try {
+        const r = await api('/api/bots/auto-secure/subscribe', { method: 'POST', body: JSON.stringify({ userId: uidNow() }) }, 25000);
+        if (!r.res || !r.res.ok || !r.data || !r.data.ok) return tmsg((r.data && r.data.error) || 'Subscription failed', 'err');
+        await Remote.refresh(true);
+        await load(true);
+        tmsg('Auto Secure is ON — available profit will be secured for you', 'ok');
+        render();
+      } catch (e) { tmsg('Subscription failed: ' + e.message, 'err'); }
+    };
+
+    App.botAutoToggle = async function () {
+      if (typeof Remote === 'undefined' || !Remote.enabled) return tmsg('Connect the sync server to change this tool', 'err');
+      const cur = (B.state && B.state.autoSecure) || {};
+      try {
+        const r = await api('/api/bots/auto-secure/toggle', { method: 'POST', body: JSON.stringify({ userId: uidNow(), enabled: !cur.enabled }) }, 20000);
+        if (!r.res || !r.res.ok || !r.data || !r.data.ok) return tmsg((r.data && r.data.error) || 'Could not update the tool', 'err');
+        await load(true);
+        tmsg(r.data.autoSecure && r.data.autoSecure.enabled ? 'Auto secure turned on' : 'Auto secure turned off', 'ok');
+        render();
+      } catch (e) { tmsg('Could not update the tool: ' + e.message, 'err'); }
     };
 
     App.botAdminReload = function () { mountAdmin(true); };
@@ -580,6 +647,11 @@
     st.id = 'wc-bot-style';
     st.textContent = `
     .bot-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:12px}
+    .bot-autosecure-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-top:10px}
+    .bot-autosecure-grid div{display:flex;flex-direction:column;gap:1px;padding:8px;border:1px solid var(--border);border-radius:9px;background:var(--surface-2);min-width:0}
+    .bot-autosecure-grid span{font-size:9px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted-2);font-weight:700}
+    .bot-autosecure-grid b{font-size:12.5px;font-variant-numeric:tabular-nums}
+    @media(max-width:560px){.bot-autosecure-grid{grid-template-columns:1fr 1fr}}
     .bot-tier{padding:12px;border:1px solid var(--border);border-radius:13px;background:var(--surface-2);display:flex;flex-direction:column;gap:2px}
     .bot-tier.owned{border-color:rgba(46,230,201,.38);background:linear-gradient(150deg,rgba(46,230,201,.07),var(--surface-2))}
     .bot-tier.disabled{opacity:.55}
