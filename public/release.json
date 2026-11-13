@@ -1,8 +1,8 @@
 {
-  "version": "3.26.0",
-  "build": "2026-11-13T10:34:13Z",
+  "version": "3.26.1",
+  "build": "2026-11-13T10:58:38Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.26.0 - live secured-profit totals, Claim all, and admin Auto Secure pricing/revenue controls.",
-  "releasedAt": "2026-11-13T10:34:13Z",
+  "notes": "WhaleChat 3.26.1 - Auto Secure bot now scans every second and secures any profit immediately.",
+  "releasedAt": "2026-11-13T10:58:38Z",
   "minimum": "3.0.0"
 }
