@@ -189,9 +189,31 @@ INV.viewDash = function (params) {
 INV.marketCat = 'All';
 INV.marketQuery = '';
 INV.CATS = ['All', 'US Stocks', 'Global Stocks', 'Forex', 'Crypto'];
+INV.CLASS_LIST = [
+  { key: 'us', label: 'US Stocks' },
+  { key: 'global', label: 'Global Stocks' },
+  { key: 'forex', label: 'Forex' },
+  { key: 'crypto', label: 'Crypto' }
+];
+INV.classOf = function (s) { return (s && s.assetClass) || 'us'; };
+INV.classes = function () {
+  const inv = INV.db();
+  if (!inv.classes || typeof inv.classes !== 'object') {
+    inv.classes = { us: true, global: true, forex: true, crypto: true };
+  }
+  INV.CLASS_LIST.forEach((c) => { if (inv.classes[c.key] === undefined) inv.classes[c.key] = true; });
+  return inv.classes;
+};
+INV.classEnabled = function (key) { return INV.classes()[key] !== false; };
+INV.visibleStocks = function () {
+  return INV.stocks().filter((s) => INV.classEnabled(INV.classOf(s)));
+};
+INV.visibleCats = function () {
+  return ['All'].concat(INV.CLASS_LIST.filter((c) => INV.classEnabled(c.key)).map((c) => c.label));
+};
 
 INV.marketFiltered = function () {
-  let list = INV.stocks();
+  let list = INV.visibleStocks();
   const q = INV.marketQuery.trim().toLowerCase();
   if (q) {
     list = list.filter(s => s.ticker.toLowerCase().includes(q) || s.name.toLowerCase().includes(q) || (s.sector || '').toLowerCase().includes(q));
@@ -230,6 +252,8 @@ INV.cardHTML = function (s) {
     </div></a>`;
 };
 INV.viewMarket = function () {
+  const cats = INV.visibleCats();
+  if (!cats.includes(INV.marketCat)) INV.marketCat = 'All';
   const list = INV.marketFiltered();
   return `
   <div class="page-head"><div class="between">
@@ -239,9 +263,9 @@ INV.viewMarket = function () {
   </div></div>
   <div class="searchbar" style="margin-bottom:10px">${ic('search', 17)}
     <input id="ivSearch" placeholder="Search asset — AAPL, VOD.L, EUR/USD, BTC/USDT…" value="${esc(INV.marketQuery)}" autocomplete="off"/></div>
-  <div class="chip-row inv-cats" id="ivCats">${INV.CATS.map(c => `<button class="chip ${c === INV.marketCat && !INV.marketQuery ? 'on' : ''}" data-act="inv-cat" data-cat="${esc(c)}">${esc(c)}</button>`).join('')}</div>
-  <div class="inv-grid" id="ivList">${list.length ? list.map(INV.cardHTML).join('') : `<div class="inv-empty" style="grid-column:1/-1">${ic('search', 26)}<p class="small muted">No stocks match “${esc(INV.marketQuery)}”.</p></div>`}</div>
-  <div class="card inv-note" data-market-notice="1">${ic('help', 14)} <span class="tiny">Live market data via Finnhub — US stocks, global stocks, forex and crypto.</span></div>`;
+  <div class="chip-row inv-cats" id="ivCats">${cats.map(c => `<button class="chip ${c === INV.marketCat && !INV.marketQuery ? 'on' : ''}" data-act="inv-cat" data-cat="${esc(c)}">${esc(c)}</button>`).join('')}</div>
+  <div class="inv-grid" id="ivList">${list.length ? list.map(INV.cardHTML).join('') : `<div class="inv-empty" style="grid-column:1/-1">${ic(INV.marketQuery ? 'search' : 'ban', 26)}<p class="small muted">${INV.marketQuery ? `No stocks match “${esc(INV.marketQuery)}”.` : 'No markets are currently enabled by the administrator.'}</p></div>`}</div>
+  <div class="card inv-note" data-market-notice="1">${ic('help', 14)} <span class="tiny">Live market data via Finnhub — ${INV.visibleCats().slice(1).join(', ') || 'no markets enabled'}.</span></div>`;
 };
 AFTER.invest = function (parts) {
   const sub = parts[1] || '';
@@ -268,6 +292,9 @@ INV.viewStock = function (rawTicker, params) {
   const u = me();
   const s = INV.stock(String(rawTicker || '').toUpperCase());
   if (!s) return `<div class="empty">${ic('search', 26)}<h3>Stock not found</h3><p>That ticker is not listed on WhaleChat Invest.</p><a href="#/invest/market" class="btn btn-primary">Back to market</a></div>`;
+  if (!INV.classEnabled(INV.classOf(s)) && !(u && u.role === 'admin')) {
+    return `<div class="empty">${ic('ban', 26)}<h3>Market unavailable</h3><p>This asset type is currently turned off by an administrator.</p><a href="#/invest/market" class="btn btn-primary">Back to market</a></div>`;
+  }
   const q = INV.quote(s.ticker);
   const tf = (params && ['1D', '1W', '1M', '3M', '1Y', 'ALL'].includes(params.tf)) ? params.tf : '1D';
   const mode = (params && params.mode === 'candle') ? 'candle' : 'line';
@@ -590,6 +617,7 @@ INV.viewWatchlist = function () {
     <div class="card-title">Starred stocks</div>
     ${rows.length ? `<div class="inv-list">${rows.map(w => {
       const s = INV.stock(w.ticker); if (!s) return '';
+      if (!INV.classEnabled(INV.classOf(s))) return '';
       const q = INV.quote(s.ticker);
       return `<a class="inv-row" href="#/invest/stock/${s.ticker}">
         ${INV.logoHTML(s, 34)}
@@ -694,6 +722,23 @@ INV.viewAdminStocks = function () {
       Finnhub live prices keep streaming for display, charts and TP/SL triggers — they do not change the payout.
     </div>
     <div class="tiny muted">0% = users get their capital back on close. Max 500%. Changes apply to new positions.</div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Asset classes shown on the app</div>
+    <div class="tiny muted" style="line-height:1.65;margin-bottom:10px">
+      Turn a market type off and it disappears from the user Market page, category chips, search results and
+      watchlist. Real Finnhub prices keep streaming for enabled classes only being shown. Existing positions in a
+      turned-off class stay visible in Orders so users can still close them.
+    </div>
+    <div class="row" style="gap:8px;flex-wrap:wrap">
+      ${INV.CLASS_LIST.map(c => {
+        const on = INV.classEnabled(c.key);
+        return `<button class="btn btn-sm ${on ? 'btn-primary' : 'btn-ghost'}" data-act="inv-admin-class" data-cls="${c.key}">
+          ${ic(on ? 'eye' : 'ban', 14)} ${c.label} · ${on ? 'On' : 'Off'}</button>`;
+      }).join('')}
+    </div>
+    <div class="tiny muted mt6">US Stocks = US exchange listings · Global = London/Frankfurt/Tokyo/Toronto · Forex = OANDA pairs · Crypto = Binance pairs.</div>
   </div>
 
   <div class="card">
@@ -848,6 +893,15 @@ App.invAdminProfit = function (id, ds) {
     s.profitPct = Math.round(v * 100) / 100;
     closeModal(); persist(); toast(`${s.ticker} profit rate set to ${s.profitPct}%`, 'ok'); render();
   };
+};
+App.invAdminClass = function (id, ds) {
+  const key = String(ds.cls || '').toLowerCase();
+  if (!INV.CLASS_LIST.some(c => c.key === key)) return;
+  const classes = INV.classes();
+  classes[key] = classes[key] === false;
+  persist();
+  toast(`${({ us: 'US stocks', global: 'Global stocks', forex: 'Forex', crypto: 'Crypto' })[key]} ${classes[key] ? 'shown on' : 'hidden from'} the app`, 'ok');
+  render();
 };
 App.invAdminPause = function (id, ds) {
   const s = INV.stock(ds.t); if (!s) return;
