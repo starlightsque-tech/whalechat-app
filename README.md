@@ -1,4 +1,4 @@
-# WhaleChat 3.23.1 — web app + mobile apps
+# WhaleChat 3.23.2 — web app + mobile apps
 
 WhaleChat is a social + marketplace + wallet product built as a single-page app with a
 Node sync server and native Android/iOS shells.
@@ -124,6 +124,19 @@ The sell path is a **fully synchronous critical section**: it re-reads the posit
 removes (or trims) it, then credits the wallet. A manual sell racing the TP/SL worker
 therefore cannot double-credit — the loser sees `No open position`. Notifications and
 transaction records are created for every automated exit.
+
+### Asset-class visibility (admin)
+
+Admin → **Stocks** → **Asset classes shown on the app** has four switches:
+**US Stocks**, **Global Stocks**, **Forex** and **Crypto**. Turning a class off:
+
+* removes it from the Market page cards, category chips, search results and watchlist,
+* blocks new spot buys for that class on the backend (`This asset type is currently turned off`),
+* keeps existing positions/orders visible so users can still close them,
+* leaves Finnhub live prices untouched for every enabled class.
+
+The setting is stored in the synced database (`db.invest.classes`) so every device and the
+server enforce the same set immediately.
 
 ### Admin profit rate per stock
 
