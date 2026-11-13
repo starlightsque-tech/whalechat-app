@@ -209,6 +209,26 @@ is closed. Admin → Stocks includes the bot configuration panel. Endpoints:
 `/api/bots/state`, `/api/bots/subscribe`, `/api/bots/start`, `/api/bots/stop`,
 `/api/bots/admin`, `/api/bots/admin/config`.
 
+**Bot profiles, health engine and performance page (3.30.0).** Every tier is a full trading
+identity with a profile picture (`public/bots/*.jpg`, admin-overridable with an uploaded photo):
+
+- `#/bots` — all bot identities as cards (avatar, `@username`, accuracy, price, HOT/Owned).
+- `#/bots/<tierId>` — profile page: large picture, accuracy, subscription state, health, energy,
+  net P/L and trade count, a per-bot equity chart, session history and subscribe / start / stop /
+  cool-down actions.
+- **Cooling** — `POST /api/bots/cool` stops the session, stores `db.botCooldowns[userId]`, and the
+  UI shows a live `m:ss` countdown until the bot is ready again. Cooling also restores energy so
+  the next session trades closer to its target accuracy.
+- **Health engine** (`BotService.healthEngine`) — derives `state` (`thriving` / `stable` /
+  `fatigued` / `cooling` / `idle`), score, energy, stamina band, win rate, drawdown and the
+  cooldown deadline, plus the 40-point health history sparkline. Exposed as `health` in
+  `GET /api/bots/state` and rendered as its own card on the bot, profile and performance pages.
+- **Performance page** — `#/invest/bots/performance`: net bot P/L, ROI on allocated capital,
+  win rate, trades/sessions, a Lightweight Charts v5 equity curve (`WC_PRO_CHART.mountEquity`)
+  with a break-even line, the health engine, the cooling banner and a per-session table with
+  avatars. Aggregation is computed server-side in `BotService.performance` from every session's
+  trade log (`poolAfter`, `pnlCoins`) and exposed as `performance` on the bot state.
+
 ### Auto Secure Take Profit (bot tool)
 
 A dedicated bot tool users can subscribe to (default **$20 / month → 40 WC**, stored in
