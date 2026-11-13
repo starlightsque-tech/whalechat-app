@@ -67,6 +67,7 @@ const MODULES = [
   { file: 'demo-sellers.js', marker: 'wc-demo-sellers' },
   { file: 'support.js', marker: 'wc-support' },
   { file: 'pro-chart.js', marker: 'wc-pro-chart' },
+  { file: 'live-only.js', marker: 'wc-live-only' },
   { file: 'wc-terminal.js', marker: 'wc-trade-terminal' },
   { file: 'wc-terminal-app.js', marker: 'wc-trade-terminal-app' }
 ];
