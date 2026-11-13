@@ -403,6 +403,9 @@ async function api(req, res, pathname, query) {
   if (pathname === '/api/market/quotes' && req.method === 'GET') {
     return json(res, 200, market.snapshot());
   }
+  if (pathname === '/api/market/stream' && req.method === 'GET') {
+    return json(res, 200, market.streamInfo());
+  }
   if (pathname === '/api/market/history' && req.method === 'GET') {
     const raw = (query.get('tickers') || query.get('ticker') || '').toUpperCase();
     const tickers = raw.split(',').map(t => t.trim()).filter(Boolean).slice(0, 24);
