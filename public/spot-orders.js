@@ -170,6 +170,11 @@
     const content = document.getElementById('content');
     const host = document.getElementById('ltTicketMount');
     if (!content) return;
+    try {
+      const st = INV.stock(S.ticker);
+      const admin = me() && me().role === 'admin';
+      if (st && INV.classEnabled && INV.classOf && !INV.classEnabled(INV.classOf(st)) && !admin) return;
+    } catch (e) {}
     if (document.getElementById('spotTicketCard')) { S.paint(); return; }
     /* keep the Rise / Fall ticket — spot investing is an additional flow */
     const box = document.createElement('div');
