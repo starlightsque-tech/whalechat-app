@@ -545,7 +545,9 @@ class BotService {
     });
     return {
       ok: true,
-      tiers: this.tiers(),
+      tiers: this.tiers().map((t) => Object.assign({}, t, {
+        subscribers: (db.botSubscriptions || []).filter((x) => x && x.tierId === t.id && x.status === 'active').length
+      })),
       settings: this.settings(),
       cycleOptions: Object.keys(CYCLE_MS),
       autoSecure: {
@@ -574,23 +576,54 @@ class BotService {
     if (!db) throw nextError('Database not ready');
     this.ensureDefaults(db);
     if (Array.isArray(opts.tiers)) {
+      let sort = 0;
       for (const incoming of opts.tiers) {
-        const t = db.botTiers.find((x) => x && x.id === incoming.id);
-        if (!t) continue;
-        if (incoming.name != null) t.name = String(incoming.name).slice(0, 60);
+        sort += 1;
+        if (!incoming || typeof incoming !== 'object') continue;
+        const wantedId = String(incoming.id || '').trim();
+        let t = wantedId ? db.botTiers.find((x) => x && x.id === wantedId) : null;
+        const isNew = !t;
+        if (isNew) {
+          const name = String(incoming.name || '').trim();
+          if (!name) throw nextError('Every new bot needs a name');
+          const base = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 28) || 'bot';
+          let id = base, n = 2;
+          while (db.botTiers.some((x) => x && x.id === id)) id = base + '_' + (n++);
+          t = {
+            id, name, username: 'bot_' + id, avatar: null, hot: false,
+            accuracy: 50, priceUsd: 20, billingCycle: 'monthly', intervalMin: 0,
+            enabled: true, sort, blurb: '', createdAt: Date.now(), custom: true
+          };
+          db.botTiers.push(t);
+        }
+        if (incoming.name != null) {
+          const nm = String(incoming.name).trim().slice(0, 60);
+          if (!nm) throw nextError('Bot name cannot be empty');
+          t.name = nm;
+        }
+        if (incoming.username != null) {
+          const un = String(incoming.username).replace(/^@/, '').replace(/[^a-zA-Z0-9_]/g, '').slice(0, 32);
+          if (un) t.username = un;
+        }
         if (incoming.accuracy != null) t.accuracy = clamp(incoming.accuracy, 1, 100, t.accuracy);
         if (incoming.priceUsd != null) t.priceUsd = Math.max(0, round(incoming.priceUsd, 2));
         if (incoming.billingCycle != null && CYCLE_MS.hasOwnProperty(incoming.billingCycle)) t.billingCycle = incoming.billingCycle;
         if (incoming.intervalMin != null) t.intervalMin = clamp(incoming.intervalMin, 0, 10080, t.intervalMin);
         if (incoming.enabled != null) t.enabled = !!incoming.enabled;
         if (incoming.blurb != null) t.blurb = String(incoming.blurb).slice(0, 140);
-        if (incoming.username != null) t.username = String(incoming.username).replace(/^@/, '').slice(0, 32);
         if (incoming.hot != null) t.hot = !!incoming.hot;
-        if (incoming.avatar != null) {
-          const av = String(incoming.avatar);
+        t.sort = sort;
+        if (incoming.avatar !== undefined) {
+          const av = String(incoming.avatar || '').trim();
           if (av === '') { t.avatar = null; t.avatarCleared = true; }
-          else if ((/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(av) || /^\.\/bots\/[a-z0-9-]+\.jpg$/.test(av)) && av.length <= 120000) {
+          else if (/^data:image\/(png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/=\s]+$/i.test(av)) {
+            if (av.length > 400000) throw nextError('Profile picture is too large for ' + t.name + ' — use a smaller image');
             t.avatar = av; t.avatarCleared = false;
+          } else if (/^https?:\/\/[^\s]+$/i.test(av) || /^\.\/bots\/[a-z0-9-]+\.(jpg|jpeg|png|webp)$/i.test(av)) {
+            if (av.length > 500) throw nextError('Profile picture URL is too long for ' + t.name);
+            t.avatar = av; t.avatarCleared = false;
+          } else {
+            throw nextError('Profile picture for ' + t.name + ' must be an uploaded image or an https URL');
           }
         }
       }
