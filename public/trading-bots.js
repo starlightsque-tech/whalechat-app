@@ -15,6 +15,17 @@
   B.adminLoadedAt = 0;
 
   const CYCLE_TEXT = { daily: 'day', weekly: 'week', monthly: 'month', one_time: 'one-time' };
+  /* Built-in profile pictures that ship with the app (public/bots/*.jpg) */
+  const PRESET_AVATARS = [
+    { file: './bots/miguel-santos.jpg', label: 'Miguel' },
+    { file: './bots/aiko-tanaka.jpg', label: 'Aiko' },
+    { file: './bots/lena-hoffmann.jpg', label: 'Lena' },
+    { file: './bots/arjun-mehta.jpg', label: 'Arjun' },
+    { file: './bots/zofia-nowak.jpg', label: 'Zofia' },
+    { file: './bots/oliver-hughes.jpg', label: 'Oliver' },
+    { file: './bots/carla-moreno.jpg', label: 'Carla' },
+    { file: './bots/mathieu-leroy.jpg', label: 'Mathieu' }
+  ];
   function escB(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
   function num(v, n) { return (Number(v) || 0).toFixed(n == null ? 2 : n); }
   function money(v) { return '$' + num(v, 2); }
@@ -667,9 +678,15 @@
     return `<tr data-bot-tier="${escB(id)}" data-bot-custom="${t && t.custom ? '1' : '0'}">
       <td style="font-weight:650;min-width:190px">
         <div class="row" style="gap:6px;align-items:center;margin-bottom:5px">
-          <span class="bot-av" data-bot-av>${av ? `<img src="${escB(av)}" alt=""/>` : botInitials(t && t.name, t && t.username)}</span>
-          <label class="btn btn-xs btn-ghost" style="cursor:pointer">Upload<input type="file" accept="image/*" data-f="avatarFile" style="display:none" onchange="App.botAvatarPick(this)"/></label>
-          <button type="button" class="btn btn-xs btn-ghost" data-act="bot-avatar-remove">Remove</button>
+          <span class="bot-av bot-av-lg" data-bot-av>${av ? `<img src="${escB(av)}" alt=""/>` : botInitials(t && t.name, t && t.username)}</span>
+          <div class="col" style="gap:3px">
+            <div class="row" style="gap:4px;flex-wrap:wrap">
+              <label class="btn btn-xs btn-ghost" style="cursor:pointer">Upload<input type="file" accept="image/*" data-f="avatarFile" style="display:none" onchange="App.botAvatarPick(this)"/></label>
+              <button type="button" class="btn btn-xs btn-soft" data-act="bot-avatar-gallery">Preset gallery</button>
+              <button type="button" class="btn btn-xs btn-ghost" data-act="bot-avatar-remove">Remove</button>
+            </div>
+            <span class="tiny muted">Preview updates before saving</span>
+          </div>
         </div>
         <input class="input bot-mini" data-f="name" value="${escB(t ? t.name : '')}" placeholder="Bot name" style="margin-bottom:4px;width:100%"/>
         <input class="input bot-mini" data-f="username" value="${escB(t ? t.username || '' : '')}" placeholder="username" style="margin-bottom:4px;width:100%"/>
@@ -808,6 +825,37 @@
         tmsg('Bot running — it trades even when the app is closed', 'ok');
         render();
       } catch (e) { tmsg('Could not start bot: ' + e.message, 'err'); }
+    };
+
+    App.botAvatarGallery = function (id, ds, ev) {
+      const row = ev && ev.target ? ev.target.closest('[data-bot-tier]') : B.galleryRow;
+      if (!row) return tmsg('Open the gallery from a bot row', 'err');
+      B.galleryRow = row;
+      const current = row.dataset.avatar || '';
+      openModal(modalShell('Choose bot profile picture', `
+        <div class="tiny muted" style="margin-bottom:10px;line-height:1.6">Pick one of the built-in photos or upload your own from the bot row. The bot preview updates immediately; nothing is published until you press <b>Save bot settings</b>.</div>
+        <div class="bot-avatar-grid">
+          ${PRESET_AVATARS.map((a) => `<button type="button" class="bot-avatar-choice ${current === a.file ? 'on' : ''}" data-act="bot-avatar-choose" data-av="${a.file}" title="${a.label}">
+            <img src="${a.file}" alt="${a.label}" loading="lazy"/><span>${a.label}</span>
+            ${current === a.file ? '<b class="bot-avatar-check">✓</b>' : ''}
+          </button>`).join('')}
+        </div>
+        <div class="bot-avatar-note">${ic('help', 13)} Built-in pictures live in <b>public/bots</b>. Use <b>Upload</b> on any row for a custom photo, or paste an https URL.</div>`,
+        `<button class="btn btn-ghost" data-close style="flex:1">Cancel</button>`), { width: '520px' });
+    };
+
+    App.botAvatarChoose = function (id, ds) {
+      const av = String((ds && ds.av) || '');
+      if (!/^\.\/bots\/[a-z0-9-]+\.jpg$/i.test(av)) return tmsg('That preset is not available', 'err');
+      const row = B.galleryRow;
+      if (!row || !row.isConnected) return tmsg('Bot row is no longer open — reopen the gallery', 'err');
+      row.dataset.avatar = av;
+      const urlEl = row.querySelector('[data-f="avatarUrl"]');
+      if (urlEl) urlEl.value = '';
+      const prev = row.querySelector('[data-bot-av]');
+      if (prev) prev.innerHTML = `<img src="${av}" alt=""/>`;
+      if (typeof closeModal === 'function') closeModal();
+      tmsg('Profile picture preview updated — press Save bot settings to publish', 'ok');
     };
 
     App.botAvatarPick = async function (input) {
@@ -1185,6 +1233,19 @@
     .bot-mini{height:30px;padding:3px 6px;font-size:11px;min-width:64px}
     .bot-admin-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:9px;margin-top:12px}
     @media(max-width:560px){.bot-grid{grid-template-columns:1fr}.bot-admin-table{font-size:10px}}
+    .bot-av-lg{width:46px;height:46px;font-size:13px}
+    .bot-avatar-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+    .bot-avatar-choice{position:relative;display:flex;flex-direction:column;align-items:center;gap:4px;padding:7px;border-radius:11px;
+      border:1px solid var(--border);background:var(--surface-2);color:var(--muted);cursor:pointer}
+    .bot-avatar-choice img{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:9px;display:block}
+    .bot-avatar-choice span{font-size:10px;font-weight:650}
+    .bot-avatar-choice:hover{border-color:rgba(46,230,201,.45)}
+    .bot-avatar-choice.on{border-color:var(--accent);background:rgba(46,230,201,.08);color:var(--accent)}
+    .bot-avatar-check{position:absolute;top:3px;right:3px;width:18px;height:18px;border-radius:50%;background:var(--accent);color:#03221d;
+      display:flex;align-items:center;justify-content:center;font-size:11px;line-height:1}
+    .bot-avatar-note{display:flex;gap:6px;align-items:flex-start;margin-top:11px;padding:8px 9px;border-radius:8px;font-size:10.5px;
+      line-height:1.55;color:var(--muted);background:rgba(46,230,201,.05);border:1px solid rgba(46,230,201,.16)}
+    @media(max-width:480px){.bot-avatar-grid{grid-template-columns:repeat(3,1fr)}}
     .bot-profile-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:9px}
     .bot-profile-card{display:flex;gap:11px;padding:11px;border:1px solid var(--border);border-radius:13px;background:var(--surface-2);text-decoration:none;color:inherit;align-items:center}
     .bot-profile-card:hover{border-color:rgba(46,230,201,.4)}
