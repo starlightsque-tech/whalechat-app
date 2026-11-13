@@ -1,4 +1,4 @@
-# WhaleChat 3.27.0 — web app + mobile apps
+# WhaleChat 3.28.0 — web app + mobile apps
 
 WhaleChat is a social + marketplace + wallet product built as a single-page app with a
 Node sync server and native Android/iOS shells.
@@ -265,6 +265,28 @@ displayed price from the previous tick to the new tick over an 850 ms ease-out w
 last point of the active lightweight-chart (stock chart and portfolio chart) is updated in
 place, and price/percentage labels are repainted at ~10 fps, so the trade view moves
 smoothly while server settlement and TP/SL continue to use the authoritative quote.
+
+## Shared stock portfolio (username-only manager access)
+
+Every user can share their stock portfolio from **Invest → Share stock portfolio**.
+
+* The link looks like `https://your-app/#/portfolio/<token>` and is stored on the user as a
+  random `portfolioToken` (reset the link at any time to revoke access).
+* The visitor opens the link, enters the **owner's username only** (no password) and gets a
+  restricted session:
+  * allowed: **Invest** (dashboard, market, stock pages, orders, watchlist),
+    **WhaleChat investment plans** and **Trading Bots**;
+  * blocked: home/chat/marketplace, wallet, profile, notifications, deposits and withdrawals;
+  * trades, plan subscriptions and bot subscriptions use the owner's balance.
+* A visible **Portfolio manager mode** banner and **Exit portfolio** buttons are shown; the
+  visitor's previous login is restored on exit. Token resets invalidate active sessions.
+* Money actions are blocked in the client, and the restricted routes redirect to Invest.
+
+## Readability
+
+Global text sizing and contrast were raised for readability: larger `.tiny`/`.small` text,
+stronger muted colours in both themes, clearer labels, chips and buttons. This applies
+everywhere, including the shared-portfolio screens.
 
 ## Desktop / Mobile view
 
