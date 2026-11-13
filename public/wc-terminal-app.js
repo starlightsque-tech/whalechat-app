@@ -179,19 +179,8 @@
     /* keep time strictly increasing and end at "now" with the live value */
     const clean = [];
     out.forEach((p) => { if (!clean.length || p.time > clean[clean.length - 1].time) clean.push(p); });
-    const live = portfolioValue();
-    if (live > 0 && clean.length) {
-      const last = clean[clean.length - 1].value;
-      if (last > 0 && Math.abs(live / last - 1) > 0.0005) {
-        const k = Math.min(70, clean.length);
-        const factor = live / last;
-        for (let i = 0; i < k; i++) {
-          const w = (i + 1) / k;
-          clean[clean.length - k + i].value = Math.round(clean[clean.length - k + i].value * (1 + (factor - 1) * w) * 100) / 100;
-        }
-      }
-      clean[clean.length - 1].value = Math.round(live * 100) / 100;
-    }
+    /* live-only: keep the real samples untouched — the live value continues the
+       curve from the last real point instead of being pinned onto it */
     return clean;
   }
 
