@@ -118,6 +118,43 @@ stop loss, mint **Long** CTA). Only the live segment and the badge change colour
 green on an up-tick, red on a down-tick — so the chart stays calm like the reference while still
 signalling direction.
 
+### Live feed banner + 60 s waiting state
+
+The Invest dashboard shows a data banner above the performance card:
+
+```
+● Finnhub connected · 34 symbols live · last tick just now · Market closed — … · WebSocket · 812 ticks
+```
+
+It reads the browser socket (`WC_TERMINAL_APP.streamInst`), the app quote snapshot and the backend
+`/api/market/stream` descriptor, and refreshes every second. States:
+
+| State | Banner | Trigger |
+|---|---|---|
+| live | green | socket open **and** a real quote within 20 s |
+| wait | amber | connecting / reconnecting, or 20–60 s without a tick |
+| down | red | no real quote for **60 s** (socket dead, key rejected, rate limited) |
+
+The chart reacts to the same clock: `Terminal._checkStale()` runs every 5 s and, after 60 s without a
+real quote, parks the canvas in the waiting state (“No live quote for 62s — the feed reconnects
+automatically”) while keeping the real history visible. The state clears on the next tick.
+
+### Live key from the deploy environment
+
+Set **`FINNHUB_API_KEY`** in the deploy environment (Render/Docker/Compose). `market.js` then:
+
+* uses that key (it wins over a stored key — `keySource: "env"` in `/api/market/status` and `/api/market/stream`)
+* switches the feed to hybrid automatically, no `FINNHUB_MODE` needed
+* gives the *single* free-tier socket to the browsers (`wsMode: "browser"`) and keeps the server on
+  REST polling for TP/SL settlement (`FINNHUB_BROWSER_STREAM=off` restores the server socket)
+* persists the recorded real ticks to `DATA_DIR/market-history.json` every 30 s (and on shutdown), so
+  candles survive restarts
+
+A free key cannot fetch historical candles (`/stock/candle` is premium), so history is built from the
+live quotes the server records. On a closed US market that means few samples until the session
+opens; the chart says so (“Market closed — showing the last real Finnhub prices”) instead of drawing
+invented data.
+
 ### Live-only market data (no virtual prices)
 
 The market is **Finnhub-only**. Nothing in the app invents a price any more:
