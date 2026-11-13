@@ -329,12 +329,14 @@
       host.appendChild(wrap);
       host.setAttribute('data-wc-terminal', '1');
       host.setAttribute('data-wc-kind', spec.kind);
+      host.setAttribute('data-wc-managed', '1');
       const card = host.closest('.inv-chartcard');
       if (card) {
         card.querySelectorAll('.inv-seg').forEach((n) => { n.style.display = 'none'; });
         card.querySelectorAll('[data-market-notice]').forEach((n) => { n.style.display = 'none'; });
       }
-      ['data-chart', 'data-lt-live-chart', 'data-lt-tf', 'data-lt-mode', 'data-ltd-chart'].forEach((a) => host.removeAttribute(a));
+      /* the attributes stay on the host: they are how a later pass notices that
+         the page is now showing a different symbol, so the chart can re-mount */
 
       const opts = {
         adapter: A.adapter,
@@ -357,6 +359,14 @@
         opts.showExec = spec.kind === 'full';
         opts.balance = balance();
         if (A.streamInst) opts.feed = A.streamInst;
+        const list = symbols();
+        if (list) opts.symbols = list;
+        /* picking a ticker in the terminal header opens that stock page */
+        opts.onSymbolChange = (sym) => {
+          if (!sym) return;
+          const target = '#/invest/stock/' + String(sym).toUpperCase();
+          if (location.hash !== target) location.hash = target;
+        };
       }
 
       let inst;
