@@ -564,9 +564,12 @@ const LT = {
       </div>
     </div>`).join('');
     return `<div class="card" id="ltSecured">
-      <div class="between"><div class="card-title" style="margin:0">Secured profits
+      <div class="between" style="align-items:flex-start;gap:10px"><div class="card-title" style="margin:0">Secured profits
         <span class="badge badge-success" style="margin-left:6px">${list.length}</span></div>
-        <span class="tiny up">${coins(total)} WC pending</span></div>
+        <div class="row" style="gap:8px;align-items:center">
+          <span class="tiny up">${coins(total)} WC pending</span>
+          <button class="btn btn-sm btn-primary" data-act="lt-claim-all-profits">Claim all · ${coins(total)} WC</button>
+        </div></div>
       <div class="tiny muted" style="margin:4px 0 8px;line-height:1.6">
         The Auto Secure bot locked these profits while you were away. Press <b>Take profit</b> on each entry to credit it to your balance.
       </div>
@@ -708,6 +711,8 @@ const LT = {
   .lt-card{border:1px solid var(--border);border-radius:14px;padding:11px;margin-top:10px;
     background:linear-gradient(160deg,var(--surface-2),var(--surface));position:relative;overflow:hidden}
   .lt-card:first-of-type{margin-top:6px}
+  .inv-hero-grid-4{grid-template-columns:repeat(2,1fr)}
+  @media(min-width:520px){.inv-hero-grid-4{grid-template-columns:repeat(4,1fr)}}
   .lt-action-row{flex-wrap:nowrap}
   .lt-action-row .btn{flex:1 1 0;min-width:0;padding:8px 4px;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   @media(max-width:380px){.lt-action-row{flex-wrap:wrap}.lt-action-row .btn{flex:1 1 46%}}
@@ -946,6 +951,16 @@ LT.summary = function (userId) {
   let capital = pos.reduce((s, p) => s + p.capital, 0);
   let pnl = pos.reduce((s, p) => s + p.pnlCoins, 0);
   if (bot) { valueCoins += botValue; capital += botCapital; pnl += botPnl; }
+  let securedCoins = 0;
+  let securedCount = 0;
+  (DB.trades || []).forEach((t) => {
+    if (!t || t.userId !== userId) return;
+    (t.securedProfits || []).forEach((rec) => {
+      if (!rec || rec.claimed) return;
+      securedCoins = Math.round((securedCoins + (Number(rec.coins) || 0)) * 100) / 100;
+      securedCount += 1;
+    });
+  });
   const u = me();
   return {
     pos, valueCoins, capital, pnl,
@@ -960,7 +975,8 @@ LT.summary = function (userId) {
     botTrades: bot ? (Number(bot.tradeCount) || (bot.trades || []).length || 0) : 0,
     botStatus: bot ? bot.status : null,
     botTier: bot ? bot.tierName : null,
-    botLast: bot && bot.trades && bot.trades.length ? bot.trades[0] : null
+    botLast: bot && bot.trades && bot.trades.length ? bot.trades[0] : null,
+    securedCoins, securedCount
   };
 };
 
@@ -1040,12 +1056,14 @@ LT.dash = function (params) {
       <b>${s.pnl >= 0 ? '+' : '−'}${usd_LT(Math.abs(s.pnlUsd))}</b>
       <span>(${s.pnl >= 0 ? '+' : '−'}${Math.abs(s.pnlPct).toFixed(2)}%) today</span>
     </div>
-    <div class="inv-hero-grid">
+    <div class="inv-hero-grid inv-hero-grid-4">
       <div><span class="tiny muted">Invested</span><b data-ltd="invested">${coins(s.capital)} WC</b></div>
       <div><span class="tiny muted">Earnings${s.live ? ' · live' : ''}</span>
         <b class="${dayUp ? 'up' : dayDown ? 'down' : ''}" data-ltd="earnings">
           ${s.pnl >= 0 ? '+' : '−'}${coins(Math.abs(s.pnl))} WC</b></div>
       <div><span class="tiny muted">Available cash</span><b data-ltd="cash">${coins(s.cash)} WC</b></div>
+      <div><span class="tiny muted">Secured profit</span><b class="up" data-ltd="secured">+${coins(s.securedCoins)} WC</b>
+        <span class="tiny muted" data-ltd="secured-count">${s.securedCount} entr${s.securedCount === 1 ? 'y' : 'ies'} to claim</span></div>
     </div>
   </div>
 
@@ -1142,6 +1160,8 @@ LT.paintDash = function () {
   set('[data-ltd="invested"]', coins(s.capital) + ' WC');
   set('[data-ltd="earnings"]', (s.pnl >= 0 ? '+' : '−') + coins(Math.abs(s.pnl)) + ' WC');
   set('[data-ltd="cash"]', coins(s.cash) + ' WC');
+  set('[data-ltd="secured"]', '+' + coins(s.securedCoins) + ' WC');
+  set('[data-ltd="secured-count"]', s.securedCount + ' entr' + (s.securedCount === 1 ? 'y' : 'ies') + ' to claim');
   const day = document.querySelector('[data-ltd="day"]');
   if (day) {
     day.className = 'lt-day ' + (s.pnl > 0 ? 'up' : s.pnl < 0 ? 'down' : '');
@@ -2030,6 +2050,44 @@ App.ltTp = async function (id, ds) {
   }
   LT.takeProfit(t, 'Take Profit Taken');
 };
+App.ltClaimAllProfits = async function () {
+  const list = LT.securedEntries(me().id);
+  if (!list.length) return toast('No secured profit to claim', 'err');
+  const total = list.reduce((a, x) => a + (Number(x.profit.coins) || 0), 0);
+  if (typeof confirmDialog === 'function') {
+    const ok = await confirmDialog({ title: 'Claim all secured profits?', body: `${list.length} entries totalling ${coins(total)} WC will be credited to your balance.`, ok: 'Claim all' });
+    if (!ok) return;
+  }
+  if (typeof Remote !== 'undefined' && Remote && Remote.enabled) {
+    try {
+      const r = await Remote.fetchJSON('/api/market/secure-profit/claim-all', {
+        method: 'POST', body: JSON.stringify({ userId: me().id })
+      }, 10000);
+      if (r.res && r.res.ok && r.data && r.data.ok) {
+        await Remote.refresh(true);
+        toast(`Claimed ${r.data.count} secured profit${Number(r.data.count) === 1 ? '' : 's'} — +${coins(Number(r.data.coins) || 0)} WC credited`, 'ok');
+        return;
+      }
+      if (r.data && r.data.error) return toast(r.data.error, 'err');
+    } catch (e) { /* offline fallback */ }
+  }
+  const u = findUser(me().id);
+  if (!u) return toast('User not found', 'err');
+  let coinsTotal = 0;
+  list.forEach(({ trade, profit }) => {
+    const c = Number(profit.coins) || 0;
+    profit.claimed = true;
+    profit.claimedAt = Date.now();
+    coinsTotal += c;
+    trade.claimedSecuredCoins = Math.round(((Number(trade.claimedSecuredCoins) || 0) + c) * 100) / 100;
+  });
+  u.balance = Math.round(((Number(u.balance) || 0) + coinsTotal) * 100) / 100;
+  tx(u.id, 'secured-profit-claim', `Claimed ${list.length} secured profits · +${coins(coinsTotal)} WC`, coinsTotal, { count: list.length, all: true });
+  notify(u.id, 'Secured profits credited', `+${coins(coinsTotal)} WC was added to your balance.`, '#/wallet', 'check');
+  persist(); render();
+  toast(`Claimed ${list.length} secured profits — +${coins(coinsTotal)} WC credited`, 'ok');
+};
+
 App.ltClaimProfit = async function (id, ds) {
   const tradeId = ds.trade;
   const profitId = ds.profit;
