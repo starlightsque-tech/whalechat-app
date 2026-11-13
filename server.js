@@ -19,10 +19,30 @@ const DATABASE_URL = process.env.DATABASE_URL || '';
 let email = null;
 try { email = require('./email'); } catch (e) { console.error('[email] module unavailable:', e.message); }
 const { MarketService, DEFAULT_ASSETS, assetKey, displayTickerFor } = require('./market');
+const { SpotService } = require('./spot');
+const { BotService } = require('./bots');
+const { ShareService } = require('./shares');
 const market = new MarketService({
   dataDir: DATA_DIR,
   getDb: () => store.db,
   persist: () => persistNow(),
+  broadcast: (event, data) => { try { broadcast(event, data); } catch (e) {} }
+});
+const spot = new SpotService({
+  getDb: () => store.db,
+  persist: () => persist(),
+  broadcast: (event, data) => { try { broadcast(event, data); } catch (e) {} },
+  getQuote: (ticker) => market.quotes[String(ticker || '').toUpperCase()] || null
+});
+const bots = new BotService({
+  getDb: () => store.db,
+  persist: () => persist(),
+  broadcast: (event, data) => { try { broadcast(event, data); } catch (e) {} },
+  getQuote: (ticker) => market.quotes[String(ticker || '').toUpperCase()] || null
+});
+const shares = new ShareService({
+  getDb: () => store.db,
+  persist: () => persist(),
   broadcast: (event, data) => { try { broadcast(event, data); } catch (e) {} }
 });
 let pool = null;
@@ -296,7 +316,17 @@ function serveStatic(req, res, pathname) {
   });
 }
 
-const COLLECTIONS = ['users', 'vendors', 'companyProducts', 'products', 'orders', 'deposits', 'withdrawals', 'messages', 'statuses', 'notifications', 'contacts', 'blocks', 'txs', 'referrals', 'purchases', 'refunds', 'vendorApplications', 'reports', 'bonuses', 'bonusClaims', 'emailCampaigns', 'stocks', 'holdings', 'trades', 'watchlist', 'alerts', 'audit', 'traffic'];
+const COLLECTIONS = ['users', 'vendors', 'companyProducts', 'products', 'orders', 'deposits', 'withdrawals', 'messages', 'statuses', 'notifications', 'contacts', 'blocks', 'txs', 'referrals', 'purchases', 'refunds', 'vendorApplications', 'reports', 'bonuses', 'bonusClaims', 'emailCampaigns', 'stocks', 'holdings', 'trades', 'watchlist', 'alerts', 'audit', 'traffic', 'shareInvestments'];
+
+function isAdmin(db, adminId) {
+  return !!(db && Array.isArray(db.users) && db.users.some((u) => u && u.id === adminId && u.role === 'admin'));
+}
+function ensureServices(db) {
+  if (!db) return;
+  try { spot.ensureDefaults(db); } catch (e) {}
+  try { bots.ensureDefaults(db); } catch (e) {}
+  try { shares.ensureDefaults(db); } catch (e) {}
+}
 function applyOps(db, ops) {
   const pushes = [];
   const events = [];
@@ -357,6 +387,7 @@ async function api(req, res, pathname, query) {
     if (!body || !body.db || !Array.isArray(body.db.users)) return json(res, 400, { ok: false, error: 'invalid_db' });
     store.db = body.db; store.rev = Math.max(1, Number(body.rev) || 1); store.updatedAt = Date.now();
     ensureTradingAssets();
+    ensureServices(store.db);
     persistNow(); console.log('[db] initialised · users:', store.db.users.length);
     return json(res, 200, { ok: true, rev: store.rev });
   }
@@ -611,6 +642,110 @@ async function api(req, res, pathname, query) {
     const sent = await sendPush(body.userId, { title: body.title || 'WhaleChat', body: body.body || 'Push notifications are working on this device 🐋', link: body.link || '#/notifications', tag: 'wc-test' });
     return json(res, 200, { ok: true, sent });
   }
+  // --- spot stock orders (authoritative, wallet + TP/SL in one place) ---
+  if (pathname === '/api/market/spot/buy' && req.method === 'POST') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    const body = await readBody(req);
+    try {
+      const out = spot.buy(body);
+      return json(res, 200, Object.assign({ ok: true }, out));
+    } catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+  if (pathname === '/api/market/spot/sell' && req.method === 'POST') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    const body = await readBody(req);
+    try {
+      const out = spot.sell(Object.assign({ reason: 'Manual sell' }, body));
+      return json(res, 200, Object.assign({ ok: true }, out));
+    } catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+  if (pathname === '/api/market/spot/tpsl' && req.method === 'POST') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    const body = await readBody(req);
+    try {
+      const out = spot.setTargets(body);
+      return json(res, 200, Object.assign({ ok: true }, out));
+    } catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+  if (pathname === '/api/market/spot/positions' && req.method === 'GET') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    const userId = query.get('userId') || '';
+    return json(res, 200, { ok: true, positions: spot.positions(store.db, userId), status: spot.status() });
+  }
+  if (pathname === '/api/market/spot/admin/profit' && req.method === 'POST') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    const body = await readBody(req);
+    if (!isAdmin(store.db, body.adminId)) return json(res, 403, { ok: false, error: 'admin_only' });
+    try {
+      const out = spot.setAdminProfitPct(store.db, body.ticker, body.profitPct);
+      return json(res, 200, Object.assign({ ok: true }, out));
+    } catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+
+  // --- trading bots (server-side simulation) ---
+  if (pathname === '/api/bots/state' && req.method === 'GET') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    try { return json(res, 200, bots.publicState(query.get('userId') || '')); }
+    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+  if (pathname === '/api/bots/admin' && req.method === 'GET') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    if (!isAdmin(store.db, query.get('adminId') || '')) return json(res, 403, { ok: false, error: 'admin_only' });
+    try { return json(res, 200, bots.adminState()); }
+    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+  if (pathname === '/api/bots/subscribe' && req.method === 'POST') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    const body = await readBody(req);
+    try { return json(res, 200, bots.subscribe(body)); }
+    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+  if (pathname === '/api/bots/start' && req.method === 'POST') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    const body = await readBody(req);
+    try { return json(res, 200, bots.start(body)); }
+    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+  if (pathname === '/api/bots/stop' && req.method === 'POST') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    const body = await readBody(req);
+    try { return json(res, 200, bots.stop(body)); }
+    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+  if (pathname === '/api/bots/admin/config' && req.method === 'POST') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    const body = await readBody(req);
+    if (!isAdmin(store.db, body.adminId)) return json(res, 403, { ok: false, error: 'admin_only' });
+    try { return json(res, 200, bots.saveAdminConfig(body)); }
+    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+
+  // --- WhaleChat share investment plans (portfolio) ---
+  if (pathname === '/api/shares/state' && req.method === 'GET') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    try { return json(res, 200, shares.publicState(query.get('userId') || '')); }
+    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+  if (pathname === '/api/shares/invest' && req.method === 'POST') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    const body = await readBody(req);
+    try { return json(res, 200, shares.invest(body)); }
+    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+  if (pathname === '/api/shares/admin' && req.method === 'GET') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    if (!isAdmin(store.db, query.get('adminId') || '')) return json(res, 403, { ok: false, error: 'admin_only' });
+    try { return json(res, 200, shares.adminState()); }
+    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+  if (pathname === '/api/shares/admin/plans' && req.method === 'POST') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    const body = await readBody(req);
+    if (!isAdmin(store.db, body.adminId)) return json(res, 403, { ok: false, error: 'admin_only' });
+    try { return json(res, 200, shares.savePlans(body)); }
+    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+
   if (pathname === '/version.json' || pathname === '/release.json') {
     return json(res, 200, Object.assign({}, readJSON(path.join(PUBLIC_DIR, 'version.json'), {}), { server: true }));
   }
@@ -647,6 +782,10 @@ server.headersTimeout = 70000;
     console.log('[market] restored durable config · mode', durableMarket.mode || 'simulated', '· key', durableMarket.apiKey ? 'set' : 'not set');
   }
   market.start();
+  ensureServices(store.db);
+  spot.startTimers();
+  bots.startTimers();
+  shares.startTimers();
   server.listen(PORT, HOST, () => {
     console.log(`[whalechat] listening on http://localhost:${PORT}`);
     console.log(`[whalechat] data: ${DATA_DIR}`);
@@ -658,6 +797,9 @@ let stopping = false;
 function shutdown(signal) {
   if (stopping) return; stopping = true;
   try { market.stop(); } catch (e) {}
+  try { spot.stopTimers(); } catch (e) {}
+  try { bots.stopTimers(); } catch (e) {}
+  try { shares.stopTimers(); } catch (e) {}
   console.log(`[whalechat] ${signal} — saving and exiting`);
   try { if (store.db) snapshot('shutdown'); } catch (e) {}
   try { persistNow(); } catch (e) {}
