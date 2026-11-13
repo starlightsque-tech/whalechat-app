@@ -1,8 +1,8 @@
 {
-  "version": "3.23.0",
-  "build": "2026-11-13T08:33:55Z",
+  "version": "3.23.1",
+  "build": "2026-11-13T08:46:51Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.23.0 - spot stock investing with automated TP/SL, per-stock admin profit margins, trading bots and WhaleChat share portfolio restored.",
-  "releasedAt": "2026-11-13T08:33:55Z",
+  "notes": "WhaleChat 3.23.1 - spot profit is now the exact admin-set rate paid on close; Finnhub prices remain display-only.",
+  "releasedAt": "2026-11-13T08:46:51Z",
   "minimum": "3.0.0"
 }
