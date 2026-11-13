@@ -1,8 +1,8 @@
 {
-  "version": "3.26.1",
-  "build": "2026-11-13T10:58:38Z",
+  "version": "3.27.0",
+  "build": "2026-11-13T11:24:39Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.26.1 - Auto Secure bot now scans every second and secures any profit immediately.",
-  "releasedAt": "2026-11-13T10:58:38Z",
+  "notes": "WhaleChat 3.27.0 - desktop view by default with a desktop/mobile view switch.",
+  "releasedAt": "2026-11-13T11:24:39Z",
   "minimum": "3.0.0"
 }
