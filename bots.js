@@ -30,7 +30,9 @@ const DEFAULT_SETTINGS = {
   stakePct: 20,            // % of the pool used per simulated trade
   winPct: 4,               // % gain on the stake when the trade wins
   lossPct: 6,              // % loss on the stake when the trade loses
-  currency: 'WC'
+  currency: 'WC',
+  autoSecurePriceUsd: 20,
+  autoSecureCycle: 'monthly'
 };
 
 const round = (v, n) => Math.round(Number(v || 0) * Math.pow(10, n)) / Math.pow(10, n);
@@ -47,6 +49,7 @@ class BotService {
     this.persist = opts.persist || (() => {});
     this.broadcast = opts.broadcast || (() => {});
     this.getQuote = opts.getQuote || (() => null);
+    this.market = opts.market || null;
     this.timer = null;
     this.running = false;
     this.lastError = '';
@@ -72,6 +75,7 @@ class BotService {
     db.botSettings = Object.assign({}, DEFAULT_SETTINGS, db.botSettings || {});
     if (!Array.isArray(db.botSubscriptions)) { db.botSubscriptions = []; changed = true; }
     if (!Array.isArray(db.botSessions)) { db.botSessions = []; changed = true; }
+    if (!Array.isArray(db.autoSecureSubs)) { db.autoSecureSubs = []; changed = true; }
     return changed;
   }
 
@@ -130,6 +134,85 @@ class BotService {
     try { this.broadcast('change', { rev: null, source: source || 'bot', at: Date.now() }); } catch (e) {}
   }
 
+  /* --------------------------- auto-secure bot tool ------------------------- */
+  autoSecureSub(db, userId) {
+    const now = Date.now();
+    return (db.autoSecureSubs || []).find((s) => s && s.userId === userId && s.status === 'active' && (!s.expiresAt || Number(s.expiresAt) > now)) || null;
+  }
+
+  autoSecureView(db, userId) {
+    const sub = this.autoSecureSub(db, userId);
+    const priceUsd = Number(this.settings().autoSecurePriceUsd) || 20;
+    let count = 0;
+    let coins = 0;
+    (db.trades || []).forEach((t) => {
+      if (!t || t.userId !== userId) return;
+      (t.securedProfits || []).forEach((p) => {
+        if (!p || p.claimed) return;
+        count += 1;
+        coins = round(coins + (Number(p.coins) || 0), 2);
+      });
+    });
+    return {
+      active: !!sub,
+      enabled: !!(sub && sub.enabled !== false),
+      status: sub ? sub.status : 'inactive',
+      startedAt: sub ? sub.startedAt : null,
+      expiresAt: sub ? (sub.expiresAt || null) : null,
+      priceUsd,
+      priceCoins: round(priceUsd * COINS_PER_USD, 2),
+      billedAs: this.settings().autoSecureCycle || 'monthly',
+      securedCount: count,
+      securedCoins: coins
+    };
+  }
+
+  subscribeAutoSecure(opts) {
+    const db = this.getDb && this.getDb();
+    if (!db) throw nextError('Database not ready');
+    this.ensureDefaults(db);
+    const userId = String(opts.userId || '');
+    const u = (db.users || []).find((x) => x.id === userId);
+    if (!u) throw nextError('User not found');
+    const priceUsd = Number(this.settings().autoSecurePriceUsd) || 20;
+    const feeCoins = round(priceUsd * COINS_PER_USD, 2);
+    if (!(feeCoins > 0)) throw nextError('This tool is not priced yet');
+    if ((Number(u.balance) || 0) < feeCoins) throw nextError(`Not enough WC — the Auto Secure tool costs ${feeCoins.toFixed(2)} WC ($${priceUsd.toFixed(2)})`);
+    const now = Date.now();
+    const cycle = this.settings().autoSecureCycle || 'monthly';
+    const ms = this.cycleMs(cycle) || CYCLE_MS.monthly;
+    u.balance = round(Number(u.balance) - feeCoins, 2);
+    const old = (db.autoSecureSubs || []).find((s) => s && s.userId === userId);
+    const sub = old || { id: nid('as_'), userId };
+    Object.assign(sub, {
+      status: 'active', enabled: true, startedAt: now,
+      expiresAt: ms ? now + ms : null,
+      priceUsd: round(priceUsd, 2), priceCoins: feeCoins,
+      billedAs: cycle, renewedAt: old ? now : null
+    });
+    if (!old) db.autoSecureSubs.push(sub);
+    this.tx(db, userId, `Auto Secure Take Profit tool · $${priceUsd.toFixed(2)} ${cycle}`, -feeCoins, 'auto-secure-subscription', {
+      priceUsd, priceCoins: feeCoins, expiresAt: sub.expiresAt
+    });
+    this.notify(db, userId, 'Auto Secure activated',
+      `The bot will secure available profit on your active trades, even while you are offline. Claim each secured profit from Orders.`, 'lock');
+    this.changed('auto-secure-subscribe');
+    return { ok: true, autoSecure: this.autoSecureView(db, userId), balance: u.balance, subscription: sub };
+  }
+
+  toggleAutoSecure(opts) {
+    const db = this.getDb && this.getDb();
+    if (!db) throw nextError('Database not ready');
+    this.ensureDefaults(db);
+    const userId = String(opts.userId || '');
+    const sub = this.autoSecureSub(db, userId);
+    if (!sub) throw nextError('Subscribe to the Auto Secure tool first');
+    sub.enabled = opts.enabled === undefined ? sub.enabled === false : !!opts.enabled;
+    sub.toggledAt = Date.now();
+    this.changed('auto-secure-toggle');
+    return { ok: true, autoSecure: this.autoSecureView(db, userId) };
+  }
+
   /* ------------------------------- public state ----------------------------- */
   publicState(userId) {
     const db = this.getDb && this.getDb();
@@ -155,6 +238,7 @@ class BotService {
       .sort((a, b) => (b.stoppedAt || 0) - (a.stoppedAt || 0))
       .slice(0, 10)
       .map((s) => this.sessionView(s));
+    const auto = this.autoSecureView(db, userId);
     return {
       ok: true,
       balance: round(u.balance, 2),
@@ -162,8 +246,11 @@ class BotService {
       settings: {
         intervalMin: this.settings().intervalMin,
         minCapitalCoins: this.settings().minCapitalCoins,
-        minPoolPct: this.settings().minPoolPct
+        minPoolPct: this.settings().minPoolPct,
+        autoSecurePriceUsd: Number(this.settings().autoSecurePriceUsd) || 20,
+        autoSecureCycle: this.settings().autoSecureCycle || 'monthly'
       },
+      autoSecure: auto,
       tiers,
       subscriptions: subs.map((s) => ({ id: s.id, tierId: s.tierId, startedAt: s.startedAt, expiresAt: s.expiresAt || null, billingCycle: s.billingCycle })),
       session: session ? this.sessionView(session) : null,
@@ -386,7 +473,24 @@ class BotService {
       }
     }
 
-    /* 2 · advance running bots */
+    /* 2 · auto-secure tool: expire subscriptions and secure open profits */
+    for (const sub of db.autoSecureSubs || []) {
+      if (sub && sub.status === 'active' && sub.expiresAt && Number(sub.expiresAt) <= now) {
+        sub.status = 'expired';
+        sub.enabled = false;
+        sub.expiredAt = now;
+        this.notify(db, sub.userId, 'Auto Secure tool expired', 'Renew the tool to keep securing take profit while offline.', 'clock');
+        changed = true;
+      }
+    }
+    if (this.market && typeof this.market.secureProfitTrade === 'function') {
+      for (const t of (db.trades || []).slice()) {
+        if (!t || t.type !== 'live' || t.status !== 'Open') continue;
+        try { if (this.market.secureProfitTrade(t.userId, t.id) > 0) changed = true; } catch (e) { this.lastError = e.message; }
+      }
+    }
+
+    /* 3 · advance running bots */
     for (const session of (db.botSessions || []).slice()) {
       if (!session || session.status !== 'running') continue;
       const user = (db.users || []).find((x) => x.id === session.userId);
