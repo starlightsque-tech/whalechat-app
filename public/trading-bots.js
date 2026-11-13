@@ -80,9 +80,15 @@
     const disabled = t.enabled === false;
     return `<div class="bot-tier ${owned ? 'owned' : ''} ${disabled ? 'disabled' : ''}">
       <div class="between" style="align-items:flex-start;gap:8px">
-        <div><div class="bot-tier-name">${escB(t.name)}</div>
-          <div class="tiny muted" style="margin-top:2px">${escB(t.blurb || '')}</div></div>
-        <span class="badge ${owned ? 'badge-success' : 'badge'}">${num(t.accuracy, 0)}%</span>
+        <div class="row" style="gap:8px;align-items:center">
+          <span class="bot-av">${t.avatar ? `<img src="${t.avatar}" alt=""/>` : escB(String(t.username || t.name || '?').slice(0,2).toUpperCase())}</span>
+          <div><div class="bot-tier-name">${escB(t.name)}</div>
+            <div class="tiny muted" style="margin-top:2px">@${escB(t.username || 'bot')} · ${escB(t.blurb || '')}</div></div>
+        </div>
+        <div class="row" style="gap:4px;flex-direction:column;align-items:flex-end">
+          ${t.hot ? '<span class="bot-hot-badge">HOT</span>' : ''}
+          <span class="badge ${owned ? 'badge-success' : 'badge'}">${num(t.accuracy, 0)}%</span>
+        </div>
       </div>
       <div class="bot-acc"><i style="width:${Math.min(100, Math.max(0, Number(t.accuracy) || 0))}%"></i></div>
       <div class="tiny muted" style="margin-top:4px">Simulated trade accuracy</div>
@@ -149,6 +155,36 @@
     </svg>`;
   }
 
+  function healthSpark(hist) {
+    const pts = (hist || []).slice(-24);
+    if (pts.length < 2) return '';
+    const W = 300, H = 54;
+    const xs = (i) => 4 + (i / (pts.length - 1)) * (W - 8);
+    const ys = (v) => 4 + (1 - Math.max(0, Math.min(100, v)) / 100) * (H - 10);
+    const d = pts.map((p, i) => (i ? 'L' : 'M') + xs(i).toFixed(1) + ' ' + ys(p.health).toFixed(1)).join(' ');
+    const last = pts[pts.length - 1].health;
+    return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:54px;margin-top:6px">
+      <path d="${d} L${xs(pts.length - 1)} ${H} L${xs(0)} ${H} Z" fill="${last >= 50 ? 'rgba(34,197,94,.18)' : 'rgba(239,68,68,.16)'}"/>
+      <path d="${d}" fill="none" stroke="${last >= 50 ? '#22c55e' : '#ef4444'}" stroke-width="2" stroke-linejoin="round"/>
+    </svg>`;
+  }
+  function botHealthHTML(session) {
+    const h = Number(session.health != null ? session.health : 100);
+    const e = Number(session.energy != null ? session.energy : 100);
+    const wr = session.winRate;
+    const need = (e <= 35 || h <= 45) && session.status === 'running';
+    const cls = h >= 65 ? 'ok' : h >= 45 ? 'warn' : 'bad';
+    return `<div class="bot-health ${cls}">
+      <div class="between" style="align-items:center"><b style="font-size:12px">Account health</b>
+        <span class="bot-health-val">${h}%</span></div>
+      <div class="bot-health-bar"><i style="width:${Math.max(0, Math.min(100, h))}%"></i></div>
+      <div class="tiny muted" style="margin-top:4px">Energy ${Math.round(e)}%${wr != null ? ' · win rate ' + wr + '%' : ''} · ${h >= 65 ? 'growing steadily' : h >= 45 ? 'cooling recommended soon' : 'rest needed — losing more'}</div>
+      ${healthSpark(session.healthHistory)}
+      ${need ? `<button class="btn btn-primary btn-sm" data-act="bot-cool" style="width:100%;margin-top:8px">${ic('clock', 14)} Cool down &amp; refresh</button>` : ''}
+      ${session.cooldownUntil ? `<div class="tiny" style="margin-top:6px;color:var(--warn)">Cooling down until ${new Date(session.cooldownUntil).toLocaleTimeString()} — ready to trade after rest.</div>` : ''}
+    </div>`;
+  }
+
   function sessionHTML(session) {
     if (!session) {
       const owned = (B.state && B.state.tiers || []).filter((t) => t.owned);
@@ -182,6 +218,7 @@
         <div><span>Next trade</span><b data-bot-next>${session.status === 'running' ? 'counting…' : '—'}</b></div>
       </div>
       <div class="bot-poolbar"><i style="width:${pct}%"></i></div>
+      ${botHealthHTML(session)}
       <div class="tiny muted" style="margin-top:4px">Started ${when(session.startedAt)} · initial allocation ${num(session.allocatedCoins)} WC</div>
       <div class="bot-perf">
         <div class="between" style="margin-bottom:4px"><b style="font-size:11.5px">Session performance</b>
@@ -277,6 +314,12 @@
 
     ${autoSecureHTML()}
 
+    ${tiers.filter((t) => t.hot).length ? `<div class="card"><div class="between"><div class="card-title" style="margin:0">Hot trading assistants</div><span class="tiny muted">${tiers.filter((t) => t.hot).length} trending</span></div>
+      <div class="bot-hot-list">${tiers.filter((t) => t.hot).map((t) => `<a class="bot-hot-item" href="#/bots">
+        <span class="bot-av">${t.avatar ? `<img src="${t.avatar}" alt=""/>` : escB(String(t.username || t.name || '?').slice(0, 2).toUpperCase())}</span>
+        <span class="grow" style="min-width:0"><span class="small" style="font-weight:650;display:block">@${escB(t.username || 'bot')}</span>
+        <span class="tiny muted">${escB(t.name)} · ${num(t.accuracy, 0)}%</span></span>
+        <span class="bot-hot-badge">HOT</span></a>`).join('')}</div></div>` : ''}
     <div class="card" id="botMarketCard">
       <div class="between"><div class="card-title" style="margin:0">Bot marketplace</div>
         <span class="tiny muted">Paid from your WC balance · ${B.state.coinsPerUsd} WC = $1</span></div>
@@ -337,9 +380,18 @@
         <div><span>Reserved capital</span><b>${num(a.stats.reservedCoins)} WC</b></div>
         <div><span>Subscription revenue</span><b>${num(a.stats.revenueCoins)} WC</b></div>
       </div>
-      <div class="table-wrap"><table class="tbl bot-admin-table"><thead><tr><th>Tier</th><th>Accuracy %</th><th>Price (USD)</th><th>Billing cycle</th><th>Speed override (min)</th><th>Live</th></tr></thead><tbody>
+      <div class="table-wrap"><table class="tbl bot-admin-table"><thead><tr><th>Tier &amp; identity</th><th>Hot</th><th>Accuracy %</th><th>Price (USD)</th><th>Billing cycle</th><th>Speed override (min)</th><th>Live</th></tr></thead><tbody>
         ${a.tiers.map((t) => `<tr data-bot-tier="${escB(t.id)}">
-          <td style="font-weight:650">${escB(t.name)}<div class="tiny muted">${num(t.priceUsd * 2)} WC</div></td>
+          <td style="font-weight:650">
+            <div class="row" style="gap:6px;align-items:center">
+              <span class="bot-av" data-bot-av>${t.avatar ? `<img src="${t.avatar}" alt=""/>` : escB(String(t.username || t.name || '?').slice(0,2).toUpperCase())}</span>
+              <label class="btn btn-xs btn-ghost" style="cursor:pointer">photo<input type="file" accept="image/*" data-f="avatarFile" style="display:none" onchange="App.botAvatarPick(this)"/></label>
+            </div>
+            <div style="margin-top:4px">${escB(t.name)}</div>
+            <input class="input bot-mini" data-f="username" value="${escB(t.username || '')}" placeholder="username" style="margin-top:4px"/>
+            <div class="tiny muted">${num(t.priceUsd * 2)} WC</div>
+          </td>
+          <td><label class="checkline" style="margin:0"><input type="checkbox" data-f="hot" ${t.hot ? 'checked' : ''}/></label></td>
           <td><input class="input bot-mini" data-f="accuracy" type="number" min="1" max="100" step="1" value="${t.accuracy}"/></td>
           <td><input class="input bot-mini" data-f="priceUsd" type="number" min="0" step="0.01" value="${t.priceUsd}"/></td>
           <td><select class="input bot-mini" data-f="billingCycle">
@@ -448,6 +500,34 @@
       } catch (e) { tmsg('Could not start bot: ' + e.message, 'err'); }
     };
 
+    App.botAvatarPick = async function (input) {
+      const f = input.files && input.files[0];
+      if (!f) return;
+      try {
+        const c = await compressImage(f, 128, 0.82);
+        const d = await fileToDataURL(c);
+        const row = input.closest('[data-bot-tier]');
+        if (row) { row.dataset.avatar = d; const av = row.querySelector('[data-bot-av]'); if (av) av.innerHTML = `<img src="${d}" alt=""/>`; }
+        tmsg('Avatar ready — press Save changes to publish it', 'ok');
+      } catch (e) { tmsg('Could not read that image', 'err'); }
+    };
+
+    App.botCool = async function () {
+      if (typeof Remote === 'undefined' || !Remote.enabled) return tmsg('Connect the sync server first', 'err');
+      if (typeof confirmDialog === 'function') {
+        const ok = await confirmDialog({ title: 'Cool the bot down?', body: 'The bot stops, returns its capital to your balance and rests. After the cooldown it trades with fresh energy and better accuracy.', ok: 'Cool down' });
+        if (!ok) return;
+      }
+      try {
+        const r = await api('/api/bots/cool', { method: 'POST', body: JSON.stringify({ userId: uidNow() }) }, 25000);
+        if (!r.res || !r.res.ok || !r.data || !r.data.ok) return tmsg((r.data && r.data.error) || 'Could not cool the bot', 'err');
+        await Remote.refresh(true);
+        await load(true);
+        tmsg('Bot cooled down for ' + (r.data.cooldownMin || 30) + ' min', 'ok');
+        render();
+      } catch (e) { tmsg('Could not cool the bot: ' + e.message, 'err'); }
+    };
+
     App.botStop = async function () {
       if (typeof Remote === 'undefined' || !Remote.enabled) return tmsg('Connect the sync server to stop the bot', 'err');
       if (typeof confirmDialog === 'function') {
@@ -510,6 +590,9 @@
         const get = (f) => row.querySelector('[data-f="' + f + '"]');
         tiers.push({
           id: row.getAttribute('data-bot-tier'),
+          username: (get('username') || {}).value || '',
+          hot: !!((get('hot') || {}).checked),
+          avatar: row.dataset.avatar || undefined,
           accuracy: Number(get('accuracy').value),
           priceUsd: Number(get('priceUsd').value),
           billingCycle: get('billingCycle').value,
@@ -727,3 +810,11 @@
 
   init();
 })();
+
+/* wc-bot-health-ui */
+(function(){try{
+  if(document.getElementById('wc-bot-health-css')) return;
+  var st=document.createElement('style'); st.id='wc-bot-health-css';
+  st.textContent='.bot-av{width:34px;height:34px;border-radius:50%;background:var(--surface-2);display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;overflow:hidden;flex:none}.bot-av img{width:100%;height:100%;object-fit:cover}.bot-hot-badge{background:linear-gradient(135deg,#ff7a18,#ff3d71);color:#fff;font-size:9px;font-weight:800;letter-spacing:.08em;padding:2px 6px;border-radius:6px}.bot-hot-list{display:flex;flex-direction:column;gap:6px;margin-top:10px}.bot-hot-item{display:flex;align-items:center;gap:10px;padding:8px;border:1px solid var(--border);border-radius:12px;text-decoration:none;color:inherit}.bot-health{margin-top:10px;padding:10px;border-radius:12px;border:1px solid var(--border);background:var(--surface-2)}.bot-health.ok{border-color:rgba(34,197,94,.35)}.bot-health.warn{border-color:rgba(234,179,8,.35)}.bot-health.bad{border-color:rgba(239,68,68,.4)}.bot-health-val{font-weight:800;font-size:13px}.bot-health-bar{height:7px;border-radius:6px;background:rgba(255,255,255,.1);overflow:hidden;margin-top:6px}.bot-health-bar i{display:block;height:100%;background:linear-gradient(90deg,#2ee6c9,#22c55e)}.bot-health.bad .bot-health-bar i{background:linear-gradient(90deg,#f59e0b,#ef4444)}';
+  document.head.appendChild(st);
+}catch(e){}})();
