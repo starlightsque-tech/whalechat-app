@@ -24,10 +24,12 @@
     if (Number.isFinite(n) && n >= 0) return n;
     return adminPct(t);
   }
-  function payoutFor(invested, rate) {
+  function payoutFor(invested, rate, gain) {
     const basis = Math.max(0, Number(invested) || 0);
-    const profit = Math.round(basis * (Math.max(0, Number(rate) || 0) / 100) * 100) / 100;
-    return { profit, payout: Math.round((basis + profit) * 100) / 100 };
+    const g = Number(gain) || 0;
+    const base = Math.max(0, basis + g);
+    const profit = Math.round(base * (Math.max(0, Number(rate) || 0) / 100) * 100) / 100;
+    return { gain: g, base, profit, payout: Math.round((basis + profit) * 100) / 100 };
   }
 
   S.preview = function () {
@@ -43,8 +45,8 @@
     if (S.mode === 'usd') { usdAmt = v; shares = v / live; cost = v / 0.5; }
     else if (S.mode === 'wc') { cost = v; usdAmt = v * 0.5; shares = usdAmt / live; }
     else { shares = v; usdAmt = shares * live; cost = usdAmt / 0.5; }
-    const out = payoutFor(cost, pct);
-    pv.innerHTML = `<b>${usdAmt.toLocaleString(undefined, { style: 'currency', currency: 'USD' })}</b> = <b>${cost.toFixed(2)} WC</b> · ${shares.toLocaleString(undefined, { maximumFractionDigits: 6 })} shares · live ${px(S.ticker, live)} · close payout <b>${out.payout.toFixed(2)} WC</b> (locked +${pct}% = +${out.profit.toFixed(2)} WC)`;
+    const out = payoutFor(cost, pct, 0);
+    pv.innerHTML = `<b>${usdAmt.toLocaleString(undefined, { style: 'currency', currency: 'USD' })}</b> = <b>${cost.toFixed(2)} WC</b> · ${shares.toLocaleString(undefined, { maximumFractionDigits: 6 })} shares · live ${px(S.ticker, live)} · closes at <b>+${pct}%</b> of capital + gain`;
   };
 
   function ticketHTML(ticker) {
@@ -59,7 +61,7 @@
     return `<div class="card" id="spotTicketCard">
       <div class="between" style="align-items:flex-start;gap:10px">
         <div><div class="card-title" style="margin:0">Spot · buy ${escSpot(label(ticker))}</div>
-          <div class="tiny muted" style="margin-top:2px">Live Finnhub market ${live > 0 ? px(ticker, live) + ' (' + (live * 2).toFixed(2) + ' WC)' : 'waiting for quote'} · closes at locked <b>+${pct}%</b> profit (admin rate)</div></div>
+          <div class="tiny muted" style="margin-top:2px">Live Finnhub market ${live > 0 ? px(ticker, live) + ' (' + (live * 2).toFixed(2) + ' WC)' : 'waiting for quote'} · closes at <b>+${pct}%</b> of capital + market gain</div></div>
         <span class="badge badge-success">Spot</span>
       </div>
       <div class="lt-modebtns" style="margin-top:11px">
@@ -96,7 +98,8 @@
     const price = q && q.price > 0 ? Number(q.price) : avg;
     const invested = Number(h.investedCoins) || ((shares * avg) / 0.5);
     const rate = lockedRate(h, ticker);
-    const out = payoutFor(invested, rate);
+    const gain = (shares * (price - avg)) / 0.5;
+    const out = payoutFor(invested, rate, gain);
     const marketValue = (shares * price) / 0.5;
     return `<div class="spot-position" id="spotPosition" data-spot="${ticker}">
       <div class="between"><div class="card-title" style="margin:0">Your open position</div>
@@ -108,8 +111,9 @@
         <div><span>Live market</span><b data-spot-market>${px(ticker, price)}</b></div>
         <div><span>Invested</span><b data-spot-invested>${invested.toFixed(2)} WC <span class="tiny muted">(${((Number(h.investedUsd) || invested * 0.5)).toFixed(2)} USD)</span></b></div>
         <div><span>Market value (display)</span><b data-spot-value>${marketValue.toFixed(2)} WC</b></div>
+        <div><span>Market gain</span><b class="${gain >= 0 ? 'up' : 'down'}" data-spot-gain>${gain >= 0 ? '+' : '−'}${Math.abs(gain).toFixed(2)} WC</b></div>
         <div><span>Payout on close</span><b class="up" data-spot-payout>${out.payout.toFixed(2)} WC</b></div>
-        <div><span>Profit on close</span><b class="up" data-spot-pnl>+${out.profit.toFixed(2)} WC <span class="tiny">(${rate}% rate)</span></b></div>
+        <div><span>Profit on close</span><b class="up" data-spot-pnl>+${out.profit.toFixed(2)} WC <span class="tiny">(${rate}% of ${(out.base).toFixed(2)})</span></b></div>
         <div><span>Take Profit</span><b data-spot-tp>${Number(h.takeProfitPrice) > 0 ? px(ticker, h.takeProfitPrice) : '—'}</b></div>
         <div><span>Stop Loss</span><b data-spot-sl>${Number(h.stopLossPrice) > 0 ? px(ticker, h.stopLossPrice) : '—'}</b></div>
       </div>
@@ -134,7 +138,7 @@
         </div>
         <div class="tiny muted" style="margin-top:5px">TP must be above the current market price, SL below. When either level is hit the backend closes the position and pays the locked admin profit rate — even with the app closed.</div>
       </div>
-      <div class="tiny muted center" style="margin-top:5px">Payout = invested capital + locked ${rate}% profit · credited instantly, live price is display only</div>
+      <div class="tiny muted center" style="margin-top:5px">Payout = capital + (capital + market gain) × ${rate}% profit · credited instantly</div>
     </div>`;
   }
 
@@ -209,11 +213,13 @@
         const q = qFor(h.ticker);
         const rate = lockedRate(h, h.ticker);
         const invested = Number(h.investedCoins) || ((Number(h.shares) || 0) * (Number(h.avgPrice) || 0)) / 0.5;
-        const out = payoutFor(invested, rate);
+        const hp = Number((q && q.price) || h.avgPrice);
+        const hg = ((Number(h.shares) || 0) * (hp - (Number(h.avgPrice) || 0))) / 0.5;
+        const out = payoutFor(invested, rate, hg);
         return `<div class="spot-row" data-spot-row="${escSpot(h.ticker)}">
           <div class="grow" style="min-width:0"><b>${escSpot(label(h.ticker))}</b>
             <div class="tiny muted">${Number(h.shares).toLocaleString(undefined, { maximumFractionDigits: 6 })} shares · live ${px(h.ticker, (q && q.price) || h.avgPrice)}</div>
-            <div class="tiny up">Payout ${out.payout.toFixed(2)} WC · +${rate}%</div></div>
+            <div class="tiny up">Payout ${out.payout.toFixed(2)} WC · +${out.profit.toFixed(2)} profit</div></div>
           <button class="btn btn-sm btn-danger" data-act="spot-sell" data-t="${escSpot(h.ticker)}">Sell</button>
           <button class="btn btn-sm btn-ghost" data-act="spot-edit" data-t="${escSpot(h.ticker)}">TP/SL</button>
         </div>`;
@@ -247,7 +253,8 @@
     const price = Number(q.price) || avg;
     const invested = Number(h.investedCoins) || (shares * avg / 0.5);
     const rate = lockedRate(h, S.ticker);
-    const out = payoutFor(invested, rate);
+    const gain = shares * (price - avg) / 0.5;
+    const out = payoutFor(invested, rate, gain);
     const marketValue = shares * price / 0.5;
     const set = (sel, txt) => { const n = el.querySelector(sel); if (n) n.textContent = txt; };
     set('[data-spot-qty]', shares.toLocaleString(undefined, { maximumFractionDigits: 6 }));
@@ -256,8 +263,10 @@
     set('[data-spot-invested]', invested.toFixed(2) + ' WC ($' + (invested * 0.5).toFixed(2) + ')');
     set('[data-spot-value]', marketValue.toFixed(2) + ' WC');
     set('[data-spot-payout]', out.payout.toFixed(2) + ' WC');
+    const gn = el.querySelector('[data-spot-gain]');
+    if (gn) { gn.textContent = (gain >= 0 ? '+' : '−') + Math.abs(gain).toFixed(2) + ' WC'; gn.className = gain >= 0 ? 'up' : 'down'; }
     const pn = el.querySelector('[data-spot-pnl]');
-    if (pn) { pn.textContent = '+' + out.profit.toFixed(2) + ' WC (' + rate + '% rate)'; pn.className = 'up'; }
+    if (pn) { pn.textContent = '+' + out.profit.toFixed(2) + ' WC (' + rate + '% of ' + out.base.toFixed(2) + ')'; pn.className = 'up'; }
   };
 
   if (typeof App !== 'undefined') {
