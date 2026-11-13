@@ -702,8 +702,7 @@ LT.paintMarket = function () {
     const q = INV.quote(ticker);
     if (!q) return;
     if (kind === 'price') {
-      const wc = Math.round((q.price / 0.5) * 100) / 100;
-      const txt = '$' + q.price.toFixed(2) + ' (' + (Number.isInteger(wc) ? wc : wc.toFixed(2)) + ' WC)';
+      const txt = '$' + q.price.toFixed(2);
       if (el.textContent !== txt) {
         el.textContent = txt;
         el.classList.remove('lt-up', 'lt-down');
