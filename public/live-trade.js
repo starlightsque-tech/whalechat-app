@@ -194,7 +194,8 @@ const LT = {
     const trade = {
       id: uid('lt'), userId: u.id, type: 'live', ticker, name: s.name,
       side: side === 'short' ? 'short' : 'long', direction,
-      capitalCoins: capital, stakeAmount: capital, entryPrice: q.price, leverage: this.leverage(),
+      capitalCoins: capital, stakeAmount: capital, entryPrice: q.price, initialEntryPrice: q.price,
+      leverage: this.leverage(),
       takeProfitPrice: tpPrice > 0 ? Math.round(tpPrice * 10000) / 10000 : null,
       takeProfitMode: o.tpMode || 'PRICE',
       takeProfitWc: Number(o.tpWc) > 0 ? Math.round(Number(o.tpWc) * 100) / 100 : null,
@@ -289,7 +290,48 @@ const LT = {
     return true;
   },
 
-  /* auto close on target / stop / expiry */
+  /* ---------------- take profit (skim, keep trade running) ---------------- */
+  takeProfit(t, reason) {
+    if (!t || t.status !== 'Open') return false;
+    const u = findUser(t.userId);
+    if (!u) return false;
+    const p = this.calc(t);
+    const profit = Math.round((Number(p.pnlCoins) || 0) * 100) / 100;
+    if (!(profit > 0)) { toast('No profit to take yet — wait for the chart to move in your favour', 'err'); return false; }
+    if (!t.initialEntryPrice) t.initialEntryPrice = t.entryPrice;
+    u.balance = Math.round(((Number(u.balance) || 0) + profit) * 100) / 100;
+    /* re-base the position so the remaining trade starts from the current price */
+    t.entryPrice = Math.round((Number(p.price) || 0) * 10000) / 10000;
+    t.profitTakenCoins = Math.round(((Number(t.profitTakenCoins) || 0) + profit) * 100) / 100;
+    t.lastProfitAt = Date.now();
+    t.lastProfitPrice = p.price;
+    /* the taken level is consumed — a new TP can be set from the new entry */
+    t.takeProfitPrice = null;
+    t.takeProfitWc = null;
+    t.takeProfitMode = 'PRICE';
+    t.tpPct = 0;
+    /* keep a trailing stop anchored to the new price */
+    if (t.trailingActive && Number(t.trailingStopPct) > 0) {
+      const dist = Math.max(0.05, Math.min(50, Number(t.trailingStopPct))) / 100;
+      const stop = t.direction === 'FALL' ? t.entryPrice * (1 + dist) : t.entryPrice * (1 - dist);
+      t.trailingStopPrice = Math.round(stop * 10000) / 10000;
+      t.stopLossPrice = t.trailingStopPrice;
+    }
+    const label = reason || 'Take Profit';
+    tx(u.id, 'trade-profit', `${label} · ${t.ticker} · +${coins(profit)} WC taken, trade continues`, profit,
+      { tradeId: t.id, pnlCoins: profit, price: p.price, continues: true });
+    notify(u.id, 'Profit taken — trade continues',
+      `${t.ticker}: +${coins(profit)} WC profit credited to your balance. The trade is still running — it closes at your stop loss, when the timer ends, or when you press Stop trade.`,
+      '#/invest/orders', 'trend');
+    try { sync(); } catch (e) {}
+    persist();
+    render();
+    toast(`Profit taken — ${coins(profit)} WC credited. Trade continues`, 'ok');
+    try { window.dispatchEvent(new CustomEvent('wc:trade-profit', { detail: { ticker: t.ticker, id: t.id, profit } })); } catch (e) {}
+    return true;
+  },
+
+  /* auto close on stop / expiry; take profit now skims and keeps running */
   auto() {
     if (!DB || !DB.trades) return;
     this.open().forEach(t => {
@@ -302,13 +344,13 @@ const LT = {
       const lv = this.tpslOf(t);
       const slReason = t.trailingActive ? 'Trailing Stop Hit' : 'Stop Loss Hit';
       if (dir === 'RISE') {
-        if (lv.tp > 0 && p.price >= lv.tp) return void this.settle(t, 'Take Profit Hit');
+        if (lv.tp > 0 && p.price >= lv.tp) return void this.takeProfit(t, 'Take Profit Hit');
         if (lv.sl > 0 && p.price <= lv.sl) return void this.settle(t, slReason);
       } else {
-        if (lv.tp > 0 && p.price <= lv.tp) return void this.settle(t, 'Take Profit Hit');
+        if (lv.tp > 0 && p.price <= lv.tp) return void this.takeProfit(t, 'Take Profit Hit');
         if (lv.sl > 0 && p.price >= lv.sl) return void this.settle(t, slReason);
       }
-      if (t.tpPct > 0 && p.pnlPct >= t.tpPct) return void this.settle(t, 'Take Profit Hit');
+      if (t.tpPct > 0 && p.pnlPct >= t.tpPct) return void this.takeProfit(t, 'Take Profit Hit');
       if (t.slPct > 0 && p.pnlPct <= -t.slPct) return void this.settle(t, slReason);
       if (t.expiresAt && Date.now() >= t.expiresAt) return void this.settle(t, 'Time limit reached');
     });
@@ -358,13 +400,15 @@ const LT = {
       </div>
       <div class="lt-bar"><i style="width:${Math.min(100, Math.max(0, 50 + p.pnlPct))}%"
         class="${up ? 'up' : down ? 'down' : ''}"></i></div>
-      <div class="row" style="gap:7px;margin-top:9px">
-        <button class="btn btn-sm btn-primary grow" data-act="lt-tp" data-id="${t.id}">
-          ${ic('trend', 13)} Take profit ${p.pnlCoins > 0 ? '(+' + coins(p.pnlCoins) + ')' : ''}</button>
-        <button class="btn btn-sm btn-ghost grow" data-act="lt-sl" data-id="${t.id}">
-          ${ic('down', 13)} Take loss ${p.pnlCoins < 0 ? '(−' + coins(Math.abs(p.pnlCoins)) + ')' : ''}</button>
+      <div class="row lt-action-row" style="gap:6px;margin-top:9px">
+        <button class="btn btn-sm btn-primary grow" data-act="lt-tp" data-id="${t.id}" data-lt-tp-btn="${t.id}" ${p.pnlCoins > 0 ? '' : 'disabled'} title="${p.pnlCoins > 0 ? 'Take the open profit and keep the trade running' : 'No profit to take yet'}">
+          ${ic('trend', 13)} Take profit <span data-lt-tp-amt="${t.id}">${p.pnlCoins > 0 ? '(+' + coins(p.pnlCoins) + ')' : ''}</span></button>
+        <button class="btn btn-sm btn-soft grow" data-act="lt-stop" data-id="${t.id}" title="Close the trade now and return capital + open P/L">
+          ${ic('ban', 13)} Stop trade</button>
+        <button class="btn btn-sm btn-ghost grow" data-act="lt-sl" data-id="${t.id}" data-lt-sl-btn="${t.id}" ${p.pnlCoins < 0 ? '' : 'disabled'} title="${p.pnlCoins < 0 ? 'Close the trade at a loss now' : 'Only available while the trade is losing'}">
+          ${ic('down', 13)} Take loss <span data-lt-sl-amt="${t.id}">${p.pnlCoins < 0 ? '(−' + coins(Math.abs(p.pnlCoins)) + ')' : ''}</span></button>
       </div>
-      <div class="tiny muted center" style="margin-top:6px">Returns ${coins(p.payoutCoins)} WC if closed now</div>
+      <div class="tiny muted center" style="margin-top:6px">${Number(t.profitTakenCoins) > 0 ? `Profit already taken: <b class="up">+${coins(t.profitTakenCoins)} WC</b> · ` : ''}Returns ${coins(p.payoutCoins)} WC if stopped now</div>
       ${Number(t.dividendBonus) > 0 ? `<div class="tiny center lt-div-line">+${coins(t.dividendBonus)} WC dividend at timer</div>` : ''}
     </div>`;
   },
@@ -416,7 +460,21 @@ const LT = {
         el.textContent = Number(t.stopLossPrice) > 0 ? usd(t.stopLossPrice) : '—';
       });
       const ret = document.querySelector('[data-lt="' + t.id + '"] .tiny.muted.center');
-      if (ret) ret.textContent = 'Returns ' + coins(p.payoutCoins) + ' WC if closed now';
+      if (ret) ret.textContent = (Number(t.profitTakenCoins) > 0 ? 'Profit already taken: +' + coins(t.profitTakenCoins) + ' WC · ' : '') + 'Returns ' + coins(p.payoutCoins) + ' WC if stopped now';
+      document.querySelectorAll('[data-lt-tp-btn="' + t.id + '"]').forEach((b) => {
+        b.disabled = p.pnlCoins <= 0;
+        b.title = p.pnlCoins > 0 ? 'Take the open profit and keep the trade running' : 'No profit to take yet';
+      });
+      document.querySelectorAll('[data-lt-sl-btn="' + t.id + '"]').forEach((b) => {
+        b.disabled = p.pnlCoins >= 0;
+        b.title = p.pnlCoins < 0 ? 'Close the trade at a loss now' : 'Only available while the trade is losing';
+      });
+      document.querySelectorAll('[data-lt-tp-amt="' + t.id + '"]').forEach((el) => {
+        el.textContent = p.pnlCoins > 0 ? '(+' + coins(p.pnlCoins) + ')' : '';
+      });
+      document.querySelectorAll('[data-lt-sl-amt="' + t.id + '"]').forEach((el) => {
+        el.textContent = p.pnlCoins < 0 ? '(−' + coins(Math.abs(p.pnlCoins)) + ')' : '';
+      });
     });
     this.paintEarnings();
   },
@@ -468,11 +526,13 @@ const LT = {
         ${head}
         <div class="tiny muted" style="margin:4px 0 10px">Your position is live and counting now — it is not waiting for the market.</div>
         ${this.cardHTML(pos)}
-        <div class="row" style="gap:8px;margin-top:10px">
-          <button class="btn btn-primary grow" data-act="lt-tp" data-id="${pos.id}">
-            ${ic('trend', 15)} Take profit</button>
-          <button class="btn btn-ghost grow" data-act="lt-sl" data-id="${pos.id}">
-            ${ic('down', 15)} Take loss</button>
+        <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
+          <button class="btn btn-primary grow" data-act="lt-tp" data-id="${pos.id}" data-lt-tp-btn="${pos.id}" ${this.calc(pos).pnlCoins > 0 ? '' : 'disabled'}>
+            ${ic('trend', 15)} Take profit <span data-lt-tp-amt="${pos.id}">${this.calc(pos).pnlCoins > 0 ? '(+' + coins(this.calc(pos).pnlCoins) + ')' : ''}</span></button>
+          <button class="btn btn-soft grow" data-act="lt-stop" data-id="${pos.id}">
+            ${ic('ban', 15)} Stop trade</button>
+          <button class="btn btn-ghost grow" data-act="lt-sl" data-id="${pos.id}" data-lt-sl-btn="${pos.id}" ${this.calc(pos).pnlCoins < 0 ? '' : 'disabled'}>
+            ${ic('down', 15)} Take loss <span data-lt-sl-amt="${pos.id}">${this.calc(pos).pnlCoins < 0 ? '(−' + coins(Math.abs(this.calc(pos).pnlCoins)) + ')' : ''}</span></button>
         </div>
         <button class="btn btn-soft btn-sm" data-act="lt-edit-tpsl" data-id="${pos.id}" style="width:100%;margin-top:8px">
           ${ic('edit', 14)} Edit Take Profit / Stop Loss</button>
@@ -494,7 +554,7 @@ const LT = {
         <div class="tiny muted" id="ltCapitalUsd">≈ $0.00 · balance ${coins(me().balance)} WC</div></div>
       <div class="lt-tpsl-grid">
         <div class="lt-level-box" data-k="tp" data-mode="${LT.levels.tp}">
-          <div class="between"><label class="label">Take Profit <span class="tiny muted">optional</span></label>
+          <div class="between"><label class="label">Take Profit <span class="tiny muted">skims profit, trade continues</span></label>
             <div class="lt-modebtns">
               <button type="button" class="${LT.levels.tp === 'pct' ? 'on' : ''}" data-act="lt-mode" data-k="tp" data-mode="pct">%</button>
               <button type="button" class="${LT.levels.tp === 'price' ? 'on' : ''}" data-act="lt-mode" data-k="tp" data-mode="price">$</button>
@@ -543,13 +603,13 @@ const LT = {
         <span class="small">Trailing stop</span>
         <span class="lt-trail-dist"><input class="input" id="ltTrailPct" type="number" step="0.1" min="0.5" max="50" value="2"/>% behind price</span>
       </label>
-      <div class="tiny muted" id="ltTpslHint" style="margin:-2px 0 10px;line-height:1.55">Rise: TP above entry, SL below. Fall: TP below entry, SL above. WC mode targets a Whale Coin profit/loss amount. Leave blank to trade to duration only.</div>
+      <div class="tiny muted" id="ltTpslHint" style="margin:-2px 0 10px;line-height:1.55">Rise: TP above entry, SL below. Fall: TP below entry, SL above. <b>Take Profit skims the profit into your balance and keeps the trade running</b>; <b>Stop Loss ends the trade</b>. WC mode targets a Whale Coin amount.</div>
       <div class="field"><label class="label">Trade duration</label>
         <select class="input" id="ltDuration">${this.DURATIONS.map(d => `<option value="${d.m}" ${d.m === 60 ? 'selected' : ''}>${d.label}</option>`).join('')}</select></div>
       <div class="lt-div-est" id="ltDivEst">Dividend bonus · calculating…</div>
       <button class="btn btn-primary" data-act="lt-start" data-t="${esc(ticker)}" style="width:100%">
         ${ic('play', 15)} Buy</button>
-      <div class="tiny muted center mt6">${ic('lock', 11)} Capital is held while the trade runs · ${this.feePct()}% fee · it closes by itself at your limit or when time is up</div>
+      <div class="tiny muted center mt6">${ic('lock', 11)} Capital is held while the trade runs · ${this.feePct()}% fee · take profit skims &amp; continues · stop loss closes automatically · timer ends the trade</div>
     </div>`;
   }
 };
@@ -565,6 +625,9 @@ const LT = {
   .lt-card{border:1px solid var(--border);border-radius:14px;padding:11px;margin-top:10px;
     background:linear-gradient(160deg,var(--surface-2),var(--surface));position:relative;overflow:hidden}
   .lt-card:first-of-type{margin-top:6px}
+  .lt-action-row{flex-wrap:nowrap}
+  .lt-action-row .btn{flex:1 1 0;min-width:0;padding:8px 4px;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  @media(max-width:380px){.lt-action-row{flex-wrap:wrap}.lt-action-row .btn{flex:1 1 46%}}
   .lt-side{font-size:9.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;padding:2px 6px;border-radius:6px;margin-left:5px}
   .lt-side.long{background:rgba(47,214,166,.16);color:var(--success)}
   .lt-side.short{background:rgba(255,95,116,.16);color:var(--danger)}
@@ -740,6 +803,33 @@ LT.paintMarket = function () {
 /* =========================== dashboard (trade aware) ====================== */
 const LT_WINDOW = { '1D': 864e5, '1W': 7 * 864e5, '1M': 30 * 864e5, '3M': 90 * 864e5, '1Y': 365 * 864e5, 'ALL': 730 * 864e5 };
 
+/* ------------------------- bot performance (live) ------------------------- */
+LT.botSession = function (userId) {
+  try {
+    const B = (typeof window !== 'undefined') ? window.WC_BOTS : null;
+    const s = B && B.state && B.state.session;
+    if (!s || (s.userId && s.userId !== userId)) return null;
+    return s;
+  } catch (e) { return null; }
+};
+
+/* bot equity at a point in time: allocation, then each simulated trade's pool */
+LT.botValueAt = function (session, at) {
+  if (!session) return 0;
+  const alloc = Number(session.allocatedCoins) || 0;
+  if (!(alloc > 0)) return 0;
+  if (at < (Number(session.startedAt) || 0)) return 0;
+  let v = alloc;
+  const trades = (session.trades || []).slice().sort((a, b) => (Number(a.at) || 0) - (Number(b.at) || 0));
+  trades.forEach((tr) => {
+    if ((Number(tr.at) || 0) > at) return;
+    const after = Number(tr.poolAfter);
+    if (Number.isFinite(after)) v = after;
+  });
+  if (at >= Date.now() - 3000) v = Number(session.poolCoins) || v;
+  return Math.max(0, v);
+};
+
 LT.positions = function (userId) {
   const trades = LT.open(userId).map(t => {
     const p = LT.calc(t);
@@ -765,9 +855,14 @@ LT.positions = function (userId) {
 
 LT.summary = function (userId) {
   const pos = LT.positions(userId);
-  const valueCoins = pos.reduce((s, p) => s + p.valueCoins, 0);
-  const capital = pos.reduce((s, p) => s + p.capital, 0);
-  const pnl = pos.reduce((s, p) => s + p.pnlCoins, 0);
+  const bot = LT.botSession(userId);
+  const botValue = bot ? (Number(bot.poolCoins) || 0) : 0;
+  const botCapital = bot ? (Number(bot.allocatedCoins) || 0) : 0;
+  const botPnl = bot ? Math.round((botValue - botCapital) * 100) / 100 : 0;
+  let valueCoins = pos.reduce((s, p) => s + p.valueCoins, 0);
+  let capital = pos.reduce((s, p) => s + p.capital, 0);
+  let pnl = pos.reduce((s, p) => s + p.pnlCoins, 0);
+  if (bot) { valueCoins += botValue; capital += botCapital; pnl += botPnl; }
   const u = me();
   return {
     pos, valueCoins, capital, pnl,
@@ -776,21 +871,29 @@ LT.summary = function (userId) {
     pnlUsd: coinsToUsd(pnl),
     pnlPct: capital ? (pnl / capital) * 100 : 0,
     cash: (u && u.balance) || 0,
-    live: pos.filter(p => p.kind === 'trade').length
+    live: pos.filter(p => p.kind === 'trade').length,
+    botActive: !!bot,
+    botValue, botCapital, botPnl,
+    botTrades: bot ? (Number(bot.tradeCount) || (bot.trades || []).length || 0) : 0,
+    botStatus: bot ? bot.status : null,
+    botTier: bot ? bot.tierName : null,
+    botLast: bot && bot.trades && bot.trades.length ? bot.trades[0] : null
   };
 };
 
-/* series for the performance chart: spot holdings + live trades */
+/* series for the performance chart: spot holdings + live trades + trading bot */
 LT.seriesWithTrades = function (tf, userId) {
   const pos = LT.positions(userId);
-  if (!pos.length) return [];
+  const bot = LT.botSession(userId);
+  if (!pos.length && !bot) return [];
   const win = LT_WINDOW[tf] || LT_WINDOW['1M'];
   const now = Date.now();
   const series = pos.map(p => ({ p, data: INV.series(p.ticker, tf) }));
-  const len = Math.max(...series.map(s => s.data.length));
+  const len = pos.length ? Math.max(...series.map(s => s.data.length)) : 60;
   const out = [];
   for (let i = 0; i < len; i++) {
-    let v = 0;
+    const msAgo = (1 - i / Math.max(1, len - 1)) * win;
+    let v = bot ? LT.botValueAt(bot, now - msAgo) : 0;
     series.forEach(({ p, data }) => {
       if (!data.length) { v += p.capital; return; }
       const price = data[Math.min(i, data.length - 1)];
@@ -813,12 +916,15 @@ LT.seriesWithTrades = function (tf, userId) {
 LT.allocSlices = function (userId) {
   const map = {};
   LT.positions(userId).forEach(p => { map[p.ticker] = (map[p.ticker] || 0) + p.valueCoins; });
+  const bot = LT.botSession(userId);
+  if (bot) map['Trading Bot'] = (map['Trading Bot'] || 0) + (Number(bot.poolCoins) || 0);
   return Object.keys(map).map(t => ({ ticker: t, value: coinsToUsd(map[t]) })).sort((a, b) => b.value - a.value);
 };
 
 LT.dash = function (params) {
   const u = me();
   const s = LT.summary(u.id);
+  const hasPerf = s.pos.length > 0 || s.botActive;
   const tf = (params && params.tf && LT_WINDOW[params.tf]) ? params.tf : '1M';
   const slices = LT.allocSlices(u.id);
   const cols = ['#2ee6c9', '#3aa0ff', '#8b7bff', '#ffc861', '#2fd6a6', '#ff7bb0', '#5ad1ff', '#ff9f5a'];
@@ -865,13 +971,17 @@ LT.dash = function (params) {
   <div class="card inv-chartcard">
     <div class="between" style="align-items:center">
       <div><div class="card-title" style="margin:0;display:flex;align-items:center;gap:7px">Portfolio performance
-        ${s.pos.length ? '<span class="lt-live-badge"><i></i>LIVE</span>' : ''}</div>
-        <div class="tiny muted">${s.pos.length ? tf + ' · live performance' : 'No positions yet'}</div></div>
+        ${hasPerf ? '<span class="lt-live-badge"><i></i>LIVE</span>' : ''}</div>
+        <div class="tiny muted">${hasPerf ? tf + ' · live performance' + (s.botActive ? ' + bot' : '') : 'No positions yet'}</div></div>
       ${INV.seg(tf)}
     </div>
     <div class="inv-chart" id="ltDashChart" data-ltd-chart="${tf}">
-      ${s.pos.length ? INV.lineChart(series, { h: 150 }) : `<div class="inv-empty">${ic('trend', 26)}<p class="small muted">Start a trade or buy stock to see performance.</p><a href="#/invest/market" class="btn btn-sm btn-primary">Explore market</a></div>`}
+      ${hasPerf ? INV.lineChart(series, { h: 150 }) : `<div class="inv-empty">${ic('trend', 26)}<p class="small muted">Start a trade, buy stock or run a bot to see performance.</p><a href="#/invest/market" class="btn btn-sm btn-primary">Explore market</a></div>`}
     </div>
+    ${s.botActive ? `<div class="tiny center ${s.botPnl >= 0 ? 'up' : 'down'}" style="margin-top:5px" data-lt-bot-line>
+      ${ic('trend', 11)} ${esc(s.botTier || 'Trading bot')} · ${coins(s.botValue)} WC equity · ${s.botPnl >= 0 ? '+' : '−'}${coins(Math.abs(s.botPnl))} WC · ${s.botTrades} trade${s.botTrades === 1 ? '' : 's'}${s.botStatus === 'running' ? ' · live' : ''}
+      ${s.botLast ? `<span class="muted"> · last ${esc(s.botLast.ticker || '')} ${Number(s.botLast.pnlCoins) >= 0 ? '+' : '−'}${coins(Math.abs(Number(s.botLast.pnlCoins) || 0))} WC</span>` : ''}
+    </div>` : ''}
     <div class="tiny muted center wc-feed-notice" data-market-notice="1" style="margin-top:6px">Simulated market data · 24/7</div>
   </div>
 
@@ -900,8 +1010,23 @@ function usd_LT(n) { return '$' + (Math.round((Number(n) || 0) * 100) / 100).toF
 
 LT.positionsHTML = function (userId) {
   const pos = LT.positions(userId);
-  if (!pos.length) return `<div class="inv-empty">${ic('bag', 26)}<p class="small muted">No open positions. Buy a stock or start a trade to begin.</p><a href="#/invest/market" class="btn btn-sm btn-primary">Browse stocks</a></div>`;
-  return `<div class="inv-list">${pos.map(p => {
+  const bot = LT.botSession(userId);
+  if (!pos.length && !bot) return `<div class="inv-empty">${ic('bag', 26)}<p class="small muted">No open positions. Buy a stock or start a trade to begin.</p><a href="#/invest/market" class="btn btn-sm btn-primary">Browse stocks</a></div>`;
+  const botRow = bot ? (() => {
+    const pnl = Math.round(((Number(bot.poolCoins) || 0) - (Number(bot.allocatedCoins) || 0)) * 100) / 100;
+    return `<a class="inv-row" href="#/invest/bots">
+      <span class="inv-logo" style="width:38px;height:38px;background:linear-gradient(135deg,#2ee6c9,#3aa0ff)"><b style="font-size:12px">BOT</b></span>
+      <div class="grow" style="min-width:0">
+        <div class="small ellipsis" style="font-weight:650">${esc(bot.tierName || 'Trading Bot')} <span class="lt-side long">Auto</span></div>
+        <div class="tiny muted">${coins(Number(bot.allocatedCoins) || 0)} WC in · ${coins(Number(bot.poolCoins) || 0)} WC equity</div>
+        <div class="tiny muted">${Number(bot.tradeCount) || 0} bot trade${(Number(bot.tradeCount) || 0) === 1 ? '' : 's'}${bot.status === 'running' ? ' · live' : ''}</div>
+      </div>
+      <div style="text-align:right">
+        <div class="small ${pnl >= 0 ? 'up' : 'down'}" style="font-weight:650">${pnl >= 0 ? '+' : '−'}${coins(Math.abs(pnl))} WC</div>
+        <div class="tiny muted">bot P/L</div>
+      </div></a>`;
+  })() : '';
+  return `<div class="inv-list">${botRow}${pos.map(p => {
     const stock = INV.stock(p.ticker) || { ticker: p.ticker, name: p.ticker, color: '#3aa0ff' };
     const up = p.pnlCoins > 0, down = p.pnlCoins < 0;
     const tag = p.kind === 'trade' ? `<span class="lt-side ${p.side}">${p.side === 'short' ? 'Short' : 'Long'} ${p.lev}×</span>` : '';
@@ -1796,8 +1921,55 @@ App.ltStart = function (id, ds) {
     trailingPct: trailPct
   });
 };
-App.ltTp = function (id, ds) { const t = DB.trades.find(x => x.id === ds.id); LT.settle(t, 'Take Profit Hit'); };
-App.ltSl = function (id, ds) { const t = DB.trades.find(x => x.id === ds.id); LT.settle(t, 'Stop Loss Hit'); };
+App.ltTp = async function (id, ds) {
+  const t = DB.trades.find(x => x.id === ds.id);
+  if (!t || t.status !== 'Open') return toast('This trade is already closed', 'err');
+  if (!(LT.calc(t).pnlCoins > 0)) return toast('No profit to take yet', 'err');
+  /* the backend skim is atomic; fall back to the local bookkeeping offline */
+  if (typeof Remote !== 'undefined' && Remote && Remote.enabled) {
+    try {
+      const r = await Remote.fetchJSON('/api/market/trade/take-profit', {
+        method: 'POST',
+        body: JSON.stringify({ userId: me().id, tradeId: t.id })
+      }, 8000);
+      if (r.res && r.res.ok && r.data && r.data.ok) {
+        await Remote.refresh(true);
+        toast(`Profit taken — ${coins(Number(r.data.profit) || 0)} WC credited. Trade continues`, 'ok');
+        return;
+      }
+      if (r.data && r.data.error) return toast(r.data.error, 'err');
+    } catch (e) { /* offline: local skim below */ }
+  }
+  LT.takeProfit(t, 'Take Profit Taken');
+};
+async function ltManualClose(t, action, reason) {
+  if (typeof Remote !== 'undefined' && Remote && Remote.enabled) {
+    try {
+      const r = await Remote.fetchJSON('/api/market/trade/close', {
+        method: 'POST',
+        body: JSON.stringify({ userId: me().id, tradeId: t.id, action })
+      }, 8000);
+      if (r.res && r.res.ok && r.data && r.data.ok) {
+        await Remote.refresh(true);
+        toast(action === 'sl' ? `Take loss — ${coins(Number(r.data.payout) || 0)} WC returned` : `Trade stopped — ${coins(Number(r.data.payout) || 0)} WC returned`, 'ok');
+        return true;
+      }
+      if (r.data && r.data.error) { toast(r.data.error, 'err'); return false; }
+    } catch (e) { /* offline: local close below */ }
+  }
+  return LT.settle(t, reason);
+}
+App.ltStop = async function (id, ds) {
+  const t = DB.trades.find(x => x.id === ds.id);
+  if (!t || t.status !== 'Open') return toast('This trade is already closed', 'err');
+  await ltManualClose(t, 'stop', 'Stopped by user');
+};
+App.ltSl = async function (id, ds) {
+  const t = DB.trades.find(x => x.id === ds.id);
+  if (!t || t.status !== 'Open') return toast('This trade is already closed', 'err');
+  if (!(LT.calc(t).pnlCoins < 0)) return toast('The trade is not in loss — take loss is only available while losing', 'err');
+  await ltManualClose(t, 'sl', 'Stop Loss Hit');
+};
 
 App.ltEditTpsl = function (id, ds) {
   const t = DB.trades.find(x => x.id === ds.id);
