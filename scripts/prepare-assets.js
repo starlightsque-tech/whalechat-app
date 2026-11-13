@@ -59,6 +59,9 @@ if (!parts.length) {
 const MODULES = [
   { file: 'tawk-control.js', marker: 'wc-tawk-control' },
   { file: 'live-trade.js', marker: 'wc-live-trade' },
+  { file: 'spot-orders.js', marker: 'wc-spot-orders' },
+  { file: 'whalechat-shares.js', marker: 'wc-shares' },
+  { file: 'trading-bots.js', marker: 'wc-bots' },
   { file: 'assets-multi.js', marker: 'wc-assets-multi' },
   { file: 'market-live.js', marker: 'wc-market-live' },
   { file: 'demo-sellers.js', marker: 'wc-demo-sellers' },
