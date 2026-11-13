@@ -858,6 +858,49 @@ class MarketService {
     return { ok: true, coins, balance: u.balance, tradeId: t.id, profitId: rec.id };
   }
 
+  /* Claim every unclaimed secured entry in one go. */
+  claimAllSecuredProfits(userId) {
+    const db = this.getDb && this.getDb();
+    if (!db) throw new Error('Database not ready');
+    const u = (db.users || []).find((x) => x.id === userId);
+    if (!u) throw new Error('User not found');
+    const now = Date.now();
+    let total = 0;
+    let count = 0;
+    (db.trades || []).forEach((t) => {
+      if (!t || t.userId !== userId) return;
+      const list = Array.isArray(t.securedProfits) ? t.securedProfits : [];
+      list.forEach((rec) => {
+        if (!rec || rec.claimed) return;
+        const coins = round(Number(rec.coins) || 0, 2);
+        if (!(coins > 0)) return;
+        rec.claimed = true;
+        rec.claimedAt = now;
+        rec.claimedCoins = coins;
+        t.claimedSecuredCoins = round((Number(t.claimedSecuredCoins) || 0) + coins, 2);
+        total = round(total + coins, 2);
+        count += 1;
+      });
+    });
+    if (!count) throw new Error('No secured profit to claim');
+    u.balance = round((Number(u.balance) || 0) + total, 2);
+    db.txs = db.txs || [];
+    db.txs.unshift({
+      id: id('tx_'), userId, type: 'secured-profit-claim',
+      label: `Claimed ${count} secured profit${count === 1 ? '' : 's'} · +${total} WC`, coins: total,
+      meta: { count, all: true, server: true }, createdAt: now
+    });
+    db.notifications = db.notifications || [];
+    db.notifications.unshift({
+      id: id('nt_'), userId, title: 'Secured profits credited',
+      body: `+${total} WC from ${count} secured take-profit ${count === 1 ? 'entry was' : 'entries were'} added to your balance.`,
+      link: '#/wallet', icon: 'check', read: false, createdAt: now
+    });
+    this.persist();
+    try { this.broadcast('change', { rev: null, source: 'secured-profit-claim-all', at: now }); } catch (e) {}
+    return { ok: true, coins: total, count, balance: u.balance };
+  }
+
   skimProfit(t, q, db, now, reason, forceCredit) {
     if (!t || t.status !== 'Open' || !q) return 0;
     /* Auto Secure bot: queue automatic profit for the user to claim instead of crediting.
