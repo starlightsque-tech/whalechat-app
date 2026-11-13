@@ -737,8 +737,132 @@ class MarketService {
   /* --------------------------- settlement ------------------------------- */
   /* Take Profit is a skim: credit only the open profit, re-base the position,
      clear the consumed TP level and keep the trade open. Returns profit credited. */
-  skimProfit(t, q, db, now, reason) {
+  /* ---------------------- auto-secure profit (bot tool) ------------------ */
+  autoSecureActive(db, userId) {
+    if (!db || !userId) return false;
+    const now = Date.now();
+    return (db.autoSecureSubs || []).some((sub) => sub && sub.userId === userId &&
+      sub.status === 'active' && sub.enabled !== false && (!sub.expiresAt || Number(sub.expiresAt) > now));
+  }
+
+  /* Secure (queue) the open profit without crediting it. The user claims it
+     later, one entry at a time, from their secured-profits list. */
+  secureProfit(t, q, db, now, reason, clearTp) {
     if (!t || t.status !== 'Open' || !q) return 0;
+    const lev = Math.max(1, Math.min(20, Number(t.leverage) || 1));
+    const direction = t.direction || (t.side === 'short' ? 'FALL' : 'RISE');
+    const dir = direction === 'FALL' ? -1 : 1;
+    const entry = Number(t.entryPrice);
+    if (!(entry > 0)) return 0;
+    if (t.lastSecureAt && now - Number(t.lastSecureAt) < 3000) return 0;
+    const move = (q.price - entry) / entry;
+    const profit = round(Math.max(0, (Number(t.capitalCoins) || 0) * lev * move * dir), 2);
+    if (!(profit > 0)) return 0;
+    if (!t.initialEntryPrice) t.initialEntryPrice = entry;
+    t.securedProfits = Array.isArray(t.securedProfits) ? t.securedProfits : [];
+    const rec = {
+      id: id('sp_'), coins: profit, at: now, price: round(q.price, 6),
+      entryBefore: round(entry, 6), reason: reason || 'Auto Secure', claimed: false
+    };
+    t.securedProfits.unshift(rec);
+    if (t.securedProfits.length > 100) t.securedProfits.length = 100;
+    t.securedProfitCoins = round((Number(t.securedProfitCoins) || 0) + profit, 2);
+    t.securedProfitCount = (Number(t.securedProfitCount) || 0) + 1;
+    t.entryPrice = round(q.price, 6);
+    t.lastSecureAt = now;
+    t.lastProfitAt = now;
+    t.lastProfitPrice = q.price;
+    if (clearTp) {
+      t.takeProfitPrice = 0;
+      t.takeProfitWc = null;
+      t.takeProfitMode = 'PRICE';
+      t.tpPct = 0;
+    }
+    if (t.trailingActive && Number(t.trailingStopPct) > 0) {
+      const dist = Math.max(0.05, Math.min(50, Number(t.trailingStopPct))) / 100;
+      const stop = direction === 'FALL' ? q.price * (1 + dist) : q.price * (1 - dist);
+      t.trailingStopPrice = round(stop, 6);
+      t.stopLossPrice = t.trailingStopPrice;
+    }
+    db.notifications = db.notifications || [];
+    db.notifications.unshift({
+      id: id('nt_'), userId: t.userId, title: 'Profit secured — claim it anytime',
+      body: `${t.ticker}: ${profit} WC secured at $${round(q.price, 4)}. Open Orders and press Take profit on the secured entry to credit it to your balance.`,
+      link: '#/invest/orders', icon: 'lock', read: false, createdAt: now
+    });
+    console.log('[market] auto-secured', profit, 'WC on', t.ticker, 'for user', t.userId);
+    return profit;
+  }
+
+  /* Called by the Auto Secure bot worker every few seconds. */
+  secureProfitTrade(userId, tradeId) {
+    const db = this.getDb && this.getDb();
+    if (!db) return 0;
+    if (!this.autoSecureActive(db, userId)) return 0;
+    const t = (db.trades || []).find((x) => x && x.id === tradeId && x.userId === userId && x.type === 'live' && x.status === 'Open');
+    if (!t) return 0;
+    const q = this.quotes[t.ticker];
+    if (!q || !(Number(q.price) > 0)) return 0;
+    const now = Date.now();
+    if (t.lastSecureAt && now - Number(t.lastSecureAt) < 8000) return 0;
+    const lev = Math.max(1, Math.min(20, Number(t.leverage) || 1));
+    const direction = t.direction || (t.side === 'short' ? 'FALL' : 'RISE');
+    const dir = direction === 'FALL' ? -1 : 1;
+    const entry = Number(t.entryPrice);
+    if (!(entry > 0)) return 0;
+    const move = (q.price - entry) / entry;
+    const available = round(Math.max(0, (Number(t.capitalCoins) || 0) * lev * move * dir), 2);
+    const threshold = Math.max(0.5, round((Number(t.capitalCoins) || 0) * 0.01, 2));
+    if (available < threshold) return 0;
+    const secured = this.secureProfit(t, q, db, now, 'Auto Secure', false);
+    if (secured > 0) {
+      this.persist();
+      try { this.broadcast('change', { rev: null, source: 'auto-secure', at: now }); } catch (e) {}
+    }
+    return secured;
+  }
+
+  claimSecuredProfit(userId, tradeId, profitId) {
+    const db = this.getDb && this.getDb();
+    if (!db) throw new Error('Database not ready');
+    const t = (db.trades || []).find((x) => x && x.id === tradeId && x.userId === userId);
+    if (!t) throw new Error('Trade not found');
+    const list = Array.isArray(t.securedProfits) ? t.securedProfits : [];
+    const rec = list.find((x) => x && x.id === profitId);
+    if (!rec) throw new Error('Secured profit not found');
+    if (rec.claimed) throw new Error('That profit has already been claimed');
+    const u = (db.users || []).find((x) => x.id === userId);
+    if (!u) throw new Error('User not found');
+    const now = Date.now();
+    const coins = round(Number(rec.coins) || 0, 2);
+    if (!(coins > 0)) throw new Error('Nothing to claim');
+    u.balance = round((Number(u.balance) || 0) + coins, 2);
+    rec.claimed = true;
+    rec.claimedAt = now;
+    rec.claimedCoins = coins;
+    t.claimedSecuredCoins = round((Number(t.claimedSecuredCoins) || 0) + coins, 2);
+    db.txs = db.txs || [];
+    db.txs.unshift({
+      id: id('tx_'), userId, type: 'secured-profit-claim',
+      label: `Secured profit claimed · ${t.ticker} · +${coins} WC`, coins,
+      meta: { tradeId: t.id, profitId: rec.id, securedAt: rec.at, server: true }, createdAt: now
+    });
+    db.notifications = db.notifications || [];
+    db.notifications.unshift({
+      id: id('nt_'), userId, title: 'Secured profit credited',
+      body: `+${coins} WC from your ${t.ticker} secured profit was added to your balance.`,
+      link: '#/wallet', icon: 'check', read: false, createdAt: now
+    });
+    this.persist();
+    try { this.broadcast('change', { rev: null, source: 'secured-profit-claim', at: now }); } catch (e) {}
+    return { ok: true, coins, balance: u.balance, tradeId: t.id, profitId: rec.id };
+  }
+
+  skimProfit(t, q, db, now, reason, forceCredit) {
+    if (!t || t.status !== 'Open' || !q) return 0;
+    /* Auto Secure bot: queue automatic profit for the user to claim instead of crediting.
+       A manual button press passes forceCredit=true and pays immediately. */
+    if (!forceCredit && this.autoSecureActive(db, t.userId)) return this.secureProfit(t, q, db, now, reason, true);
     const u = (db.users || []).find((x) => x.id === t.userId);
     if (!u) return 0;
     const lev = Math.max(1, Math.min(20, Number(t.leverage) || 1));
@@ -840,7 +964,7 @@ class MarketService {
     if (!t) throw new Error('That trade is not open');
     const q = this.quotes[t.ticker];
     if (!q || !(Number(q.price) > 0)) throw new Error('Waiting for a live quote — try again in a moment');
-    const profit = this.skimProfit(t, q, db, Date.now(), 'Take Profit Taken');
+    const profit = this.skimProfit(t, q, db, Date.now(), 'Take Profit Taken', true);
     if (!(profit > 0)) throw new Error('No profit to take yet');
     this.persist();
     try { this.broadcast('change', { rev: null, source: 'manual-take-profit', at: Date.now() }); } catch (e) {}
