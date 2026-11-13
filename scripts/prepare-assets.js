@@ -60,16 +60,9 @@ const MODULES = [
   { file: 'tawk-control.js', marker: 'wc-tawk-control' },
   { file: 'live-trade.js', marker: 'wc-live-trade' },
   { file: 'assets-multi.js', marker: 'wc-assets-multi' },
-  { file: 'spot-orders.js', marker: 'wc-spot-orders' },
   { file: 'market-live.js', marker: 'wc-market-live' },
-  { file: 'trading-bots.js', marker: 'wc-trading-bots' },
-  { file: 'whalechat-shares.js', marker: 'wc-whalechat-shares' },
   { file: 'demo-sellers.js', marker: 'wc-demo-sellers' },
-  { file: 'support.js', marker: 'wc-support' },
-  { file: 'pro-chart.js', marker: 'wc-pro-chart' },
-  { file: 'live-only.js', marker: 'wc-live-only' },
-  { file: 'wc-terminal.js', marker: 'wc-trade-terminal' },
-  { file: 'wc-terminal-app.js', marker: 'wc-trade-terminal-app' }
+  { file: 'support.js', marker: 'wc-support' }
 ];
 try {
   let page = fs.readFileSync(APP, 'utf8');
