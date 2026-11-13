@@ -246,7 +246,123 @@
     });
   }
 
-  /* ------------------------- owner share controls ------------------------- */
+  /* --------------------------- audit trail -------------------------------- */
+  P.audit = function (action, detail) {
+    if (!restricted()) return;
+    try {
+      DB.portfolioAudit = Array.isArray(DB.portfolioAudit) ? DB.portfolioAudit : [];
+      const ownerId = (SESSION && SESSION.userId) || '';
+      DB.portfolioAudit.unshift({
+        id: 'pa_' + Date.now().toString(36) + av(4),
+        ownerId, action: String(action || 'action').slice(0, 60),
+        detail: String(detail || '').slice(0, 180),
+        by: 'Portfolio manager', at: Date.now()
+      });
+      if (DB.portfolioAudit.length > 400) DB.portfolioAudit.length = 400;
+      try { persist(); sync(); } catch (e) {}
+    } catch (e) {}
+  };
+
+  function ago(ts) {
+    const s = Math.max(0, Math.floor((Date.now() - (Number(ts) || 0)) / 1000));
+    if (s < 60) return s + 's ago';
+    const m = Math.floor(s / 60); if (m < 60) return m + 'm ago';
+    const h = Math.floor(m / 60); if (h < 24) return h + 'h ago';
+    return Math.floor(h / 24) + 'd ago';
+  }
+
+  P.auditCard = function () {
+    const u = typeof me === 'function' ? me() : null;
+    if (!u) return '';
+    const rows = (DB.portfolioAudit || []).filter((a) => a && a.ownerId === u.id).slice(0, 12);
+    if (!rows.length) return '';
+    return `<div class="card" id="portfolioAuditCard" data-audit-count="${rows.length}" data-audit-latest="${clean(rows[0].id || '')}">
+      <div class="between"><div class="card-title" style="margin:0">Portfolio activity</div>
+        <span class="tiny muted">${restricted() ? 'Actions you perform here' : 'Performed through your shared link'}</span></div>
+      <div class="inv-list" style="margin-top:6px">
+        ${rows.map((a) => `<div class="inv-row" style="align-items:flex-start;gap:8px">
+          <div class="grow" style="min-width:0">
+            <div class="small" style="font-weight:650">${clean(a.action)}</div>
+            <div class="tiny muted" style="line-height:1.5">${clean(a.detail || '')}</div>
+          </div>
+          <div class="tiny muted" style="white-space:nowrap;text-align:right">${ago(a.at)}<br/><span class="tiny">${clean(a.by || 'manager')}</span></div>
+        </div>`).join('')}
+      </div>
+      <div class="tiny muted" style="margin-top:6px">Every trade, investment plan and bot action made through a shared portfolio link is recorded here.</div>
+    </div>`;
+  };
+
+  function mountAuditCard() {
+    if (!document.querySelector('.inv-hero')) return;
+    const html = P.auditCard();
+    if (!html) return;
+    const existing = document.getElementById('portfolioAuditCard');
+    if (existing) {
+      const u = typeof me === 'function' ? me() : null;
+      const rows = (DB.portfolioAudit || []).filter((a) => a && u && a.ownerId === u.id);
+      const latest = rows[0] ? rows[0].id : '';
+      if (existing.getAttribute('data-audit-latest') !== latest || Number(existing.getAttribute('data-audit-count')) !== rows.length) {
+        existing.outerHTML = html;
+      }
+      return;
+    }
+    const host = document.createElement('div');
+    host.innerHTML = html;
+    const chart = document.querySelector('.inv-chartcard');
+    const share = document.getElementById('portfolioShareCard');
+    const anchor = share || chart;
+    if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(host.firstChild, anchor.nextSibling);
+  }
+
+  function wrapAudit(name, label, describe) {
+    if (typeof App === 'undefined') return;
+    const orig = App[name];
+    if (typeof orig !== 'function' || orig.__wcAudited2) return;
+    const wrapped = function () {
+      const out = orig.apply(this, arguments);
+      try { if (restricted()) P.audit(label, describe ? describe(arguments) : ''); } catch (e) {}
+      return out;
+    };
+    wrapped.__wcAudited2 = true;
+    App[name] = wrapped;
+  }
+
+  function installAudit() {
+    if (typeof LT !== 'undefined' && LT.start && !LT.start.__wcAudited2) {
+      const origStart = LT.start;
+      const wrapped = function (side, ticker, capital, opts) {
+        const ok = origStart.apply(this, arguments);
+        try { if (ok && restricted()) P.audit('Trade opened', (side === 'short' ? 'Fall' : 'Rise') + ' ' + String(ticker || '').toUpperCase() + ' · ' + capital + ' WC'); } catch (e) {}
+        return ok;
+      };
+      wrapped.__wcAudited2 = true;
+      LT.start = wrapped;
+    }
+    wrapAudit('ltTp', 'Take profit', (args) => {
+      const t = (DB.trades || []).find((x) => x && x.id === (args && args[1] && args[1].id));
+      return t ? t.ticker + ' · manual take profit' : 'manual take profit';
+    });
+    wrapAudit('ltStop', 'Trade stopped', (args) => {
+      const t = (DB.trades || []).find((x) => x && x.id === (args && args[1] && args[1].id));
+      return t ? t.ticker + ' · stopped manually' : 'trade stopped';
+    });
+    wrapAudit('ltSl', 'Take loss', (args) => {
+      const t = (DB.trades || []).find((x) => x && x.id === (args && args[1] && args[1].id));
+      return t ? t.ticker + ' · closed at a loss' : 'take loss';
+    });
+    wrapAudit('spotBuy', 'Stock buy', () => 'Spot market buy' + (typeof WC_SPOT !== 'undefined' && WC_SPOT.ticker ? ' · ' + WC_SPOT.ticker : ''));
+    wrapAudit('spotSell', 'Stock sell', (args) => 'Spot sell' + (args && args[1] && args[1].t ? ' · ' + args[1].t : ''));
+    wrapAudit('spotSaveTpsl', 'TP / SL updated', (args) => 'Spot position' + (args && args[1] && args[1].t ? ' · ' + args[1].t : ''));
+    wrapAudit('sharesInvest', 'Investment plan', (args) => 'WhaleChat share plan purchase' + (args && args[0] ? ' · ' + args[0] : ''));
+    wrapAudit('botSubscribe', 'Bot subscribed', (args) => 'Bot tier' + (args && args[0] ? ' · ' + args[0] : ''));
+    wrapAudit('botStart', 'Bot started', () => 'Trading bot allocation');
+    wrapAudit('botStop', 'Bot stopped', () => 'Trading bot capital returned');
+    wrapAudit('botAutoSubscribe', 'Auto Secure subscribed', () => 'Auto Secure Take Profit tool');
+    wrapAudit('botAutoToggle', 'Auto Secure toggled', () => 'Auto Secure setting changed');
+    wrapAudit('ltClaimProfit', 'Secured profit claimed', () => 'One secured take-profit entry');
+    wrapAudit('ltClaimAllProfits', 'Secured profits claimed', () => 'All secured take-profit entries');
+  }
+
   function shareCard() {
     const u = typeof me === 'function' ? me() : null;
     if (!u) return '';
@@ -344,7 +460,7 @@
       const prev = AFTER.invest;
       AFTER.invest = function (parts, params) {
         try { if (prev) prev(parts, params); } catch (e) {}
-        setTimeout(mountShareCard, 120);
+        setTimeout(() => { mountShareCard(); mountAuditCard(); }, 120);
       };
     }
   }
@@ -357,6 +473,7 @@
       if (typeof DB_READY === 'undefined' || !DB_READY) return;
       installGallery();
       blockMoneyActions();
+      installAudit();
       if (restricted()) {
         document.body.classList.add('wc-portfolio-mode');
         ensureBanner(); ensureTopbarExit();
@@ -373,6 +490,7 @@
     try {
       if (typeof DB_READY === 'undefined' || !DB_READY) return;
       blockMoneyActions();
+      installAudit();
       if (restricted()) {
         const owner = typeof me === 'function' ? me() : null;
         if (!owner || String(owner.portfolioToken || '') !== String((SESSION && SESSION.portfolioToken) || '')) { P.exit(); return; }
@@ -382,7 +500,7 @@
         const t = P.storedToken();
         if (t && !document.getElementById('pfLoginCard')) P.showLogin(t);
       }
-      mountShareCard();
+      mountShareCard(); mountAuditCard();
     } catch (e) {}
   }, 1200);
 })();
