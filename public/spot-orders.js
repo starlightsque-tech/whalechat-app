@@ -46,7 +46,7 @@
     else if (S.mode === 'wc') { cost = v; usdAmt = v * 0.5; shares = usdAmt / live; }
     else { shares = v; usdAmt = shares * live; cost = usdAmt / 0.5; }
     const out = payoutFor(cost, pct, 0);
-    pv.innerHTML = `<b>${usdAmt.toLocaleString(undefined, { style: 'currency', currency: 'USD' })}</b> = <b>${cost.toFixed(2)} WC</b> · ${shares.toLocaleString(undefined, { maximumFractionDigits: 6 })} shares · live ${px(S.ticker, live)} · closes at <b>+${pct}%</b> of capital + gain`;
+    pv.innerHTML = `<b>${usdAmt.toLocaleString(undefined, { style: 'currency', currency: 'USD' })}</b> = <b>${cost.toFixed(2)} WC</b> · ${shares.toLocaleString(undefined, { maximumFractionDigits: 6 })} shares · live ${px(S.ticker, live)} · closes at <b>+${pct}%</b> of capital + gain · payout now <b>${out.payout.toFixed(2)} WC</b>`;
   };
 
   function ticketHTML(ticker) {
