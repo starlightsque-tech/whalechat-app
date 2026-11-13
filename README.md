@@ -118,6 +118,26 @@ stop loss, mint **Long** CTA). Only the live segment and the badge change colour
 green on an up-tick, red on a down-tick — so the chart stays calm like the reference while still
 signalling direction.
 
+### Live-only market data (no virtual prices)
+
+The market is **Finnhub-only**. Nothing in the app invents a price any more:
+
+| Removed | Replacement |
+|---|---|
+| Client random-walk ticker (`INV.tick` mutating quotes) | `public/live-only.js` neutralises it — quotes only change when `/api/market/quotes` delivers a real Finnhub tick |
+| Catalogue seed prices copied into quotes at boot (`seedBaseQuotes`) | quotes start at `0`, `source:'waiting'`, `real:false`; a symbol has no price until Finnhub sends one |
+| Synthetic candles/history fallbacks in the chart adapter | `history()` returns real `/api/market/history` samples (or `/api/v1/stock/candle` when available); if there are none the chart shows **“Waiting for live Finnhub data…”** instead of a fabricated curve |
+| “24/7 simulated market” notices | live status: `Live market data via Finnhub` / `Market closed — showing the last real Finnhub prices` / `Live prices unavailable — connect Finnhub in Admin → Markets` |
+
+Every quote carries `real` / `live` flags and `snapshot()` reports `liveOnly: true` plus `liveCount`.
+UI values that have no real tick render as `—` (the terminal also refuses to open a trade without a
+live price). `WC_LIVE_ONLY.liveCount()` exposes the count to any screen that wants to show it.
+
+The **portfolio performance** card uses the same chart family as the WhaleChat investment-plan
+performance card: invested capital as a dashed reference line, live value as the series, and a
+footer with invested / unrealised P&L. The stock view uses the same component in price mode, so
+trade price movement and portfolio performance are the same chart, same feed.
+
 ### Direct Finnhub WebSocket (tick-by-tick)
 
 `GET /api/market/stream` returns the browser stream descriptor. When the admin runs hybrid mode
