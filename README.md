@@ -1,4 +1,4 @@
-# WhaleChat 3.26.0 — web app + mobile apps
+# WhaleChat 3.26.1 — web app + mobile apps
 
 WhaleChat is a social + marketplace + wallet product built as a single-page app with a
 Node sync server and native Android/iOS shells.
@@ -236,8 +236,10 @@ can be credited at once.
 
 Endpoints: `/api/bots/auto-secure/subscribe`, `/api/bots/auto-secure/toggle`,
 `/api/market/secure-profit/claim`, `/api/market/secure-profit/claim-all`.
-The bot secures at most every 8 seconds per trade and only when the open profit is at least
-max(0.5 WC, 1% of the trade capital).
+The Auto Secure worker scans every **1 second** (and immediately after the tool is turned on),
+securing any profit of at least **0.01 WC**, with a 2-second per-trade cooldown so entries stay
+meaningful. Secured amounts are re-based out of the position, so later price movement can never
+take them back.
 
 ### WhaleChat share investment portfolio (restored)
 
