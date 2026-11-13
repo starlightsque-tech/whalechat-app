@@ -1,8 +1,8 @@
 {
-  "version": "3.24.0",
-  "build": "2026-11-13T09:24:51Z",
+  "version": "3.24.1",
+  "build": "2026-11-13T09:34:03Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.24.0 - take-profit skims profit and keeps trades running, stop-trade button, smart TP/SL buttons, and bot equity on the portfolio chart.",
-  "releasedAt": "2026-11-13T09:24:51Z",
+  "notes": "WhaleChat 3.24.1 - smooth animated chart ticks and admin-rate payout on capital + market gain.",
+  "releasedAt": "2026-11-13T09:34:03Z",
   "minimum": "3.0.0"
 }
