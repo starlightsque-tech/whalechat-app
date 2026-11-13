@@ -17,10 +17,10 @@ const CYCLE_MS = { daily: 86400000, weekly: 604800000, monthly: 2592000000, one_
 const CYCLE_LABEL = { daily: 'day', weekly: 'week', monthly: 'month', one_time: 'one-time' };
 
 const DEFAULT_TIERS = [
-  { id: 'low', name: 'Low-Level Grade Bot', username: 'whale_scout', hot: false, accuracy: 45, priceUsd: 20, billingCycle: 'monthly', intervalMin: 0, enabled: true, sort: 1, blurb: 'Steady starter automation for small allocations.' },
-  { id: 'medium', name: 'Medium-Level Grade Bot', username: 'orca_trader', hot: true, accuracy: 50, priceUsd: 50, billingCycle: 'monthly', intervalMin: 0, enabled: true, sort: 2, blurb: 'Balanced risk with more frequent simulated entries.' },
-  { id: 'premium', name: 'Premium-Level Grade Bot', username: 'deep_blue', hot: true, accuracy: 70, priceUsd: 120, billingCycle: 'monthly', intervalMin: 0, enabled: true, sort: 3, blurb: 'Higher hit-rate for users scaling their capital.' },
-  { id: 'high', name: 'High-Performance Bot', username: 'apex_whale', hot: true, accuracy: 85, priceUsd: 250, billingCycle: 'monthly', intervalMin: 0, enabled: true, sort: 4, blurb: 'Top tier accuracy for serious allocations.' }
+  { id: 'low', name: 'Low-Level Grade Bot', username: 'whale_scout', avatar: './bots/miguel-santos.jpg', hot: false, accuracy: 45, priceUsd: 20, billingCycle: 'monthly', intervalMin: 0, enabled: true, sort: 1, blurb: 'Steady starter automation for small allocations.' },
+  { id: 'medium', name: 'Medium-Level Grade Bot', username: 'orca_trader', avatar: './bots/aiko-tanaka.jpg', hot: true, accuracy: 50, priceUsd: 50, billingCycle: 'monthly', intervalMin: 0, enabled: true, sort: 2, blurb: 'Balanced risk with more frequent simulated entries.' },
+  { id: 'premium', name: 'Premium-Level Grade Bot', username: 'deep_blue', avatar: './bots/lena-hoffmann.jpg', hot: true, accuracy: 70, priceUsd: 120, billingCycle: 'monthly', intervalMin: 0, enabled: true, sort: 3, blurb: 'Higher hit-rate for users scaling their capital.' },
+  { id: 'high', name: 'High-Performance Bot', username: 'apex_whale', avatar: './bots/arjun-mehta.jpg', hot: true, accuracy: 85, priceUsd: 250, billingCycle: 'monthly', intervalMin: 0, enabled: true, sort: 4, blurb: 'Top tier accuracy for serious allocations.' }
 ];
 
 const DEFAULT_SETTINGS = {
@@ -76,7 +76,7 @@ class BotService {
       if (!t) continue;
       const def = DEFAULT_TIERS.find((x) => x.id === t.id) || {};
       if (!t.username) { t.username = def.username || ('bot_' + t.id); changed = true; }
-      if (t.avatar === undefined) { t.avatar = def.avatar || null; changed = true; }
+      if (!t.avatar && !t.avatarCleared) { t.avatar = def.avatar || null; if (t.avatar) changed = true; }
       if (t.hot === undefined) { t.hot = !!def.hot; changed = true; }
     }
     if (!db.botCooldowns || typeof db.botCooldowns !== 'object') { db.botCooldowns = {}; changed = true; }
@@ -263,9 +263,13 @@ class BotService {
       .slice(0, 10)
       .map((s) => this.sessionView(s));
     const auto = this.autoSecureView(db, userId);
+    const sessionView = session ? this.sessionView(session) : null;
     return {
       ok: true,
       balance: round(u.balance, 2),
+      cooldownUntil: this.cooldownFor(userId),
+      health: this.healthEngine(userId, sessionView, history),
+      performance: this.performance(userId, sessionView, history),
       coinsPerUsd: COINS_PER_USD,
       settings: {
         intervalMin: this.settings().intervalMin,
@@ -277,7 +281,7 @@ class BotService {
       autoSecure: auto,
       tiers,
       subscriptions: subs.map((s) => ({ id: s.id, tierId: s.tierId, startedAt: s.startedAt, expiresAt: s.expiresAt || null, billingCycle: s.billingCycle })),
-      session: session ? this.sessionView(session) : null,
+      session: sessionView,
       history,
       serverTime: Date.now()
     };
@@ -313,6 +317,75 @@ class BotService {
       tierUsername: tier ? (tier.username || null) : null,
       tierAvatar: tier ? (tier.avatar || null) : null,
       trades: (s.trades || []).slice(0, 60)
+    };
+  }
+
+  /* ------------------------- health engine + performance ------------------- */
+  cooldownFor(userId) {
+    const db = this.getDb && this.getDb();
+    const cd = Number((db && db.botCooldowns && db.botCooldowns[userId]) || 0);
+    return cd > Date.now() ? cd : null;
+  }
+
+  healthEngine(userId, session, history) {
+    const cooldownUntil = this.cooldownFor(userId);
+    const src = session || (history && history[0]) || null;
+    const score = src ? Math.max(0, Math.min(100, Math.round(Number(src.health != null ? src.health : 100)))) : 100;
+    const energy = src ? Math.max(0, Math.min(100, Math.round(Number(src.energy != null ? src.energy : 100)))) : 100;
+    const winRate = src ? src.winRate : null;
+    const allocated = src ? Number(src.allocatedCoins) || 0 : 0;
+    const pool = src ? Number(src.poolCoins) || 0 : 0;
+    const drawdownPct = allocated > 0 ? round(Math.max(0, Math.min(100, (1 - pool / allocated) * 100)), 1) : 0;
+    const stamina = energy >= 75 ? 'high' : energy >= 45 ? 'medium' : energy >= 20 ? 'low' : 'critical';
+    const state = cooldownUntil ? 'cooling' : !src ? 'idle' : score >= 70 ? 'thriving' : score >= 45 ? 'stable' : 'fatigued';
+    const last = (src && Array.isArray(src.healthHistory)) ? src.healthHistory.slice(-40) : [];
+    return {
+      state, score, energy, stamina, winRate, drawdownPct, cooldownUntil,
+      plan: !cooldownUntil && src && src.status === 'running' && (energy <= 35 || score <= 45) ? 'cool' : 'trade',
+      history: last,
+      label: state === 'cooling' ? 'Cooling down' : state === 'thriving' ? 'Thriving' : state === 'stable' ? 'Stable' : state === 'fatigued' ? 'Fatigued' : 'Idle'
+    };
+  }
+
+  performance(userId, session, history) {
+    const sessions = (history || []).slice();
+    if (session) sessions.unshift(session);
+    const trades = [];
+    sessions.forEach((s) => {
+      (s.trades || []).forEach((t) => {
+        const at = Number(t.at) || Number(s.startedAt) || Date.now();
+        trades.push({ at, pnl: Number(t.pnlCoins) || 0, win: !!t.win });
+      });
+    });
+    trades.sort((a, b) => a.at - b.at);
+    let net = 0;
+    const points = [];
+    for (const t of trades) {
+      net = round(net + t.pnl, 2);
+      points.push({ t: t.at, v: net });
+    }
+    if (points.length) points.unshift({ t: points[0].t - 60000, v: 0 });
+    const winCount = trades.filter((t) => t.win).length;
+    const lossCount = trades.length - winCount;
+    const profitCoins = round(trades.filter((t) => t.pnl > 0).reduce((a, t) => a + t.pnl, 0), 2);
+    const lossCoins = round(trades.filter((t) => t.pnl < 0).reduce((a, t) => a + Math.abs(t.pnl), 0), 2);
+    const allocated = sessions.reduce((a, s) => a + (Number(s.allocatedCoins) || 0), 0);
+    const ranked = sessions.slice().sort((a, b) => (Number(b.profitCoins) || 0) - (Number(a.profitCoins) || 0));
+    const best = ranked[0] || null;
+    const worst = ranked[ranked.length - 1] || null;
+    return {
+      sessions: sessions.length,
+      tradeCount: trades.length,
+      winCount, lossCount,
+      winRate: trades.length ? Math.round((winCount / trades.length) * 100) : null,
+      netCoins: net,
+      profitCoins, lossCoins,
+      allocatedCoins: round(allocated, 2),
+      roiPct: allocated > 0 ? round((net / allocated) * 100, 2) : 0,
+      points: points.slice(-300),
+      best: best ? { tierName: best.tierName, coins: round(Number(best.profitCoins) || 0, 2) } : null,
+      worst: worst ? { tierName: worst.tierName, coins: round(Number(worst.profitCoins) || 0, 2) } : null,
+      cooldownUntil: this.cooldownFor(userId)
     };
   }
 
@@ -515,7 +588,10 @@ class BotService {
         if (incoming.hot != null) t.hot = !!incoming.hot;
         if (incoming.avatar != null) {
           const av = String(incoming.avatar);
-          t.avatar = (av === '' || /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(av)) && av.length <= 120000 ? (av || null) : t.avatar;
+          if (av === '') { t.avatar = null; t.avatarCleared = true; }
+          else if ((/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(av) || /^\.\/bots\/[a-z0-9-]+\.jpg$/.test(av)) && av.length <= 120000) {
+            t.avatar = av; t.avatarCleared = false;
+          }
         }
       }
     }
