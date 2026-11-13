@@ -17,10 +17,10 @@ const CYCLE_MS = { daily: 86400000, weekly: 604800000, monthly: 2592000000, one_
 const CYCLE_LABEL = { daily: 'day', weekly: 'week', monthly: 'month', one_time: 'one-time' };
 
 const DEFAULT_TIERS = [
-  { id: 'low', name: 'Low-Level Grade Bot', accuracy: 45, priceUsd: 20, billingCycle: 'monthly', intervalMin: 0, enabled: true, sort: 1, blurb: 'Steady starter automation for small allocations.' },
-  { id: 'medium', name: 'Medium-Level Grade Bot', accuracy: 50, priceUsd: 50, billingCycle: 'monthly', intervalMin: 0, enabled: true, sort: 2, blurb: 'Balanced risk with more frequent simulated entries.' },
-  { id: 'premium', name: 'Premium-Level Grade Bot', accuracy: 70, priceUsd: 120, billingCycle: 'monthly', intervalMin: 0, enabled: true, sort: 3, blurb: 'Higher hit-rate for users scaling their capital.' },
-  { id: 'high', name: 'High-Performance Bot', accuracy: 85, priceUsd: 250, billingCycle: 'monthly', intervalMin: 0, enabled: true, sort: 4, blurb: 'Top tier accuracy for serious allocations.' }
+  { id: 'low', name: 'Low-Level Grade Bot', username: 'whale_scout', hot: false, accuracy: 45, priceUsd: 20, billingCycle: 'monthly', intervalMin: 0, enabled: true, sort: 1, blurb: 'Steady starter automation for small allocations.' },
+  { id: 'medium', name: 'Medium-Level Grade Bot', username: 'orca_trader', hot: true, accuracy: 50, priceUsd: 50, billingCycle: 'monthly', intervalMin: 0, enabled: true, sort: 2, blurb: 'Balanced risk with more frequent simulated entries.' },
+  { id: 'premium', name: 'Premium-Level Grade Bot', username: 'deep_blue', hot: true, accuracy: 70, priceUsd: 120, billingCycle: 'monthly', intervalMin: 0, enabled: true, sort: 3, blurb: 'Higher hit-rate for users scaling their capital.' },
+  { id: 'high', name: 'High-Performance Bot', username: 'apex_whale', hot: true, accuracy: 85, priceUsd: 250, billingCycle: 'monthly', intervalMin: 0, enabled: true, sort: 4, blurb: 'Top tier accuracy for serious allocations.' }
 ];
 
 const DEFAULT_SETTINGS = {
@@ -72,6 +72,14 @@ class BotService {
         }
       }
     }
+    for (const t of db.botTiers) {
+      if (!t) continue;
+      const def = DEFAULT_TIERS.find((x) => x.id === t.id) || {};
+      if (!t.username) { t.username = def.username || ('bot_' + t.id); changed = true; }
+      if (t.avatar === undefined) { t.avatar = def.avatar || null; changed = true; }
+      if (t.hot === undefined) { t.hot = !!def.hot; changed = true; }
+    }
+    if (!db.botCooldowns || typeof db.botCooldowns !== 'object') { db.botCooldowns = {}; changed = true; }
     db.botSettings = Object.assign({}, DEFAULT_SETTINGS, db.botSettings || {});
     if (!Array.isArray(db.botSubscriptions)) { db.botSubscriptions = []; changed = true; }
     if (!Array.isArray(db.botSessions)) { db.botSessions = []; changed = true; }
@@ -294,6 +302,16 @@ class BotService {
       stopReason: s.stopReason || '',
       intervalMin: interval,
       nextTradeAt: nextAt,
+      energy: Math.max(0, Math.min(100, Number(s.energy != null ? s.energy : 100))),
+      health: Math.max(0, Math.min(100, Number(s.health != null ? s.health : 100))),
+      fatigue: Math.round(100 - Math.max(0, Math.min(100, Number(s.energy != null ? s.energy : 100)))),
+      winCount: Number(s.winCount) || 0,
+      lossCount: Number(s.lossCount) || 0,
+      winRate: (Number(s.winCount) + Number(s.lossCount)) ? Math.round((Number(s.winCount) / (Number(s.winCount) + Number(s.lossCount))) * 100) : null,
+      healthHistory: (s.healthHistory || []).slice(-40),
+      cooldownUntil: (() => { const cd = (this.getDb().botCooldowns || {})[s.userId] || 0; return cd > Date.now() ? cd : null; })(),
+      tierUsername: tier ? (tier.username || null) : null,
+      tierAvatar: tier ? (tier.avatar || null) : null,
       trades: (s.trades || []).slice(0, 60)
     };
   }
@@ -355,6 +373,8 @@ class BotService {
     if (!tier) throw nextError('Subscribe to a bot tier first');
     if (!this.subFor(db, userId, tier.id)) throw nextError('Your subscription for this bot is not active');
 
+    const cdUntil = (db.botCooldowns || {})[userId] || 0;
+    if (cdUntil > Date.now()) throw nextError('This bot is cooling down until ' + new Date(cdUntil).toLocaleTimeString() + ' — rest lets it trade accurately again');
     const current = this.sessionFor(db, userId);
     if (current && current.status === 'running') throw nextError('Your bot is already running — stop it before starting a new session');
     if (current && current.status === 'paused') throw nextError('Your bot is paused — stop it to return the reserved capital first');
@@ -375,6 +395,7 @@ class BotService {
       allocatedCoins: allocated, poolCoins: allocated,
       startedAt: now, stoppedAt: null, lastTradeAt: now - interval * 60000,
       intervalMin: interval, totalProfitCoins: 0, totalLossCoins: 0,
+      energy: 100, health: 100, healthHistory: [], winCount: 0, lossCount: 0,
       trades: [], autoStopped: false
     };
     db.botSessions.unshift(session);
@@ -393,6 +414,18 @@ class BotService {
     return this.stopSession(db, session, String(opts.reason || 'Stopped by user'), 'bot-stop');
   }
 
+  cool(opts) {
+    const db = this.getDb && this.getDb();
+    if (!db) throw nextError('Database not ready');
+    const userId = String(opts.userId || '');
+    const session = this.sessionFor(db, userId);
+    if (!session) throw nextError('No active bot session');
+    const res = this.stopSession(db, session, 'Cooling down', 'bot-cool');
+    const cd = (db.botCooldowns || {})[userId] || null;
+    const mins = cd ? Math.max(1, Math.round((cd - Date.now()) / 60000)) : 0;
+    return Object.assign({}, res, { cooldownUntil: cd, cooldownMin: mins });
+  }
+
   stopSession(db, session, reason, source) {
     const u = (db.users || []).find((x) => x.id === session.userId);
     if (!u) throw nextError('User not found');
@@ -402,6 +435,14 @@ class BotService {
     session.status = 'stopped';
     session.stoppedAt = now;
     session.stopReason = reason;
+    if (/^(cooling|fatigued)/i.test(String(reason || ''))) {
+      const tier = this.tier(session.tierId) || {};
+      const mins = clamp(Math.round(40 - (Number(tier.accuracy) || 50) * 0.2), 15, 45);
+      db.botCooldowns = db.botCooldowns || {};
+      db.botCooldowns[session.userId] = now + mins * 60000;
+      session.cooldownUntil = db.botCooldowns[session.userId];
+      try { this.notify(db, session.userId, 'Bot cooling down', 'Resting for ' + mins + ' minutes, then it is ready to trade again.', 'clock'); } catch (e) {}
+    }
     session.poolCoins = returned;
     session.lastTradeAt = now;
     this.tx(db, session.userId, `Trading bot stopped · ${reason}`, returned, 'bot-return', {
@@ -470,6 +511,12 @@ class BotService {
         if (incoming.intervalMin != null) t.intervalMin = clamp(incoming.intervalMin, 0, 10080, t.intervalMin);
         if (incoming.enabled != null) t.enabled = !!incoming.enabled;
         if (incoming.blurb != null) t.blurb = String(incoming.blurb).slice(0, 140);
+        if (incoming.username != null) t.username = String(incoming.username).replace(/^@/, '').slice(0, 32);
+        if (incoming.hot != null) t.hot = !!incoming.hot;
+        if (incoming.avatar != null) {
+          const av = String(incoming.avatar);
+          t.avatar = (av === '' || /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(av)) && av.length <= 120000 ? (av || null) : t.avatar;
+        }
       }
     }
     if (opts.settings && typeof opts.settings === 'object') {
@@ -554,7 +601,9 @@ class BotService {
 
     const stake = Math.max(0.5, round(pool * (clamp(s.stakePct, 1, 100, 20) / 100), 2));
     const accuracy = clamp(tier.accuracy, 1, 100, 50);
-    const win = Math.random() * 100 < accuracy;
+    const energyBefore = Math.max(0, Math.min(100, Number(session.energy != null ? session.energy : 100)));
+    const effAccuracy = accuracy * (0.6 + 0.4 * (energyBefore / 100));
+    const win = Math.random() * 100 < effAccuracy;
     const move = win ? clamp(s.winPct, 0.1, 100, 4) : -clamp(s.lossPct, 0.1, 100, 6);
     const pnl = round(stake * (move / 100), 2);
     pool = Math.round((pool + pnl) * 100) / 100;
@@ -581,7 +630,21 @@ class BotService {
     if (win) session.totalProfitCoins = round((Number(session.totalProfitCoins) || 0) + pnl, 2);
     else session.totalLossCoins = round((Number(session.totalLossCoins) || 0) + Math.abs(pnl), 2);
     session.tradeCount = (Number(session.tradeCount) || 0) + 1;
+    if (win) session.winCount = (Number(session.winCount) || 0) + 1;
+    else session.lossCount = (Number(session.lossCount) || 0) + 1;
+    const durability = clamp(8 + ((accuracy - 40) * 0.55), 8, 42);
+    session.energy = Math.max(0, Math.round((energyBefore - (100 / durability)) * 100) / 100);
+    const allocatedNow = Math.max(0.01, Number(session.allocatedCoins) || 0.01);
+    const pnlPct = ((pool - allocatedNow) / allocatedNow) * 100;
+    const healthScore = Math.max(0, Math.min(100, Math.round((session.energy * 0.7) + (Math.max(0, Math.min(100, 50 + pnlPct * 1.5)) * 0.3))));
+    session.health = healthScore;
+    session.healthHistory = (session.healthHistory || []).concat([{ t: now, health: healthScore, energy: session.energy, pool }]).slice(-40);
 
+    if (Number(session.energy) <= 0) {
+      session.autoStopped = true;
+      try { this.stopSession(db, session, 'Fatigued — cooling down', 'bot-auto-stop'); } catch (e) { this.lastError = e.message; }
+      return true;
+    }
     const floor = Math.max(0.5, round((Number(session.allocatedCoins) || 0) * (clamp(s.minPoolPct, 1, 100, 10) / 100), 2));
     if (pool <= floor) {
       session.autoStopped = true;
