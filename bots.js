@@ -167,6 +167,20 @@ class BotService {
     };
   }
 
+  /* Runs every second so profit is secured as soon as it appears. */
+  autoSecureSweep() {
+    const db = this.getDb && this.getDb();
+    if (!db || !Array.isArray(db.trades)) return 0;
+    if (!this.market || typeof this.market.secureProfitTrade !== 'function') return 0;
+    let changed = 0;
+    for (const t of db.trades.slice()) {
+      if (!t || t.type !== 'live' || t.status !== 'Open') continue;
+      try { if (this.market.secureProfitTrade(t.userId, t.id) > 0) changed += 1; }
+      catch (e) { this.lastError = e.message; }
+    }
+    return changed;
+  }
+
   subscribeAutoSecure(opts) {
     const db = this.getDb && this.getDb();
     if (!db) throw nextError('Database not ready');
@@ -197,6 +211,7 @@ class BotService {
     this.notify(db, userId, 'Auto Secure activated',
       `The bot will secure available profit on your active trades, even while you are offline. Claim each secured profit from Orders.`, 'lock');
     this.changed('auto-secure-subscribe');
+    try { this.autoSecureSweep(); } catch (e) {}
     return { ok: true, autoSecure: this.autoSecureView(db, userId), balance: u.balance, subscription: sub };
   }
 
@@ -210,6 +225,7 @@ class BotService {
     sub.enabled = opts.enabled === undefined ? sub.enabled === false : !!opts.enabled;
     sub.toggledAt = Date.now();
     this.changed('auto-secure-toggle');
+    if (sub.enabled !== false) { try { this.autoSecureSweep(); } catch (e) {} }
     return { ok: true, autoSecure: this.autoSecureView(db, userId) };
   }
 
@@ -507,12 +523,7 @@ class BotService {
         changed = true;
       }
     }
-    if (this.market && typeof this.market.secureProfitTrade === 'function') {
-      for (const t of (db.trades || []).slice()) {
-        if (!t || t.type !== 'live' || t.status !== 'Open') continue;
-        try { if (this.market.secureProfitTrade(t.userId, t.id) > 0) changed = true; } catch (e) { this.lastError = e.message; }
-      }
-    }
+    if (this.autoSecureSweep() > 0) changed = true;
 
     /* 3 · advance running bots */
     for (const session of (db.botSessions || []).slice()) {
@@ -587,6 +598,11 @@ class BotService {
       try { this.tick(); } catch (e) { this.lastError = e.message; console.error('[bots] tick failed:', e.message); }
     }, 10000);
     if (this.timer.unref) this.timer.unref();
+    /* Auto Secure reacts on every tick, so profit is locked the moment it appears */
+    this.autoTimer = setInterval(() => {
+      try { this.autoSecureSweep(); } catch (e) { this.lastError = e.message; }
+    }, 1000);
+    if (this.autoTimer.unref) this.autoTimer.unref();
     setTimeout(() => { try { this.tick(); } catch (e) {} }, 4000);
     console.log('[bots] background trading worker started');
   }
@@ -594,7 +610,9 @@ class BotService {
   stopTimers() {
     this.running = false;
     if (this.timer) clearInterval(this.timer);
+    if (this.autoTimer) clearInterval(this.autoTimer);
     this.timer = null;
+    this.autoTimer = null;
   }
 }
 
