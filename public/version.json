@@ -1,8 +1,8 @@
 {
-  "version": "3.24.1",
-  "build": "2026-11-13T09:34:03Z",
+  "version": "3.24.2",
+  "build": "2026-11-13T09:50:56Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.24.1 - smooth animated chart ticks and admin-rate payout on capital + market gain.",
-  "releasedAt": "2026-11-13T09:34:03Z",
+  "notes": "WhaleChat 3.24.2 - explicit Rise/Fall direction semantics, direction-aware chart colours and profit-zone hints.",
+  "releasedAt": "2026-11-13T09:50:56Z",
   "minimum": "3.0.0"
 }
