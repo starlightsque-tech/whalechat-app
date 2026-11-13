@@ -65,7 +65,8 @@ const MODULES = [
   { file: 'assets-multi.js', marker: 'wc-assets-multi' },
   { file: 'market-live.js', marker: 'wc-market-live' },
   { file: 'demo-sellers.js', marker: 'wc-demo-sellers' },
-  { file: 'support.js', marker: 'wc-support' }
+  { file: 'support.js', marker: 'wc-support' },
+  { file: 'view-mode.js', marker: 'wc-view-mode' }
 ];
 try {
   let page = fs.readFileSync(APP, 'utf8');
