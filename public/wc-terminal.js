@@ -308,6 +308,10 @@
 .wt.th-deriv .wt-zoom button{color:#b9bec7}
 .wt.th-deriv .wt-zoom button:hover{background:#23272e;color:#fff}
 /* icon rail, top-left of the canvas */
+.wt .wt-noData{position:absolute;inset:0;z-index:4;display:none;align-items:center;justify-content:center;
+ text-align:center;padding:24px;font-size:12.5px;color:var(--dim);line-height:1.6;background:var(--chartbg,transparent)}
+.wt .wt-noData.on{display:flex}
+.wt .wt-noData b{display:block;color:var(--text);font-size:13.5px;margin-bottom:4px;font-weight:600}
 .wt .wt-tools{position:absolute;left:8px;top:8px;z-index:5;display:none;flex-direction:column;gap:2px;
  padding:3px;border-radius:7px;border:1px solid rgba(255,255,255,.07);background:rgba(20,20,20,.82);backdrop-filter:blur(6px)}
 .wt.th-deriv .wt-tools{display:flex}
@@ -701,6 +705,7 @@
               <button data-tool="alert" title="Alert">${TOOL_SVG.alert}</button>
               <button data-tool="shot" title="Save image">${TOOL_SVG.shot}</button>
             </div>
+            <div class="wt-noData" data-wt="noData"></div>
             <div class="wt-hud" data-wt="hud"></div>
             <div class="wt-tip" data-wt="tip"></div>
             <div class="wt-zoom">
@@ -786,6 +791,7 @@
       this.stage = this.$('stage');
       this.chartHost = this.$('chart');
       this.els = {
+        noData: this.$('noData'),
         price: this.$('price'), chg: this.$('chg'), sym: this.$('sym'), name: this.$('name'),
         tip: this.$('tip'), hud: this.$('hud'), legend: this.$('legend'),
         amount: this.$('amount'), qty: this.$('qty'), bt: this.$('buy'), sel: this.$('sell'),
@@ -1062,7 +1068,7 @@
       if ((!pts || !pts.length) && this.adapter && typeof this.adapter.history === 'function') {
         try { pts = await this.adapter.history(sym, tf); } catch (e) { pts = null; }
       }
-      if (!pts || !pts.length) {
+      if ((!pts || !pts.length) && !this.adapter) {
         const base = (this._universe().find((u) => u.ticker === sym) || {}).base || 100;
         const step = { '1m': 4, '5m': 10, '15m': 20, '1H': 45, '1D': 300 }[tf] || 10;
         pts = buildHistory(sym, base, step * 720, step);
@@ -1073,6 +1079,7 @@
       const clean = [];
       for (const p of pts) { if (!clean.length || p.time > clean[clean.length - 1].time) clean.push(p); else clean[clean.length - 1] = p; }
       this.points = clean;
+      this._paintNoData(!clean.length);
       this.sessionOpen = clean[0] ? clean[0].value : 0;
       this._stats = null;
       if (this.o.kind !== 'equity' && this.adapter && typeof this.adapter.stats === 'function') {
@@ -1101,6 +1108,7 @@
         this.area.setData(pts.map((p) => ({ time: p.time, value: p.value })));
         this._setTail();
       }
+      if (this.o.kind === 'equity') this._paintEquityMeta();
       if (this._shouldFit) { this.chart.timeScale().fitContent(); this._shouldFit = false; }
       else this.chart.timeScale().scrollToRealTime();
     }
@@ -1149,8 +1157,19 @@
       this._feedTimer = setTimeout(loop, 600);
     }
 
+    _paintNoData(show, msg) {
+      const n = this.els && this.els.noData;
+      if (!n) return;
+      if (show) {
+        n.innerHTML = msg || ('<div><b>Waiting for live Finnhub data…</b>' +
+          (this.adapter ? 'The chart draws as soon as real ticks arrive. No simulated prices are shown.' : 'Connect the data feed to start streaming.') + '</div>');
+        n.classList.add('on');
+      } else n.classList.remove('on');
+    }
+
     pushTick(tick) {
       if (this.destroyed || !this.chart) return;
+      this._paintNoData(false);
       const price = Number(tick && tick.price);
       if (!(price > 0)) return;
       const sec = Math.max(1, Math.floor(Number(tick.time) || Date.now() / 1000));
@@ -1221,7 +1240,7 @@
       const up = d >= 0;
       const th = THEMES[this.theme];
       const E = this.els;
-      E.price.textContent = this._fmtPrice(p);
+      E.price.textContent = p > 0 ? this._fmtPrice(p) : '—';
       E.price.style.color = this.dir > 0 ? th.up : this.dir < 0 ? th.down : 'var(--text)';
       E.chg.className = 'wt-chg ' + (up ? 'up' : 'down');
       E.chg.textContent = (up ? '▲ ' : '▼ ') + usd(Math.abs(d)) + ' (' + (up ? '+' : '−') + Math.abs(pct).toFixed(2) + '%)';
@@ -1252,6 +1271,32 @@
       add(p.entry, th.chart.lineNeutral || th.accent, 'ENTRY', 2);
       if (p.tp) add(p.tp, th.up, 'TP', 1);
       if (p.sl) add(p.sl, th.down, 'SL', 1);
+    }
+
+    _paintEquityMeta() {
+      const s = this.activeSeries();
+      if (!s || !this.adapter || typeof this.adapter.equityMeta !== 'function') return;
+      let meta = null;
+      try { meta = this.adapter.equityMeta(); } catch (e) { meta = null; }
+      if (!meta || !(meta.cost > 0)) return;
+      if (this._costLine) { try { s.removePriceLine(this._costLine); } catch (e) {} }
+      try {
+        this._costLine = s.createPriceLine({
+          price: meta.cost, color: THEMES[this.theme].chart.lineNeutral || '#787b86',
+          lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'INVESTED'
+        });
+      } catch (e) {}
+      const value = meta.value || this.lastPrice || 0;
+      const diff = value - meta.cost;
+      const pct = meta.cost ? (diff / meta.cost) * 100 : 0;
+      const th = THEMES[this.theme];
+      const col = diff >= 0 ? th.up : th.down;
+      const foot = this.els.foot;
+      if (foot) {
+        foot.innerHTML = 'Invested <b>' + usd(meta.cost) + '</b> · '
+          + '<b style="color:' + col + '">' + (diff >= 0 ? '+' : '−') + usd(Math.abs(diff))
+          + ' (' + (diff >= 0 ? '+' : '−') + Math.abs(pct).toFixed(2) + '%)</b>';
+      }
     }
 
     _paintPosition() {
