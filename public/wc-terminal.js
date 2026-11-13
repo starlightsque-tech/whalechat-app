@@ -458,7 +458,7 @@
       this.alias = Object.assign({}, (opts && opts.symbolMap) || {});   /* appTicker -> Finnhub symbol */
       this.reverse = {};
       Object.keys(this.alias).forEach((k) => { this.reverse[String(this.alias[k]).toUpperCase()] = k; });
-      this.maxBackoff = 30000;
+      this.maxBackoff = 60000;
       this.subs = new Map();          /* symbol -> Set(callback) */
       this.ws = null;
       this.status = 'connecting';
@@ -522,7 +522,9 @@
     _schedule(reason) {
       if (this._closed) return;
       this.attempt = Math.min(this.attempt + 1, 8);
-      const wait = Math.min(this.maxBackoff, 800 * Math.pow(1.7, this.attempt - 1)) + Math.random() * 500;
+      /* gentle on the free tier: 1.5s → 60s, jittered, and never faster than a
+         minute after several failures (Finnhub answers 429 on the handshake) */
+      const wait = Math.min(this.maxBackoff, 1500 * Math.pow(2, this.attempt - 1)) + Math.random() * 800;
       this._emit('reconnecting', { attempt: this.attempt, retryIn: Math.round(wait), reason });
       const t = setTimeout(() => { this._timers.delete(t); this._open(); }, wait);
       this._timers.add(t);
@@ -1131,6 +1133,8 @@
 
     /* ------------------------------------------------------------ live feed */
     _startFeed() {
+      /* the 60 s stale clock starts when the feed subscribes, not at epoch */
+      if (!this.lastTickAt) this.lastTickAt = Date.now();
       if (this.o.feed) {
         this._unsub = this.o.feed.subscribe(this.symbol, (tick) => this.pushTick(tick));
         this.o.feed.onStatus((st) => {
