@@ -198,7 +198,7 @@
         }
         if (restricted()) {
           document.body.classList.add('wc-portfolio-mode');
-          if (parts[0] === 'portfolio') { location.hash = '#/invest'; return; }
+          if (!parts[0] || parts[0] === 'portfolio') { location.hash = '#/invest'; return; }
           if (!allowedRoute(parts)) { location.hash = '#/invest'; return; }
         } else {
           document.body.classList.remove('wc-portfolio-mode');
