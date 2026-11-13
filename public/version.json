@@ -1,8 +1,8 @@
 {
-  "version": "3.24.2",
-  "build": "2026-11-13T09:50:56Z",
+  "version": "3.25.0",
+  "build": "2026-11-13T10:21:26Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.24.2 - explicit Rise/Fall direction semantics, direction-aware chart colours and profit-zone hints.",
-  "releasedAt": "2026-11-13T09:50:56Z",
+  "notes": "WhaleChat 3.25.0 - Auto Secure Take Profit bot tool: queues secured profit while offline for one-by-one claims.",
+  "releasedAt": "2026-11-13T10:21:26Z",
   "minimum": "3.0.0"
 }
