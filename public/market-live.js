@@ -298,6 +298,11 @@
   function positionFor(ticker) {
     return openPosition(ticker);
   }
+  function positionSide(pos) {
+    if (!pos) return 'long';
+    if (pos.direction) return pos.direction === 'FALL' ? 'short' : 'long';
+    return pos.side === 'short' ? 'short' : 'long';
+  }
 
   function fallbackData(ticker, tf) {
     let vals = [];
@@ -492,7 +497,7 @@
       await makeChart(host, {
         mode: 'stock', ticker, data,
         baseline: pos ? Number(pos.entryPrice) : Number(data[0].value),
-        side: pos ? pos.side : 'long'
+        side: positionSide(pos)
       });
     } catch (e) {
       MK.chartLoading = null;
@@ -585,7 +590,7 @@
     if (!q || !(q.price > 0)) return;
     const pos = positionFor(ticker);
     const targetBase = pos ? Number(pos.entryPrice) : c.defaultBase;
-    const targetSide = pos ? (pos.side === 'short' ? 'short' : 'long') : 'long';
+    const targetSide = positionSide(pos);
     if (Math.abs(targetBase - c.basePrice) > 0.000001 || targetSide !== c.side) {
       c.basePrice = targetBase;
       c.side = targetSide;
