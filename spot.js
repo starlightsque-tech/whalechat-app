@@ -67,6 +67,18 @@ class SpotService {
     return !!(s && s.paused);
   }
 
+  classOf(db, ticker) {
+    const s = this.stock(db, ticker);
+    return (s && s.assetClass) || 'us';
+  }
+
+  /** Admin-controlled asset-class visibility (Admin → Stocks → Asset classes). */
+  classEnabled(db, ticker) {
+    const inv = (db && db.invest) || {};
+    const classes = inv.classes || {};
+    return classes[this.classOf(db, ticker)] !== false;
+  }
+
   livePrice(ticker) {
     let q = null;
     try { q = this.getQuote(String(ticker || '').toUpperCase()); } catch (e) { q = null; }
@@ -171,6 +183,7 @@ class SpotService {
     const s = this.stock(db, ticker);
     if (!s) throw new Error('That stock is not listed');
     if (this.paused(db, ticker)) throw new Error(`${ticker} trading is paused by an administrator`);
+    if (!this.classEnabled(db, ticker)) throw new Error('This asset type is currently turned off by an administrator');
 
     const { live, pct, exec } = this.pricing(db, ticker);
     if (!(live > 0) || !(exec > 0)) throw new Error('Waiting for a live market price — try again in a moment');
