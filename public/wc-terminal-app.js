@@ -92,7 +92,9 @@
     const raw = (d && d.history && d.history[ticker]) || [];
     let pts = raw.map((p) => ({ time: Math.floor((Number(p.t) || 0) / 1000), value: Number(p.p) || 0 }))
       .filter((p) => p.time > 0 && p.value > 0);
-    if (pts.length < 40) {
+    const need = { '1m': 1800, '5m': 6 * 3600, '15m': 24 * 3600, '1H': 7 * 86400, '1D': 30 * 86400 }[tf] || 6 * 3600;
+    const span = pts.length > 1 ? pts[pts.length - 1].time - pts[0].time : 0;
+    if (pts.length < 120 || span < need * 0.35) {
       /* too thin to draw (no Finnhub candles, market closed or a just-booted
          server) — synthesise
          a drift-corrected walk so the tape still lands exactly on the live price */
