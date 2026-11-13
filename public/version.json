@@ -1,8 +1,8 @@
 {
-  "version": "3.23.3",
-  "build": "2026-11-13T08:58:26Z",
+  "version": "3.24.0",
+  "build": "2026-11-13T09:24:51Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.23.3 - bulk profit-rate assignment by market type (US, global, Forex, crypto) with inheritance for new stocks.",
-  "releasedAt": "2026-11-13T08:58:26Z",
+  "notes": "WhaleChat 3.24.0 - take-profit skims profit and keeps trades running, stop-trade button, smart TP/SL buttons, and bot equity on the portfolio chart.",
+  "releasedAt": "2026-11-13T09:24:51Z",
   "minimum": "3.0.0"
 }
