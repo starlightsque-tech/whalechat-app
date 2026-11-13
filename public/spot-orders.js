@@ -13,7 +13,10 @@
 
   function adminPct(t) {
     const s = (typeof INV !== 'undefined' && INV.stock) ? INV.stock(t) : null;
-    const n = Number(s && s.profitPct);
+    if (!s) return 0;
+    /* per-stock override, or the market-type rate set by the admin */
+    if (typeof INV.effectiveProfitPct === 'function') return INV.effectiveProfitPct(s) || 0;
+    const n = Number(s.profitPct);
     return Number.isFinite(n) && n > 0 ? n : 0;
   }
   function lockedRate(h, t) {
