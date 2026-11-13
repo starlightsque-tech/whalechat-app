@@ -771,6 +771,12 @@ async function api(req, res, pathname, query) {
     try { return json(res, 200, bots.stop(body)); }
     catch (e) { return json(res, 400, { ok: false, error: e.message }); }
   }
+  if (pathname === '/api/bots/cool' && req.method === 'POST') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    const body = await readBody(req);
+    try { return json(res, 200, bots.cool(body)); }
+    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
   if (pathname === '/api/bots/admin/config' && req.method === 'POST') {
     if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
     const body = await readBody(req);
