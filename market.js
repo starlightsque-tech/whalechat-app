@@ -25,6 +25,14 @@ const BASE_PRICES = {
   DIS: 112.44, V: 309.51, UBER: 74.21, AMZN: 206.74
 };
 
+const FALLBACK_EXTRA_PRICES = {
+  VOD_L: 8.45, SAP_DE: 238.5, '7203_T': 2510, SHOP_TO: 148.2,
+  EURUSD: 1.084, GBPUSD: 1.271, USDJPY: 155.2, XAUUSD: 2412,
+  BTCUSDT: 96250, ETHUSDT: 3480, SOLUSDT: 198, BNBUSDT: 612, XRPUSDT: 2.18,
+  MSFT: 438.2, GOOGL: 192.4, META: 585.1, NFLX: 912.3, AMD: 162.8,
+  PEP: 158.4, PLTR: 68.2, ARM: 138.5, SHOP: 118.4, HOOD: 48.6
+};
+
 const FALLBACK_DIVIDEND_YIELDS = {
   AAPL: 0.45, TSLA: 0, NVDA: 0.03, COIN: 0, MSTR: 0, MARA: 0, KO: 3.00, JPM: 2.20,
   NKE: 1.80, UNH: 1.50, AVGO: 1.20, WMT: 1.00, DIS: 0.80, V: 0.75, UBER: 0, AMZN: 0,
@@ -156,6 +164,9 @@ class MarketService {
     this.dividendFetched = 0;
     this.timers = [];
     this.settleLock = false;
+    this.seedBase = {};
+    this.lastSimAt = 0;
+    this.simTicks = 0;
   }
 
   /* ------------------------------- config ------------------------------- */
@@ -246,20 +257,100 @@ class MarketService {
     return out;
   }
 
+  fallbackBase(ticker) {
+    const t = String(ticker || '').toUpperCase();
+    if (BASE_PRICES[t]) return BASE_PRICES[t];
+    if (FALLBACK_EXTRA_PRICES[t]) return FALLBACK_EXTRA_PRICES[t];
+    /* deterministic synthetic base for any custom symbol so it always has data */
+    let h = 2166136261;
+    for (let i = 0; i < t.length; i++) { h ^= t.charCodeAt(i); h = Math.imul(h, 16777619); }
+    const n = (h >>> 0) % 46000;
+    return Math.round((20 + (n / 100)) * 100) / 100;
+  }
+
+  /* build a believable intraday history tail so the trade chart is never flat */
+  seedHistory(ticker, price, now) {
+    const arr = this.history[ticker];
+    if (arr && arr.length >= 30) return;
+    const base = Number(price) > 0 ? Number(price) : this.fallbackBase(ticker);
+    if (!(base > 0)) return;
+    const a = this.assetList().find((x) => x.ticker === ticker);
+    const cls = (a && a.assetClass) || 'us';
+    const vol = cls === 'crypto' ? 0.002 : cls === 'forex' ? 0.0006 : 0.0016;
+    const pts = [];
+    let p = base;
+    const step = 60000;
+    for (let i = 179; i >= 0; i--) {
+      const shock = (Math.random() - 0.5) * 2 * vol;
+      p = Math.max(base * 0.8, Math.min(base * 1.2, p / (1 + shock)));
+      pts.push({ t: now - i * step, p: round(p, 4), real: false, source: 'simulated' });
+    }
+    pts[pts.length - 1].p = round(base, 4);
+    this.history[ticker] = pts;
+    this.seedBase[ticker] = base;
+  }
+
   seedBaseQuotes() {
     const now = Date.now();
     this.refreshAssets();
+    const db = this.getDb && this.getDb();
     this.assetList().forEach((a) => {
       if (this.quotes[a.ticker]) return;
-      const price = Number(a.price) || 0;
+      const base = this.fallbackBase(a.ticker);
+      const price = Number(a.price) > 0 ? Number(a.price) : base;
       this.quotes[a.ticker] = {
         ticker: a.ticker, price, prevClose: price, open: price,
         dayHigh: price, dayLow: price,
         changePct: 0, changeUsd: 0, vol: 0,
         dir: 0, updatedAt: now, source: 'cached', real: false
       };
-      if (price > 0) this.recordHistory(a.ticker, price, now, 'cached', false);
+      if (price > 0) {
+        this.recordHistory(a.ticker, price, now, 'cached', false);
+        this.seedHistory(a.ticker, price, now);
+        this.seedBase[a.ticker] = price;
+        /* make sure a catalogue row with no price still has data for the app */
+        const rec = db && Array.isArray(db.stocks) ? db.stocks.find((x) => x && String(x.ticker).toUpperCase() === a.ticker) : null;
+        if (rec && !(Number(rec.price) > 0)) { rec.price = price; if (!(Number(rec.prevClose) > 0)) rec.prevClose = price; }
+      }
     });
+  }
+
+  /* 24/7 fallback movement for symbols without a fresh Finnhub tick */
+  simulateTick() {
+    if (this.stopped) return;
+    const now = Date.now();
+    this.refreshAssets();
+    let moved = 0;
+    this.assetList().forEach((a) => {
+      const lastReal = this.lastRealTime[a.ticker] || 0;
+      if (now - lastReal < 12000) return;                    /* real ticks are flowing */
+      let q = this.quotes[a.ticker];
+      if (!q || !(Number(q.price) > 0)) {
+        const base = this.fallbackBase(a.ticker);
+        this.writeQuote(a.ticker, base, { prevClose: base, open: base, source: 'simulated', real: false });
+        this.seedHistory(a.ticker, base, now);
+        this.seedBase[a.ticker] = base;
+        moved++;
+        return;
+      }
+      const base = this.seedBase[a.ticker] || this.fallbackBase(a.ticker) || q.price;
+      const cls = a.assetClass || 'us';
+      const vol = cls === 'crypto' ? 0.0032 : cls === 'forex' ? 0.00055 : cls === 'global' ? 0.0018 : 0.0015;
+      const shock = (Math.random() - 0.5) * 2 * vol;
+      const drift = (base - q.price) / base * 0.0018;
+      const next = Math.max(base * 0.55, Math.min(base * 1.8, q.price * (1 + shock + drift)));
+      const addVol = cls === 'crypto' ? Math.floor(Math.random() * 9000) : cls === 'forex' ? Math.floor(Math.random() * 120000) : Math.floor(Math.random() * 30000);
+      this.writeQuote(a.ticker, next, {
+        prevClose: q.prevClose, open: q.open, vol: (Number(q.vol) || 0) + addVol,
+        source: 'simulated', real: false
+      });
+      moved++;
+    });
+    if (moved) {
+      this.lastSimAt = now;
+      this.simTicks = (Number(this.simTicks) || 0) + moved;
+      this._settleSoon();
+    }
   }
 
   async seedAsset(ticker) {
@@ -296,6 +387,7 @@ class MarketService {
     q.changeUsd = round(q.price - q.prevClose, 4);
     q.changePct = q.prevClose ? round((q.changeUsd / q.prevClose) * 100, 4) : 0;
     this.quotes[ticker] = q;
+    if (meta && meta.real) this.seedBase[ticker] = q.price;
     this.lastTickAt = now;
     this.recordHistory(ticker, q.price, now, q.source, q.real);
     if (q.real) { this.lastReal[ticker] = q.price; this.lastRealTime[ticker] = now; this.lastRealAt = now; }
@@ -599,8 +691,11 @@ class MarketService {
   }
 
   notice() {
-    if (this.config.mode === 'hybrid' && this.config.apiKey) return 'Live market data via Finnhub';
-    return 'Connect Finnhub in Admin → Markets';
+    const sim = this.lastSimAt && Date.now() - this.lastSimAt < 8000;
+    if (this.config.mode === 'hybrid' && this.config.apiKey) {
+      return sim ? 'Live Finnhub with 24/7 simulated fallback where ticks are stale' : 'Live market data via Finnhub';
+    }
+    return '24/7 simulated market mode — prices move for every stock';
   }
 
   source() {
@@ -624,6 +719,8 @@ class MarketService {
       lastWsTickAt: this.lastWsTickAt || null,
       rateLimitedUntil: this.rateLimitedUntil > Date.now() ? this.rateLimitedUntil : null,
       lastError: this.lastError || '',
+      simulated: !!(this.lastSimAt && Date.now() - this.lastSimAt < 8000),
+      simulatedTicks: this.simTicks || 0,
       tickers: this.assetList().length,
       assetCounts: this.assetClasses(),
       unpriced: this.assetList().filter((a) => !(this.quotes[a.ticker] && this.quotes[a.ticker].price > 0)).length,
@@ -1198,6 +1295,8 @@ class MarketService {
     this.seedBaseQuotes();
     /* TP/SL checks run every second so a level hit is settled immediately */
     this.timers.push(setInterval(() => { try { this.settleTrades(); } catch (e) { this.lastError = e.message; } }, 1000));
+    /* 24/7 chart movement when a symbol has no fresh real print */
+    this.timers.push(setInterval(() => { try { this.simulateTick(); } catch (e) { this.lastError = e.message; } }, 2000));
     this.timers.push(setInterval(() => {
       try {
         if (this.config.mode === 'hybrid' && this.config.apiKey) this.pollCycle();
