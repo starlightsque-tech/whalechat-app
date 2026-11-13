@@ -193,8 +193,9 @@ chart, portfolio performance — subscribes through it:
 * 180 s stale watchdog rebuilds a wedged/quiet socket (market closed)
 * full teardown on `beforeunload` and per-terminal unsubscribe on unmount
 
-`symbolMap` translates app tickers to Finnhub symbols (e.g. `BTCUSD → BINANCE:BTCUSDT`), so
-crypto/forex assets stream on the same socket.
+`symbolMap` translates app tickers to Finnhub symbols (e.g. `BTCUSDT → BINANCE:BTCUSDT`), so
+crypto/forex assets stream on the same socket. The terminal header lists the app's real tickers and
+picking one navigates to that stock page, so the chart, the page and the socket always agree.
 
 **Data + orders.** With the adapter (`wc-terminal-app.js`) the terminal backfills from
 `GET /api/market/history`, streams ticks from the direct Finnhub socket above, buys through
