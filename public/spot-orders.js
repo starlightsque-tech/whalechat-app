@@ -329,15 +329,25 @@
       const q = qFor(ticker);
       openModal(modalShell('TP / SL · ' + label(ticker), `
         <div class="tiny muted" style="margin-bottom:10px">Live price ${q ? px(ticker, q.price) : '—'}. TP must be above, SL below.</div>
-        <div class="field"><label class="label">Take Profit price</label>
-          <input class="input" id="spotEditTp" type="number" step="0.01" value="${Number(h.takeProfitPrice) > 0 ? h.takeProfitPrice : ''}" placeholder="optional"/></div>
-        <div class="field"><label class="label">Stop Loss price</label>
-          <input class="input" id="spotEditSl" type="number" step="0.01" value="${Number(h.stopLossPrice) > 0 ? h.stopLossPrice : ''}" placeholder="optional"/></div>`,
+        <div class="field"><label class="label between"><span>Take Profit price</span>
+            <span class="tiny muted" style="display:flex;gap:4px;align-items:center">on <input type="checkbox" id="spotEditTpOn" ${Number(h.takeProfitPrice) > 0 ? 'checked' : ''} style="accent-color:var(--accent)"/></span></label>
+          <input class="input" id="spotEditTp" type="number" step="0.01" value="${Number(h.takeProfitPrice) > 0 ? h.takeProfitPrice : ''}" placeholder="optional" ${Number(h.takeProfitPrice) > 0 ? '' : 'disabled'}/></div>
+        <div class="field"><label class="label between"><span>Stop Loss price</span>
+            <span class="tiny muted" style="display:flex;gap:4px;align-items:center">on <input type="checkbox" id="spotEditSlOn" ${Number(h.stopLossPrice) > 0 ? 'checked' : ''} style="accent-color:var(--accent)"/></span></label>
+          <input class="input" id="spotEditSl" type="number" step="0.01" value="${Number(h.stopLossPrice) > 0 ? h.stopLossPrice : ''}" placeholder="optional" ${Number(h.stopLossPrice) > 0 ? '' : 'disabled'}/></div>`,
         `<button class="btn btn-ghost" data-close style="flex:1">Cancel</button>
          <button class="btn btn-primary" id="spotTpSave" style="flex:1">Save</button>`), { locked: false });
+      [['spotEditTpOn', 'spotEditTp'], ['spotEditSlOn', 'spotEditSl']].forEach(([cbId, inId]) => {
+        const cb = document.getElementById(cbId);
+        const input = document.getElementById(inId);
+        if (!cb || !input) return;
+        cb.addEventListener('change', () => { input.disabled = !cb.checked; if (!cb.checked) input.value = ''; });
+      });
       document.getElementById('spotTpSave').onclick = async () => {
-        const tp = Number(document.getElementById('spotEditTp').value) || 0;
-        const sl = Number(document.getElementById('spotEditSl').value) || 0;
+        const tpOn = document.getElementById('spotEditTpOn');
+        const slOn = document.getElementById('spotEditSlOn');
+        const tp = (tpOn && !tpOn.checked) ? 0 : Number(document.getElementById('spotEditTp').value) || 0;
+        const sl = (slOn && !slOn.checked) ? 0 : Number(document.getElementById('spotEditSl').value) || 0;
         try {
           const r = await apiJSON('/api/market/spot/tpsl', { method: 'POST', body: JSON.stringify({ userId: me().id, ticker, tpPrice: tp, slPrice: sl }) }, 20000);
           if (!r.res || !r.res.ok || !r.data || !r.data.ok) return tmsg((r.data && r.data.error) || 'Update failed', 'err');
