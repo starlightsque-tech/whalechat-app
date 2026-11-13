@@ -204,7 +204,7 @@
     if (live > 0 && clean.length) {
       const last = clean[clean.length - 1].value;
       if (last > 0 && Math.abs(live / last - 1) > 0.0005) {
-        const k = Math.min(24, clean.length);
+        const k = Math.min(70, clean.length);
         const factor = live / last;
         for (let i = 0; i < k; i++) {
           const w = (i + 1) / k;
@@ -342,6 +342,11 @@
       host.appendChild(wrap);
       host.setAttribute('data-wc-terminal', '1');
       host.setAttribute('data-wc-kind', spec.kind);
+      const card = host.closest('.inv-chartcard');
+      if (card) {
+        card.querySelectorAll('.inv-seg').forEach((n) => { n.style.display = 'none'; });
+        card.querySelectorAll('[data-market-notice]').forEach((n) => { n.style.display = 'none'; });
+      }
       ['data-chart', 'data-lt-live-chart', 'data-lt-tf', 'data-lt-mode', 'data-ltd-chart'].forEach((a) => host.removeAttribute(a));
 
       const opts = {
