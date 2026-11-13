@@ -268,6 +268,10 @@ function shellHTML(inner, opts = {}) {
       <div class="side-brand">${brandMark(34)}</div>
       ${navHTML(false)}
       <div class="side-foot">
+        <button class="nav-item" data-act="view-toggle" data-view-toggle>
+          <span data-view-icon>${ic(((window.WC_VIEW && WC_VIEW.mode) || 'desktop') === 'desktop' ? 'smartphone' : 'monitor', 18)}</span>
+          <span data-view-label>Switch to ${((window.WC_VIEW && WC_VIEW.mode) || 'desktop') === 'desktop' ? 'mobile' : 'desktop'} view</span>
+        </button>
         <button class="nav-item" data-theme-toggle>${ic(document.documentElement.getAttribute('data-theme') === 'dark' ? 'sun' : 'moon', 18)}<span>${document.documentElement.getAttribute('data-theme') === 'dark' ? 'Light mode' : 'Dark mode'}</span></button>
         <div class="side-user" data-nav="#/profile">
           ${avatarHTML(u, 'sm')}
@@ -292,6 +296,7 @@ function shellHTML(inner, opts = {}) {
           <button class="btn-icon" data-nav="#/notifications" title="Notifications" style="position:relative">${ic('bell', 18)}
             ${nn ? `<span style="position:absolute;top:-4px;right:-4px;background:var(--danger);color:#fff;font-size:9px;min-width:16px;height:16px;border-radius:99px;display:flex;align-items:center;justify-content:center;padding:0 4px">${nn > 9 ? '9+' : nn}</span>` : ''}</button>
           <button class="btn-icon hide-desktop" data-theme-toggle title="Theme">${ic(document.documentElement.getAttribute('data-theme') === 'dark' ? 'sun' : 'moon', 18)}</button>
+          <button class="btn-icon" data-act="view-toggle" data-view-toggle title="Switch to ${((window.WC_VIEW && WC_VIEW.mode) || 'desktop') === 'desktop' ? 'mobile' : 'desktop'} view">${ic(((window.WC_VIEW && WC_VIEW.mode) || 'desktop') === 'desktop' ? 'smartphone' : 'monitor', 18)}</button>
           <button class="btn-icon" data-nav="#/profile" title="Profile" style="padding:0;overflow:hidden">${u.avatar ? `<img src="${u.avatar}" style="width:100%;height:100%;object-fit:cover"/>` : `<span style="font-weight:700;font-size:13px;color:var(--accent)">${esc(initials(u.fullName))}</span>`}</button>
         </div>
       </header>
