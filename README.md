@@ -1,4 +1,4 @@
-# WhaleChat 3.23.0 — web app + mobile apps
+# WhaleChat 3.23.1 — web app + mobile apps
 
 WhaleChat is a social + marketplace + wallet product built as a single-page app with a
 Node sync server and native Android/iOS shells.
@@ -94,16 +94,19 @@ Every listed stock has **two independent flows** on the same live Finnhub quote:
 `POST /api/market/spot/buy` accepts `userId`, `ticker` and **one** of
 `amountCoins` (WC), `amountUsd`, or `shares`, plus optional `tpPrice` / `slPrice`.
 
-* Execution price is the current live Finnhub quote (plus the per-stock admin margin below).
+* Execution price is the current live Finnhub quote — **no markup**.
+* The admin profit rate for the stock is **locked on the position at purchase**.
 * The total cost is deducted from the wallet in the same synchronous step that stores the
   position, so a failed request can never leave a free position behind.
 * A position records `Symbol`, `Entry Price`, `Quantity`, `Invested Capital`,
-  `Take Profit Price` and `Stop Loss Price` in `db.holdings` (`kind: "spot"`).
+  `Profit Rate`, `Take Profit Price` and `Stop Loss Price` in `db.holdings` (`kind: "spot"`).
 * Every buy is written to `db.trades` (`type: "spot"`, `status: "Completed"`).
 
-`POST /api/market/spot/sell` with `userId` + `ticker` closes the position at the current
-live price: `payout WC = quantity × live USD ÷ 0.50` (1 WC = $0.50). The payout is
-credited to the wallet and the sell is written to Order History (`#/invest/orders`).
+`POST /api/market/spot/sell` with `userId` + `ticker` closes the position and pays the
+locked rate: `payout WC = invested capital + (invested capital × profit rate ÷ 100)`.
+The payout is credited to the wallet and the sell is written to Order History
+(`#/invest/orders`). Live Finnhub prices are shown on screen and drive TP/SL triggers,
+but they do not change the payout.
 
 `POST /api/market/spot/tpsl` updates or clears (`0`) the TP/SL levels on an open position.
 
@@ -111,20 +114,24 @@ credited to the wallet and the sell is written to Order History (`#/invest/order
 
 `spot.js` runs a 1-second worker:
 
-* **Take Profit** — `live price >= takeProfitPrice` → market sell.
-* **Stop Loss** — `live price <= stopLossPrice` → market sell.
+* **Take Profit** — `live price >= takeProfitPrice` → close position.
+* **Stop Loss** — `live price <= stopLossPrice` → close position.
+
+Either exit pays the same locked admin profit rate — the live price only decides *when*
+the position closes.
 
 The sell path is a **fully synchronous critical section**: it re-reads the position,
 removes (or trims) it, then credits the wallet. A manual sell racing the TP/SL worker
 therefore cannot double-credit — the loser sees `No open position`. Notifications and
 transaction records are created for every automated exit.
 
-### Admin profit margin per stock
+### Admin profit rate per stock
 
 Admin → **Stocks** → the **%** button (or Add/Edit stock) sets `profitPct` per stock
-(0–100%). It is added to the **live Finnhub price on buys** — the platform's profit on
-that stock — while every chart, quote, TP/SL check and sell keeps using the raw live
-market price. Finnhub remains the only price source for all real stocks.
+(0–500%). The rate is locked when a user buys and paid exactly on close:
+`payout = invested + invested × rate`. Every chart, quote and TP/SL check keeps using the
+raw live Finnhub market price — the live feed is display/trigger only and real stocks are
+never altered. Rate changes apply to new positions; open positions keep their locked rate.
 
 ### Trading bots (restored)
 
