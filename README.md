@@ -1,4 +1,4 @@
-# WhaleChat 3.24.0 — web app + mobile apps
+# WhaleChat 3.24.1 — web app + mobile apps
 
 WhaleChat is a social + marketplace + wallet product built as a single-page app with a
 Node sync server and native Android/iOS shells.
@@ -103,10 +103,13 @@ Every listed stock has **two independent flows** on the same live Finnhub quote:
 * Every buy is written to `db.trades` (`type: "spot"`, `status: "Completed"`).
 
 `POST /api/market/spot/sell` with `userId` + `ticker` closes the position and pays the
-locked rate: `payout WC = invested capital + (invested capital × profit rate ÷ 100)`.
+locked rate and the live market gain:
+`profit payout = (invested capital + market gain) × profit rate ÷ 100`, then
+`credit = invested capital + profit payout`. Example: capital 100 WC, market gain 1.2 WC,
+rate 10% → profit 10.12 WC, total credit 110.12 WC.
+
 The payout is credited to the wallet and the sell is written to Order History
-(`#/invest/orders`). Live Finnhub prices are shown on screen and drive TP/SL triggers,
-but they do not change the payout.
+(`#/invest/orders`). Finnhub live prices drive the market gain and TP/SL triggers.
 
 `POST /api/market/spot/tpsl` updates or clears (`0`) the TP/SL levels on an open position.
 
@@ -180,8 +183,8 @@ server enforce the same set immediately.
 
 Admin → **Stocks** → the **%** button (or Add/Edit stock) sets `profitPct` per stock
 (0–500%). The rate is locked when a user buys and paid exactly on close:
-`payout = invested + invested × rate`. Every chart, quote and TP/SL check keeps using the
-raw live Finnhub market price — the live feed is display/trigger only and real stocks are
+`profit = (capital + market gain) × rate`, paid on top of the returned capital. Every
+chart, quote and TP/SL check keeps using the raw live Finnhub market price — the live feed is display/trigger only and real stocks are
 never altered. Rate changes apply to new positions; open positions keep their locked rate.
 
 ### Trading bots (restored)
@@ -208,6 +211,14 @@ PORT=8091 DATA_DIR=/tmp/wcdata node server.js
 
 The backend exposes `/api/market/spot/positions?userId=…` for a quick position/worker
 status check, and `/api/health` reports the market feed and service state.
+
+### Smooth live charts (3.24.1)
+
+The backend quote poll arrives every ~2.5 s. Instead of snapping, the app now animates each
+displayed price from the previous tick to the new tick over an 850 ms ease-out window. The
+last point of the active lightweight-chart (stock chart and portfolio chart) is updated in
+place, and price/percentage labels are repainted at ~10 fps, so the trade view moves
+smoothly while server settlement and TP/SL continue to use the authoritative quote.
 
 ## Run locally
 
