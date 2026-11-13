@@ -271,6 +271,11 @@
         </div>
         ${statusBadge(sess)}
       </div>
+      ${running ? `<div class="row" style="gap:8px;margin-top:7px;flex-wrap:wrap">
+        <span class="tiny ${Number(sess.profitCoins) >= 0 ? 'up' : 'down'}"><b>${Number(sess.profitCoins) >= 0 ? '+' : '−'}${num(Math.abs(Number(sess.profitCoins) || 0))} WC</b> bot P/L</span>
+        <span class="tiny muted">${num(sess.tradeCount)} trade${Number(sess.tradeCount) === 1 ? '' : 's'}</span>
+        ${sess.trades && sess.trades.length ? `<span class="tiny muted">last ${escB(sess.trades[0].ticker || '')} <b class="${Number(sess.trades[0].pnlCoins) >= 0 ? 'up' : 'down'}">${Number(sess.trades[0].pnlCoins) >= 0 ? '+' : '−'}${num(Math.abs(Number(sess.trades[0].pnlCoins) || 0))} WC</b></span>` : ''}
+      </div>` : ''}
       <div class="tiny" style="margin-top:8px;color:var(--accent);font-weight:650">Open Trading Bots →</div>
     </a>`;
   }
@@ -542,6 +547,18 @@
       }
     }, 200);
     setInterval(paintCountdown, 1000);
+    /* keep the main Invest dashboard's portfolio chart in sync with the bot */
+    setInterval(async () => {
+      if (document.hidden) return;
+      const h = location.hash || '';
+      if (!h.startsWith('#/invest') || h.startsWith('#/invest/bots') || h.startsWith('#/invest/shares')) return;
+      const snap = (st) => st && st.session ? [st.session.id, st.session.poolCoins, st.session.tradeCount, st.session.status].join('|') : '';
+      const before = snap(B.state);
+      await load(true);
+      const after = snap(B.state);
+      if (before === after) return;
+      try { if (typeof render === 'function') render(); } catch (e) {}
+    }, 8000);
     /* live refresh while the bot page is open */
     setInterval(async () => {
       if (!onBotsPage() || document.hidden) return;
