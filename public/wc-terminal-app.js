@@ -238,7 +238,8 @@
       return {
         side: 'long', entry: Number(h.avgPrice) || price(ticker),
         qty: Number(h.shares) || 0, amountUsd: (Number(h.shares) || 0) * (Number(h.avgPrice) || 0),
-        tp: Number(h.tpPrice) || 0, sl: Number(h.slPrice) || 0
+        tp: Number(h.takeProfitPrice || h.tpPrice) || 0,
+        sl: Number(h.stopLossPrice || h.slPrice) || 0
       };
     } catch (e) { return null; }
   }
