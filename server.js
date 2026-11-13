@@ -642,6 +642,30 @@ async function api(req, res, pathname, query) {
     const sent = await sendPush(body.userId, { title: body.title || 'WhaleChat', body: body.body || 'Push notifications are working on this device 🐋', link: body.link || '#/notifications', tag: 'wc-test' });
     return json(res, 200, { ok: true, sent });
   }
+  // --- live trades: manual stop / take loss (server-authoritative close) ---
+  if (pathname === '/api/market/trade/close' && req.method === 'POST') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    const body = await readBody(req);
+    const owner = (store.db.users || []).find((u) => u && u.id === body.userId);
+    if (!owner) return json(res, 400, { ok: false, error: 'User not found' });
+    const action = String(body.action || 'stop');
+    const reason = action === 'sl' ? 'Stop Loss Hit' : 'Stopped by user';
+    try {
+      return json(res, 200, market.closeTradeManual(String(body.userId), String(body.tradeId || ''), reason));
+    } catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+
+  // --- live trades: manual take profit skims profit and keeps running ---
+  if (pathname === '/api/market/trade/take-profit' && req.method === 'POST') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    const body = await readBody(req);
+    const owner = (store.db.users || []).find((u) => u && u.id === body.userId);
+    if (!owner) return json(res, 400, { ok: false, error: 'User not found' });
+    try {
+      return json(res, 200, market.takeProfitTrade(String(body.userId), String(body.tradeId || '')));
+    } catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+
   // --- spot stock orders (authoritative, wallet + TP/SL in one place) ---
   if (pathname === '/api/market/spot/buy' && req.method === 'POST') {
     if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
