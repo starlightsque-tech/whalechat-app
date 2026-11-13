@@ -1080,6 +1080,10 @@
       for (const p of pts) { if (!clean.length || p.time > clean[clean.length - 1].time) clean.push(p); else clean[clean.length - 1] = p; }
       this.points = clean;
       this._paintNoData(!clean.length);
+      /* first paint, or a short real history: fit the data instead of leaving
+         it pinned to the right edge with the default bar spacing */
+      this._shouldFit = !this._fitted || clean.length < 120;
+      this._fitted = true;
       this.sessionOpen = clean[0] ? clean[0].value : 0;
       this._stats = null;
       if (this.o.kind !== 'equity' && this.adapter && typeof this.adapter.stats === 'function') {
