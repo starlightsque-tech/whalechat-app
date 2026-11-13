@@ -308,10 +308,13 @@
 .wt.th-deriv .wt-zoom button{color:#b9bec7}
 .wt.th-deriv .wt-zoom button:hover{background:#23272e;color:#fff}
 /* icon rail, top-left of the canvas */
-.wt .wt-noData{position:absolute;inset:0;z-index:4;display:none;align-items:center;justify-content:center;
- text-align:center;padding:24px;font-size:12.5px;color:var(--dim);line-height:1.6;background:var(--chartbg,transparent)}
-.wt .wt-noData.on{display:flex}
-.wt .wt-noData b{display:block;color:var(--text);font-size:13.5px;margin-bottom:4px;font-weight:600}
+.wt .wt-noData{position:absolute;left:50%;bottom:56px;transform:translateX(-50%);z-index:4;display:none;
+ max-width:min(440px,calc(100% - 40px));padding:11px 14px;border-radius:10px;text-align:left;
+ font-size:12px;color:#c3c7cf;line-height:1.55;background:rgba(20,22,26,.94);
+ border:1px solid rgba(224,179,65,.32);box-shadow:0 16px 40px rgba(0,0,0,.45);backdrop-filter:blur(8px)}
+.wt .wt-noData.on{display:block}
+.wt .wt-noData b{display:block;color:#e0b341;font-size:12.5px;margin-bottom:3px;font-weight:700}
+.wt.th-deriv .wt-noData{background:rgba(16,16,16,.96)}
 .wt .wt-tools{position:absolute;left:8px;top:8px;z-index:5;display:none;flex-direction:column;gap:2px;
  padding:3px;border-radius:7px;border:1px solid rgba(255,255,255,.07);background:rgba(20,20,20,.82);backdrop-filter:blur(6px)}
 .wt.th-deriv .wt-tools{display:flex}
@@ -644,6 +647,7 @@
       this.points = [];
       this.lastPrice = 0;
       this.prevPrice = 0;
+      this.lastTickAt = 0;
       this.sessionOpen = 0;
       this.dir = 1;
       this.position = null;         /* { side, amountUsd, entry, qty, tp, sl, openedAt } */
@@ -1000,6 +1004,7 @@
         await this._loadHistory();
         this._startFeed();
         this._resize();
+        this._staleTimer = setInterval(() => this._checkStale(), 5000);
       } catch (e) {
         this.chartHost.innerHTML = '<div style="padding:24px;color:#8b949e;font-size:12px">Chart engine could not load: ' + String(e.message) + '</div>';
       }
@@ -1161,6 +1166,22 @@
       this._feedTimer = setTimeout(loop, 600);
     }
 
+    /* No real quote for 60 s (feed died, market closed, socket wedged) → park the
+       canvas in the waiting state instead of showing a frozen line. */
+    _checkStale() {
+      if (this.destroyed) return;
+      if (!this.adapter && !this.o.feed) return;
+      const age = Date.now() - (this.lastTickAt || 0);
+      if (age > 60000) {
+        const secs = Math.round(age / 1000);
+        this._paintNoData(true, '<div><b>No live quote for ' + secs + 's</b>' +
+          'The feed reconnects automatically. Candle history stays visible from the last real ticks.</div>');
+        this.setFeedStatus('stale · ' + secs + 's', 'sim');
+      } else if (age < 15000 && this.els.noData && this.els.noData.classList.contains('on') && this.points.length) {
+        this._paintNoData(false);
+      }
+    }
+
     _paintNoData(show, msg) {
       const n = this.els && this.els.noData;
       if (!n) return;
@@ -1174,6 +1195,7 @@
     pushTick(tick) {
       if (this.destroyed || !this.chart) return;
       this._paintNoData(false);
+      this.lastTickAt = Date.now();
       const price = Number(tick && tick.price);
       if (!(price > 0)) return;
       const sec = Math.max(1, Math.floor(Number(tick.time) || Date.now() / 1000));
@@ -1570,6 +1592,7 @@
       this.destroyed = true;
       clearTimeout(this._feedTimer);
       clearInterval(this._eqTimer);
+      clearInterval(this._staleTimer);
       if (typeof this._unsub === 'function') { try { this._unsub(); } catch (e) {} }
       if (typeof this._unsubStatus === 'function') { try { this._unsubStatus(); } catch (e) {} }
       try { this._ro.disconnect(); } catch (e) {}
