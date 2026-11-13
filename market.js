@@ -708,6 +708,8 @@ class MarketService {
 
   notice() {
     if (this.config.mode !== 'hybrid' || !this.config.apiKey) return 'Live prices unavailable — connect Finnhub in Admin → Markets';
+    const fresh = this.lastRealAt && Date.now() - this.lastRealAt < 90000;
+    if (fresh) return 'Live market data via Finnhub';
     if (Date.now() < this.rateLimitedUntil) return 'Finnhub rate limit — real prices resume shortly';
     if (!usMarketOpen()) return 'Market closed — showing the last real Finnhub prices';
     return 'Live market data via Finnhub';
