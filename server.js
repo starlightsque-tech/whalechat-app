@@ -25,19 +25,6 @@ const market = new MarketService({
   persist: () => persistNow(),
   broadcast: (event, data) => { try { broadcast(event, data); } catch (e) {} }
 });
-const { BotService } = require('./bots');
-const bots = new BotService({
-  getDb: () => store.db,
-  persist: () => persistNow(),
-  broadcast: (event, data) => { try { broadcast(event, data); } catch (e) {} },
-  getQuote: (ticker) => market.spotQuote(ticker)
-});
-const { ShareService } = require('./shares');
-const shares = new ShareService({
-  getDb: () => store.db,
-  persist: () => persistNow(),
-  broadcast: (event, data) => { try { broadcast(event, data); } catch (e) {} }
-});
 let pool = null;
 const BUILD = process.env.APP_BUILD || new Date().toISOString();
 
@@ -109,9 +96,6 @@ function ensureTradingAssets() {
   if (!db) return false;
   if (!Array.isArray(db.stocks)) db.stocks = [];
   let changed = false;
-  /* bot tier catalogue + settings live in the synced database; seed them once */
-  try { if (bots.ensureDefaults(db)) changed = true; } catch (e) { console.error('[bots] defaults:', e.message); }
-  try { if (shares.ensureDefaults(db)) changed = true; } catch (e) { console.error('[shares] defaults:', e.message); }
   db.stocks.forEach((s) => {
     if (!s || !s.ticker) return;
     if (!s.assetClass) { s.assetClass = 'us'; changed = true; }
@@ -403,9 +387,6 @@ async function api(req, res, pathname, query) {
   if (pathname === '/api/market/quotes' && req.method === 'GET') {
     return json(res, 200, market.snapshot());
   }
-  if (pathname === '/api/market/stream' && req.method === 'GET') {
-    return json(res, 200, market.streamInfo());
-  }
   if (pathname === '/api/market/history' && req.method === 'GET') {
     const raw = (query.get('tickers') || query.get('ticker') || '').toUpperCase();
     const tickers = raw.split(',').map(t => t.trim()).filter(Boolean).slice(0, 24);
@@ -437,121 +418,6 @@ async function api(req, res, pathname, query) {
     saveMarketConfig(market.rawConfig()).then((ok) => { if (ok) console.log('[market] config persisted to Postgres'); });
     console.log('[market] config saved by @' + admin.username + ' · mode', saved.mode, '· refresh', saved.refreshSec + 's', '· key', saved.hasKey ? 'set' : 'cleared');
     return json(res, 200, saved);
-  }
-  if (pathname === '/api/market/spot/buy' && req.method === 'POST') {
-    const body = await readBody(req);
-    const u = (store.db && (store.db.users || []).find(x => x.id === body.userId));
-    if (!u) return json(res, 404, { ok: false, error: 'user_not_found' });
-    try { return json(res, 200, Object.assign({ ok: true }, market.buySpot(body))); }
-    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
-  }
-  if (pathname === '/api/market/spot/sell' && req.method === 'POST') {
-    const body = await readBody(req);
-    const u = (store.db && (store.db.users || []).find(x => x.id === body.userId));
-    if (!u) return json(res, 404, { ok: false, error: 'user_not_found' });
-    try { return json(res, 200, Object.assign({ ok: true }, market.sellSpot(body))); }
-    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
-  }
-  if (pathname === '/api/market/spot/tpsl' && req.method === 'POST') {
-    const body = await readBody(req);
-    const u = (store.db && (store.db.users || []).find(x => x.id === body.userId));
-    if (!u) return json(res, 404, { ok: false, error: 'user_not_found' });
-    try { return json(res, 200, { ok: true, holding: market.updateSpotTpsl(body) }); }
-    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
-  }
-  /* --- trading bot assistant (server-side, runs while users are offline) --- */
-  if (pathname === '/api/bots/state' && req.method === 'GET') {
-    const userId = query.get('userId') || '';
-    const u = (store.db && (store.db.users || []).find(x => x.id === userId));
-    if (!u) return json(res, 404, { ok: false, error: 'user_not_found' });
-    try { return json(res, 200, bots.publicState(userId)); }
-    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
-  }
-  if (pathname === '/api/bots/subscribe' && req.method === 'POST') {
-    const body = await readBody(req);
-    const u = (store.db && (store.db.users || []).find(x => x.id === body.userId));
-    if (!u) return json(res, 404, { ok: false, error: 'user_not_found' });
-    try { return json(res, 200, bots.subscribe(body)); }
-    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
-  }
-  if (pathname === '/api/bots/start' && req.method === 'POST') {
-    const body = await readBody(req);
-    const u = (store.db && (store.db.users || []).find(x => x.id === body.userId));
-    if (!u) return json(res, 404, { ok: false, error: 'user_not_found' });
-    try { return json(res, 200, bots.start(body)); }
-    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
-  }
-  if (pathname === '/api/bots/stop' && req.method === 'POST') {
-    const body = await readBody(req);
-    const u = (store.db && (store.db.users || []).find(x => x.id === body.userId));
-    if (!u) return json(res, 404, { ok: false, error: 'user_not_found' });
-    try { return json(res, 200, bots.stop(body)); }
-    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
-  }
-  if (pathname === '/api/bots/admin' && req.method === 'GET') {
-    const adminId = query.get('adminId') || '';
-    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === adminId && u.role === 'admin') : null;
-    if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
-    try { return json(res, 200, bots.adminState()); }
-    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
-  }
-  if (pathname === '/api/bots/admin/config' && req.method === 'POST') {
-    const body = await readBody(req);
-    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === body.adminId && u.role === 'admin') : null;
-    if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
-    try {
-      const saved = bots.saveAdminConfig(body);
-      console.log('[bots] config saved by @' + admin.username);
-      return json(res, 200, saved);
-    } catch (e) { return json(res, 400, { ok: false, error: e.message }); }
-  }
-  /* --- WhaleChat share investment plans ------------------------------------ */
-  if (pathname === '/api/shares/state' && req.method === 'GET') {
-    const userId = query.get('userId') || '';
-    const u = (store.db && (store.db.users || []).find(x => x.id === userId));
-    if (!u) return json(res, 404, { ok: false, error: 'user_not_found' });
-    try { return json(res, 200, shares.publicState(userId)); }
-    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
-  }
-  if (pathname === '/api/shares/invest' && req.method === 'POST') {
-    const body = await readBody(req);
-    const u = (store.db && (store.db.users || []).find(x => x.id === body.userId));
-    if (!u) return json(res, 404, { ok: false, error: 'user_not_found' });
-    try { return json(res, 200, shares.invest(body)); }
-    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
-  }
-  if (pathname === '/api/shares/admin' && req.method === 'GET') {
-    const adminId = query.get('adminId') || '';
-    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === adminId && u.role === 'admin') : null;
-    if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
-    try { return json(res, 200, shares.adminState()); }
-    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
-  }
-  if (pathname === '/api/shares/admin/plans' && req.method === 'POST') {
-    const body = await readBody(req);
-    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === body.adminId && u.role === 'admin') : null;
-    if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
-    try {
-      const saved = shares.savePlans(body);
-      console.log('[shares] plans saved by @' + admin.username + ' ·', saved.plans.length);
-      return json(res, 200, saved);
-    } catch (e) { return json(res, 400, { ok: false, error: e.message }); }
-  }
-  if (pathname === '/api/market/sync-all' && req.method === 'POST') {
-    const body = await readBody(req);
-    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === body.adminId && u.role === 'admin') : null;
-    if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
-    if (!market.config.apiKey) return json(res, 400, { ok: false, error: 'Add a Finnhub API key first' });
-    /* run in the background: the shared rate limiter finishes the whole
-       catalogue even when Finnhub returns a 429 mid-run. */
-    (async () => {
-      try {
-        await market.seedFromFinnhub();
-        await market.syncDividends(true);
-        console.log('[market] full sync finished ·', market.status().seed, market.dividendStatus());
-      } catch (e) { console.error('[market] full sync failed:', e.message); }
-    })();
-    return json(res, 200, { ok: true, started: true, message: 'Syncing live prices + dividends in the background' });
   }
   if (pathname === '/api/market/search' && req.method === 'GET') {
     const adminId = query.get('adminId') || '';
@@ -781,8 +647,6 @@ server.headersTimeout = 70000;
     console.log('[market] restored durable config · mode', durableMarket.mode || 'simulated', '· key', durableMarket.apiKey ? 'set' : 'not set');
   }
   market.start();
-  bots.startTimers();
-  shares.startTimers();
   server.listen(PORT, HOST, () => {
     console.log(`[whalechat] listening on http://localhost:${PORT}`);
     console.log(`[whalechat] data: ${DATA_DIR}`);
@@ -794,8 +658,6 @@ let stopping = false;
 function shutdown(signal) {
   if (stopping) return; stopping = true;
   try { market.stop(); } catch (e) {}
-  try { bots.stopTimers(); } catch (e) {}
-  try { shares.stopTimers(); } catch (e) {}
   console.log(`[whalechat] ${signal} — saving and exiting`);
   try { if (store.db) snapshot('shutdown'); } catch (e) {}
   try { persistNow(); } catch (e) {}
