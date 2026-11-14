@@ -1,4 +1,4 @@
-# WhaleChat 3.31.0 — web app + mobile apps
+# WhaleChat 3.31.1 — web app + mobile apps
 
 WhaleChat is a social + marketplace + wallet product built as a single-page app with a
 Node sync server and native Android/iOS shells.
@@ -283,6 +283,14 @@ The Invest dashboard and Trading Bots page show an **Account health analysis** c
 * an equity/drawdown SVG chart from the bot session trades,
 * a **rest recommendation**: Healthy / Watch closely / Rest recommended, so users know when
   to stop the bot and let it refresh before restarting.
+
+## WhaleChat Shares admin plans
+
+Admin → Stocks → **WhaleChat share investment plans** can add/edit plans with name, min/max
+USD amount, duration (days/months/years) and return %. Saving publishes the plan to every
+user's Shares page; the Shares page checks for plan changes every 6 seconds and re-renders,
+and a server broadcast also refreshes connected clients. New investments copy the plan's
+return % and duration, and the maturity payout uses those exact terms.
 
 ## WhaleChat Shares profit example
 
