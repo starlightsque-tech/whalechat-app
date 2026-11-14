@@ -152,8 +152,8 @@
     return `<div class="shares-hero">
       <div class="between" style="align-items:flex-start">
         <div><div class="tiny muted">Total earnings from WhaleChat shares</div>
-          <div class="shares-earn">+<span data-share-earn-big data-share-hero-earn data-completed="${num(s.completedProfitCoins, 6)}">${tinyNum(s.totalEarnedCoins)}</span> <span class="shares-earn-unit">WC</span></div>
-          <div class="tiny muted">≈ <span data-share-earn-usd>${money(s.totalEarnedUsd)}</span> accrued + matured</div></div>
+          <div class="shares-earn"><span data-share-earn-sign>${Number(s.totalEarnedCoins) < 0 ? '−' : '+'}</span><span data-share-earn-big data-share-hero-earn data-completed="${num(s.completedProfitCoins, 6)}">${tinyNum(Math.abs(Number(s.totalEarnedCoins) || 0))}</span> <span class="shares-earn-unit">WC</span></div>
+          <div class="tiny muted">≈ <span data-share-earn-usd>${money(Math.abs(Number(s.totalEarnedUsd) || 0))}</span> ${Number(s.totalEarnedUsd) < 0 ? 'loss' : 'accrued + matured'} · market-linked ROI</div></div>
         <span class="badge badge-success">Live</span>
       </div>
       <div class="shares-hero-grid">
@@ -168,14 +168,13 @@
   function planCard(p) {
     return `<div class="shares-plan">
       <div class="between" style="align-items:flex-start"><b>${escS(p.name)}</b>
-        <span class="badge badge-accent">${num(p.returnPct, 0)}%</span></div>
+        <span class="badge badge-accent">${num(p.returnPct, 2)}% plan</span></div>
       <div class="tiny muted" style="margin-top:3px;line-height:1.5">${escS(p.blurb || '')}</div>
       <div class="shares-plan-meta">
         <div><span>Duration</span><b>${escS(p.durationLabel || (p.durationValue + ' ' + p.durationUnit))}</b></div>
         <div><span>Min</span><b>$${num(p.minUsd)} <i class="tiny muted">(${num(p.minCoins)} WC)</i></b></div>
         <div><span>Max</span><b>$${num(p.maxUsd)} <i class="tiny muted">(${num(p.maxCoins)} WC)</i></b></div>
       </div>
-      <div class="tiny muted" style="margin-top:6px">Example: $100 → <b>$${num(100 + 100 * (Number(p.returnPct) || 0) / 100)}</b> at maturity</div>
       <button class="btn btn-primary btn-sm" style="width:100%;margin-top:9px" data-act="shares-open" data-id="${escS(p.id)}">
         Invest in ${escS(p.name)}
       </button>
@@ -184,17 +183,20 @@
 
   function investmentCard(v) {
     const eq = equitySeries(v.equityHistory);
+    const earn = Number(v.accruedCoins) || 0;
+    const up = earn >= 0;
+    const move = Number(v.marketReturnPct) || 0;
     return `<div class="shares-inv">
       <div class="between" style="align-items:flex-start">
         <div><b>${escS(v.planName)}</b>
-          <div class="tiny muted">${num(v.shares, 4)} shares @ $${num(v.entryPriceUsd)} · ${num(v.returnPct, 0)}% return</div></div>
+          <div class="tiny muted">${num(v.shares, 4)} shares @ $${num(v.entryPriceUsd)} · ${num(v.returnPct, 2)}% market plan</div></div>
         <span class="badge badge-warn">${left(v.remainingMs)}</span>
       </div>
       <div class="shares-inv-grid">
         <div><span>Invested</span><b>${both(v.amountCoins)}</b></div>
-        <div><span>Earnings</span><b class="up" data-share-inv-earn data-start="${v.startAt}" data-end="${v.endAt}" data-amount="${v.amountCoins}" data-ret="${v.returnPct}" data-value="${v.amountCoins}">+${bothEarn(v.accruedCoins)}</b></div>
-        <div><span>Current value</span><b data-share-inv-value data-start="${v.startAt}" data-end="${v.endAt}" data-amount="${v.amountCoins}" data-ret="${v.returnPct}">${both(v.currentValueCoins)}</b></div>
-        <div><span>Target profit</span><b>+${bothEarn(v.targetProfitCoins)}</b></div>
+        <div><span>Market move</span><b class="${move >= 0 ? 'up' : 'down'}" data-share-inv-move data-entry="${v.entryPriceUsd}" data-ret="${v.returnPct}">${move >= 0 ? '+' : '−'}${Math.abs(move).toFixed(2)}%</b></div>
+        <div><span>Earnings</span><b class="${up ? 'up' : 'down'}" data-share-inv-earn data-entry="${v.entryPriceUsd}" data-amount="${v.amountCoins}" data-ret="${v.returnPct}">${up ? '+' : '−'}${bothEarn(Math.abs(earn))}</b></div>
+        <div><span>Current value</span><b data-share-inv-value data-entry="${v.entryPriceUsd}" data-amount="${v.amountCoins}" data-ret="${v.returnPct}">${both(v.currentValueCoins)}</b></div>
       </div>
       <div class="shares-progress"><i style="width:${Math.max(0, Math.min(100, Number(v.progressPct) || 0))}%"></i></div>
       <div class="between tiny muted" style="margin-top:3px">
@@ -216,14 +218,13 @@
   /* ------------------- investment plan performance (v5 chart) ------------------- */
   S.perfSel = '__all__';
 
-  function planValueAt(inv, t) {
-    const start = Number(inv.startAt) || 0;
-    const end = Number(inv.endAt) || 0;
+  function planLiveValue(inv, price) {
     const amount = Number(inv.amountCoins) || 0;
-    const ret = Number(inv.returnPct) || 0;
-    if (!(amount > 0)) return 0;
-    const p = end > start ? Math.max(0, Math.min(1, (t - start) / (end - start))) : 1;
-    return amount + (amount * ret / 100) * p;
+    const entry = Number(inv.entryPriceUsd) || 0;
+    const rate = (Number(inv.returnPct) || 0) / 100;
+    if (!(amount > 0) || !(entry > 0)) return amount;
+    const move = (Number(price) - entry) / entry;
+    return Math.max(0, amount + amount * rate * move);
   }
 
   function perfPlans() {
@@ -239,24 +240,28 @@
 
   function perfSeries(plans, now) {
     if (!plans.length) return [];
-    const start = Math.min.apply(null, plans.map((v) => Number(v.startAt) || now));
+    /* real snapshots recorded by the shares worker (equityHistory) plus a live point */
+    const stamps = [];
+    plans.forEach((p) => (p.equityHistory || []).forEach((pt) => { const t = Number(pt.t); if (t > 0) stamps.push(t); }));
+    const uniq = Array.from(new Set(stamps)).sort((a, b) => a - b).slice(-160);
     const invested = plans.reduce((a, v) => a + (Number(v.amountCoins) || 0), 0);
-    const N = 140;
-    const span = Math.max(60000, now - start);
-    const pts = [];
-    for (let i = 0; i <= N; i++) {
-      const t = start + (span * i) / N;
-      const v = plans.reduce((a, p) => a + planValueAt(p, t), 0);
-      pts.push({ t, v: Number.isFinite(v) ? v : invested });
-    }
-    pts[pts.length - 1].t = now;
+    const valueAt = (p, t) => {
+      const hist = p.equityHistory || [];
+      let val = Number(p.amountCoins) || 0;
+      for (const pt of hist) { if (Number(pt.t) <= t) val = Number(pt.coins) || val; else break; }
+      return val;
+    };
+    const pts = uniq.map((t) => ({ t, v: plans.reduce((a, p) => a + valueAt(p, t), 0) }));
+    if (!pts.length) pts.push({ t: Math.min.apply(null, plans.map((v) => Number(v.startAt) || now)), v: invested });
+    pts.push({ t: now, v: plans.reduce((a, p) => a + planLiveValue(p, (S.state.shareMarket || {}).priceUsd), 0) });
     return pts;
   }
 
   function perfLive(plans) {
     const now = Date.now();
+    const price = Number((S.state && S.state.shareMarket && S.state.shareMarket.priceUsd) || 0);
     const invested = plans.reduce((a, v) => a + (Number(v.amountCoins) || 0), 0);
-    const value = plans.reduce((a, v) => a + planValueAt(v, now), 0);
+    const value = plans.reduce((a, v) => a + planLiveValue(v, price), 0);
     const earn = value - invested;
     const nextEnd = plans.length ? Math.min.apply(null, plans.map((v) => Number(v.endAt) || Infinity)) : 0;
     return {
@@ -275,12 +280,12 @@
     return `<div class="card shares-perfcard" id="sharesPerfCard">
       <div class="between" style="align-items:flex-start;gap:10px">
         <div><div class="card-title" style="margin:0">Plan performance · ROI progress</div>
-          <div class="tiny muted" style="margin-top:3px">Principal + accrued profit, updated live every second. Finnhub feeds the market chart; plan ROI is accrued by the server.</div></div>
+          <div class="tiny muted" style="margin-top:3px">Capital + market-linked profit, updated every second. Profit = capital × plan % × WhaleChat share price move.</div></div>
         <span class="badge badge-success">Live</span>
       </div>
       <div class="shares-perf-pills">${pills}</div>
       <div class="shares-perf-chart" id="sharesPerfChart"></div>
-      <div class="tiny muted" style="margin-top:6px">Blue dashed line = invested principal · cyan dotted line = target payout at maturity.</div>
+      <div class="tiny muted" style="margin-top:6px">Blue dashed line = invested capital. The curve falls when the WhaleChat share price falls — profit is not fixed.</div>
     </div>`;
   }
 
@@ -292,7 +297,6 @@
     const now = Date.now();
     const live = perfLive(plans);
     const invested = live.invested;
-    const target = plans.reduce((a, v) => a + (Number(v.amountCoins) || 0) * (1 + (Number(v.returnPct) || 0) / 100), 0);
     WC_PRO_CHART.mountEquity(host, {
       key: String(S.perfSel),
       unit: 'wc',
@@ -303,8 +307,7 @@
         matures: live.matures
       },
       lines: [
-        { price: invested, color: '#3AA0FF', title: 'INVESTED', style: 2 },
-        { price: target, color: '#00F5D4', title: 'TARGET', style: 1 }
+        { price: invested, color: '#3AA0FF', title: 'CAPITAL', style: 2 }
       ],
       getLive: () => perfLive(perfSelection())
     });
@@ -323,62 +326,6 @@
       </div>`).join('')}
     </div>`;
   }
-
-  function exampleHTML(plans) {
-    const p = (plans || [])[0] || { id: '', name: 'Growth plan', returnPct: 10, durationLabel: '3 months' };
-    const exRate = Math.max(0, Number(p.returnPct) || 0);
-    const exProfit = 100 * exRate / 100;
-    const exPayout = 100 + exProfit;
-    return `<div class="card" id="sharesExampleCard">
-      <div class="between" style="align-items:flex-start;gap:10px">
-        <div><div class="card-title" style="margin:0">How your investment profit is calculated</div>
-          <div class="tiny muted" style="margin-top:3px">Principal × plan return % = profit · principal + profit = maturity payout</div></div>
-        <span class="badge badge-accent">Worked example</span>
-      </div>
-      <div class="shares-example-grid">
-        <div class="field" style="margin:0"><label class="label">Plan</label>
-          <select class="input" id="shareExPlan" onchange="App.sharesExample()">
-            ${(plans || []).map((x) => `<option value="${escS(x.id)}">${escS(x.name)} · ${num(x.returnPct, 0)}%</option>`).join('') || `<option value="">${escS(p.name)} · ${num(p.returnPct, 0)}%</option>`}
-          </select></div>
-        <div class="field" style="margin:0"><label class="label">Example investment (USD)</label>
-          <div class="input-wrap"><span class="inv-prefix">$</span><input class="input" id="shareExAmount" type="number" min="1" step="1" value="100" oninput="App.sharesExample()"/></div></div>
-      </div>
-      <div class="shares-example-steps">
-        <div><span>1 · Principal</span><b data-share-ex-principal>$100.00 · 200 WC</b></div>
-        <div><span>2 · Plan return</span><b data-share-ex-rate>${num(exRate, 0)}%</b></div>
-        <div><span>3 · Profit</span><b class="up" data-share-ex-profit>+$${num(exProfit)} · ${num(exProfit * 2)} WC</b></div>
-        <div><span>4 · Maturity payout</span><b class="up" data-share-ex-payout>$${num(exPayout)} · ${num(exPayout * 2)} WC</b></div>
-      </div>
-      <div class="tiny muted" style="margin-top:8px;line-height:1.6">
-        Example: invest <b>$100 (200 WC)</b> in a <b data-share-ex-rate-inline>${num(p.returnPct, 0)}%</b> plan for
-        <b>${escS(p.durationLabel || 'the plan duration')}</b>. At maturity the app credits
-        <b data-share-ex-profit-inline>+$${num(exProfit)} (${num(exProfit * 2)} WC)</b> profit plus your <b>$100</b> principal —
-        total <b data-share-ex-payout-inline>$${num(exPayout)} (${num(exPayout * 2)} WC)</b>. 1 WC = $0.50.
-      </div>
-      <div class="tiny muted" style="margin-top:4px">Profit accrues daily over the plan duration and is paid automatically when the plan matures. The example assumes the plan is held to maturity.</div>
-    </div>`;
-  }
-
-  function paintShareExample() {
-    const sel = document.getElementById('shareExPlan');
-    const amt = document.getElementById('shareExAmount');
-    if (!sel || !amt || !S.state) return;
-    const plans = S.state.plans || [];
-    const plan = plans.find((p) => p.id === sel.value) || plans[0] || { returnPct: 10, durationLabel: 'the plan duration' };
-    const usd = Math.max(0, Number(amt.value) || 0);
-    const rate = Math.max(0, Number(plan.returnPct) || 0);
-    const profitUsd = usd * rate / 100;
-    const payoutUsd = usd + profitUsd;
-    const set = (sel2, txt) => { const el = document.querySelector(sel2); if (el) el.textContent = txt; };
-    set('[data-share-ex-principal]', '$' + num(usd) + ' · ' + num(usd * 2) + ' WC');
-    set('[data-share-ex-rate]', rate + '%');
-    set('[data-share-ex-rate-inline]', rate + '%');
-    set('[data-share-ex-profit]', '+$' + num(profitUsd) + ' · ' + num(profitUsd * 2) + ' WC');
-    set('[data-share-ex-payout]', '$' + num(payoutUsd) + ' · ' + num(payoutUsd * 2) + ' WC');
-    set('[data-share-ex-profit-inline]', '+$' + num(profitUsd) + ' (' + num(profitUsd * 2) + ' WC)');
-    set('[data-share-ex-payout-inline]', '$' + num(payoutUsd) + ' (' + num(payoutUsd * 2) + ' WC)');
-  }
-  S.paintExample = paintShareExample;
 
   S.view = function () {
     if (!S.state) {
@@ -400,7 +347,6 @@
 
     <div id="sharesLiveMount">${heroHTML()}${marketChartHTML()}${activeMountHTML()}</div>
     ${planPerfHTML()}
-    ${exampleHTML(plans)}
 
     <div class="card" id="sharesPlansCard">
       <div class="between"><div class="card-title" style="margin:0">Investment plans</div>
@@ -435,7 +381,8 @@
     if (!p) return tmsg('Plan not found', 'err');
     const price = Number((S.state && S.state.shareMarket && S.state.shareMarket.priceUsd) || 12.5);
     openModal(modalShell('Invest in ' + p.name, `
-      <div class="tiny muted" style="margin-bottom:10px;line-height:1.6">Share price <b>$${num(price)} (${num(price * 2)} WC)</b> · ${p.returnPct}% fixed return · ${escS(p.durationLabel)}.</div>
+      <div class="tiny muted" style="margin-bottom:10px;line-height:1.6">Share price <b>$${num(price)} (${num(price * 2)} WC)</b> · <b>${p.returnPct}% plan</b> on the share price move · ${escS(p.durationLabel)}.<br/>
+        Profit is not fixed: it follows the live WhaleChat share price (up or down), multiplied by your plan percentage.</div>
       <div class="field"><label class="label">Investment amount (USD)</label>
         <div class="input-wrap"><span class="inv-prefix">$</span>
           <input class="input" id="sharesUsd" type="number" min="${p.minUsd}" max="${p.maxUsd}" step="0.01" placeholder="${num(p.minUsd)}"/></div>
@@ -443,8 +390,9 @@
       <div class="shares-calc" id="sharesCalc">
         <div class="between"><span>Cost in WC</span><b id="sharesCost">—</b></div>
         <div class="between"><span>Shares purchased</span><b id="sharesQty">—</b></div>
-        <div class="between"><span>Expected profit</span><b id="sharesProfit" class="up">—</b></div>
-        <div class="between"><span>Total at maturity</span><b id="sharesTotal">—</b></div>
+        <div class="between"><span>Profit if price rises 10%</span><b id="sharesProfit" class="up">—</b></div>
+        <div class="between"><span>Profit if price falls 10%</span><b id="sharesLoss" class="down">—</b></div>
+        <div class="between"><span>Breaks even at</span><b id="sharesBreak">—</b></div>
         <div class="between"><span>Matures</span><b id="sharesMature">—</b></div>
       </div>
       <div class="tiny muted" style="margin-top:6px">Balance ${num(S.state.balance)} WC. WC = USD ÷ 0.50.</div>`,
@@ -456,13 +404,16 @@
         const usd = Number(inp.value) || 0;
         const cost = usd / 0.5;
         const qty = price > 0 ? usd / price : 0;
-        const profit = usd * (Number(p.returnPct) || 0) / 100;
+        const rate = (Number(p.returnPct) || 0) / 100;
+        const up = usd * rate * 0.10;
+        const down = usd * rate * -0.10;
         const end = Date.now() + durationMs(p.durationValue, p.durationUnit);
         const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
         set('sharesCost', num(cost) + ' WC');
         set('sharesQty', num(qty, 4));
-        set('sharesProfit', '+' + money(profit) + ' (+' + num(profit * 2) + ' WC)');
-        set('sharesTotal', money(usd + profit) + ' (' + num((usd + profit) * 2) + ' WC)');
+        set('sharesProfit', '+' + money(up) + ' (+' + num(up * 2) + ' WC)');
+        set('sharesLoss', money(down) + ' (' + num(down * 2) + ' WC)');
+        set('sharesBreak', money(usd) + ' capital back');
         set('sharesMature', new Date(end).toLocaleDateString());
       });
       inp.focus();
@@ -481,7 +432,7 @@
     return `<div class="card" id="sharesAdminCard">
       <div class="between" style="align-items:flex-start;gap:10px">
         <div><div class="card-title" style="margin:0">WhaleChat share investment plans</div>
-          <div class="tiny muted" style="margin-top:3px">Add plans, set min/max investment, duration and percentage return.</div></div>
+          <div class="tiny muted" style="margin-top:3px">Add plans, set min/max investment, duration and the fixed market participation %.</div></div>
         <span class="badge badge-accent">Admin</span>
       </div>
       <div id="sharesAdminBody"><div class="tiny muted" style="margin-top:10px">Loading share plans…</div></div>
@@ -514,14 +465,14 @@
       <div><span>Share price</span><b>$${num(a.market.priceUsd)} (${num(a.market.priceCoins)} WC)</b></div>
     </div>
     <div class="table-wrap"><table class="tbl shares-admin-table"><thead><tr>
-      <th>Plan</th><th>Min USD</th><th>Max USD</th><th>Duration</th><th>Return %</th><th>Live</th><th></th>
+      <th>Plan</th><th>Min USD</th><th>Max USD</th><th>Duration</th><th>Plan %</th><th>Live</th><th></th>
     </tr></thead><tbody id="sharesPlanRows">${a.plans.map(planRow).join('')}</tbody></table></div>
     <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
       <button class="btn btn-ghost btn-sm" data-act="shares-plan-add">${ic('plus', 14)} Add plan</button>
       <button class="btn btn-primary btn-sm" data-act="shares-admin-save">${ic('check', 14)} Save plans</button>
       <button class="btn btn-ghost btn-sm" data-act="shares-admin-reload">${ic('refresh', 14)} Reload</button>
     </div>
-    <div class="tiny muted" style="margin-top:8px;line-height:1.6">Saved plans appear on every user's <b>WhaleChat Shares</b> page immediately. Minimum/maximum amounts, duration and return % are copied into each new investment, and the maturity payout uses the plan's return. Duration uses days, months (30 days) or years (365 days). Active investments keep the terms they were purchased under.</div>`;
+    <div class="tiny muted" style="margin-top:8px;line-height:1.6">Plan % is the fixed share of the WhaleChat share price move credited to investors (e.g. 3%). Profit = capital × plan % × price move, so it rises and falls with the market. Active investments keep their purchase terms.</div>`;
   }
 
   async function mountAdmin(force) {
@@ -553,8 +504,6 @@
 
   /* -------------------------------- actions -------------------------------- */
   if (typeof App !== 'undefined') {
-    App.sharesExample = function () { paintShareExample(); };
-
     App.sharesRefresh = async function () {
       await load(true);
       await loadAdmin(true);
@@ -584,11 +533,9 @@
     App.sharesPlanAdd = function () {
       const body = document.getElementById('sharesPlanRows');
       if (!body) return;
-      body.insertAdjacentHTML('beforeend', planRow(null));
-      const rows = body.querySelectorAll('[data-share-plan]');
-      const last = rows[rows.length - 1];
-      const name = last && last.querySelector('[data-f="name"]');
-      if (name) { try { name.focus(); } catch (e) {} }
+      const tr = document.createElement('tbody');
+      tr.innerHTML = planRow(null);
+      body.appendChild(tr.firstElementChild);
     };
 
     App.sharesPerf = function (id, ds) {
@@ -608,15 +555,12 @@
       if (!isAdmin()) return tmsg('Admin only', 'err');
       const plans = readPlanRows();
       if (!plans.length) return tmsg('Add at least one plan with a name', 'err');
-      const bad = plans.find((p) => !(p.minUsd > 0) || !(p.maxUsd >= p.minUsd) || !(p.durationValue > 0));
-      if (bad) return tmsg('Each plan needs a positive minimum, a maximum ≥ minimum and a duration', 'err');
       try {
         const r = await api('/api/shares/admin/plans', { method: 'POST', body: JSON.stringify({ adminId: uidNow(), plans }) }, 20000);
         if (!r.res || !r.res.ok || !r.data || !r.data.ok) return tmsg((r.data && r.data.error) || 'Save failed', 'err');
         S.admin = r.data; S.adminLoadedAt = Date.now(); S.loadedAt = 0;
         mountAdmin(true);
-        try { await load(true); } catch (e) {}
-        tmsg('WhaleChat share plans saved — live on the user Shares page', 'ok');
+        tmsg('WhaleChat share plans saved', 'ok');
       } catch (e) { tmsg('Save failed: ' + e.message, 'err'); }
     };
   }
@@ -666,39 +610,38 @@
   /* live earning counter — recalculates once per second between server polls */
   function tickEarnings() {
     if (!onSharesPage()) return;
-    const now = Date.now();
+    const price = Number(S.state && S.state.shareMarket && S.state.shareMarket.priceUsd) || 0;
+    if (!(price > 0)) return;
     let hero = 0;
     document.querySelectorAll('[data-share-inv-earn]').forEach((el) => {
-      const start = Number(el.getAttribute('data-start')) || 0;
-      const end = Number(el.getAttribute('data-end')) || 0;
+      const entry = Number(el.getAttribute('data-entry')) || 0;
       const amount = Number(el.getAttribute('data-amount')) || 0;
-      const ret = Number(el.getAttribute('data-ret')) || 0;
-      if (!(end > start) || !(amount > 0)) return;
-      const target = amount * ret / 100;
-      const elapsed = Math.max(0, Math.min(end - start, now - start));
-      const accrued = target * (elapsed / (end - start));
+      const rate = (Number(el.getAttribute('data-ret')) || 0) / 100;
+      if (!(entry > 0) || !(amount > 0)) return;
+      const move = (price - entry) / entry;
+      const accrued = amount * rate * move;
       hero += accrued;
-      el.textContent = '+' + bothEarn(accrued);
-      const val = document.querySelector('[data-share-inv-value][data-start="' + start + '"]');
-      if (val) val.textContent = both(amount + accrued);
+      el.textContent = (accrued >= 0 ? '+' : '−') + bothEarn(Math.abs(accrued));
+      el.className = accrued >= 0 ? 'up' : 'down';
+      const val = document.querySelector('[data-share-inv-value][data-entry="' + entry + '"]');
+      if (val) val.textContent = both(Math.max(0, amount + accrued));
+      const mv = document.querySelector('[data-share-inv-move][data-entry="' + entry + '"]');
+      if (mv) { mv.textContent = (move >= 0 ? '+' : '−') + Math.abs(move * 100).toFixed(2) + '%'; mv.className = move >= 0 ? 'up' : 'down'; }
     });
     const heroEl = document.querySelector('[data-share-hero-earn]');
     if (heroEl) {
       const completed = Number(heroEl.getAttribute('data-completed')) || 0;
-      heroEl.textContent = tinyNum(hero + completed);
+      const total = hero + completed;
+      const sign = document.querySelector('[data-share-earn-sign]');
+      if (sign) sign.textContent = total < 0 ? '−' : '+';
+      heroEl.textContent = tinyNum(Math.abs(total));
       const usdEl = document.querySelector('[data-share-earn-usd]');
-      if (usdEl) usdEl.textContent = money((hero + completed) * 0.5);
+      if (usdEl) usdEl.textContent = money(Math.abs(total) * 0.5);
       const big = document.querySelector('[data-share-earn-big]');
-      if (big) big.textContent = tinyNum(hero + completed);
+      if (big) big.textContent = tinyNum(Math.abs(total));
       const stat = document.querySelector('[data-share-earn]');
-      if (stat) stat.textContent = '+' + tinyNum(hero + completed) + ' WC';
+      if (stat) stat.textContent = (total >= 0 ? '+' : '−') + tinyNum(Math.abs(total)) + ' WC';
     }
-  }
-
-  function plansSig() {
-    try {
-      return JSON.stringify((S.state && S.state.plans || []).map((p) => [p.id, p.name, p.returnPct, p.durationValue, p.durationUnit, p.minUsd, p.maxUsd, p.enabled]));
-    } catch (e) { return ''; }
   }
 
   function refreshLiveMount() {
@@ -722,13 +665,9 @@
           try { if (prev) prev(parts, params); } catch (e) {}
           if (onSharesPage()) {
             load(true).then(() => {
-              const sig = plansSig();
-              if (S.plansSig && S.plansSig !== sig) { S.plansSig = sig; try { render(); } catch (e) {} return; }
-              S.plansSig = sig;
               const live = document.getElementById('sharesLiveMount');
               if (live && S.state) live.innerHTML = heroHTML() + marketChartHTML() + activeMountHTML();
               try { S.mountPerf(); } catch (e) {}
-              try { paintShareExample(); } catch (e) {}
             });
           } else if (!S.state) {
             load(false).then(() => { if (S.state && (location.hash || '').startsWith('#/invest') && !onSharesPage()) { try { render(); } catch (e) {} } });
@@ -743,13 +682,8 @@
     }, 200);
     setInterval(() => {
       if (!onSharesPage() || document.hidden) return;
-      load(true).then(() => {
-        const sig = plansSig();
-        if (S.plansSig && S.plansSig !== sig) { S.plansSig = sig; try { render(); } catch (e) {} return; }
-        S.plansSig = sig;
-        refreshLiveMount();
-      });
-    }, 6000);
+      load(true).then(() => refreshLiveMount());
+    }, 10000);
     setInterval(tickEarnings, 1000);
   }
 
