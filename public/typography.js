@@ -86,6 +86,48 @@
     table td{font-size:13px}
   }
 
+  /* ---------------------- user text-size preference ---------------------- */
+  html[data-textsize="compact"]{
+    --wc-fs-xs:11.5px; --wc-fs-sm:12.75px; --wc-fs-base:14px;
+    --wc-fs-lg:15.5px; --wc-fs-xl:18px; --wc-fs-2xl:22px;
+  }
+  html[data-textsize="compact"] body{font-size:14px}
+  html[data-textsize="compact"] .pc-price{font-size:20px}
+  html[data-textsize="compact"] .shares-earn{font-size:clamp(28px,26px + .5vw,34px)}
+
+  html[data-textsize="large"]{
+    --wc-fs-xs:13.5px; --wc-fs-sm:15.5px; --wc-fs-base:17.5px;
+    --wc-fs-lg:19.5px; --wc-fs-xl:25px; --wc-fs-2xl:34px;
+  }
+  html[data-textsize="large"] body{font-size:17.5px;line-height:1.6}
+  html[data-textsize="large"] .tiny{line-height:1.65}
+  html[data-textsize="large"] .pc-price{font-size:28px}
+  html[data-textsize="large"] .shares-earn{font-size:clamp(36px,34px + .7vw,44px)}
+  html[data-textsize="large"] .btn{min-height:46px}
+  html[data-textsize="large"] .btn-sm{min-height:40px}
+  html[data-textsize="large"] .btn-xs{min-height:34px}
+
+  /* appearance control */
+  .ts-row{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}
+  .ts-opt{display:flex;flex-direction:column;align-items:center;gap:3px;padding:12px 8px;
+    border:1px solid var(--border);border-radius:12px;background:var(--surface-2);
+    cursor:pointer;color:var(--text);text-align:center;transition:border-color .15s,background .15s,box-shadow .15s}
+  .ts-opt b{font-size:var(--wc-fs-sm);font-weight:750}
+  .ts-opt i{font-style:normal;font-size:var(--wc-fs-xs);color:var(--muted);line-height:1.4}
+  .ts-opt .ts-a{font-weight:800;line-height:1;color:var(--muted)}
+  .ts-opt .ts-a-sm{font-size:14px}
+  .ts-opt .ts-a{font-size:18px}
+  .ts-opt .ts-a-lg{font-size:23px}
+  .ts-opt:hover{border-color:rgba(46,230,201,.35)}
+  .ts-opt.on{border-color:rgba(46,230,201,.55);background:rgba(46,230,201,.09);box-shadow:0 0 0 1px rgba(46,230,201,.18)}
+  .ts-opt.on .ts-a{color:var(--accent)}
+  .ts-opt:active{transform:translateY(1px)}
+  @media(max-width:560px){
+    .ts-row{grid-template-columns:repeat(3,1fr);gap:6px}
+    .ts-opt{padding:10px 5px}
+    .ts-opt i{display:none}
+  }
+
   /* large desktop: cap growth so nothing looks oversized */
   @media (min-width:1440px){
     :root{
