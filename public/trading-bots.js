@@ -432,7 +432,21 @@
       <div class="tiny muted" style="margin-top:8px;line-height:1.6">Speed changes apply to sessions started after saving. Existing running sessions keep their interval until the user stops and starts again.</div>`;
   }
 
+  function ensureAdminNav() {
+    try {
+      const nav = document.querySelector('.admin-nav');
+      if (!nav || nav.querySelector('[data-wc-bots-nav]')) return;
+      const a = document.createElement('a');
+      a.href = '#/admin/trading-bots';
+      a.setAttribute('data-wc-bots-nav', '1');
+      a.textContent = 'Trading bots';
+      if ((location.hash || '').indexOf('#/admin/trading-bots') === 0) a.className = 'on';
+      nav.appendChild(a);
+    } catch (e) {}
+  }
+
   async function mountAdmin(force) {
+    ensureAdminNav();
     const body = document.getElementById('botAdminBody');
     if (!body) return;
     const a = await loadAdmin(force);
