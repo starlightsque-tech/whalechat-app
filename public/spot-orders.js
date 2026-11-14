@@ -174,6 +174,8 @@
     const m = (location.hash || '').match(/^#\/invest\/stock\/([A-Z0-9._]+)/i);
     if (!m) return;
     S.ticker = m[1].toUpperCase();
+    /* do not mount a ticket for a market without a live price */
+    try { if (INV.liveFeedReady && INV.liveFeedReady() && !INV.isLive(S.ticker) && !INV.paused(S.ticker)) return; } catch (e) {}
     const content = document.getElementById('content');
     const host = document.getElementById('ltTicketMount');
     if (!content) return;
@@ -280,6 +282,7 @@
 
     App.spotBuy = async function () {
       if (typeof Remote === 'undefined' || !Remote.enabled) return tmsg('Connect the sync server to place spot orders', 'err');
+      try { if (INV.liveFeedReady && INV.liveFeedReady() && !INV.isLive(S.ticker)) return tmsg('This market is not live right now — trading is disabled', 'err'); } catch (e) {}
       const amt = Number((document.getElementById('spotAmount') || {}).value) || 0;
       if (!(amt > 0)) return tmsg('Enter an amount or quantity', 'err');
       const tp = Number((document.getElementById('spotTp') || {}).value) || 0;
