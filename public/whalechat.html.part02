@@ -407,6 +407,27 @@ function toggleTheme() {
   render();
 }
 
+/* ---------------- text size (compact / default / large) ---------------- */
+const LS_TEXTSIZE = 'whalechat.textsize';
+function applyTextSize(size, opts) {
+  const s = ['compact', 'default', 'large'].indexOf(size) >= 0 ? size : 'default';
+  document.documentElement.setAttribute('data-textsize', s);
+  const u = me();
+  if (u) {
+    u.settings = u.settings || {};
+    u.settings.textSize = s;
+    if (!(opts && opts.silent)) persist(true);
+  }
+  try { localStorage.setItem(LS_TEXTSIZE, s); } catch (e) {}
+}
+function initTextSize() {
+  let s = null;
+  try { s = localStorage.getItem(LS_TEXTSIZE); } catch (e) {}
+  const u = me();
+  if (u && u.settings && u.settings.textSize) s = u.settings.textSize;
+  applyTextSize(s || 'default', { silent: true });
+}
+
 /* ---------------- product visuals ---------------- */
 const CAT_HUES = { Phones: 195, Laptos: 210, Laptops: 210, Tablets: 250, Headphones: 168, Chargers: 38, 'Video Games': 280, 'Phone Pouches': 320, Accessories: 145 };
 function productThumb(p, h = 150) {
