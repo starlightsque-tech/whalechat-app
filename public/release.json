@@ -1,8 +1,8 @@
 {
-  "version": "3.36.1",
-  "build": "2026-11-14T03:30:00Z",
+  "version": "3.36.2",
+  "build": "2026-11-14T05:10:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.36.1 — sign in or sign up from any device, and updates never interrupt you: drafts, scroll and route survive any refresh, and the app now stays warm with keep-alive pings.",
-  "releasedAt": "2026-11-14T03:30:00Z",
+  "notes": "WhaleChat 3.36.2 — faster loads (Brotli, 1.4 MB → 280 KB) and an update flow that never covers a form: updates wait as a small pill until you are done.",
+  "releasedAt": "2026-11-14T05:10:00Z",
   "minimum": "3.0.0"
 }
