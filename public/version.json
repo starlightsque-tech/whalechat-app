@@ -1,8 +1,8 @@
 {
-  "version": "3.34.0",
-  "build": "2026-11-13T22:00:00Z",
+  "version": "3.35.0",
+  "build": "2026-11-14T00:00:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.34.0 — Appearance → Text size control (Compact / Default / Large) with per-user, per-device persistence that overrides the fluid type scale.",
-  "releasedAt": "2026-11-13T22:00:00Z",
+  "notes": "WhaleChat 3.35.0 — stock trading view restored to the Finnhub price chart (plain lightweight-charts, live quotes + TP/SL lines); the v5 pro chart is now only used for portfolio, plan ROI and bot equity curves.",
+  "releasedAt": "2026-11-14T00:00:00Z",
   "minimum": "3.0.0"
 }
