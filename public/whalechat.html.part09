@@ -230,8 +230,23 @@ INV.effectiveProfitPct = function (value) {
   return r == null ? 0 : r;
 };
 
+/* A market is tradable only while its quote is live and the symbol is active.
+   This keeps Buy / TP / SL from opening on a stale or missing feed. */
+INV.liveFeedReady = function () {
+  try { return !!(window.WC_MARKET && WC_MARKET.feed && WC_MARKET.feed.ok); } catch (e) { return false; }
+};
+INV.isLive = function (t) {
+  const s = INV.stock(t);
+  if (!s) return false;
+  if (s.active === false || s.paused || INV.paused(t)) return false;
+  const l = INV.live[t];
+  if (!l || !(Number(l.price) > 0)) return false;
+  const age = Date.now() - (Number(l.updatedAt) || 0);
+  return age < 20 * 60000;
+};
 INV.marketFiltered = function () {
   let list = INV.visibleStocks();
+  if (INV.liveFeedReady()) list = list.filter((s) => INV.isLive(s.ticker));
   const q = INV.marketQuery.trim().toLowerCase();
   if (q) {
     list = list.filter(s => s.ticker.toLowerCase().includes(q) || s.name.toLowerCase().includes(q) || (s.sector || '').toLowerCase().includes(q));
@@ -282,8 +297,8 @@ INV.viewMarket = function () {
   <div class="searchbar" style="margin-bottom:10px">${ic('search', 17)}
     <input id="ivSearch" placeholder="Search asset — AAPL, VOD.L, EUR/USD, BTC/USDT…" value="${esc(INV.marketQuery)}" autocomplete="off"/></div>
   <div class="chip-row inv-cats" id="ivCats">${cats.map(c => `<button class="chip ${c === INV.marketCat && !INV.marketQuery ? 'on' : ''}" data-act="inv-cat" data-cat="${esc(c)}">${esc(c)}</button>`).join('')}</div>
-  <div class="inv-grid" id="ivList">${list.length ? list.map(INV.cardHTML).join('') : `<div class="inv-empty" style="grid-column:1/-1">${ic(INV.marketQuery ? 'search' : 'ban', 26)}<p class="small muted">${INV.marketQuery ? `No stocks match “${esc(INV.marketQuery)}”.` : 'No markets are currently enabled by the administrator.'}</p></div>`}</div>
-  <div class="card inv-note" data-market-notice="1">${ic('help', 14)} <span class="tiny">Live market data via Finnhub — ${INV.visibleCats().slice(1).join(', ') || 'no markets enabled'}.</span></div>`;
+  <div class="inv-grid" id="ivList">${list.length ? list.map(INV.cardHTML).join('') : `<div class="inv-empty" style="grid-column:1/-1">${ic(INV.marketQuery ? 'search' : 'ban', 26)}<p class="small muted">${INV.marketQuery ? `No stocks match “${esc(INV.marketQuery)}”.` : 'No live markets right now.'}</p></div>`}</div>
+  <div class="card inv-note" data-market-notice="1">${ic('help', 14)} <span class="tiny">Live market data via Finnhub · only active markets with a live price are tradable. ${INV.visibleCats().slice(1).join(', ') || ''}</span></div>`;
 };
 AFTER.invest = function (parts) {
   const sub = parts[1] || '';
@@ -314,6 +329,18 @@ INV.viewStock = function (rawTicker, params) {
     return `<div class="empty">${ic('ban', 26)}<h3>Market unavailable</h3><p>This asset type is currently turned off by an administrator.</p><a href="#/invest/market" class="btn btn-primary">Back to market</a></div>`;
   }
   const q = INV.quote(s.ticker);
+  if (INV.liveFeedReady() && !INV.isLive(s.ticker) && !INV.paused(s.ticker)) {
+    return `<div class="page-head"><div class="between">
+      <div class="row" style="gap:10px;align-items:center"><a href="#/invest/market" class="btn-icon">${ic('back', 18)}</a>
+        <div><div class="section-title" style="margin:0">${esc(s.name)}</div>
+          <div class="tiny muted">${esc(INV.assetTicker ? INV.assetTicker(s) : s.ticker)} · market not live</div></div></div></div></div>
+      <div class="card"><div class="empty">
+        ${ic('clock', 28)}
+        <h3>This market is not live right now</h3>
+        <p class="muted small">Trading, Take Profit and Stop Loss are disabled until the price feed returns for this symbol. Only live, active markets are listed in the Market page.</p>
+        <a href="#/invest/market" class="btn btn-primary">Back to live markets</a>
+      </div></div>`;
+  }
   const tf = (params && ['1D', '1W', '1M', '3M', '1Y', 'ALL'].includes(params.tf)) ? params.tf : '1D';
   const mode = (params && params.mode === 'candle') ? 'candle' : 'line';
   const vals = INV.series(s.ticker, tf);
