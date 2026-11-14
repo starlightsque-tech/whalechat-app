@@ -198,6 +198,10 @@
         <div><span>Earnings</span><b class="${up ? 'up' : 'down'}" data-share-inv-earn data-entry="${v.entryPriceUsd}" data-amount="${v.amountCoins}" data-ret="${v.returnPct}">${up ? '+' : '−'}${bothEarn(Math.abs(earn))}</b></div>
         <div><span>Current value</span><b data-share-inv-value data-entry="${v.entryPriceUsd}" data-amount="${v.amountCoins}" data-ret="${v.returnPct}">${both(v.currentValueCoins)}</b></div>
       </div>
+      <div class="row" style="gap:6px;margin-top:8px">
+        <a class="btn btn-xs btn-soft" href="#/invest/shares/plan/${escS(v.id)}">Performance page</a>
+        <span class="tiny muted" style="align-self:center">ROI ${Number(v.planRoiPct) >= 0 ? '+' : '−'}${Math.abs(Number(v.planRoiPct) || 0).toFixed(3)}%</span>
+      </div>
       <div class="shares-progress"><i style="width:${Math.max(0, Math.min(100, Number(v.progressPct) || 0))}%"></i></div>
       <div class="between tiny muted" style="margin-top:3px">
         <span>${num(v.progressPct, 1)}% complete</span><span>Matures ${when(v.endAt)}</span></div>
@@ -311,6 +315,157 @@
       ],
       getLive: () => perfLive(perfSelection())
     });
+  };
+
+  /* ----------------------- per-plan performance page ------------------------ */
+  function planById(id) {
+    const all = [].concat((S.state && S.state.investments) || [], (S.state && S.state.completed) || []);
+    return all.find((v) => String(v.id) === String(id)) || null;
+  }
+  function planRows(inv) {
+    return ((inv && inv.daily) || []).slice().sort((a, b) => (a.d < b.d ? -1 : a.d > b.d ? 1 : 0));
+  }
+  function planPoints(inv) {
+    const capital = Number(inv.amountCoins) || 0;
+    const pts = planRows(inv).map((d) => ({
+      t: Date.parse(d.d + 'T16:00:00Z'),
+      v: Math.max(0, capital * (1 + (Number(d.roiPct) || 0) / 100))
+    })).filter((p) => Number.isFinite(p.t) && p.t > 0);
+    const live = planLive(inv);
+    pts.push({ t: Date.now(), v: live.value });
+    return pts;
+  }
+  function planLive(inv) {
+    const capital = Number(inv.amountCoins) || 0;
+    const entry = Number(inv.entryPriceUsd) || 0;
+    const rate = (Number(inv.returnPct) || 0) / 100;
+    const price = Number((S.state && S.state.shareMarket && S.state.shareMarket.priceUsd) || 0);
+    const move = entry > 0 && price > 0 ? (price - entry) / entry : 0;
+    const roi = rate * move;
+    return {
+      value: Math.max(0, capital * (1 + roi)),
+      roiPct: roi * 100,
+      earnCoins: capital * roi,
+      matures: inv.endAt ? when(inv.endAt) : '—'
+    };
+  }
+
+  S.planView = function (investmentId) {
+    if (!S.state) {
+      load(false).then(() => { if (S.state) { try { render(); } catch (e) {} } });
+      return `<div class="page-head"><div class="section-title">Plan performance</div></div><div class="card"><div class="tiny muted">Loading plan…</div></div>`;
+    }
+    const inv = planById(investmentId);
+    if (!inv) {
+      return `<div class="page-head"><div class="between">
+        <div class="row" style="gap:10px;align-items:center"><a href="#/invest/shares" class="btn-icon">${ic('back', 18)}</a>
+          <div class="section-title" style="margin:0">Plan not found</div></div></div></div>
+        <div class="card"><div class="empty"><h3>Investment not found</h3><p class="muted small">It may have been closed or belongs to another account.</p>
+        <a class="btn btn-primary" href="#/invest/shares">Back to WhaleChat Shares</a></div></div>`;
+    }
+    const capital = Number(inv.amountCoins) || 0;
+    const profit = Number(inv.accruedCoins) || 0;
+    const up = profit >= 0;
+    const rows = planRows(inv);
+    const best = rows.length ? rows.reduce((a, b) => (Number(b.roiPct) > Number(a.roiPct) ? b : a)) : null;
+    const worst = rows.length ? rows.reduce((a, b) => (Number(b.roiPct) < Number(a.roiPct) ? b : a)) : null;
+    const payout = Math.max(0, Number(inv.payoutTodayCoins != null ? inv.payoutTodayCoins : capital + profit));
+    const live = planLive(inv);
+    const dayLabel = (d) => new Date(d + 'T12:00:00Z').toLocaleDateString([], { month: 'short', day: 'numeric' });
+    return `<div class="page-head"><div class="between">
+      <div class="row" style="gap:10px;align-items:center">
+        <a href="#/invest/shares" class="btn-icon">${ic('back', 18)}</a>
+        <div><div class="section-title" style="margin:0">${escS(inv.planName)} · performance</div>
+          <div class="tiny muted">${num(inv.shares, 4)} shares @ $${num(inv.entryPriceUsd)} · ${num(inv.returnPct, 2)}% plan · entry ${when(inv.startAt)}</div></div></div>
+      <span class="badge ${inv.status === 'completed' ? 'badge' : 'badge-success'}">${inv.status === 'completed' ? 'Matured' : 'Active'}</span>
+    </div></div>
+
+    <div class="grid-kpi">
+      <div class="kpi"><span class="tiny muted">Cumulative ROI</span><b class="${live.roiPct >= 0 ? 'up' : 'down'}" data-plan-roi>${live.roiPct >= 0 ? '+' : '−'}${Math.abs(live.roiPct).toFixed(4)}%</b></div>
+      <div class="kpi"><span class="tiny muted">Profit now</span><b class="${up ? 'up' : 'down'}" data-plan-profit>${up ? '+' : '−'}${num(Math.abs(profit))} WC</b></div>
+      <div class="kpi"><span class="tiny muted">Payout if matured today</span><b data-plan-payout>${num(payout)} WC</b></div>
+      <div class="kpi"><span class="tiny muted">Capital · days left</span><b>${num(capital)} WC · ${left(inv.remainingMs)}</b></div>
+    </div>
+
+    <div class="card">
+      <div class="between"><div class="card-title" style="margin:0">ROI progress</div>
+        <span class="badge ${live.roiPct >= 0 ? 'badge-success' : 'badge-warn'}">market-linked</span></div>
+      <div class="shares-planpage-chart" id="sharesPlanPageChart"></div>
+      <div class="tiny muted" style="margin-top:6px">Daily closes since purchase · blue dashed line = invested capital. Profit follows the WhaleChat share price.</div>
+    </div>
+
+    <div class="shares-two">
+      <div class="card">
+        <div class="card-title" style="margin:0 0 6px">Best day</div>
+        ${best ? `<div class="tiny muted">${dayLabel(best.d)}</div>
+          <div class="shares-day-big ${Number(best.roiPct) >= 0 ? 'up' : 'down'}">${Number(best.roiPct) >= 0 ? '+' : '−'}${Math.abs(Number(best.roiPct)).toFixed(4)}%</div>
+          <div class="tiny muted">turn-up ${Number(best.turnPct) >= 0 ? '+' : '−'}${Math.abs(Number(best.turnPct)).toFixed(2)}% · ${num(best.profitCoins)} WC</div>`
+          : '<div class="tiny muted">No full trading day recorded yet.</div>'}
+      </div>
+      <div class="card">
+        <div class="card-title" style="margin:0 0 6px">Worst day</div>
+        ${worst ? `<div class="tiny muted">${dayLabel(worst.d)}</div>
+          <div class="shares-day-big ${Number(worst.roiPct) >= 0 ? 'up' : 'down'}">${Number(worst.roiPct) >= 0 ? '+' : '−'}${Math.abs(Number(worst.roiPct)).toFixed(4)}%</div>
+          <div class="tiny muted">turn-up ${Number(worst.turnPct) >= 0 ? '+' : '−'}${Math.abs(Number(worst.turnPct)).toFixed(2)}% · ${num(worst.profitCoins)} WC</div>`
+          : '<div class="tiny muted">No full trading day recorded yet.</div>'}
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="between"><div class="card-title" style="margin:0">Daily turn-up ledger</div>
+        <span class="tiny muted">${rows.length} day${rows.length === 1 ? '' : 's'}</span></div>
+      <div class="table-wrap"><table class="tbl shares-ledger"><thead><tr>
+        <th>Date</th><th class="num">Open</th><th class="num">Close</th><th class="num">Turn-up</th><th class="num">Plan ROI</th><th class="num">Profit</th>
+      </tr></thead><tbody>
+        ${rows.slice().reverse().slice(0, 20).map((d) => {
+          const t = Number(d.turnPct) || 0;
+          const r = Number(d.roiPct) || 0;
+          return `<tr><td>${d.d}</td><td class="num">$${num(d.open)}</td><td class="num">$${num(d.close)}</td>
+            <td class="num ${t >= 0 ? 'up' : 'down'}">${t >= 0 ? '+' : '−'}${Math.abs(t).toFixed(2)}%</td>
+            <td class="num ${r >= 0 ? 'up' : 'down'}">${r >= 0 ? '+' : '−'}${Math.abs(r).toFixed(4)}%</td>
+            <td class="num ${Number(d.profitCoins) >= 0 ? 'up' : 'down'}">${Number(d.profitCoins) >= 0 ? '+' : '−'}${num(Math.abs(Number(d.profitCoins) || 0))} WC</td></tr>`;
+        }).join('') || '<tr><td colspan="6" class="tiny muted">The ledger fills as daily candles close.</td></tr>'}
+      </tbody></table></div>
+    </div>
+
+    <div class="card"><div class="row" style="gap:8px;flex-wrap:wrap">
+      <a class="btn btn-soft" href="#/invest/shares">All investments</a>
+      <a class="btn btn-ghost" href="#/invest/shares">Back to plans</a>
+    </div></div>`;
+  };
+
+  S.mountPlanPage = function () {
+    const host = document.getElementById('sharesPlanPageChart');
+    if (!host || !window.WC_PRO_CHART || !WC_PRO_CHART.mountEquity) return;
+    const m = (location.hash || '').match(/^#\/invest\/shares\/plan\/([A-Za-z0-9_-]+)/i);
+    const inv = m ? planById(m[1]) : null;
+    if (!inv) { host.innerHTML = '<div class="shares-chart-empty">Plan unavailable.</div>'; return; }
+    const pts = planPoints(inv);
+    if (pts.length < 2) { host.innerHTML = '<div class="shares-chart-empty">The ROI curve appears after the first daily close.</div>'; return; }
+    WC_PRO_CHART.mountEquity(host, {
+      key: 'plan-page-' + inv.id, unit: 'wc', height: 320,
+      points: pts,
+      hud: { title: inv.planName + ' · ' + num(inv.returnPct, 2) + '% plan', matures: when(inv.endAt) },
+      lines: [{ price: Number(inv.amountCoins) || 0, color: '#3AA0FF', title: 'CAPITAL', style: 2 }],
+      getLive: () => planLive(inv)
+    });
+  };
+
+  S.paintPlanPage = function () {
+    if (!/^#\/invest\/shares\/plan\//.test(location.hash || '') || !S.state) return;
+    const m = (location.hash || '').match(/\/plan\/([A-Za-z0-9_-]+)/);
+    const inv = m ? planById(m[1]) : null;
+    if (!inv) return;
+    const live = planLive(inv);
+    const set = (sel, txt, cls) => {
+      const el = document.querySelector(sel);
+      if (!el) return;
+      el.textContent = txt;
+      if (cls) el.className = cls;
+    };
+    set('[data-plan-roi]', (live.roiPct >= 0 ? '+' : '−') + Math.abs(live.roiPct).toFixed(4) + '%', live.roiPct >= 0 ? 'up' : 'down');
+    set('[data-plan-profit]', (live.earnCoins >= 0 ? '+' : '−') + num(Math.abs(live.earnCoins)) + ' WC', live.earnCoins >= 0 ? 'up' : 'down');
+    set('[data-plan-payout]', num(live.value) + ' WC');
   };
 
   function completedHTML() {
@@ -472,7 +627,43 @@
       <button class="btn btn-primary btn-sm" data-act="shares-admin-save">${ic('check', 14)} Save plans</button>
       <button class="btn btn-ghost btn-sm" data-act="shares-admin-reload">${ic('refresh', 14)} Reload</button>
     </div>
-    <div class="tiny muted" style="margin-top:8px;line-height:1.6">Plan % is the fixed share of the WhaleChat share price move credited to investors (e.g. 3%). Profit = capital × plan % × price move, so it rises and falls with the market. Active investments keep their purchase terms.</div>`;
+    <div class="tiny muted" style="margin-top:8px;line-height:1.6">Plan % is the fixed share of the WhaleChat share price move credited to investors (e.g. 3%). Profit = capital × plan % × price move, so it rises and falls with the market. Active investments keep their purchase terms.</div>
+    ${adminLedgerHTML(a)}`;
+  }
+
+  function adminLedgerHTML(a) {
+    const plans = (a.plans || []).filter((p) => p.enabled !== false);
+    const rows = ((a.market && a.market.daily) || []).slice().reverse().slice(0, 30);
+    if (!rows.length) return '<div class="tiny muted" style="margin-top:12px">The daily turn-up ledger fills after the next share-price tick.</div>';
+    return `<div class="shares-ledger-block">
+      <div class="between" style="margin-top:16px;align-items:flex-end">
+        <div><b style="font-size:12.5px">Daily turn-up ledger</b>
+          <div class="tiny muted">WhaleChat share open → close each day, the resulting turn-up and every active plan's daily ROI.</div></div>
+        <span class="badge">${rows.length} day${rows.length === 1 ? '' : 's'}</span>
+      </div>
+      <div class="table-wrap" style="max-height:340px;overflow:auto">
+        <table class="tbl shares-ledger"><thead><tr>
+          <th>Date</th><th class="num">Open</th><th class="num">Close</th><th class="num">Turn-up</th>
+          ${plans.map((p) => `<th class="num">${escS(p.name)}<div class="tiny muted" style="font-weight:600">${num(p.returnPct, 2)}% plan</div></th>`).join('')}
+        </tr></thead><tbody>
+          ${rows.map((d) => {
+            const turn = Number(d.open) > 0 ? (Number(d.close) - Number(d.open)) / Number(d.open) : 0;
+            const tcls = turn >= 0 ? 'up' : 'down';
+            return `<tr>
+              <td>${escS(d.d)}</td>
+              <td class="num">$${escS(num(d.open))}</td>
+              <td class="num">$${escS(num(d.close))}</td>
+              <td class="num ${tcls}">${turn >= 0 ? '+' : '−'}${Math.abs(turn * 100).toFixed(2)}%</td>
+              ${plans.map((p) => {
+                const roi = (Number(p.returnPct) || 0) * turn;
+                return `<td class="num ${roi >= 0 ? 'up' : 'down'}">${roi >= 0 ? '+' : '−'}${Math.abs(roi).toFixed(4)}%</td>`;
+              }).join('')}
+            </tr>`;
+          }).join('')}
+        </tbody></table>
+      </div>
+      <div class="tiny muted" style="margin-top:5px">Daily ROI % = plan % × turn-up %. A plan's profit for the day = capital × daily ROI %.</div>
+    </div>`;
   }
 
   async function mountAdmin(force) {
@@ -573,7 +764,10 @@
     if (VIEWS.__wcSharesPatched) return true;
     const base = VIEWS.invest;
     VIEWS.invest = function (parts, params) {
-      if ((parts[1] || '') === 'shares') return S.view();
+      if ((parts[1] || '') === 'shares') {
+        if ((parts[2] || '') === 'plan') return S.planView(parts[3] || '');
+        return S.view();
+      }
       return base.apply(this, arguments);
     };
     VIEWS.__wcSharesPatched = true;
@@ -651,6 +845,7 @@
     const hist = document.getElementById('sharesHistoryMount');
     if (hist) hist.innerHTML = completedHTML();
     try { S.mountPerf(); } catch (e) {}
+    try { S.mountPlanPage(); } catch (e) {}
   }
 
   function init() {
@@ -668,6 +863,7 @@
               const live = document.getElementById('sharesLiveMount');
               if (live && S.state) live.innerHTML = heroHTML() + marketChartHTML() + activeMountHTML();
               try { S.mountPerf(); } catch (e) {}
+              try { S.mountPlanPage(); } catch (e) {}
             });
           } else if (!S.state) {
             load(false).then(() => { if (S.state && (location.hash || '').startsWith('#/invest') && !onSharesPage()) { try { render(); } catch (e) {} } });
@@ -685,6 +881,7 @@
       load(true).then(() => refreshLiveMount());
     }, 10000);
     setInterval(tickEarnings, 1000);
+    setInterval(() => { try { S.paintPlanPage(); } catch (e) {} }, 1000);
   }
 
   (function styles() {
@@ -747,7 +944,14 @@
     .shares-dash-ic{width:32px;height:32px;border-radius:10px;display:flex;align-items:center;justify-content:center;
       background:rgba(139,123,255,.14);color:#8b7bff;flex:none}
     .shares-dash .up{color:var(--success)}
-    @media(max-width:560px){.shares-plan-grid{grid-template-columns:1fr}.shares-hero-grid{grid-template-columns:1fr 1fr}.shares-stats{grid-template-columns:1fr 1fr}.shares-plan-meta{grid-template-columns:1fr 1fr}}
+    .shares-planpage-chart{min-height:320px;margin-top:10px}
+    .shares-two{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+    .shares-day-big{font-size:22px;font-weight:800;font-variant-numeric:tabular-nums;margin:3px 0}
+    .shares-day-big.up{color:var(--success)} .shares-day-big.down{color:var(--danger)}
+    .shares-ledger th,.shares-ledger td{font-size:10px;padding:5px 6px;white-space:nowrap}
+    .shares-ledger td.num,.shares-ledger th.num{text-align:right;font-variant-numeric:tabular-nums}
+    .shares-ledger td.up{color:var(--success)} .shares-ledger td.down{color:var(--danger)}
+    @media(max-width:560px){.shares-plan-grid{grid-template-columns:1fr}.shares-hero-grid{grid-template-columns:1fr 1fr}.shares-stats{grid-template-columns:1fr 1fr}.shares-plan-meta{grid-template-columns:1fr 1fr}.shares-two{grid-template-columns:1fr}}
     `;
     document.head.appendChild(st);
   })();
