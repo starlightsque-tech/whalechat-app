@@ -1,8 +1,8 @@
 {
-  "version": "3.31.2",
-  "build": "2026-11-14T12:43:04Z",
+  "version": "3.30.0",
+  "build": "2026-11-14T13:41:12Z",
   "file": "whalechat.html",
-  "notes": "Bot profile pictures (advanced AI art), and an auto-updating admin trade & investment guide.",
-  "releasedAt": "2026-11-14T12:43:04.186Z",
+  "notes": "WhaleChat 3.30.0 - bot assistants with avatars/usernames/HOT tools, account health analysis chart, updated admin trade guide with shares payout flows.",
+  "releasedAt": "2026-11-14T13:41:12Z",
   "minimum": "3.0.0"
 }
