@@ -33,6 +33,30 @@ whalechat-release.apk   signed release APK (v3.2.0, code 6)
 Dockerfile · docker-compose.yml · Caddyfile · render.yaml
 ```
 
+### Any-device access + non-disruptive updates (`public/session-guard.js`)
+
+Injected last by `scripts/prepare-assets.js` (marker `wc-session-guard`).
+
+**Any device, any time.** Sign up / sign in works from any browser with the link — there is no
+device registration step. If a login is submitted while the server database is still syncing, the
+guard holds the form, forces a refresh, then re-submits it, so a brand-new device never sees a false
+“no account found”. A backup of the session is kept in `sessionStorage`, so a sync race cannot log
+someone out.
+
+**Updates never interrupt.** `applyUpdate()` is wrapped: while a field is focused, a form is dirty, a
+modal is open or the user typed in the last 9 s, the update is deferred (a toast explains why) and an
+idle watcher applies it 15 s after the screen goes quiet — never on the sign-up/login screens. Every
+field, checkbox, select, scroll position and route is snapshotted to `sessionStorage` while typing and
+restored after *any* reload (update, admin force-refresh, crash, offline bounce), so a refresh is
+invisible to the user.
+
+**Always alive.** A 40 s keep-alive hits `/api/health` (and re-refreshes the sync when the stream is
+offline), plus a 45 s SSE watchdog. Combined with `auto_stop_machines = false` on Fly, one machine is
+always warm.
+
+**Deploy:** see `DEPLOY-FLY.md` (`fly.toml` ships with a `/data` volume, HTTP health checks,
+always-on machine, and `FINNHUB_API_KEY` as a secret).
+
 ## Market data (Finnhub + 24/7 OTC fallback)
 
 `Admin → Stocks → Market data · Finnhub` stores three server-side settings:
