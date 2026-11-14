@@ -1,8 +1,8 @@
 {
-  "version": "3.36.4",
-  "build": "2026-11-14T07:20:00Z",
+  "version": "3.36.5",
+  "build": "2026-11-14T09:05:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.36.4 — sign-up reliably works for every new visitor: a shared phone number no longer blocks registration, typed fields survive in-app re-renders, and flaky connections sync themselves without scary errors.",
-  "releasedAt": "2026-11-14T07:20:00Z",
+  "notes": "WhaleChat 3.36.5 — sign-up crash fixed: accounts with missing profile fields can no longer abort registration or login. Any new visitor can create an account and sign in.",
+  "releasedAt": "2026-11-14T09:05:00Z",
   "minimum": "3.0.0"
 }
