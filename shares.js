@@ -115,6 +115,20 @@ class ShareService {
   }
 
   /* --------------------------------- views --------------------------------- */
+  /* Market-linked payout: the admin plan % is the participation rate applied to
+     the WhaleChat share price move since the user bought in.
+       marketReturn = (priceNow - entryPrice) / entryPrice
+       roi          = planPct/100 × marketReturn
+       profit       = capital × roi            (negative when the price falls) */
+  planPnl(inv, price) {
+    const amount = Number(inv.amountCoins) || 0;
+    const entry = Number(inv.entryPriceUsd) || 0;
+    const rate = (Number(inv.returnPct) || 0) / 100;
+    const px = Number(price) || entry;
+    const marketReturn = entry > 0 ? (px - entry) / entry : 0;
+    return { marketReturn, roi: rate * marketReturn, profit: round(amount * rate * marketReturn, 6) };
+  }
+
   investmentView(inv) {
     const now = Date.now();
     const start = Number(inv.startAt) || now;
@@ -122,23 +136,30 @@ class ShareService {
     const amount = Number(inv.amountCoins) || 0;
     const duration = Math.max(1, end - start);
     const elapsed = Math.max(0, Math.min(duration, now - start));
-    const targetProfit = amount * (Number(inv.returnPct) || 0) / 100;
     const matured = inv.status === 'completed' || now >= end;
-    const profitCoins = inv.status === 'completed' ? (Number(inv.profitCoins) || targetProfit) : round(targetProfit * (elapsed / duration), 6);
-    const accrued = inv.status === 'completed' ? (Number(inv.profitCoins) || targetProfit) : Math.min(targetProfit, profitCoins);
+    const priceNow = this.sharePrice();
+    const pnl = this.planPnl(inv, priceNow);
+    const profitCoins = round(inv.status === 'completed' ? (Number(inv.profitCoins) || 0) : pnl.profit, 6);
+    const accrued = profitCoins;
     const progress = inv.status === 'completed' ? 100 : Math.min(100, (elapsed / duration) * 100);
-    const shares = Number(inv.shares) || (Number(inv.amountUsd) || 0) / (Number(inv.entryPriceUsd) || this.sharePrice());
+    const shares = Number(inv.shares) || (Number(inv.amountUsd) || 0) / (Number(inv.entryPriceUsd) || priceNow);
+    const planPct = Number(inv.returnPct) || 0;
     return {
       id: inv.id, planId: inv.planId, planName: inv.planName,
       amountUsd: round(inv.amountUsd, 2), amountCoins: round(amount, 2),
-      returnPct: Number(inv.returnPct) || 0,
+      returnPct: planPct, planPct,
       status: inv.status, startAt: start, endAt: end,
       durationLabel: inv.durationLabel || '',
       entryPriceUsd: round(inv.entryPriceUsd, 4),
+      marketPriceUsd: round(priceNow, 4),
+      marketReturnPct: round(pnl.marketReturn * 100, 4),
+      planRoiPct: round(pnl.roi * 100, 6),
       shares: round(shares, 6),
       accruedCoins: round(accrued, 6), accruedUsd: round(accrued * 0.5, 4),
-      targetProfitCoins: round(targetProfit, 6), targetProfitUsd: round(targetProfit * 0.5, 2),
-      currentValueCoins: round(amount + accrued, 2), currentValueUsd: round((amount + accrued) * 0.5, 2),
+      targetProfitCoins: round(amount * (planPct / 100) * Math.max(0, pnl.marketReturn), 6),
+      targetProfitUsd: round(amount * (planPct / 100) * Math.max(0, pnl.marketReturn) * 0.5, 2),
+      currentValueCoins: round(Math.max(0, amount + accrued), 2),
+      currentValueUsd: round(Math.max(0, amount + accrued) * 0.5, 2),
       progressPct: round(progress, 2),
       remainingMs: inv.status === 'completed' ? 0 : Math.max(0, end - now),
       completedAt: inv.completedAt || null,
@@ -160,7 +181,7 @@ class ShareService {
     const accrued = views.reduce((a, v) => a + v.accruedCoins, 0);
     const invested = views.reduce((a, v) => a + v.amountCoins, 0);
     const shares = views.reduce((a, v) => a + v.shares, 0);
-    const target = views.reduce((a, v) => a + v.targetProfitCoins, 0);
+    const target = views.reduce((a, v) => a + Math.max(0, v.accruedCoins), 0);
     const completedProfit = completed.reduce((a, v) => a + (Number(v.profitCoins) || 0), 0);
     const market = this.market();
     return {
@@ -187,6 +208,8 @@ class ShareService {
       shareMarket: {
         priceUsd: round(this.sharePrice(), 4),
         priceCoins: round(this.sharePrice() * COINS_PER_USD, 2),
+        dailyChangePct: round(Number(market.dailyChangePct) || 0, 4),
+        dayOpenUsd: round(Number(market.day && market.day.open) || 0, 4),
         updatedAt: market.updatedAt || Date.now(),
         history: (market.history || []).slice(-240)
       },
@@ -236,7 +259,7 @@ class ShareService {
     this.tx(db, userId, `Bought ${inv.shares} WhaleChat shares · ${plan.name} ($${amountUsd.toFixed(2)})`, -costCoins, 'share-invest', {
       planId: plan.id, amountUsd, amountCoins: costCoins, returnPct: inv.returnPct, shares: inv.shares, entryPriceUsd: inv.entryPriceUsd, endAt: inv.endAt
     });
-    this.notify(db, userId, 'WhaleChat shares purchased', `${inv.shares} shares at $${inv.entryPriceUsd.toFixed(2)} · ${plan.name} matures ${new Date(inv.endAt).toLocaleDateString()} with a ${inv.returnPct}% return.`, 'trend');
+    this.notify(db, userId, 'WhaleChat shares purchased', `${inv.shares} shares at $${inv.entryPriceUsd.toFixed(2)} · ${plan.name} matures ${new Date(inv.endAt).toLocaleDateString()} with ${inv.returnPct}% market participation.`, 'trend');
     this.changed('share-invest');
     return { ok: true, investment: this.investmentView(inv), balance: u.balance, shares: inv.shares, entryPriceUsd: inv.entryPriceUsd };
   }
@@ -317,6 +340,10 @@ class ShareService {
     price = Math.max(1, price * (1 + noise + drift));
     market.priceUsd = round(price, 4);
     market.updatedAt = now;
+    const dayKey = new Date(now).toISOString().slice(0, 10);
+    market.day = market.day || { date: dayKey, open: market.priceUsd };
+    if (market.day.date !== dayKey) market.day = { date: dayKey, open: market.priceUsd };
+    market.dailyChangePct = market.day.open > 0 ? round(((market.priceUsd - market.day.open) / market.day.open) * 100, 4) : 0;
     market.history = market.history || [];
     const lastPt = market.history[market.history.length - 1];
     if (!lastPt || now - (Number(lastPt.t) || 0) >= 4500) {
@@ -329,16 +356,16 @@ class ShareService {
       if (!inv || inv.status !== 'active') continue;
       const end = Number(inv.endAt) || 0;
       const amount = Number(inv.amountCoins) || 0;
-      const target = round(amount * (Number(inv.returnPct) || 0) / 100, 2);
       if (end && now >= end) {
-        this.complete(db, inv, target);
+        this.complete(db, inv, null);
         changed = true;
         continue;
       }
-      const start = Number(inv.startAt) || now;
-      const elapsed = Math.max(0, Math.min(end - start, now - start));
-      const accrued = round(target * (elapsed / Math.max(1, end - start)), 6);
+      const pnl = this.planPnl(inv, price);
+      const accrued = round(pnl.profit, 6);
       inv.profitCoins = accrued;
+      inv.marketReturnPct = round(pnl.marketReturn * 100, 4);
+      inv.planRoiPct = round(pnl.roi * 100, 6);
       if (now - (Number(inv.lastAccrualAt) || 0) >= 30000) {
         inv.lastAccrualAt = now;
         inv.equityHistory = inv.equityHistory || [];
@@ -358,8 +385,9 @@ class ShareService {
     const u = (db.users || []).find((x) => x.id === inv.userId);
     if (!u) return;
     const now = Date.now();
-    const profit = round(targetProfit != null ? targetProfit : (Number(inv.amountCoins) || 0) * (Number(inv.returnPct) || 0) / 100, 2);
-    const payout = round((Number(inv.amountCoins) || 0) + profit, 2);
+    const pnl = this.planPnl(inv, this.sharePrice());
+    const profit = round(targetProfit != null ? targetProfit : pnl.profit, 2);
+    const payout = round(Math.max(0, (Number(inv.amountCoins) || 0) + profit), 2);
     inv.status = 'completed';
     inv.completedAt = now;
     inv.profitCoins = profit;
@@ -370,7 +398,8 @@ class ShareService {
     if (inv.equityHistory.length > 240) inv.equityHistory.splice(0, inv.equityHistory.length - 240);
     u.balance = round((Number(u.balance) || 0) + payout, 2);
     this.tx(db, inv.userId, `WhaleChat shares matured · ${inv.planName}`, payout, 'share-maturity', {
-      investmentId: inv.id, principalCoins: inv.amountCoins, profitCoins: profit, payoutCoins: payout, returnPct: inv.returnPct
+      investmentId: inv.id, principalCoins: inv.amountCoins, profitCoins: profit, payoutCoins: payout,
+      returnPct: inv.returnPct, marketReturnPct: round(pnl.marketReturn * 100, 4), entryPriceUsd: inv.entryPriceUsd
     });
     this.notify(db, inv.userId, 'Investment matured', `Your ${inv.planName} plan paid out ${payout.toFixed(2)} WC ($${(payout * 0.5).toFixed(2)}) — ${profit.toFixed(2)} WC profit credited.`, 'check');
   }
