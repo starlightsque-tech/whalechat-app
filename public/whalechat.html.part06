@@ -163,7 +163,7 @@ VIEWS.profile = function () {
     </div>
     <div class="section-title mt22"><h3>Quick navigation</h3></div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px">
-      ${[['bag', 'Marketplace', '#/market'], ['truck', 'My orders', '#/orders'], ['cart', 'Cart', '#/cart'], ['chat', 'Chats', '#/home'], ['status', 'Status', '#/status'], ['bell', 'Notifications', '#/notifications'], ['gift', 'Referrals', '#/referrals'], ['settings', 'Settings', '#/settings']]
+      ${[['bag', 'Marketplace', '#/market'], ['truck', 'My orders', '#/orders'], ['cart', 'Cart', '#/cart'], ['chat', 'Chats', '#/home'], ['status', 'Status', '#/status'], ['bell', 'Notifications', '#/notifications'], ['gift', 'Referrals', '#/referrals'], ['settings', 'Settings', '#/settings'], ['edit', 'Appearance', '#/settings']]
         .map(([i, t, h]) => `<a href="${h}" class="card card-hover" style="padding:14px;display:flex;flex-direction:column;gap:9px;align-items:flex-start">
           <span style="width:32px;height:32px;border-radius:9px;background:var(--surface-2);color:var(--accent);display:flex;align-items:center;justify-content:center">${ic(i, 16)}</span>
           <span class="small" style="font-weight:600">${t}</span></a>`).join('')}
@@ -294,6 +294,7 @@ VIEWS.settings = function () {
   const u = me();
   const notif = u.settings && u.settings.notifications !== false;
   const theme = document.documentElement.getAttribute('data-theme');
+  const tsize = (u.settings && u.settings.textSize) || document.documentElement.getAttribute('data-textsize') || 'default';
   return `<div class="page-head"><div><button class="btn btn-ghost btn-sm mb10" data-act="back">${ic('back', 14)} Back</button>
       <h1>Settings</h1><p>Manage your account, security and notifications.</p></div></div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px" class="wallet-grid">
@@ -320,6 +321,22 @@ VIEWS.settings = function () {
           <button class="list-item" data-act="logout" style="width:100%;text-align:left;color:var(--danger)">${ic('logout', 16)} <span class="grow"><span class="small" style="font-weight:600;display:block">Sign out</span><span class="tiny muted">End this session</span></span></button>
         </div>
       </div>
+    </div>
+    <div class="card mt16" id="appearanceCard">
+      <div class="between wrap gap10">
+        <div><h3 style="font-size:15px">Appearance</h3>
+          <p class="tiny muted mt6">Text size applies to the whole app and syncs with your account on every device.</p></div>
+        <span class="badge" data-ts-label>${tsize === 'compact' ? 'Compact' : tsize === 'large' ? 'Large' : 'Default'}</span>
+      </div>
+      <div class="ts-row" role="radiogroup" aria-label="Text size">
+        <button class="ts-opt ${tsize === 'compact' ? 'on' : ''}" data-act="text-size" data-size="compact" role="radio" aria-checked="${tsize === 'compact'}">
+          <span class="ts-a ts-a-sm">A</span><b>Compact</b><i>Smaller, denser text</i></button>
+        <button class="ts-opt ${tsize === 'default' ? 'on' : ''}" data-act="text-size" data-size="default" role="radio" aria-checked="${tsize === 'default'}">
+          <span class="ts-a">A</span><b>Default</b><i>Balanced, recommended</i></button>
+        <button class="ts-opt ${tsize === 'large' ? 'on' : ''}" data-act="text-size" data-size="large" role="radio" aria-checked="${tsize === 'large'}">
+          <span class="ts-a ts-a-lg">A</span><b>Large</b><i>Bigger, easier reading</i></button>
+      </div>
+      <div class="tiny muted mt10">Preview — “WhaleChat: chat, shop and get paid.” Your choice is remembered per account and per device.</div>
     </div>
     <div class="card mt16">
       <div class="between wrap gap10">
@@ -368,6 +385,10 @@ App.toggleNotif = function () {
   render();
 };
 App.toggleTheme = function () { toggleTheme(); };
+App.textSize = function (id, ds) {
+  applyTextSize(ds && ds.size);
+  render();
+};
 App.changePassword = function () {
   openModal(modalShell('Change password', `
     ${field('Current password', 'cpOld', { type: 'password', icon: 'lock' })}
