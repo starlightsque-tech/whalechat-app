@@ -46,9 +46,8 @@
       if (/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)) return true;
       if (ae.isContentEditable) return true;
     }
-    /* a dirty field, an open modal with inputs, or a half-filled auth form */
-    if (G.dirty.size) return true;
-    if ($('.modal input, .modal textarea, .update-sheet input')) return true;
+    /* a modal is open: let them finish, the sheet would cover it */
+    if ($('.modal')) return true;
     return false;
   };
 
@@ -221,6 +220,16 @@
     if (typeof realPrompt === 'function') {
       window.showUpdatePrompt = function (v, opts) {
         const wantsAuto = !!(opts && opts.auto);
+        G.pendingVersion = (v && v.version) || G.pendingVersion;
+        if (G.isBusy()) {
+          /* an update is ready, but the sheet would cover what they are doing:
+             leave a small pill instead and open the sheet once the screen is idle */
+          G.pendingPrompt = v;
+          G.pendingAuto = G.pendingAuto || wantsAuto;
+          showUpdatePill(G.pendingVersion);
+          if (wantsAuto) scheduleIdleApply();
+          return false;
+        }
         const out = realPrompt.call(this, v, Object.assign({}, opts, { auto: false }));
         if (wantsAuto) { G.pendingAuto = true; scheduleIdleApply(); }
         return out;
@@ -228,6 +237,27 @@
       window.showUpdatePrompt.__wcGuarded = true;
     }
     return true;
+  }
+
+  function showUpdatePill(version) {
+    if (document.getElementById('wcUpdatePill')) return;
+    const pill = document.createElement('button');
+    pill.id = 'wcUpdatePill';
+    pill.type = 'button';
+    pill.innerHTML = '&#8635; Update ready' + (version ? ' · ' + version : '');
+    pill.style.cssText = 'position:fixed;left:16px;bottom:16px;z-index:9998;display:flex;align-items:center;gap:6px;' +
+      'padding:9px 13px;border-radius:999px;border:1px solid rgba(46,230,201,.35);background:rgba(10,26,32,.94);' +
+      'color:#2ee6c9;font:600 12px Inter,-apple-system,Segoe UI,Roboto,sans-serif;cursor:pointer;' +
+      'box-shadow:0 10px 24px rgba(0,0,0,.35);backdrop-filter:blur(8px)';
+    pill.onclick = () => {
+      pill.remove();
+      if (!G.pendingPrompt) return;
+      const v = G.pendingPrompt;
+      G.pendingPrompt = null;
+      try { if (typeof window.showUpdatePrompt === 'function') window.showUpdatePrompt(v, { auto: false }); } catch (e) {}
+    };
+    document.body.appendChild(pill);
+    setTimeout(() => { const p = document.getElementById('wcUpdatePill'); if (p) p.style.opacity = '0.85'; }, 6000);
   }
 
   let idleTimer = null;
@@ -238,7 +268,11 @@
       /* never reload while the tab is hidden mid-typing unless it is truly idle */
       if (G.isBusy()) return;
       const inAuth = /^#\/(login|signup|forgot|reset|set-pin)/.test(location.hash || '');
-      if (inAuth && !document.hidden) return;
+      if (inAuth && !document.hidden) return;   /* never reload mid-sign-up */
+      if (G.pendingPrompt) {
+        const pill = document.getElementById('wcUpdatePill');
+        if (pill) pill.remove();
+      }
       saveDraft(true);
       G.pendingAuto = false;
       clearInterval(idleTimer); idleTimer = null;
