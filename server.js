@@ -377,6 +377,84 @@ async function dispatchPushes(pushes, db) {
   }
 }
 
+
+/* --------------------------------------------------------------------------
+   Auto-generated trade & investment guide. Built from the live database on
+   every request, so it always matches the current bot tiers, fees and rules.
+   -------------------------------------------------------------------------- */
+function buildTradeGuide() {
+  const db = store.db || {};
+  const bs = db.botSettings || {};
+  const tiers = (db.botTiers || []).slice().sort((a, b) => (Number(a.accuracy) || 0) - (Number(b.accuracy) || 0));
+  const stocks = db.stocks || [];
+  const tradeFee = Number((db.invest && (db.invest.feePct != null ? db.invest.feePct : db.invest.tradeFeePct)) || 0);
+  const stamina = (acc) => Math.max(8, Math.min(42, 8 + ((Number(acc) || 0) - 40) * 0.55));
+  const cooldown = (acc) => Math.max(15, Math.min(45, Math.round(40 - (Number(acc) || 50) * 0.2)));
+  const tierRows = tiers.map((t) => `<tr>
+      <td><b>${String(t.name || '').replace(/[<>&]/g, '')}</b><div class="tiny muted">@${String(t.username || 'bot').replace(/[<>&]/g, '')}</div></td>
+      <td>${Number(t.accuracy) || 0}%</td>
+      <td>$${(Number(t.priceUsd) || 0).toFixed(2)}</td>
+      <td>${Math.round(stamina(t.accuracy))} trades</td>
+      <td>${cooldown(t.accuracy)} min</td>
+    </tr>`).join('');
+
+  const sections = [
+    { id: 'overview', title: '1. What WhaleChat is', html: `
+      <p>WhaleChat is one app for messaging, a marketplace, a Whale Coin wallet and a simulated investing desk. Everything is priced in <b>Whale Coin (WC)</b>, with a fixed reference rate of <b>1 WC = $0.50 USD</b>. The wallet, marketplace and investing pages all read and write the same balance, so money moves instantly between them.</p>
+      <p>Users can chat with contacts, buy from vendors, top up with crypto or bank transfer, and put WC to work in the stock simulator or with automated trading bots.</p>` },
+    { id: 'wallet', title: '2. Wallet, deposits and withdrawals', html: `
+      <ul>
+        <li><b>Deposits</b> — the user picks a crypto or bank method, pays to the company account (QR codes are shown when the admin uploads one) and submits a reference. An admin reviews and approves it; only then is WC credited.</li>
+        <li><b>Withdrawals</b> — paid in USDT to the chosen network, protected by the user's withdrawal PIN and reviewed by an admin.</li>
+        <li><b>Referrals</b> — a 10 WC bonus is credited after the invited friend's first approved deposit.</li>
+        <li><b>Reserved capital</b> — while a trading bot runs, its allocated WC is locked out of the spendable balance and returned when the bot stops.</li>
+      </ul>` },
+    { id: 'stocks', title: '3. Stock investing flow', html: `
+      <p>The Invest tab is a simulated brokerage on top of the wallet.</p>
+      <ol>
+        <li><b>Explore</b> — the market lists ${stocks.length} instruments with live simulated prices that move every few seconds.</li>
+        <li><b>Buy</b> — enter an amount in USD or WC (or a share quantity). The cost, fee and remaining balance are shown before confirming with the transaction PIN.</li>
+        <li><b>Hold</b> — shares and average price are stored per user; the portfolio page shows value, daily change, allocation and profit/loss.</li>
+        <li><b>Sell</b> — proceeds (minus the same fee) are credited to WC instantly; the trade is recorded with its realised P/L.</li>
+        <li><b>Orders</b> — market orders execute immediately; limit orders wait for the target price. History keeps every buy and sell.</li>
+      </ol>
+      <p>${tradeFee ? 'The current trading fee is <b>' + tradeFee + '%</b> per side, set by the admin.' : 'Trading fees are currently disabled by the admin.'}</p>` },
+    { id: 'bots', title: '4. Trading bots and accuracy', html: `
+      <p>Bots are subscription products that trade a reserved slice of the user's balance automatically, including while the app is closed. Each bot has an <b>accuracy</b> that is its target win rate.</p>
+      <table class="tbl"><thead><tr><th>Bot</th><th>Accuracy</th><th>Price</th><th>Stamina</th><th>Rest</th></tr></thead><tbody>${tierRows}</tbody></table>
+      <p><b>How a trade is decided:</b> every interval the bot stakes ${Number(bs.stakePct) || 20}% of its pool. It wins when a random roll is below its <i>effective</i> accuracy and gains ${Number(bs.winPct) || 4}% of the stake; otherwise it loses ${Number(bs.lossPct) || 6}% of the stake. Wins and losses both happen for every bot — accuracy only shifts the odds.</p>
+      <p><b>Stamina scales with accuracy.</b> A high-accuracy bot can place far more trades before tiring: roughly <b>${Math.round(stamina(85))}</b> trades at 85% versus <b>${Math.round(stamina(45))}</b> at 45%.</p>` },
+    { id: 'health', title: '5. Health, fatigue and cooling down', html: `
+      <p>Every trade consumes energy. As energy falls, the bot suffers a <b>fatigue penalty</b>: effective accuracy = accuracy × (0.6 + 0.4 × energy/100). A tired 85% bot behaves like ~51% at zero energy, which is why losses start to outnumber wins when a bot runs too long.</p>
+      <p><b>Account health</b> combines energy (70%) with the profit/loss trend (30%) and is charted on the bot profile. Guidance:</p>
+      <ul>
+        <li><b>65–100%</b> — healthy, let it run.</li>
+        <li><b>45–65%</b> — cooling down soon is recommended.</li>
+        <li><b>Below 45% or energy below 35%</b> — the <b>Cool down &amp; refresh</b> button appears; stop it before losses grow.</li>
+      </ul>
+      <p>Cooling down returns the capital, stops trading and enforces a rest of about <b>${cooldown(tiers.length ? tiers[tiers.length - 1].accuracy : 50)}</b> minutes for the strongest bot and longer for weaker ones. After the rest the bot starts again with full energy and normal accuracy. A bot that hits zero energy stops itself to protect the user's balance.</p>` },
+    { id: 'admin', title: '6. Admin controls that change this guide', html: `
+      <p>This guide is regenerated from the live database, so it updates automatically whenever the admin changes anything:</p>
+      <ul>
+        <li>Trading bots → accuracy, price, username, picture, HOT flag, interval.</li>
+        <li>Bot settings → stake %, win %, loss %, auto-stop threshold, minimum allocation.</li>
+        <li>Stocks → listings, prices, paused symbols, trading fee.</li>
+        <li>Wallet settings → deposit methods, QR codes, withdrawal networks.</li>
+      </ul>
+      <p>Current bot defaults: stake <b>${Number(bs.stakePct) || 20}%</b>, win <b>${Number(bs.winPct) || 4}%</b>, loss <b>${Number(bs.lossPct) || 6}%</b>, auto-stop at <b>${Number(bs.minPoolPct) || 10}%</b> of capital, minimum allocation <b>${Number(bs.minCapitalCoins) || 5} WC</b>.</p>` },
+    { id: 'risk', title: '7. Risk and compliance notes', html: `
+      <p>All stock and bot trading in this build is <b>simulated</b> for demonstration. Accuracy is a target, not a guarantee, and no result is financial advice. Before handling real money, connect a licensed brokerage, add server-side authentication, and review the wallet flow with a compliance advisor.</p>
+      <p>Keep the admin password and transaction PINs private; every admin action is written to the audit log.</p>` }
+  ];
+  return {
+    ok: true,
+    version: 'guide-' + Date.now(),
+    generatedAt: Date.now(),
+    stats: { tiers: tiers.length, stocks: stocks.length, feePct: tradeFee },
+    sections
+  };
+}
+
 async function api(req, res, pathname, query) {
   if (pathname === '/api/health' && req.method === 'GET') {
     return json(res, 200, { ok: true, app: 'whalechat', version: readJSON(path.join(PUBLIC_DIR, 'version.json'), {}).version || null, build: (readJSON(path.join(PUBLIC_DIR, 'version.json'), {}).build) || BUILD, uptimeSec: Math.floor((Date.now() - STARTED) / 1000), rev: store.rev, users: (store.db && store.db.users) ? store.db.users.length : 0, clients: clients.size, push: !!webpush, publicUrl: PUBLIC_URL || null, storage: pool ? 'postgres' : 'file', email: !!(email && email.configured()), market: market.status() });
@@ -728,6 +806,11 @@ async function api(req, res, pathname, query) {
     } catch (e) { return json(res, 400, { ok: false, error: e.message }); }
   }
 
+  // --- auto-updating trading & investment guide -------------------------
+  if (pathname === '/api/guide' && req.method === 'GET') {
+    try { return json(res, 200, buildTradeGuide()); }
+    catch (e) { return json(res, 500, { ok: false, error: e.message }); }
+  }
   // --- trading bots (server-side simulation) ---
   if (pathname === '/api/bots/state' && req.method === 'GET') {
     if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
