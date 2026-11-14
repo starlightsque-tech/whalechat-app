@@ -1,8 +1,8 @@
 {
-  "version": "3.31.1",
-  "build": "2026-11-14T12:26:22Z",
+  "version": "3.31.2",
+  "build": "2026-11-14T12:43:04Z",
   "file": "whalechat.html",
-  "notes": "Admin trading-bot screen: upload/change bot profile pictures, usernames and hot-assistant flags.",
-  "releasedAt": "2026-11-14T12:26:22.442Z",
+  "notes": "Bot profile pictures (advanced AI art), and an auto-updating admin trade & investment guide.",
+  "releasedAt": "2026-11-14T12:43:04.186Z",
   "minimum": "3.0.0"
 }
