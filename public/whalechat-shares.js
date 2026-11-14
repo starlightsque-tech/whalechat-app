@@ -175,6 +175,7 @@
         <div><span>Min</span><b>$${num(p.minUsd)} <i class="tiny muted">(${num(p.minCoins)} WC)</i></b></div>
         <div><span>Max</span><b>$${num(p.maxUsd)} <i class="tiny muted">(${num(p.maxCoins)} WC)</i></b></div>
       </div>
+      <div class="tiny muted" style="margin-top:6px">Example: $100 → <b>$${num(100 + 100 * (Number(p.returnPct) || 0) / 100)}</b> at maturity</div>
       <button class="btn btn-primary btn-sm" style="width:100%;margin-top:9px" data-act="shares-open" data-id="${escS(p.id)}">
         Invest in ${escS(p.name)}
       </button>
@@ -323,6 +324,62 @@
     </div>`;
   }
 
+  function exampleHTML(plans) {
+    const p = (plans || [])[0] || { id: '', name: 'Growth plan', returnPct: 10, durationLabel: '3 months' };
+    const exRate = Math.max(0, Number(p.returnPct) || 0);
+    const exProfit = 100 * exRate / 100;
+    const exPayout = 100 + exProfit;
+    return `<div class="card" id="sharesExampleCard">
+      <div class="between" style="align-items:flex-start;gap:10px">
+        <div><div class="card-title" style="margin:0">How your investment profit is calculated</div>
+          <div class="tiny muted" style="margin-top:3px">Principal × plan return % = profit · principal + profit = maturity payout</div></div>
+        <span class="badge badge-accent">Worked example</span>
+      </div>
+      <div class="shares-example-grid">
+        <div class="field" style="margin:0"><label class="label">Plan</label>
+          <select class="input" id="shareExPlan" onchange="App.sharesExample()">
+            ${(plans || []).map((x) => `<option value="${escS(x.id)}">${escS(x.name)} · ${num(x.returnPct, 0)}%</option>`).join('') || `<option value="">${escS(p.name)} · ${num(p.returnPct, 0)}%</option>`}
+          </select></div>
+        <div class="field" style="margin:0"><label class="label">Example investment (USD)</label>
+          <div class="input-wrap"><span class="inv-prefix">$</span><input class="input" id="shareExAmount" type="number" min="1" step="1" value="100" oninput="App.sharesExample()"/></div></div>
+      </div>
+      <div class="shares-example-steps">
+        <div><span>1 · Principal</span><b data-share-ex-principal>$100.00 · 200 WC</b></div>
+        <div><span>2 · Plan return</span><b data-share-ex-rate>${num(exRate, 0)}%</b></div>
+        <div><span>3 · Profit</span><b class="up" data-share-ex-profit>+$${num(exProfit)} · ${num(exProfit * 2)} WC</b></div>
+        <div><span>4 · Maturity payout</span><b class="up" data-share-ex-payout>$${num(exPayout)} · ${num(exPayout * 2)} WC</b></div>
+      </div>
+      <div class="tiny muted" style="margin-top:8px;line-height:1.6">
+        Example: invest <b>$100 (200 WC)</b> in a <b data-share-ex-rate-inline>${num(p.returnPct, 0)}%</b> plan for
+        <b>${escS(p.durationLabel || 'the plan duration')}</b>. At maturity the app credits
+        <b data-share-ex-profit-inline>+$${num(exProfit)} (${num(exProfit * 2)} WC)</b> profit plus your <b>$100</b> principal —
+        total <b data-share-ex-payout-inline>$${num(exPayout)} (${num(exPayout * 2)} WC)</b>. 1 WC = $0.50.
+      </div>
+      <div class="tiny muted" style="margin-top:4px">Profit accrues daily over the plan duration and is paid automatically when the plan matures. The example assumes the plan is held to maturity.</div>
+    </div>`;
+  }
+
+  function paintShareExample() {
+    const sel = document.getElementById('shareExPlan');
+    const amt = document.getElementById('shareExAmount');
+    if (!sel || !amt || !S.state) return;
+    const plans = S.state.plans || [];
+    const plan = plans.find((p) => p.id === sel.value) || plans[0] || { returnPct: 10, durationLabel: 'the plan duration' };
+    const usd = Math.max(0, Number(amt.value) || 0);
+    const rate = Math.max(0, Number(plan.returnPct) || 0);
+    const profitUsd = usd * rate / 100;
+    const payoutUsd = usd + profitUsd;
+    const set = (sel2, txt) => { const el = document.querySelector(sel2); if (el) el.textContent = txt; };
+    set('[data-share-ex-principal]', '$' + num(usd) + ' · ' + num(usd * 2) + ' WC');
+    set('[data-share-ex-rate]', rate + '%');
+    set('[data-share-ex-rate-inline]', rate + '%');
+    set('[data-share-ex-profit]', '+$' + num(profitUsd) + ' · ' + num(profitUsd * 2) + ' WC');
+    set('[data-share-ex-payout]', '$' + num(payoutUsd) + ' · ' + num(payoutUsd * 2) + ' WC');
+    set('[data-share-ex-profit-inline]', '+$' + num(profitUsd) + ' (' + num(profitUsd * 2) + ' WC)');
+    set('[data-share-ex-payout-inline]', '$' + num(payoutUsd) + ' (' + num(payoutUsd * 2) + ' WC)');
+  }
+  S.paintExample = paintShareExample;
+
   S.view = function () {
     if (!S.state) {
       load(false).then(() => { if (S.state) render(); });
@@ -343,6 +400,7 @@
 
     <div id="sharesLiveMount">${heroHTML()}${marketChartHTML()}${activeMountHTML()}</div>
     ${planPerfHTML()}
+    ${exampleHTML(plans)}
 
     <div class="card" id="sharesPlansCard">
       <div class="between"><div class="card-title" style="margin:0">Investment plans</div>
@@ -495,6 +553,8 @@
 
   /* -------------------------------- actions -------------------------------- */
   if (typeof App !== 'undefined') {
+    App.sharesExample = function () { paintShareExample(); };
+
     App.sharesRefresh = async function () {
       await load(true);
       await loadAdmin(true);
@@ -654,6 +714,7 @@
               const live = document.getElementById('sharesLiveMount');
               if (live && S.state) live.innerHTML = heroHTML() + marketChartHTML() + activeMountHTML();
               try { S.mountPerf(); } catch (e) {}
+              try { paintShareExample(); } catch (e) {}
             });
           } else if (!S.state) {
             load(false).then(() => { if (S.state && (location.hash || '').startsWith('#/invest') && !onSharesPage()) { try { render(); } catch (e) {} } });
