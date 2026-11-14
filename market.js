@@ -199,11 +199,17 @@ class MarketService {
         this.config.refreshSec = Math.min(300, Math.max(5, Number(raw.refreshSec) || 15));
       }
     } catch (e) { /* first run */ }
-    if (!this.config.apiKey && process.env.FINNHUB_API_KEY) {
-      this.config.apiKey = String(process.env.FINNHUB_API_KEY).trim();
-    }
-    if (this.config.mode !== 'hybrid' && process.env.FINNHUB_MODE === 'hybrid' && this.config.apiKey) {
-      this.config.mode = 'hybrid';
+    const envKey = String(process.env.FINNHUB_API_KEY || '').trim();
+    const envMode = String(process.env.FINNHUB_MODE || '').toLowerCase();
+    if (envKey) {
+      /* the deploy environment wins: a key means live unless explicitly simulated */
+      this.config.apiKey = envKey;
+      this.keySource = 'env';
+      if (envMode !== 'simulated') this.config.mode = 'hybrid';
+    } else if (this.config.apiKey) {
+      this.keySource = 'stored';
+    } else {
+      this.keySource = 'none';
     }
   }
 
@@ -234,7 +240,12 @@ class MarketService {
   /* ------------------------------- quotes ------------------------------- */
   refreshAssets() {
     const db = this.getDb && this.getDb();
-    const list = (db && Array.isArray(db.stocks)) ? db.stocks.filter((s) => s && s.ticker) : [];
+    let list = (db && Array.isArray(db.stocks)) ? db.stocks.filter((s) => s && s.ticker) : [];
+    /* fresh deployment: no database yet, but the catalogue (and the live feed)
+       must work for the very first visitor — fall back to the shipped assets */
+    if (!list.length && Array.isArray(DEFAULT_ASSETS) && DEFAULT_ASSETS.length) {
+      list = DEFAULT_ASSETS.map((a) => Object.assign({ price: 0 }, a));
+    }
     this.assets = list.map((s) => ({
       ticker: String(s.ticker).toUpperCase(),
       displayTicker: s.displayTicker || s.ticker,
@@ -290,10 +301,24 @@ class MarketService {
     this.seedBase[ticker] = base;
   }
 
+  get liveConfigured() { return !!(this.config.mode === 'hybrid' && this.config.apiKey); }
+
   seedBaseQuotes() {
     const now = Date.now();
     this.refreshAssets();
     const db = this.getDb && this.getDb();
+    if (this.liveConfigured) {
+      /* live mode: a symbol has no price until Finnhub prints one */
+      this.assetList().forEach((a) => {
+        if (this.quotes[a.ticker]) return;
+        this.quotes[a.ticker] = {
+          ticker: a.ticker, price: 0, prevClose: 0, open: 0,
+          dayHigh: 0, dayLow: 0, changePct: 0, changeUsd: 0, vol: 0,
+          dir: 0, updatedAt: 0, source: 'waiting', real: false
+        };
+      });
+      return;
+    }
     this.assetList().forEach((a) => {
       if (this.quotes[a.ticker]) return;
       const base = this.fallbackBase(a.ticker);
@@ -691,6 +716,11 @@ class MarketService {
   }
 
   notice() {
+    if (this.liveConfigured) {
+      if (this.lastRealAt && Date.now() - this.lastRealAt < 90000) return 'Live market data via Finnhub';
+      if (!usMarketOpen()) return 'Market closed — showing the last real Finnhub prices';
+      return 'Waiting for the first live Finnhub quote…';
+    }
     const sim = this.lastSimAt && Date.now() - this.lastSimAt < 8000;
     if (this.config.mode === 'hybrid' && this.config.apiKey) {
       return sim ? 'Live Finnhub with 24/7 simulated fallback where ticks are stale' : 'Live market data via Finnhub';
@@ -1295,8 +1325,11 @@ class MarketService {
     this.seedBaseQuotes();
     /* TP/SL checks run every second so a level hit is settled immediately */
     this.timers.push(setInterval(() => { try { this.settleTrades(); } catch (e) { this.lastError = e.message; } }, 1000));
-    /* 24/7 chart movement when a symbol has no fresh real print */
-    this.timers.push(setInterval(() => { try { this.simulateTick(); } catch (e) { this.lastError = e.message; } }, 2000));
+    /* simulated movement is a demo-only feature: with a Finnhub key the app
+       shows real prices only, and the chart holds when the market is closed */
+    if (!this.liveConfigured) {
+      this.timers.push(setInterval(() => { try { this.simulateTick(); } catch (e) { this.lastError = e.message; } }, 2000));
+    }
     this.timers.push(setInterval(() => {
       try {
         if (this.config.mode === 'hybrid' && this.config.apiKey) this.pollCycle();
