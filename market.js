@@ -434,6 +434,44 @@ class MarketService {
     if (arr.length > 3000) arr.splice(0, arr.length - 3000);
   }
 
+  /* Last real quotes survive a restart or a cold start (Render sleeps idle
+     apps) so the very first paint shows real prices instead of a blank chart. */
+  quotesFile() { return path.join(this.dataDir, 'market-quotes.json'); }
+
+  loadQuotesFile() {
+    try {
+      const raw = JSON.parse(fs.readFileSync(this.quotesFile(), 'utf8'));
+      if (!raw || typeof raw !== 'object') return 0;
+      let n = 0;
+      const now = Date.now();
+      Object.keys(raw).forEach((t) => {
+        const q = raw[t];
+        if (!q || !(Number(q.price) > 0)) return;
+        this.quotes[t] = Object.assign({}, q, { cached: true, real: true, updatedAt: Number(q.updatedAt) || now });
+        this.lastReal[t] = Number(q.price);
+        this.lastRealTime[t] = Number(q.updatedAt) || now;
+        n++;
+      });
+      if (n) console.log('[market] restored ' + n + ' last known quotes');
+      return n;
+    } catch (e) { return 0; }
+  }
+
+  saveQuotesFile() {
+    try {
+      fs.mkdirSync(this.dataDir, { recursive: true });
+      const out = {};
+      Object.keys(this.quotes || {}).forEach((t) => {
+        const q = this.quotes[t];
+        if (!q || !(Number(q.price) > 0)) return;
+        out[t] = { price: q.price, prevClose: q.prevClose, open: q.open, dayHigh: q.dayHigh,
+          dayLow: q.dayLow, changePct: q.changePct, changeUsd: q.changeUsd, vol: q.vol,
+          updatedAt: q.updatedAt, real: !!q.real, source: q.source };
+      });
+      fs.writeFileSync(this.quotesFile(), JSON.stringify(out));
+    } catch (e) { this.lastError = 'quotes persist: ' + e.message; }
+  }
+
   historyFor(tickers, limit) {
     const out = {};
     const n = Math.max(10, Math.min(3000, Number(limit) || 600));
@@ -1325,6 +1363,8 @@ class MarketService {
     this.seedBaseQuotes();
     /* TP/SL checks run every second so a level hit is settled immediately */
     this.timers.push(setInterval(() => { try { this.settleTrades(); } catch (e) { this.lastError = e.message; } }, 1000));
+    /* last real prices on disk → instant first paint after a cold start */
+    this.timers.push(setInterval(() => { try { this.saveQuotesFile(); } catch (e) {} }, 30000));
     /* simulated movement is a demo-only feature: with a Finnhub key the app
        shows real prices only, and the chart holds when the market is closed */
     if (!this.liveConfigured) {
@@ -1354,6 +1394,8 @@ class MarketService {
 
   start() {
     this.loadConfig();
+    this.refreshAssets();
+    this.loadQuotesFile();
     this.seedBaseQuotes();
     this.restart().catch((e) => { this.lastError = e.message; });
     console.log('[market] mode:', this.config.mode, '· refresh:', this.config.refreshSec + 's', '· key:', this.config.apiKey ? 'set' : 'not set');
@@ -1362,6 +1404,7 @@ class MarketService {
   stop() {
     this.stopped = true;
     this.stopTimers();
+    try { this.saveQuotesFile(); } catch (e) {}
     this.closeWS();
   }
 }
