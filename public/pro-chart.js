@@ -37,6 +37,8 @@
   /* The stock trading view stays on the Finnhub price chart (market-live.js).
      Pro-chart is only used for equity/ROI curves (portfolio, plans, bots). */
   PC.disableStock = true;
+  /* Portfolio performance uses the same Finnhub trade chart as stocks. */
+  PC.disablePortfolio = true;
   PC.mock = true;              /* mock ticks while no real movement arrives */
   PC.instances = PC.instances || [];
 
@@ -1006,6 +1008,7 @@
   };
 
   PC.mountPortfolio = function (explicitHost) {
+    if (PC.disablePortfolio) return null;
     const hosts = explicitHost ? [explicitHost] : findPortfolioHosts();
     let last = null;
     hosts.forEach((host) => {
@@ -1044,8 +1047,7 @@
           /* clean instances whose host was re-rendered away */
           PC.instances.slice().forEach((i) => { if (!document.body.contains(i.host)) i.destroy(); });
           (PC.equities || []).slice().forEach((e) => { if (!document.body.contains(e.host)) e.destroy(); });
-          if (document.getElementById('ltDashChart') || document.querySelector('.inv-chart[data-chart^="__portfolio__"]')) PC.mountPortfolio();
-          /* stock pages keep the Finnhub trade chart — no pro-chart mount here */
+          /* stock + portfolio charts are owned by market-live (Finnhub feed) */
         } catch (e) { console.error('[pro-chart] mount failed', e); }
       }, 220);
     };
