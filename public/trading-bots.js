@@ -366,6 +366,10 @@
           <div class="tiny muted" style="margin-top:3px">Edit tier pricing, billing cycle, accuracy and how fast offline bots place trades.</div></div>
         <span class="badge badge-accent">Admin</span>
       </div>
+      <div class="row gap8" style="margin-top:8px;flex-wrap:wrap">
+        <a class="btn btn-xs btn-ghost" href="#/admin/trade-guide">Read the trade guide</a>
+        <span class="tiny muted" style="align-self:center">Explains the wallet, stock investing and bot trading flow</span>
+      </div>
       <div id="botAdminBody"><div class="tiny muted" style="margin-top:10px">Loading bot configuration…</div></div>
     </div>`;
   }
@@ -435,14 +439,54 @@
   function ensureAdminNav() {
     try {
       const nav = document.querySelector('.admin-nav');
-      if (!nav || nav.querySelector('[data-wc-bots-nav]')) return;
-      const a = document.createElement('a');
-      a.href = '#/admin/trading-bots';
-      a.setAttribute('data-wc-bots-nav', '1');
-      a.textContent = 'Trading bots';
-      if ((location.hash || '').indexOf('#/admin/trading-bots') === 0) a.className = 'on';
-      nav.appendChild(a);
+      if (!nav) return;
+      if (!nav.querySelector('[data-wc-bots-nav]')) {
+        const a = document.createElement('a');
+        a.href = '#/admin/trading-bots';
+        a.setAttribute('data-wc-bots-nav', '1');
+        a.textContent = 'Trading bots';
+        if ((location.hash || '').indexOf('#/admin/trading-bots') === 0) a.className = 'on';
+        nav.appendChild(a);
+      }
+      if (!nav.querySelector('[data-wc-guide-nav]')) {
+        const g = document.createElement('a');
+        g.href = '#/admin/trade-guide';
+        g.setAttribute('data-wc-guide-nav', '1');
+        g.textContent = 'Trade guide';
+        if ((location.hash || '').indexOf('#/admin/trade-guide') === 0) g.className = 'on';
+        nav.appendChild(g);
+      }
     } catch (e) {}
+  }
+
+  function guideShell() {
+    return '<div class="page-head"><div class="between wrap"><div><div class="section-title" style="margin:0">Trade & investment guide</div>' +
+      '<div class="tiny muted">Auto-generated from the live app settings — updated whenever the admin changes bots, fees or rules</div></div>' +
+      '<span class="badge badge-success" id="wcGuideStamp">Auto-updating</span></div></div>' +
+      '<div id="wcGuideBody"><div class="card"><div class="tiny muted">Loading the guide…</div></div></div>';
+  }
+
+  async function loadGuide() {
+    const body = document.getElementById('wcGuideBody');
+    if (!body) return;
+    try {
+      const r = await fetch('/api/guide?t=' + Date.now(), { cache: 'no-store' });
+      const d = await r.json();
+      if (!d || !d.ok) throw new Error((d && d.error) || 'unavailable');
+      body.innerHTML = (d.sections || []).map((sec) => '<div class="card" style="margin-bottom:12px"><h3 style="font-size:15px;margin:0 0 8px">' +
+        String(sec.title).replace(/[<>&]/g, '') + '</h3><div class="guide-body">' + sec.html + '</div></div>').join('');
+      const stamp = document.getElementById('wcGuideStamp');
+      if (stamp) stamp.textContent = 'Live · updated ' + new Date(d.generatedAt).toLocaleTimeString();
+    } catch (e) {
+      body.innerHTML = '<div class="card"><div class="small">Could not load the guide: ' + String(e.message).replace(/[<>&]/g, '') + '</div></div>';
+    }
+  }
+  let guideTimer = null;
+  function startGuideAuto() {
+    if (guideTimer) return;
+    guideTimer = setInterval(() => {
+      if ((location.hash || '').indexOf('#/admin/trade-guide') === 0) loadGuide();
+    }, 30000);
   }
 
   async function mountAdmin(force) {
@@ -691,6 +735,11 @@
     if (typeof VIEWS !== 'undefined' && !VIEWS.__wcBotsAdminPage) {
       const baseAdmin = VIEWS.admin;
       VIEWS.admin = function (parts) {
+        if ((parts && parts[1] || '') === 'trade-guide') {
+          const u2 = (typeof me === 'function') ? me() : null;
+          if (!u2 || u2.role !== 'admin') return '<div class="card empty"><h3>Admin only</h3></div>';
+          return guideShell();
+        }
         if ((parts && parts[1] || '') === 'trading-bots') {
           const u = (typeof me === 'function') ? me() : null;
           if (!u || u.role !== 'admin') return '<div class="card empty"><div class="ic">' + (typeof ic === 'function' ? ic('lock', 24) : '') + '</div><h3>Admin only</h3></div>';
@@ -759,6 +808,7 @@
             }
             const sub = (parts[1] || '');
             if (sub === 'stocks' || sub === 'trading-bots') setTimeout(() => mountAdmin(false), 120);
+            if (sub === 'trade-guide') { ensureAdminNav(); setTimeout(loadGuide, 80); startGuideAuto(); }
           };
         }
       }
@@ -865,5 +915,13 @@
   if(document.getElementById('wc-bot-health-css')) return;
   var st=document.createElement('style'); st.id='wc-bot-health-css';
   st.textContent='.bot-av{width:34px;height:34px;border-radius:50%;background:var(--surface-2);display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;overflow:hidden;flex:none}.bot-av img{width:100%;height:100%;object-fit:cover}.bot-hot-badge{background:linear-gradient(135deg,#ff7a18,#ff3d71);color:#fff;font-size:9px;font-weight:800;letter-spacing:.08em;padding:2px 6px;border-radius:6px}.bot-hot-list{display:flex;flex-direction:column;gap:6px;margin-top:10px}.bot-hot-item{display:flex;align-items:center;gap:10px;padding:8px;border:1px solid var(--border);border-radius:12px;text-decoration:none;color:inherit}.bot-health{margin-top:10px;padding:10px;border-radius:12px;border:1px solid var(--border);background:var(--surface-2)}.bot-health.ok{border-color:rgba(34,197,94,.35)}.bot-health.warn{border-color:rgba(234,179,8,.35)}.bot-health.bad{border-color:rgba(239,68,68,.4)}.bot-health-val{font-weight:800;font-size:13px}.bot-health-bar{height:7px;border-radius:6px;background:rgba(255,255,255,.1);overflow:hidden;margin-top:6px}.bot-health-bar i{display:block;height:100%;background:linear-gradient(90deg,#2ee6c9,#22c55e)}.bot-health.bad .bot-health-bar i{background:linear-gradient(90deg,#f59e0b,#ef4444)}';
+  document.head.appendChild(st);
+}catch(e){}})();
+
+/* wc-guide-css */
+(function(){try{
+  if(document.getElementById('wc-guide-css')) return;
+  var st=document.createElement('style'); st.id='wc-guide-css';
+  st.textContent='.guide-body{font-size:13px;line-height:1.75;color:var(--muted)}.guide-body b{color:var(--text)}.guide-body h3{color:var(--text)}.guide-body ul,.guide-body ol{padding-left:18px;margin:8px 0}.guide-body li{margin-bottom:6px}.guide-body p{margin:0 0 10px}.guide-body table{width:100%;border-collapse:collapse;margin:10px 0;font-size:12px}.guide-body th,.guide-body td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--border)}.guide-body th{color:var(--text);font-weight:700}';
   document.head.appendChild(st);
 }catch(e){}})();
