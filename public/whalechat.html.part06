@@ -240,9 +240,9 @@ App.saveProfile = async function () {
   const phone = document.getElementById('epPhone').value.trim();
   if (fullName.length < 3) return formError('epName', 'Enter your full name');
   if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) return formError('epUser', '3–20 characters: letters, numbers, underscores');
-  if (DB.users.some(x => x.id !== u.id && x.username.toLowerCase() === username.toLowerCase())) return formError('epUser', 'Username already taken');
+  if (DB.users.some(x => x.id !== u.id && String(x && x.username || '').toLowerCase() === username.toLowerCase())) return formError('epUser', 'Username already taken');
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return formError('epEmail', 'Enter a valid email');
-  if (DB.users.some(x => x.id !== u.id && x.email.toLowerCase() === email.toLowerCase())) return formError('epEmail', 'Email already in use');
+  if (DB.users.some(x => x.id !== u.id && String(x && x.email || '').toLowerCase() === email.toLowerCase())) return formError('epEmail', 'Email already in use');
   u.fullName = fullName; u.username = username; u.email = email; u.phone = phone; u.bio = document.getElementById('epBio').value.trim();
   sync(); closeModal(); toast('Profile saved', 'ok'); render();
 };
