@@ -407,6 +407,7 @@ function render() {
   if (!DB_READY) { renderSplash(); return; }
   clearInterval(MAINT_TIMER); MAINT_TIMER = null;
   initTheme();
+  try { initTextSize(); } catch (e) {}
   const app = document.getElementById('app');
   const { parts, params } = parseHash();
   const u = me();
