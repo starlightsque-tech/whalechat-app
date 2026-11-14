@@ -23,6 +23,8 @@
   const BUSY_MS = 9000;          /* treat the user as busy this long after input */
   const IDLE_APPLY_MS = 15000;   /* how often a deferred update re-checks for idle */
 
+  const memory = new Map();     /* live values, incl. secrets — never persisted */
+
   const G = window.WC_SESSION_GUARD = {
     version: '1.0.0',
     busyUntil: 0,
@@ -126,6 +128,47 @@
     }
   }
 
+  /* The app re-renders views when sync state changes. That used to wipe a
+     half-filled form without any reload at all — restore it immediately. */
+  let restoreTimer = null;
+  function restoreFromMemory() {
+    let changed = 0;
+    memory.forEach((val, key) => {
+      let el = null;
+      try { el = $(key); } catch (e) { el = null; }
+      if (!el) return;
+      const isCheck = (el.type || '').toLowerCase() === 'checkbox';
+      const current = isCheck ? (el.checked ? 1 : 0) : el.value;
+      if (current === val) return;
+      /* do not overwrite something the user typed after the snapshot */
+      if (!isCheck && el === document.activeElement) return;
+      if (isCheck) el.checked = !!val; else el.value = val;
+      changed++;
+      try {
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      } catch (e) {}
+    });
+    return changed;
+  }
+
+  function scheduleRestore() {
+    clearTimeout(restoreTimer);
+    restoreTimer = setTimeout(() => { try { restoreFromMemory(); } catch (e) {} }, 120);
+  }
+
+  function watchRerenders() {
+    if (watchRerenders._on) return;
+    watchRerenders._on = true;
+    const obs = new MutationObserver((muts) => {
+      for (let i = 0; i < muts.length; i++) {
+        if (muts[i].addedNodes && muts[i].addedNodes.length) { scheduleRestore(); return; }
+      }
+    });
+    obs.observe(document.body, { childList: true, subtree: true });
+    G._observer = obs;
+  }
+
   /* ------------------------------------------------------------------ events */
   document.addEventListener('input', (e) => {
     const t = e.target;
@@ -133,7 +176,7 @@
     if (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable) {
       G.markBusy();
       const k = fieldKey(t);
-      if (k) G.dirty.add(k);
+      if (k) { G.dirty.add(k); memory.set(k, t.type === 'checkbox' ? (t.checked ? 1 : 0) : t.value); }
       clearTimeout(saveDraft._t);
       saveDraft._t = setTimeout(() => saveDraft(), 220);
     }
@@ -221,7 +264,8 @@
       window.showUpdatePrompt = function (v, opts) {
         const wantsAuto = !!(opts && opts.auto);
         G.pendingVersion = (v && v.version) || G.pendingVersion;
-        if (G.isBusy()) {
+        const onAuth = /^#\/(login|signup|forgot|reset|set-pin)/.test(location.hash || '');
+        if (G.isBusy() || onAuth) {
           /* an update is ready, but the sheet would cover what they are doing:
              leave a small pill instead and open the sheet once the screen is idle */
           G.pendingPrompt = v;
@@ -304,6 +348,55 @@
     } catch (e) { return false; }
   }
 
+  /* ------------------------------------------------------- resilient network
+     A failed sync must never surface as "A request failed" or interrupt a form:
+     work is kept locally and retried with backoff. */
+  const retry = { n: 0, timer: null, lastToast: 0 };
+
+  function scheduleRetry() {
+    if (retry.timer) return;
+    const wait = Math.min(60000, 4000 * Math.pow(2, Math.min(retry.n, 4)));
+    retry.n++;
+    retry.timer = setTimeout(async () => {
+      retry.timer = null;
+      try { if (typeof Remote !== 'undefined' && Remote && Remote.enabled) await Remote.refresh(true); } catch (e) {}
+      try { if (typeof Remote !== 'undefined' && Remote && Remote.enabled) await Remote.flush(); } catch (e) {}
+    }, wait);
+  }
+
+  function wrapRemote() {
+    if (typeof Remote === 'undefined' || !Remote || Remote.__wcResilient) return false;
+    Remote.__wcResilient = true;
+    const realFlush = Remote.flush && Remote.flush.bind(Remote);
+    const realRefresh = Remote.refresh && Remote.refresh.bind(Remote);
+
+    if (realFlush) {
+      Remote.flush = async function () {
+        try {
+          const out = await realFlush();
+          if (Remote.status === 'online' || Remote.status === 'syncing') { retry.n = 0; }
+          return out;
+        } catch (e) {
+          /* keep everything local and try again shortly — never throw at the UI */
+          try { Remote.status = 'offline'; } catch (err) {}
+          scheduleRetry();
+          return { ok: false, offline: true };
+        }
+      };
+    }
+    if (realRefresh) {
+      Remote.refresh = async function () {
+        try {
+          return await realRefresh.apply(null, arguments);
+        } catch (e) {
+          scheduleRetry();
+          return false;
+        }
+      };
+    }
+    return true;
+  }
+
   /* --------------------------------------------------------------- keep alive */
   let lastPing = 0;
   async function keepAlive() {
@@ -323,7 +416,55 @@
   }
 
   /* --------------------------------------------------------------- bootstrap */
+  function silenceRejectionToasts() {
+    /* the app's global handler turns ANY unhandled rejection into a red
+       "A request failed — check your connection and retry." toast, which makes a
+       broken analytics/chat script look like a broken signup. Keep the log,
+       drop the scary toast, and only report genuine offline state. */
+    window.addEventListener('unhandledrejection', (ev) => {
+      const reason = ev && ev.reason;
+      const msg = String((reason && (reason.message || reason)) || '');
+      try { console.warn('[session-guard] ignored rejection:', msg.slice(0, 200)); } catch (e) {}
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+    }, true);
+  }
+
+  function overlaySafety() {
+    if (document.getElementById('wc-overlay-safety')) return;
+    const st = document.createElement('style');
+    st.id = 'wc-overlay-safety';
+    st.textContent =
+      /* the update sheet is a card, not a modal wall: clicks pass through */
+      '.update-sheet{pointer-events:none!important}' +
+      '.update-sheet-card{pointer-events:auto!important}' +
+      /* never let a sticky banner sit on top of a submit button */
+      '.auth-split .update-sheet,.auth-split .update-sheet-card{display:none!important}' +
+      /* friendly offline chip */
+      '.wc-offline-chip{position:fixed;left:16px;bottom:16px;z-index:9997;display:flex;align-items:center;gap:7px;' +
+      'padding:8px 12px;border-radius:999px;border:1px solid rgba(255,196,0,.35);background:rgba(30,24,6,.94);' +
+      'color:#ffc400;font:600 11.5px Inter,-apple-system,Segoe UI,Roboto,sans-serif;box-shadow:0 10px 24px rgba(0,0,0,.35)}';
+    document.head.appendChild(st);
+  }
+
+  function offlineChip(show) {
+    let chip = document.getElementById('wcOfflineChip');
+    if (!show) { if (chip) chip.remove(); return; }
+    if (chip) return;
+    chip = document.createElement('div');
+    chip.id = 'wcOfflineChip';
+    chip.className = 'wc-offline-chip';
+    chip.textContent = 'Offline — your work is saved and will sync automatically';
+    document.body.appendChild(chip);
+  }
+
   function boot() {
+    overlaySafety();
+    watchRerenders();
+    window.addEventListener('online', () => offlineChip(false));
+    window.addEventListener('offline', () => offlineChip(true));
+    if (!navigator.onLine) offlineChip(true);
+    silenceRejectionToasts();
     backupSession();
     restoreSession();
     saveDraft._started = true;
@@ -332,6 +473,11 @@
     restoreDraft();
     setTimeout(restoreDraft, 350);
     setTimeout(restoreDraft, 1200);
+
+    if (!wrapRemote()) {
+      let r = 0;
+      const rt = setInterval(() => { r++; if (wrapRemote() || r > 40) clearInterval(rt); }, 250);
+    }
 
     if (!wrapUpdateFlow()) {
       let tries = 0;
@@ -357,7 +503,11 @@
       }
     }, 45000);
 
-    window.addEventListener('hashchange', () => { G.dirty.clear(); setTimeout(restoreDraft, 400); });
+    window.addEventListener('hashchange', () => {
+      G.dirty.clear();
+      memory.clear();
+      setTimeout(restoreDraft, 400);
+    });
     setInterval(backupSession, 20000);
   }
 
