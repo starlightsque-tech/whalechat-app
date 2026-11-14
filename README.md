@@ -1,4 +1,4 @@
-# WhaleChat 3.31.1 — web app + mobile apps
+# WhaleChat 3.29.0 — web app + mobile apps
 
 WhaleChat is a social + marketplace + wallet product built as a single-page app with a
 Node sync server and native Android/iOS shells.
@@ -209,6 +209,26 @@ is closed. Admin → Stocks includes the bot configuration panel. Endpoints:
 `/api/bots/state`, `/api/bots/subscribe`, `/api/bots/start`, `/api/bots/stop`,
 `/api/bots/admin`, `/api/bots/admin/config`.
 
+**Bot profiles, health engine and performance page (3.30.0).** Every tier is a full trading
+identity with a profile picture (`public/bots/*.jpg`, admin-overridable with an uploaded photo):
+
+- `#/bots` — all bot identities as cards (avatar, `@username`, accuracy, price, HOT/Owned).
+- `#/bots/<tierId>` — profile page: large picture, accuracy, subscription state, health, energy,
+  net P/L and trade count, a per-bot equity chart, session history and subscribe / start / stop /
+  cool-down actions.
+- **Cooling** — `POST /api/bots/cool` stops the session, stores `db.botCooldowns[userId]`, and the
+  UI shows a live `m:ss` countdown until the bot is ready again. Cooling also restores energy so
+  the next session trades closer to its target accuracy.
+- **Health engine** (`BotService.healthEngine`) — derives `state` (`thriving` / `stable` /
+  `fatigued` / `cooling` / `idle`), score, energy, stamina band, win rate, drawdown and the
+  cooldown deadline, plus the 40-point health history sparkline. Exposed as `health` in
+  `GET /api/bots/state` and rendered as its own card on the bot, profile and performance pages.
+- **Performance page** — `#/invest/bots/performance`: net bot P/L, ROI on allocated capital,
+  win rate, trades/sessions, a Lightweight Charts v5 equity curve (`WC_PRO_CHART.mountEquity`)
+  with a break-even line, the health engine, the cooling banner and a per-session table with
+  avatars. Aggregation is computed server-side in `BotService.performance` from every session's
+  trade log (`poolAfter`, `pnlCoins`) and exposed as `performance` on the bot state.
+
 ### Auto Secure Take Profit (bot tool)
 
 A dedicated bot tool users can subscribe to (default **$20 / month → 40 WC**, stored in
@@ -241,12 +261,28 @@ securing any profit of at least **0.01 WC**, with a 2-second per-trade cooldown 
 meaningful. Secured amounts are re-based out of the position, so later price movement can never
 take them back.
 
-### WhaleChat share investment portfolio (restored)
+### WhaleChat share investment portfolio (market-linked payout)
 
 `shares.js` + `public/whalechat-shares.js` provide admin-defined investment plans
-(min/max, duration, % return), real-time accrual, automatic maturity payout and the
-`#/invest/shares` dashboard, plus a summary card on the Invest dashboard. Endpoints:
-`/api/shares/state`, `/api/shares/invest`, `/api/shares/admin`, `/api/shares/admin/plans`.
+(min/max USD, duration, fixed **plan %**) and the `#/invest/shares` dashboard. Profit is
+**not fixed** — it follows the live WhaleChat share price:
+
+```
+market move      = (share price now − entry price) ÷ entry price
+daily turn-up %  = (price today − price yesterday) ÷ price yesterday × 100
+daily ROI %      = plan % × daily turn-up %
+total ROI %      = Σ daily ROI % = plan % × cumulative market move
+profit           = capital × total ROI %          (negative when the price falls)
+payout at maturity = capital + profit             (floor 0)
+```
+
+The worker ticks every 5 s, accrues per investment (`profitCoins`), snapshots `equityHistory`
+every 30 s, and at `endAt` credits `capital + profit` with a `share-maturity` transaction and a
+notification — even with every app closed. The admin plan % is the fixed participation rate
+(e.g. 3%); active investments keep the percentage, duration and entry price they were bought
+under. Endpoints: `/api/shares/state`, `/api/shares/invest`, `/api/shares/admin`,
+`/api/shares/admin/plans`. The admin Trade guide (Admin → Stocks) documents the same flow with
+worked examples.
 
 ### Local verification
 
@@ -265,39 +301,6 @@ displayed price from the previous tick to the new tick over an 850 ms ease-out w
 last point of the active lightweight-chart (stock chart and portfolio chart) is updated in
 place, and price/percentage labels are repainted at ~10 fps, so the trade view moves
 smoothly while server settlement and TP/SL continue to use the authoritative quote.
-
-## Bot assistants: usernames, profile pictures, HOT tools
-
-Admin → Stocks → **Trading bots** now includes **+ Add bot assistant** and an **Edit** action per
-tier. Admins can set the assistant **name**, **@username**, **profile picture**, description,
-price, accuracy, billing cycle, speed, HOT flag and live status. Images are resized to 160×160
-JPEG in the browser and stored on the synced bot tier. New assistants appear in the
-marketplace immediately and can be marked **HOT** to feature them.
-
-## Account health analysis
-
-The Invest dashboard and Trading Bots page show an **Account health analysis** card with:
-
-* a 0–100 health score (bot equity growth, drawdown, win rate and losing streaks),
-* bot equity, P/L, drawdown, win rate, account growth and open positions,
-* an equity/drawdown SVG chart from the bot session trades,
-* a **rest recommendation**: Healthy / Watch closely / Rest recommended, so users know when
-  to stop the bot and let it refresh before restarting.
-
-## WhaleChat Shares admin plans
-
-Admin → Stocks → **WhaleChat share investment plans** can add/edit plans with name, min/max
-USD amount, duration (days/months/years) and return %. Saving publishes the plan to every
-user's Shares page; the Shares page checks for plan changes every 6 seconds and re-renders,
-and a server broadcast also refreshes connected clients. New investments copy the plan's
-return % and duration, and the maturity payout uses those exact terms.
-
-## WhaleChat Shares profit example
-
-The Shares page now includes an interactive **How your investment profit is calculated** card:
-choose a plan and a USD amount and it shows the principal, plan return %, profit and maturity
-payout in both USD and WC, step by step. Example: $100 (200 WC) at 20% → +$20 (40 WC) profit;
-maturity payout $120 (240 WC). Each plan card also shows a `$100 → $X at maturity` example.
 
 ## Shared portfolio audit trail
 
