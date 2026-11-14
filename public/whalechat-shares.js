@@ -521,7 +521,7 @@
       <button class="btn btn-primary btn-sm" data-act="shares-admin-save">${ic('check', 14)} Save plans</button>
       <button class="btn btn-ghost btn-sm" data-act="shares-admin-reload">${ic('refresh', 14)} Reload</button>
     </div>
-    <div class="tiny muted" style="margin-top:8px;line-height:1.6">Duration uses days, months (30 days) or years (365 days). Active investments keep the terms they were purchased under.</div>`;
+    <div class="tiny muted" style="margin-top:8px;line-height:1.6">Saved plans appear on every user's <b>WhaleChat Shares</b> page immediately. Minimum/maximum amounts, duration and return % are copied into each new investment, and the maturity payout uses the plan's return. Duration uses days, months (30 days) or years (365 days). Active investments keep the terms they were purchased under.</div>`;
   }
 
   async function mountAdmin(force) {
@@ -584,9 +584,11 @@
     App.sharesPlanAdd = function () {
       const body = document.getElementById('sharesPlanRows');
       if (!body) return;
-      const tr = document.createElement('tbody');
-      tr.innerHTML = planRow(null);
-      body.appendChild(tr.firstElementChild);
+      body.insertAdjacentHTML('beforeend', planRow(null));
+      const rows = body.querySelectorAll('[data-share-plan]');
+      const last = rows[rows.length - 1];
+      const name = last && last.querySelector('[data-f="name"]');
+      if (name) { try { name.focus(); } catch (e) {} }
     };
 
     App.sharesPerf = function (id, ds) {
@@ -606,12 +608,15 @@
       if (!isAdmin()) return tmsg('Admin only', 'err');
       const plans = readPlanRows();
       if (!plans.length) return tmsg('Add at least one plan with a name', 'err');
+      const bad = plans.find((p) => !(p.minUsd > 0) || !(p.maxUsd >= p.minUsd) || !(p.durationValue > 0));
+      if (bad) return tmsg('Each plan needs a positive minimum, a maximum ≥ minimum and a duration', 'err');
       try {
         const r = await api('/api/shares/admin/plans', { method: 'POST', body: JSON.stringify({ adminId: uidNow(), plans }) }, 20000);
         if (!r.res || !r.res.ok || !r.data || !r.data.ok) return tmsg((r.data && r.data.error) || 'Save failed', 'err');
         S.admin = r.data; S.adminLoadedAt = Date.now(); S.loadedAt = 0;
         mountAdmin(true);
-        tmsg('WhaleChat share plans saved', 'ok');
+        try { await load(true); } catch (e) {}
+        tmsg('WhaleChat share plans saved — live on the user Shares page', 'ok');
       } catch (e) { tmsg('Save failed: ' + e.message, 'err'); }
     };
   }
@@ -690,6 +695,12 @@
     }
   }
 
+  function plansSig() {
+    try {
+      return JSON.stringify((S.state && S.state.plans || []).map((p) => [p.id, p.name, p.returnPct, p.durationValue, p.durationUnit, p.minUsd, p.maxUsd, p.enabled]));
+    } catch (e) { return ''; }
+  }
+
   function refreshLiveMount() {
     if (!S.state || !onSharesPage()) return;
     const live = document.getElementById('sharesLiveMount');
@@ -711,6 +722,9 @@
           try { if (prev) prev(parts, params); } catch (e) {}
           if (onSharesPage()) {
             load(true).then(() => {
+              const sig = plansSig();
+              if (S.plansSig && S.plansSig !== sig) { S.plansSig = sig; try { render(); } catch (e) {} return; }
+              S.plansSig = sig;
               const live = document.getElementById('sharesLiveMount');
               if (live && S.state) live.innerHTML = heroHTML() + marketChartHTML() + activeMountHTML();
               try { S.mountPerf(); } catch (e) {}
@@ -729,8 +743,13 @@
     }, 200);
     setInterval(() => {
       if (!onSharesPage() || document.hidden) return;
-      load(true).then(() => refreshLiveMount());
-    }, 10000);
+      load(true).then(() => {
+        const sig = plansSig();
+        if (S.plansSig && S.plansSig !== sig) { S.plansSig = sig; try { render(); } catch (e) {} return; }
+        S.plansSig = sig;
+        refreshLiveMount();
+      });
+    }, 6000);
     setInterval(tickEarnings, 1000);
   }
 
