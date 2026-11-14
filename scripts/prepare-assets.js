@@ -68,7 +68,8 @@ const MODULES = [
   { file: 'support.js', marker: 'wc-support' },
   { file: 'view-mode.js', marker: 'wc-view-mode' },
   { file: 'portfolio-share.js', marker: 'wc-portfolio-share' },
-  { file: 'readability.js', marker: 'wc-readability' }
+  { file: 'readability.js', marker: 'wc-readability' },
+  { file: 'account-health.js', marker: 'wc-account-health' }
 ];
 try {
   let page = fs.readFileSync(APP, 'utf8');
