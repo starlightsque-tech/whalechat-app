@@ -284,6 +284,15 @@ under. Endpoints: `/api/shares/state`, `/api/shares/invest`, `/api/shares/admin`
 `/api/shares/admin/plans`. The admin Trade guide (Admin → Stocks) documents the same flow with
 worked examples.
 
+### Typography (3.33.0)
+
+`public/typography.js` (module `wc-typography`, loaded after `readability.js`) applies a fluid type
+scale with `clamp()`: base copy is ~15px on a 360px phone and ~16.5px on desktop, helper text never
+drops below 12px, and desktop growth is capped. Every text layer is one weight step bolder
+(body 500, labels/buttons 700, headings 750–800, badges 750), tables and stat blocks keep tabular
+figures, and `-webkit-text-size-adjust:100%` stops iOS from re-scaling. Layout breakpoints at 560px
+and 1440px keep sizes balanced on both ends.
+
 ### Local verification
 
 ```bash
