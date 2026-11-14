@@ -1,8 +1,8 @@
 {
-  "version": "3.31.0",
-  "build": "2026-11-14T13:48:30Z",
+  "version": "3.31.1",
+  "build": "2026-11-14T13:56:44Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.31.0 - interactive WhaleChat Shares profit calculator/example for users.",
-  "releasedAt": "2026-11-14T13:48:30Z",
+  "notes": "WhaleChat 3.31.1 - admin-added Shares plans reflect live on user pages and drive investment terms/payouts.",
+  "releasedAt": "2026-11-14T13:56:44Z",
   "minimum": "3.0.0"
 }
