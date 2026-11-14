@@ -1,4 +1,4 @@
-# WhaleChat 3.30.0 — web app + mobile apps
+# WhaleChat 3.31.0 — web app + mobile apps
 
 WhaleChat is a social + marketplace + wallet product built as a single-page app with a
 Node sync server and native Android/iOS shells.
@@ -283,6 +283,13 @@ The Invest dashboard and Trading Bots page show an **Account health analysis** c
 * an equity/drawdown SVG chart from the bot session trades,
 * a **rest recommendation**: Healthy / Watch closely / Rest recommended, so users know when
   to stop the bot and let it refresh before restarting.
+
+## WhaleChat Shares profit example
+
+The Shares page now includes an interactive **How your investment profit is calculated** card:
+choose a plan and a USD amount and it shows the principal, plan return %, profit and maturity
+payout in both USD and WC, step by step. Example: $100 (200 WC) at 20% → +$20 (40 WC) profit;
+maturity payout $120 (240 WC). Each plan card also shows a `$100 → $X at maturity` example.
 
 ## Shared portfolio audit trail
 
