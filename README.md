@@ -290,8 +290,13 @@ worked examples.
 scale with `clamp()`: base copy is ~15px on a 360px phone and ~16.5px on desktop, helper text never
 drops below 12px, and desktop growth is capped. Every text layer is one weight step bolder
 (body 500, labels/buttons 700, headings 750–800, badges 750), tables and stat blocks keep tabular
-figures, and `-webkit-text-size-adjust:100%` stops iOS from re-scaling. Layout breakpoints at 560px
-and 1440px keep sizes balanced on both ends.
+figures, and `-webkit-text-size-adjust:100%` stops iOS from re-scaling. 
+
+**Text size preference.** Settings → **Appearance** (also linked from Profile → Appearance) offers
+**Compact / Default / Large**. The choice sets `html[data-textsize]`, which overrides the fluid scale:
+compact ≈ 14px base, default 15–16.5px, large ≈ 17.5px, with matching `.tiny`, button and KPI sizes.
+It is stored in `localStorage` for instant paint (early `<head>` script) and in `user.settings.textSize`
+so it follows the account across devices.
 
 ### Local verification
 
