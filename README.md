@@ -298,6 +298,14 @@ compact ≈ 14px base, default 15–16.5px, large ≈ 17.5px, with matching `.ti
 It is stored in `localStorage` for instant paint (early `<head>` script) and in `user.settings.textSize`
 so it follows the account across devices.
 
+### Stock chart source (3.35.0)
+
+The stock trading view is the **Finnhub price chart** from `public/market-live.js` (lightweight-charts
+v4 baseline, live quotes + server tick history, TP/SL price lines). The v5 "pro chart" no longer
+mounts on stock pages — `WC_PRO_CHART.disableStock = true` — and is used only for equity curves
+(portfolio, WhaleChat plan ROI, bot performance). This restores the plain Finnhub trade chart that
+shipped before 3.34.
+
 ### Local verification
 
 ```bash
