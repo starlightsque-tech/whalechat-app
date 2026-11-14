@@ -11,16 +11,17 @@
    ========================================================================= */
 
 const crypto = require('crypto');
+const BOT_AVATARS = require('./bot-avatars');
 
 const COINS_PER_USD = 2;                    // 1 WC = $0.50
 const CYCLE_MS = { daily: 86400000, weekly: 604800000, monthly: 2592000000, one_time: null };
 const CYCLE_LABEL = { daily: 'day', weekly: 'week', monthly: 'month', one_time: 'one-time' };
 
 const DEFAULT_TIERS = [
-  { id: 'low', name: 'Low-Level Grade Bot', username: 'whale_scout', avatar: './bots/miguel-santos.jpg', hot: false, accuracy: 45, priceUsd: 20, billingCycle: 'monthly', intervalMin: 0, enabled: true, sort: 1, blurb: 'Steady starter automation for small allocations.' },
-  { id: 'medium', name: 'Medium-Level Grade Bot', username: 'orca_trader', avatar: './bots/aiko-tanaka.jpg', hot: true, accuracy: 50, priceUsd: 50, billingCycle: 'monthly', intervalMin: 0, enabled: true, sort: 2, blurb: 'Balanced risk with more frequent simulated entries.' },
-  { id: 'premium', name: 'Premium-Level Grade Bot', username: 'deep_blue', avatar: './bots/lena-hoffmann.jpg', hot: true, accuracy: 70, priceUsd: 120, billingCycle: 'monthly', intervalMin: 0, enabled: true, sort: 3, blurb: 'Higher hit-rate for users scaling their capital.' },
-  { id: 'high', name: 'High-Performance Bot', username: 'apex_whale', avatar: './bots/arjun-mehta.jpg', hot: true, accuracy: 85, priceUsd: 250, billingCycle: 'monthly', intervalMin: 0, enabled: true, sort: 4, blurb: 'Top tier accuracy for serious allocations.' }
+  { id: 'low', name: 'Low-Level Grade Bot', username: 'whale_scout', avatar: BOT_AVATARS.low, hot: false, accuracy: 45, priceUsd: 20, billingCycle: 'monthly', intervalMin: 0, enabled: true, sort: 1, blurb: 'Steady starter automation for small allocations.' },
+  { id: 'medium', name: 'Medium-Level Grade Bot', username: 'orca_trader', avatar: BOT_AVATARS.medium, hot: true, accuracy: 50, priceUsd: 50, billingCycle: 'monthly', intervalMin: 0, enabled: true, sort: 2, blurb: 'Balanced risk with more frequent simulated entries.' },
+  { id: 'premium', name: 'Premium-Level Grade Bot', username: 'deep_blue', avatar: BOT_AVATARS.premium, hot: true, accuracy: 70, priceUsd: 120, billingCycle: 'monthly', intervalMin: 0, enabled: true, sort: 3, blurb: 'Higher hit-rate for users scaling their capital.' },
+  { id: 'high', name: 'High-Performance Bot', username: 'apex_whale', avatar: BOT_AVATARS.high, hot: true, accuracy: 85, priceUsd: 250, billingCycle: 'monthly', intervalMin: 0, enabled: true, sort: 4, blurb: 'Top tier accuracy for serious allocations.' }
 ];
 
 const DEFAULT_SETTINGS = {
@@ -80,6 +81,15 @@ class BotService {
       if (t.hot === undefined) { t.hot = !!def.hot; changed = true; }
     }
     if (!db.botCooldowns || typeof db.botCooldowns !== 'object') { db.botCooldowns = {}; changed = true; }
+    if (Number(db.botAvatarSeed) !== 3) {
+      for (const t of db.botTiers) {
+        if (!t) continue;
+        const def = DEFAULT_TIERS.find((x) => x.id === t.id);
+        if (def && def.avatar) t.avatar = def.avatar;
+      }
+      db.botAvatarSeed = 3;
+      changed = true;
+    }
     db.botSettings = Object.assign({}, DEFAULT_SETTINGS, db.botSettings || {});
     if (!Array.isArray(db.botSubscriptions)) { db.botSubscriptions = []; changed = true; }
     if (!Array.isArray(db.botSessions)) { db.botSessions = []; changed = true; }
