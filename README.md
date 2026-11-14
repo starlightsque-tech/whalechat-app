@@ -306,6 +306,18 @@ mounts on stock pages — `WC_PRO_CHART.disableStock = true` — and is used onl
 (portfolio, WhaleChat plan ROI, bot performance). This restores the plain Finnhub trade chart that
 shipped before 3.34.
 
+### Live-only markets (3.36.0)
+
+The Market page and stock pages only list symbols whose quote is **live and active**:
+`INV.isLive()` requires a fresh server quote (≤20 min), `active !== false` and not paused. The list
+re-renders as soon as the first quote batch arrives, so Buy / TP / SL can never open on a symbol
+without a feed. Direct links to a stale symbol show a "market not live" card instead of a ticket.
+
+Portfolio performance now uses the **same Finnhub trade-view chart** as stocks
+(lightweight-charts v4 in `market-live.js`) on both the Invest dashboard
+(`[data-chart^="__portfolio__"]`) and the Live-trade dashboard (`#ltDashChart`); the v5 chart is
+limited to the WhaleChat plan ROI and bot performance pages.
+
 ### Local verification
 
 ```bash
