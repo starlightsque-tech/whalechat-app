@@ -736,49 +736,49 @@
           <li>Close reasons: <code>Take Profit Hit</code>, <code>Stop Loss Hit</code>, <code>Trailing Stop Hit</code>, <code>Time limit reached</code>.</li>
           <li>Payout, transaction, notification and toast are produced even if the user's browser is closed.</li>
           <li><b>Hybrid:</b> Finnhub REST seeds every listed stock, forex pair and crypto pair; one backend WebSocket streams live ticks.</li>
-          <li><b>Fallback movement:</b> when Finnhub is unavailable or a symbol goes quiet, the backend generates a 24/7 simulated tick every 2 seconds and seeds an intraday history tail, so US/global charts always move. Real prints replace simulated ones immediately.</li>
+          <li><b>No fake ticks:</b> closed stock exchanges hold the last real print. Crypto streams 24/7 and Forex 24/5 through Finnhub.</li>
         </ul>
       </details>
 
-      <details class="guide-sec">
-        <summary>5 · WhaleChat Shares investment payout flow</summary>
-        <div class="guide-formula"><code>plan profit = principal × plan return %</code> · <code>maturity payout = principal + plan profit</code></div>
-        <ol class="guide-steps">
-          <li><b>Choose a plan.</b> Each plan has a minimum/maximum USD amount, a duration (days/months/years) and a fixed return %.</li>
-          <li><b>Invest.</b> The investment amount is converted to WC at 1 WC = $0.50 and deducted immediately. A plan position records the entry WhaleChat share price, shares and maturity date.</li>
-          <li><b>Accrue.</b> Profit accrues linearly over the plan duration in real time and is shown on the Shares dashboard; the server keeps accruing while the app is closed.</li>
-          <li><b>Mature.</b> At maturity the server automatically completes the plan and credits <b>principal + profit</b> to the user's WC balance, writes a transaction and sends a notification. There is no manual claim step.</li>
-          <li><b>History.</b> Completed plans remain visible with their profit and payout for auditing.</li>
-        </ol>
-        <div class="guide-table" style="margin-top:8px">
-          <div class="guide-tr guide-th"><span>Plan</span><span>Duration</span><span>Return</span></div>
-          ${((typeof DB !== 'undefined' && DB && DB.sharePlans) || []).map((p) => `<div class="guide-tr"><span>${escMarket(p.name)}${p.enabled === false ? ' (off)' : ''}</span><span>${Number(p.durationValue) || 0} ${escMarket(p.durationUnit || 'days')}</span><span>${Number(p.returnPct) || 0}%</span></div>`).join('') || '<div class="guide-tr"><span>No plans configured</span><span>—</span><span>—</span></div>'}
+      <details class="guide-sec" open>
+        <summary>5 · WhaleChat Shares — investment &amp; payout flow</summary>
+        <p>WhaleChat Shares is a separate in-app product with its own simulated share price (1 WC = $0.50).
+          Users buy shares with WC; the plan percentage is <b>fixed by an admin</b>, but the profit is
+          <b>not fixed</b> — it follows the real-time WhaleChat share price, so it rises and falls with the market.</p>
+        <div class="guide-formula"><code>daily turn-up % = (price today − price yesterday) ÷ price yesterday × 100<br/>
+daily ROI % = plan % × daily turn-up %<br/>
+total ROI % = Σ daily ROI % = plan % × cumulative price move %<br/>
+profit = capital × total ROI % &nbsp;·&nbsp; payout = capital + profit (never below 0)</code></div>
+        <div class="guide-scenarios">
+          <div class="guide-scenario rise">
+            <div class="guide-sc-head"><b>Worked example</b><span>3% plan</span></div>
+            <div class="guide-kv"><span>Share price move today</span><b>+12.45%</b></div>
+            <div class="guide-kv"><span>Daily ROI</span><b>3% × 12.45% = 0.37%</b></div>
+            <div class="guide-kv"><span>Capital</span><b>1,000 WC</b></div>
+            <div class="guide-outcome win">Today: +3.74 WC profit (capital 1,003.74 WC)</div>
+            <div class="guide-sc-note">Cumulative +20% over 30 days → 3% × 20% = 0.60% → +6.00 WC at maturity.</div>
+          </div>
+          <div class="guide-scenario fall">
+            <div class="guide-sc-head"><b>When the price falls</b><span>3% plan</span></div>
+            <div class="guide-kv"><span>Cumulative move</span><b>−10.00%</b></div>
+            <div class="guide-kv"><span>ROI</span><b>3% × −10% = −0.30%</b></div>
+            <div class="guide-kv"><span>Capital</span><b>1,000 WC</b></div>
+            <div class="guide-outcome loss">Payout: 997.00 WC (−3.00 WC loss)</div>
+            <div class="guide-sc-note">Losses are capped by the payout floor: the user can never receive less than 0 WC.</div>
+          </div>
         </div>
-        <div class="guide-note">Admin controls: Admin → Stocks → WhaleChat Shares lets you add/edit plans, minimum/maximum amounts, duration, return %, enable/disable and sort order. Example: 100 WC principal on a 20% plan matures at 120 WC.</div>
-      </details>
-
-      <details class="guide-sec">
-        <summary>6 · Spot stock payout flow (latest)</summary>
-        <div class="guide-formula"><code>market gain = quantity × (exit − entry)</code> · <code>profit = (capital + market gain) × admin profit rate</code> · <code>credit = capital + profit</code></div>
         <ul class="guide-list">
-          <li>Buy executes at the live Finnhub price; the admin profit rate is locked on the position at purchase.</li>
-          <li>Manual sell, TP and SL all pay the same formula. Example: capital 100, gain 1.2, admin rate 10% → profit 10.12, total credit 110.12.</li>
-          <li>Live prices remain display/trigger data; the admin rate multiplies capital + market gain.</li>
-          <li>Admin → Stocks sets a per-stock rate or applies a bulk rate for US/global/Forex/Crypto; new stocks inherit the class rate.</li>
+          <li><b>Buy:</b> the investment is charged in WC at the live share price; the purchase price becomes the entry price and is stored with the plan terms (percentage and duration).</li>
+          <li><b>Accrue:</b> the shares worker ticks every 5 seconds and recalculates <code>profit = capital × plan % × (price − entry) ÷ entry</code>; the app shows it live, including negative values, and snapshots equity every 30 seconds.</li>
+          <li><b>Mature:</b> at <code>endAt</code> the server closes the plan automatically, credits <b>capital + profit</b> to the WC wallet with a <code>share-maturity</code> transaction and sends a notification — even if the user is offline. Unclaimed profit is never lost.</li>
+          <li><b>Admin fields:</b> plan % (market participation), min/max USD, duration and live toggle. Changing a plan only affects <b>new</b> investments; active plans keep their purchased percentage, duration and entry price.</li>
+          <li><b>Risk:</b> because ROI is market-linked, a falling share price reduces the payout. Losses cannot exceed the invested capital (payout floor 0).</li>
         </ul>
+        <p class="guide-tip"><b>Reading the numbers:</b> the “daily turn-up” is the share price change, expressed as a percentage of the previous price. A $12.45 move on a $100 share is a 12.45% turn-up; a 3% plan earns 0.37% of capital for that day.</p>
       </details>
 
       <details class="guide-sec">
-        <summary>7 · Live trade, TP/Stop and Auto Secure (latest)</summary>
-        <ul class="guide-list">
-          <li><b>Take Profit is a skim:</b> the open profit is credited, the trade is re-based and keeps running. <b>Stop trade</b> closes immediately; <b>Take loss</b> is enabled only while losing and closes the trade.</li>
-          <li>A stop loss level still closes the trade automatically when hit; the duration timer closes it and pays the dividend share.</li>
-          <li><b>Auto Secure</b> (bot tool) queues available profit into the Secured profits card instead of crediting it; the user claims one entry or all entries later.</li>
-        </ul>
-      </details>
-
-      <details class="guide-sec">
-        <summary>8 · Admin controls</summary>
+        <summary>6 · Admin controls</summary>
         <div class="guide-controls">
           <div><b>Fee</b><span>0–5%, charged at entry</span></div>
           <div><b>Leverage</b><span>1×–20×, magnifies P&amp;L</span></div>
