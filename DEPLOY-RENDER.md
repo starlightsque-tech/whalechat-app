@@ -1,5 +1,7 @@
 # WhaleChat on Render — always reachable, never a cold start
 
+_Last verified: 2026-11-14 · app 3.36.6 · https://whalechat-qkgd.onrender.com_
+
 The service is live at **https://whalechat-qkgd.onrender.com** and deploys
 automatically from `main` (`render.yaml`, Node runtime, disk at `/var/data`).
 
