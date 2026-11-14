@@ -70,7 +70,8 @@ const MODULES = [
   { file: 'portfolio-share.js', marker: 'wc-portfolio-share' },
   { file: 'pro-chart.js', marker: 'wc-pro-chart' },
   { file: 'readability.js', marker: 'wc-readability' },
-  { file: 'typography.js', marker: 'wc-typography' }
+  { file: 'typography.js', marker: 'wc-typography' },
+  { file: 'session-guard.js', marker: 'wc-session-guard' }
 ];
 try {
   let page = fs.readFileSync(APP, 'utf8');
