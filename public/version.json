@@ -1,8 +1,8 @@
 {
-  "version": "3.33.0",
-  "build": "2026-11-13T20:00:00Z",
+  "version": "3.34.0",
+  "build": "2026-11-13T22:00:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.33.0 — fluid typography: text sizes now scale from phone to desktop with clamp(), all copy is one weight step bolder, and small helper text never drops below 12px. Pro chart module re-registered.",
-  "releasedAt": "2026-11-13T20:00:00Z",
+  "notes": "WhaleChat 3.34.0 — Appearance → Text size control (Compact / Default / Large) with per-user, per-device persistence that overrides the fluid type scale.",
+  "releasedAt": "2026-11-13T22:00:00Z",
   "minimum": "3.0.0"
 }
