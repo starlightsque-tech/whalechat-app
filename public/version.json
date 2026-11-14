@@ -1,8 +1,8 @@
 {
-  "version": "3.31.0",
-  "build": "2026-11-13T16:00:00Z",
+  "version": "3.32.0",
+  "build": "2026-11-13T18:00:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.31.0 — market-linked WhaleChat Shares payout (plan % × live share-price move × capital, losses included), daily turn-up tracking, equity-history ROI chart, and a full Shares payout-flow section in the admin trade guide.",
-  "releasedAt": "2026-11-13T16:00:00Z",
+  "notes": "WhaleChat 3.32.0 — per-plan WhaleChat Shares performance page (v5 ROI curve, cumulative ROI, best/worst days, payout-if-matured-today), daily turn-up ledger in the Shares admin panel, and an updated admin trade-guide payout section.",
+  "releasedAt": "2026-11-13T18:00:00Z",
   "minimum": "3.0.0"
 }
