@@ -301,9 +301,9 @@ function encodingFor(req) {
 }
 function compressedHtml(file) {
   const key = file + '|' + PUBLIC_URL;
-  let hit = htmlCache.get(key);
-  if (hit) return hit;
   const st = fs.statSync(file);
+  let hit = htmlCache.get(key);
+  if (hit && hit.mtime === st.mtimeMs) return hit;
   let html = fs.readFileSync(file, 'utf8');
   if (path.basename(file) === 'whalechat.html') {
     html = html.replace('<head>', '<head>\n<script>window.__WC_SERVER__ = true; window.__WC_PUBLIC_URL__ = ' + JSON.stringify(PUBLIC_URL || '') + ';</script>');
