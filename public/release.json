@@ -1,8 +1,8 @@
 {
-  "version": "3.35.0",
-  "build": "2026-11-14T00:00:00Z",
+  "version": "3.36.0",
+  "build": "2026-11-14T02:00:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.35.0 — stock trading view restored to the Finnhub price chart (plain lightweight-charts, live quotes + TP/SL lines); the v5 pro chart is now only used for portfolio, plan ROI and bot equity curves.",
-  "releasedAt": "2026-11-14T00:00:00Z",
+  "notes": "WhaleChat 3.36.0 — Market lists only live, active symbols (Buy/TP/SL guarded), and portfolio performance now uses the same Finnhub trade-view chart as stocks.",
+  "releasedAt": "2026-11-14T02:00:00Z",
   "minimum": "3.0.0"
 }
