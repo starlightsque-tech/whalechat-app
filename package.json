@@ -1,8 +1,8 @@
 {
   "name": "whalechat",
-  "version": "3.36.0",
+  "version": "3.36.1",
   "private": true,
-  "description": "WhaleChat \u2014 chat, marketplace and wallet. Web app + sync server + Android/iOS shells.",
+  "description": "WhaleChat — chat, marketplace and wallet. Web app + sync server + Android/iOS shells.",
   "main": "server.js",
   "engines": {
     "node": ">=18"
