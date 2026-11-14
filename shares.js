@@ -161,6 +161,21 @@ class ShareService {
       currentValueCoins: round(Math.max(0, amount + accrued), 2),
       currentValueUsd: round(Math.max(0, amount + accrued) * 0.5, 2),
       progressPct: round(progress, 2),
+      payoutTodayCoins: round(Math.max(0, amount + accrued), 2),
+      payoutTodayUsd: round(Math.max(0, amount + accrued) * 0.5, 2),
+      cumulativeRoiPct: round(pnl.roi * 100, 4),
+      daily: (() => {
+        const rate = planPct / 100;
+        const from = new Date(start).toISOString().slice(0, 10);
+        return (this.market().daily || []).filter((d) => d && d.d >= from).slice(-90).map((d) => {
+          const turn = Number(d.open) > 0 ? (Number(d.close) - Number(d.open)) / Number(d.open) : 0;
+          return {
+            d: d.d, open: round(Number(d.open), 4), close: round(Number(d.close), 4),
+            turnPct: round(turn * 100, 4), roiPct: round(rate * turn * 100, 6),
+            profitCoins: round(amount * rate * turn, 6)
+          };
+        });
+      })(),
       remainingMs: inv.status === 'completed' ? 0 : Math.max(0, end - now),
       completedAt: inv.completedAt || null,
       equityHistory: Array.isArray(inv.equityHistory) ? inv.equityHistory.slice(-120) : [],
@@ -210,6 +225,7 @@ class ShareService {
         priceCoins: round(this.sharePrice() * COINS_PER_USD, 2),
         dailyChangePct: round(Number(market.dailyChangePct) || 0, 4),
         dayOpenUsd: round(Number(market.day && market.day.open) || 0, 4),
+        daily: (market.daily || []).slice(-120),
         updatedAt: market.updatedAt || Date.now(),
         history: (market.history || []).slice(-240)
       },
@@ -274,7 +290,12 @@ class ShareService {
     return {
       ok: true,
       plans: this.plans(),
-      market: { priceUsd: round(this.sharePrice(), 4), priceCoins: round(this.sharePrice() * 2, 2), updatedAt: this.market().updatedAt },
+      market: {
+        priceUsd: round(this.sharePrice(), 4), priceCoins: round(this.sharePrice() * 2, 2),
+        dailyChangePct: round(Number(this.market().dailyChangePct) || 0, 4),
+        daily: (this.market().daily || []).slice(-120),
+        updatedAt: this.market().updatedAt
+      },
       units: ['days', 'months', 'years'],
       stats: {
         plans: this.plans().length,
@@ -344,6 +365,18 @@ class ShareService {
     market.day = market.day || { date: dayKey, open: market.priceUsd };
     if (market.day.date !== dayKey) market.day = { date: dayKey, open: market.priceUsd };
     market.dailyChangePct = market.day.open > 0 ? round(((market.priceUsd - market.day.open) / market.day.open) * 100, 4) : 0;
+    /* durable daily ledger: open / high / low / close for the admin turn-up table */
+    market.daily = market.daily || [];
+    let dayRow = market.daily[market.daily.length - 1];
+    if (!dayRow || dayRow.d !== dayKey) {
+      dayRow = { d: dayKey, open: market.priceUsd, high: market.priceUsd, low: market.priceUsd, close: market.priceUsd };
+      market.daily.push(dayRow);
+      if (market.daily.length > 400) market.daily.splice(0, market.daily.length - 400);
+    } else {
+      dayRow.close = market.priceUsd;
+      dayRow.high = Math.max(Number(dayRow.high) || market.priceUsd, market.priceUsd);
+      dayRow.low = Math.min(Number(dayRow.low) || market.priceUsd, market.priceUsd);
+    }
     market.history = market.history || [];
     const lastPt = market.history[market.history.length - 1];
     if (!lastPt || now - (Number(lastPt.t) || 0) >= 4500) {
