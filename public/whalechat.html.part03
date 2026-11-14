@@ -5,9 +5,9 @@
 
   if (fullName.length < 3) return formError('suName', 'Please enter your full name');
   if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) return formError('suUser', '3–20 characters: letters, numbers or underscores');
-  if (DB.users.some(u => u.username.toLowerCase() === username.toLowerCase())) return formError('suUser', 'That username is already taken');
+  if (DB.users.some(u => String(u && u.username || '').toLowerCase() === username.toLowerCase())) return formError('suUser', 'That username is already taken');
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return formError('suEmail', 'Enter a valid email address');
-  if (DB.users.some(u => u.email.toLowerCase() === email.toLowerCase())) return formError('suEmail', 'An account with this email already exists');
+  if (DB.users.some(u => String(u && u.email || '').toLowerCase() === email.toLowerCase())) return formError('suEmail', 'An account with this email already exists');
   if (phone.replace(/\D/g, '').length < 7) return formError('suPhone', 'Enter a valid phone number');
   /* A shared/household phone number must never stop a new visitor from joining:
      usernames and emails stay unique, but a duplicate phone is only a note. */
