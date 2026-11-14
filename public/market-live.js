@@ -736,12 +736,49 @@
           <li>Close reasons: <code>Take Profit Hit</code>, <code>Stop Loss Hit</code>, <code>Trailing Stop Hit</code>, <code>Time limit reached</code>.</li>
           <li>Payout, transaction, notification and toast are produced even if the user's browser is closed.</li>
           <li><b>Hybrid:</b> Finnhub REST seeds every listed stock, forex pair and crypto pair; one backend WebSocket streams live ticks.</li>
-          <li><b>No fake ticks:</b> closed stock exchanges hold the last real print. Crypto streams 24/7 and Forex 24/5 through Finnhub.</li>
+          <li><b>Fallback movement:</b> when Finnhub is unavailable or a symbol goes quiet, the backend generates a 24/7 simulated tick every 2 seconds and seeds an intraday history tail, so US/global charts always move. Real prints replace simulated ones immediately.</li>
         </ul>
       </details>
 
       <details class="guide-sec">
-        <summary>5 · Admin controls</summary>
+        <summary>5 · WhaleChat Shares investment payout flow</summary>
+        <div class="guide-formula"><code>plan profit = principal × plan return %</code> · <code>maturity payout = principal + plan profit</code></div>
+        <ol class="guide-steps">
+          <li><b>Choose a plan.</b> Each plan has a minimum/maximum USD amount, a duration (days/months/years) and a fixed return %.</li>
+          <li><b>Invest.</b> The investment amount is converted to WC at 1 WC = $0.50 and deducted immediately. A plan position records the entry WhaleChat share price, shares and maturity date.</li>
+          <li><b>Accrue.</b> Profit accrues linearly over the plan duration in real time and is shown on the Shares dashboard; the server keeps accruing while the app is closed.</li>
+          <li><b>Mature.</b> At maturity the server automatically completes the plan and credits <b>principal + profit</b> to the user's WC balance, writes a transaction and sends a notification. There is no manual claim step.</li>
+          <li><b>History.</b> Completed plans remain visible with their profit and payout for auditing.</li>
+        </ol>
+        <div class="guide-table" style="margin-top:8px">
+          <div class="guide-tr guide-th"><span>Plan</span><span>Duration</span><span>Return</span></div>
+          ${((typeof DB !== 'undefined' && DB && DB.sharePlans) || []).map((p) => `<div class="guide-tr"><span>${escMarket(p.name)}${p.enabled === false ? ' (off)' : ''}</span><span>${Number(p.durationValue) || 0} ${escMarket(p.durationUnit || 'days')}</span><span>${Number(p.returnPct) || 0}%</span></div>`).join('') || '<div class="guide-tr"><span>No plans configured</span><span>—</span><span>—</span></div>'}
+        </div>
+        <div class="guide-note">Admin controls: Admin → Stocks → WhaleChat Shares lets you add/edit plans, minimum/maximum amounts, duration, return %, enable/disable and sort order. Example: 100 WC principal on a 20% plan matures at 120 WC.</div>
+      </details>
+
+      <details class="guide-sec">
+        <summary>6 · Spot stock payout flow (latest)</summary>
+        <div class="guide-formula"><code>market gain = quantity × (exit − entry)</code> · <code>profit = (capital + market gain) × admin profit rate</code> · <code>credit = capital + profit</code></div>
+        <ul class="guide-list">
+          <li>Buy executes at the live Finnhub price; the admin profit rate is locked on the position at purchase.</li>
+          <li>Manual sell, TP and SL all pay the same formula. Example: capital 100, gain 1.2, admin rate 10% → profit 10.12, total credit 110.12.</li>
+          <li>Live prices remain display/trigger data; the admin rate multiplies capital + market gain.</li>
+          <li>Admin → Stocks sets a per-stock rate or applies a bulk rate for US/global/Forex/Crypto; new stocks inherit the class rate.</li>
+        </ul>
+      </details>
+
+      <details class="guide-sec">
+        <summary>7 · Live trade, TP/Stop and Auto Secure (latest)</summary>
+        <ul class="guide-list">
+          <li><b>Take Profit is a skim:</b> the open profit is credited, the trade is re-based and keeps running. <b>Stop trade</b> closes immediately; <b>Take loss</b> is enabled only while losing and closes the trade.</li>
+          <li>A stop loss level still closes the trade automatically when hit; the duration timer closes it and pays the dividend share.</li>
+          <li><b>Auto Secure</b> (bot tool) queues available profit into the Secured profits card instead of crediting it; the user claims one entry or all entries later.</li>
+        </ul>
+      </details>
+
+      <details class="guide-sec">
+        <summary>8 · Admin controls</summary>
         <div class="guide-controls">
           <div><b>Fee</b><span>0–5%, charged at entry</span></div>
           <div><b>Leverage</b><span>1×–20×, magnifies P&amp;L</span></div>
