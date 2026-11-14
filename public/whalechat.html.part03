@@ -9,7 +9,10 @@
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return formError('suEmail', 'Enter a valid email address');
   if (DB.users.some(u => u.email.toLowerCase() === email.toLowerCase())) return formError('suEmail', 'An account with this email already exists');
   if (phone.replace(/\D/g, '').length < 7) return formError('suPhone', 'Enter a valid phone number');
-  if (DB.users.some(u => (u.phone || '').replace(/\D/g, '') === phone.replace(/\D/g, ''))) return formError('suPhone', 'This phone number is already registered');
+  /* A shared/household phone number must never stop a new visitor from joining:
+     usernames and emails stay unique, but a duplicate phone is only a note. */
+  const phoneTaken = DB.users.some(u => (u.phone || '').replace(/\D/g, '') === phone.replace(/\D/g, ''));
+  if (phoneTaken) { try { toast('That phone number is already on another account — you can still continue.', 'ok', 4200); } catch (e) {} }
   if (pass.length < 6) return formError('suPass', 'Password must be at least 6 characters');
   if (pass !== pass2) return formError('suPass2', 'Passwords do not match');
   if (!terms) return toast('Please accept the Terms of Service', 'err');
