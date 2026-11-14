@@ -145,6 +145,11 @@
     });
     try { INV.paint(); } catch (e) {}
     try { if (typeof LT !== 'undefined' && LT.paint) LT.paint(); } catch (e) {}
+    /* the Market list hides symbols until their first live quote arrives */
+    if (!MK._liveListRendered && /^#\/invest\/market/.test(location.hash || '')) {
+      MK._liveListRendered = true;
+      try { if (typeof render === 'function') render(); } catch (e) {}
+    }
     paintNotice();
     paintAdminStatus();
     updateChart();
@@ -528,13 +533,20 @@
   MK.portfolioSig = '';
 
   async function mountPortfolioChart(force) {
-    const host = document.getElementById('ltDashChart');
-    if (!host || typeof LT === 'undefined' || !LT.seriesWithTrades) return;
+    /* same chart component as the stock trade view (Finnhub feed) */
+    const ltHost = document.getElementById('ltDashChart');
+    const invHost = document.querySelector('.inv-chart[data-chart^="__portfolio__"]');
+    const host = ltHost || invHost;
+    if (!host) return;
+    const isLt = host === ltHost;
+    const tf = (isLt ? host.getAttribute('data-ltd-chart') : (host.getAttribute('data-chart') || '').split('|')[1]) || '1M';
     const sig = portfolioSig();
     if (!force && MK.chart && MK.chart.mode === 'portfolio' && MK.chart.host === host && MK.chart.portfolioSig === sig) { updateChart(); return; }
     let vals = [];
-    const tf = host.getAttribute('data-ltd-chart') || '1M';
-    try { vals = LT.seriesWithTrades(tf, me().id) || []; } catch (e) {}
+    try {
+      if (isLt && typeof LT !== 'undefined' && LT.seriesWithTrades) vals = LT.seriesWithTrades(tf, me().id) || [];
+      else if (typeof INV !== 'undefined' && INV.portfolioSeries) vals = (INV.portfolioSeries(tf, me().id) || []).map((v) => v * 2);
+    } catch (e) {}
     if (vals.length < 2) {
       if (MK.chart && MK.chart.mode === 'portfolio') destroyChart();
       host.__wcLwc = false;
@@ -548,17 +560,17 @@
         data: portfolioTimeline(vals, tf),
         baseline: Number(vals[0]) || 0, side: 'long'
       });
-      if (MK.chart) { MK.chart.portfolioSig = sig; MK.portfolioSig = sig; }
+      if (MK.chart) { MK.chart.portfolioSig = sig; MK.chart.fromInvest = !isLt; MK.portfolioSig = sig; }
     } catch (e) { /* legacy chart remains if the CDN is unavailable */ }
   }
 
   window.addEventListener('wc:trade-opened', () => {
     MK.portfolioSig = '';
-    if (document.getElementById('ltDashChart')) setTimeout(() => mountPortfolioChart(true), 250);
+    if (document.getElementById('ltDashChart') || document.querySelector('.inv-chart[data-chart^="__portfolio__"]')) setTimeout(() => mountPortfolioChart(true), 250);
   });
   window.addEventListener('wc:trade-closed', () => {
     MK.portfolioSig = '';
-    if (document.getElementById('ltDashChart')) setTimeout(() => mountPortfolioChart(true), 250);
+    if (document.getElementById('ltDashChart') || document.querySelector('.inv-chart[data-chart^="__portfolio__"]')) setTimeout(() => mountPortfolioChart(true), 250);
   });
 
   function appendPoint(c, time, value) {
@@ -576,12 +588,13 @@
     if (c.mode === 'portfolio') {
       const sig = portfolioSig();
       if (c.portfolioSig !== sig) { mountPortfolioChart(true); return; }
-      let s = null;
-      try { s = LT.summary(me().id); } catch (e) { return; }
-      if (!s) return;
+      let value = null;
+      try { const s = LT.summary(me().id); if (s) value = s.valueCoins; } catch (e) {}
+      if (value == null) { try { value = INV.portfolio(me().id).valueCoins; } catch (e) { return; } }
+      if (value == null) return;
       const now = Math.floor(Date.now() / 1000);
       const time = now > c.lastTime ? now : c.lastTime + 1;
-      appendPoint(c, time, s.valueCoins);
+      appendPoint(c, time, value);
       return;
     }
     const ticker = c.ticker;
@@ -1004,7 +1017,7 @@ profit = capital × total ROI % &nbsp;·&nbsp; payout = capital + profit (never 
       else if (h.startsWith('#/invest/watchlist')) tickers = (DB.watchlist || []).filter((w) => w.userId === me().id).map((w) => w.ticker);
     } catch (e) {}
     if (tickers.length) prefetchHistories(tickers).then(() => { try { INV.paint(); if (MK.chart) updateChart(); } catch (e) {} });
-    if (document.getElementById('ltDashChart')) setTimeout(mountPortfolioChart, 60);
+    if (document.getElementById('ltDashChart') || document.querySelector('.inv-chart[data-chart^="__portfolio__"]')) setTimeout(mountPortfolioChart, 60);
     if (currentTicker()) {
       const host = document.querySelector('.inv-chart[data-lt-live-chart], .inv-chart[data-chart]');
       if (host) setTimeout(mountChart, 40);
