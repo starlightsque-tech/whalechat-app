@@ -1,8 +1,8 @@
 {
-  "version": "3.31.0",
-  "build": "2026-11-13T17:00:00Z",
+  "version": "3.31.1",
+  "build": "2026-11-14T12:26:22Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.31.0 — preset bot-avatar gallery in the admin bot panel: pick a built-in profile picture or upload a custom one, with a live preview before saving.",
-  "releasedAt": "2026-11-13T17:00:00Z",
+  "notes": "Admin trading-bot screen: upload/change bot profile pictures, usernames and hot-assistant flags.",
+  "releasedAt": "2026-11-14T12:26:22.442Z",
   "minimum": "3.0.0"
 }
