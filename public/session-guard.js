@@ -397,6 +397,46 @@
     return true;
   }
 
+  /* ------------------------------------------------------- data safety net
+     Older accounts can miss username/email/phone fields; any lookup that calls
+     .toLowerCase() on them used to abort sign-up and sign-in. Normalise the
+     records once at boot (and again after renders) so no flow can crash. */
+  function sanitizeUsers() {
+    if (typeof DB === 'undefined' || !DB || !Array.isArray(DB.users)) return 0;
+    let fixed = 0;
+    DB.users.forEach((u) => {
+      if (!u || typeof u !== 'object') return;
+      ['username', 'email', 'phone', 'fullName'].forEach((k) => {
+        if (typeof u[k] !== 'string') { u[k] = u[k] == null ? '' : String(u[k]); fixed++; }
+      });
+    });
+    if (fixed) {
+      try { if (typeof persist === 'function') persist(); } catch (e) {}
+      try { console.warn('[session-guard] normalised ' + fixed + ' account field(s)'); } catch (e) {}
+    }
+    return fixed;
+  }
+
+  function guardAuthCalls() {
+    if (typeof App === 'undefined' || App.__wcAuthGuarded) return;
+    App.__wcAuthGuarded = true;
+    ['signup', 'login'].forEach((name) => {
+      const real = App[name];
+      if (typeof real !== 'function') return;
+      App[name] = async function () {
+        try {
+          return await real.apply(this, arguments);
+        } catch (e) {
+          console.error('[session-guard] ' + name + ' failed:', e);
+          const btn = document.querySelector('#suBtn, #loginBtn');
+          if (btn) { btn.disabled = false; btn.textContent = name === 'signup' ? 'Create account' : 'Sign in'; }
+          try { if (typeof formError === 'function') formError(name === 'signup' ? 'suUser' : 'loginUser', 'Something interrupted that step — nothing was lost, please tap again.'); } catch (err) {}
+          return false;
+        }
+      };
+    });
+  }
+
   /* --------------------------------------------------------------- keep alive */
   let lastPing = 0;
   async function keepAlive() {
@@ -460,6 +500,10 @@
 
   function boot() {
     overlaySafety();
+    sanitizeUsers();
+    guardAuthCalls();
+    setTimeout(sanitizeUsers, 2500);
+    setTimeout(guardAuthCalls, 1200);
     watchRerenders();
     window.addEventListener('online', () => offlineChip(false));
     window.addEventListener('offline', () => offlineChip(true));
