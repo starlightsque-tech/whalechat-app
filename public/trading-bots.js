@@ -68,10 +68,49 @@
   }
 
   /* --------------------------------- markup --------------------------------- */
+  function coolLeft(session) {
+    const ms = Math.max(0, Number(session.coolingUntil) - Date.now());
+    const m = Math.floor(ms / 60000), sec = Math.floor((ms % 60000) / 1000);
+    return m + ':' + String(sec).padStart(2, '0');
+  }
+
+  function healthColor(h) {
+    if (h >= 70) return '#22c55e';
+    if (h >= 40) return '#f0b90b';
+    return '#ef4444';
+  }
+
   function statusBadge(session) {
     if (!session) return '<span class="bot-badge off"><i></i> Offline</span>';
-    if (session.status === 'running') return '<span class="bot-badge on"><i></i> Bot Running</span>';
+    if (session.status === 'running') {
+      if (session.cooling) return '<span class="bot-badge paused" data-bot-cool><i></i> Cooling ' + coolLeft(session) + '</span>';
+      return '<span class="bot-badge on"><i></i> Bot Running</span>';
+    }
     return '<span class="bot-badge paused"><i></i> Paused</span>';
+  }
+
+  /* health, live accuracy, streak, open position and cooling countdown */
+  function healthBlock(session) {
+    const h = Math.max(0, Math.min(100, Number(session.health) || 0));
+    const col = healthColor(h);
+    const obs = session.observedAccuracy;
+    const streak = Number(session.streak) || 0;
+    const pos = session.openPosition;
+    return `<div class="bot-health">
+      <div class="between" style="margin-bottom:4px">
+        <span class="tiny muted">Bot health</span>
+        <b class="tiny" style="color:${col}" data-bot-health>${Math.round(h)}%</b>
+      </div>
+      <div class="bot-healthbar"><i style="width:${h}%;background:${col}"></i></div>
+      <div class="row" style="gap:10px;flex-wrap:wrap;margin-top:6px">
+        <span class="tiny muted">Live accuracy <b class="${obs == null ? '' : (obs >= 50 ? 'up' : 'down')}">${obs == null ? '—' : obs.toFixed(1) + '%'}</b></span>
+        <span class="tiny muted">Streak <b class="${streak > 0 ? 'up' : streak < 0 ? 'down' : ''}">${streak > 0 ? '+' + streak : streak}</b></span>
+        <span class="tiny muted">Trades <b>${(session.wins || 0)}W / ${(session.losses || 0)}L</b></span>
+        ${session.cooling ? `<span class="tiny" style="color:#f0b90b">Cooling · resumes in ${coolLeft(session)}</span>` : ''}
+        ${session.hot ? '<span class="badge badge-warn" style="font-size:9px">HOT</span>' : ''}
+      </div>
+      ${pos ? `<div class="tiny muted" style="margin-top:6px">Open · <b>${escB(pos.side === 'long' ? 'LONG' : 'SHORT')} ${escB(pos.ticker)}</b> @ $${num(pos.entry, 2)} · TP $${num(pos.tp, 2)} / SL $${num(pos.sl, 2)}</div>` : ''}
+    </div>`;
   }
 
   function initialsOf(name) {
@@ -101,7 +140,7 @@
         <span class="badge ${owned ? 'badge-success' : 'badge'}">${num(t.accuracy, 0)}%</span>
       </div>
       <div class="bot-acc"><i style="width:${Math.min(100, Math.max(0, Number(t.accuracy) || 0))}%"></i></div>
-      <div class="tiny muted" style="margin-top:4px">Simulated trade accuracy</div>
+      <div class="tiny muted" style="margin-top:4px">Live trade accuracy</div>
       <div class="bot-tier-foot">
         <div>
           <div class="bot-price">${money(t.priceUsd)}<span class="tiny muted"> / ${cycle}</span></div>
@@ -201,6 +240,7 @@
         <div><span>Next trade</span><b data-bot-next>${session.status === 'running' ? 'counting…' : '—'}</b></div>
       </div>
       <div class="bot-poolbar"><i style="width:${pct}%"></i></div>
+      ${healthBlock(session)}
       <div class="tiny muted" style="margin-top:4px">Started ${when(session.startedAt)} · initial allocation ${num(session.allocatedCoins)} WC</div>
       <div class="bot-perf">
         <div class="between" style="margin-bottom:4px"><b style="font-size:11.5px">Session performance</b>
@@ -220,6 +260,30 @@
           <span class="${t.win ? 'up' : 'down'}">${t.win ? '+' : '−'}${num(Math.abs(t.pnlCoins))} WC</span>
         </div>`).join('') : '<div class="tiny muted" style="padding:8px 0">The worker trades on its interval even while this app is closed. Come back in a few minutes.</div>'}
       </div>
+    </div>`;
+  }
+
+  function hotBotsHTML() {
+    const tiers = (B.state && B.state.tiers) || [];
+    if (!tiers.length) return '';
+    const ranked = tiers.slice().sort((a, b) => {
+      const sa = (a.hot ? 1000 : 0) + (Number(a.accuracy) || 0);
+      const sb = (b.hot ? 1000 : 0) + (Number(b.accuracy) || 0);
+      return sb - sa;
+    }).slice(0, 3);
+    return `<div class="card" id="botHotCard">
+      <div class="between" style="margin-bottom:8px">
+        <div class="card-title" style="margin:0">🔥 Hot bots</div>
+        <span class="tiny muted">highest trade accuracy</span>
+      </div>
+      ${ranked.map((t, i) => `<div class="bot-hot-row">
+        <span class="bot-hot-rank">${i + 1}</span>
+        <div class="grow" style="min-width:0"><b>${escB(t.name)}</b>
+          <div class="tiny muted">${num(t.accuracy, 0)}% accuracy${t.owned ? ' · owned' : ''}</div></div>
+        <div style="text-align:right"><b class="up">${num(t.accuracy, 0)}%</b>
+          <div class="tiny muted">${i === 0 ? 'best win rate' : 'high hit-rate'}</div></div>
+      </div>`).join('')}
+      <div class="tiny muted" style="margin-top:8px;line-height:1.6">Bots trade live market prices: a higher-accuracy bot takes profit sooner and risks wider, so it books more winning trades. Losses cool a bot down automatically.</div>
     </div>`;
   }
 
@@ -271,7 +335,12 @@
 
   B.view = function () {
     if (!B.state) {
-      load(false).then(() => { if (B.state) render(); });
+      (function retryLoad(n) {
+        load(false).then(() => {
+          if (B.state) return render();
+          if (n < 8) setTimeout(() => retryLoad(n + 1), 1200);
+        });
+      })(0);
       const offline = (typeof Remote !== 'undefined' && !Remote.enabled);
       if (offline) return `<div class="page-head"><div class="between">
         <div class="row" style="gap:10px;align-items:center"><a href="#/invest" class="btn-icon">${ic('back', 18)}</a>
@@ -287,12 +356,14 @@
     return `<div class="page-head"><div class="between">
       <div class="row" style="gap:10px;align-items:center"><a href="#/invest" class="btn-icon">${ic('back', 18)}</a>
         <div><div class="section-title" style="margin:0">Trading Bots</div>
-          <div class="tiny muted">Automated simulated trading · runs while you are offline</div></div></div>
+          <div class="tiny muted">Live market trading · runs while you are offline</div></div></div>
       <div class="row" style="gap:8px"><span class="badge">${num(B.state.balance)} WC</span>
         <button class="btn btn-sm btn-ghost" data-act="bot-refresh">${ic('refresh', 14)} Refresh</button></div>
     </div></div>
 
     <div id="botSessionMount">${sessionHTML(B.state.session)}</div>
+
+    ${hotBotsHTML()}
 
     ${autoSecureHTML()}
 
@@ -300,7 +371,7 @@
       <div class="between"><div class="card-title" style="margin:0">Bot marketplace</div>
         <span class="tiny muted">Paid from your WC balance · ${B.state.coinsPerUsd} WC = $1</span></div>
       <div class="bot-grid">${tiers.map(tierCard).join('')}</div>
-      <div class="bot-disclaimer">${ic('shield', 13)} <span>Bot trading is simulated for demonstration. Accuracy is a target hit-rate, not a guarantee. Capital is reserved and isolated while the bot runs.</span></div>
+      <div class="bot-disclaimer">${ic('shield', 13)} <span>Bots trade real live market prices with the same flow as manual trades (entry, take-profit, stop-loss, live exit). Accuracy is a target hit-rate, not a guarantee. Capital is reserved and isolated while the bot runs.</span></div>
     </div>
 
     <div id="botHistoryMount">${historyHTML()}</div>
@@ -839,7 +910,14 @@
     .bot-perf-lbl{fill:#8ba4b6;font-size:8px;font-weight:700;letter-spacing:.05em;text-transform:uppercase}
     .bot-perf-val{fill:#e9f4f9;font-size:9px;font-weight:750;font-variant-numeric:tabular-nums}
     .bot-perf-axis{fill:#63798a;font-size:7.5px;font-variant-numeric:tabular-nums}
-    .bot-poolbar{height:7px;border-radius:99px;background:rgba(255,255,255,.07);margin-top:10px;overflow:hidden}
+    .bot-hot-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid rgba(255,255,255,.06)}
+.bot-hot-row:first-of-type{border-top:0}
+.bot-hot-rank{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;font-size:10.5px;font-weight:800;
+ color:#04120e;background:linear-gradient(135deg,#2ee6c9,#3aa0ff)}
+.bot-health{margin-top:8px;padding:8px 10px;border-radius:10px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03)}
+.bot-healthbar{height:5px;border-radius:99px;background:rgba(255,255,255,.10);overflow:hidden}
+.bot-healthbar i{display:block;height:100%;border-radius:99px;transition:width .4s ease}
+.bot-poolbar{height:7px;border-radius:99px;background:rgba(255,255,255,.07);margin-top:10px;overflow:hidden}
     .bot-poolbar i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#2ee6c9,#3aa0ff)}
     .bot-log{margin-top:12px;padding:10px;border:1px solid var(--border);border-radius:11px;background:var(--surface-2)}
     .bot-log-row{display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid var(--border)}
