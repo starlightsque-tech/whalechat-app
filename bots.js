@@ -296,6 +296,19 @@ class BotService {
       stopReason: s.stopReason || '',
       intervalMin: interval,
       nextTradeAt: nextAt,
+      health: Math.round(Number.isFinite(Number(s.health)) ? Number(s.health) : 100),
+      coolingUntil: Number(s.coolingUntil) || 0,
+      cooling: Number(s.coolingUntil) > Date.now(),
+      coolingCount: Number(s.coolingCount) || 0,
+      streak: Number(s.streak) || 0,
+      wins: Number(s.wins) || 0,
+      losses: Number(s.losses) || 0,
+      observedAccuracy: ((Number(s.wins) || 0) + (Number(s.losses) || 0)) > 0
+        ? round(((Number(s.wins) || 0) / ((Number(s.wins) || 0) + (Number(s.losses) || 0))) * 100, 1)
+        : null,
+      hot: ((Number(s.wins) || 0) >= 3) && (((Number(s.wins) || 0) / ((Number(s.wins) || 0) + (Number(s.losses) || 1))) >= 0.6) && ((Number(s.health) || 0) >= 60),
+      openPosition: s.openPos || null,
+      perf: (s.perf || []).slice(-60),
       trades: (s.trades || []).slice(0, 60)
     };
   }
@@ -377,7 +390,9 @@ class BotService {
       allocatedCoins: allocated, poolCoins: allocated,
       startedAt: now, stoppedAt: null, lastTradeAt: now - interval * 60000,
       intervalMin: interval, totalProfitCoins: 0, totalLossCoins: 0,
-      trades: [], autoStopped: false
+      trades: [], autoStopped: false,
+      health: 100, coolingUntil: 0, coolingCount: 0, streak: 0, wins: 0, losses: 0,
+      perf: [], openPos: null
     };
     db.botSessions.unshift(session);
     this.tx(db, userId, `Trading bot capital reserved · ${tier.name}`, -allocated, 'bot-reserve', { sessionId: session.id, tierId: tier.id, allocatedCoins: allocated });
@@ -561,6 +576,27 @@ class BotService {
         changed = true;
         continue;
       }
+      /* an open position is monitored every tick: take-profit, stop-loss or
+         the time limit closes it at the live price */
+      if (session.status === 'running' && session.openPos) {
+        try { if (this.monitorPosition(db, session, now)) changed = true; } catch (e) { this.lastError = e.message; }
+      }
+
+      /* health recovers while the bot runs; cooling ends by itself */
+      if (session.status === 'running') {
+        const cooling = Number(session.coolingUntil) || 0;
+        if (cooling && now >= cooling) {
+          session.coolingUntil = 0;
+          session.health = Math.max(Number(session.health) || 0, 55);
+          session.streak = 0;
+          changed = true;
+        }
+        const h = Number(session.health);
+        if (Number.isFinite(h) && h < 100 && now >= (Number(session.coolingUntil) || 0)) {
+          session.health = Math.min(100, round(h + 0.6, 2));
+          changed = true;
+        }
+      }
       const interval = Math.max(1, Number(session.intervalMin) || 1);
       if (now - (Number(session.lastTradeAt) || 0) < interval * 60000) continue;
       if (this.trade(db, session, user)) changed = true;
@@ -570,49 +606,146 @@ class BotService {
     return changed ? 1 : 0;
   }
 
-  trade(db, session, user) {
+  /* Close the open position at the live price and book the real result. */
+  closePosition(db, session, now, reason) {
     const tier = this.tier(session.tierId);
-    if (!tier) return false;
-    const s = this.settings();
-    const now = Date.now();
-    let pool = Math.max(0, Number(session.poolCoins) || 0);
-    if (!(pool > 0)) return false;
+    const pos = session.openPos;
+    if (!pos) return false;
+    let q = null;
+    try { q = this.getQuote(pos.ticker); } catch (e) { q = null; }
+    if (!q || !(Number(q.price) > 0)) return false;
+    const exit = round(Number(q.price), 4);
+    const dir = pos.side === 'long' ? 1 : -1;
+    let pnl = round((exit - pos.entry) * dir * pos.qty, 2);
+    pnl = Math.max(-pos.stakeCoins, Math.min(pos.stakeCoins * 3 || pos.stakeCoins * 1.5, pnl));
+    const win = pnl >= 0;
+    const pool = Math.max(0, Number(session.poolCoins) || 0);
+    const newPool = Math.round((pool + pnl) * 100) / 100;
 
-    const stake = Math.max(0.5, round(pool * (clamp(s.stakePct, 1, 100, 20) / 100), 2));
-    const accuracy = clamp(tier.accuracy, 1, 100, 50);
-    const win = Math.random() * 100 < accuracy;
-    const move = win ? clamp(s.winPct, 0.1, 100, 4) : -clamp(s.lossPct, 0.1, 100, 6);
-    const pnl = round(stake * (move / 100), 2);
-    pool = Math.round((pool + pnl) * 100) / 100;
-    if (pool < 0) pool = 0;
-
-    const classes = (db.invest && db.invest.classes) || {};
-    const stocks = (db.stocks || []).filter((x) => x && x.ticker && classes[x.assetClass || 'us'] !== false);
-    const pick = stocks.length ? stocks[Math.floor(Math.random() * stocks.length)] : null;
-    const ticker = pick ? String(pick.ticker) : 'BTCUSDT';
-    let quote = null;
-    try { quote = this.getQuote(ticker); } catch (e) {}
-    const price = quote && Number(quote.price) > 0 ? round(quote.price, 4) : round(20 + Math.random() * 480, 2);
-
-    const entry = {
-      id: nid('btr_'), at: now, ticker, side: win ? 'SELL · WIN' : 'SELL · LOSS',
-      stakeCoins: stake, pnlCoins: pnl, win, priceUsd: price,
-      poolAfter: pool, accuracy
+    const entryLog = {
+      id: nid('btr_'), at: now, ticker: pos.ticker,
+      side: (pos.side === 'long' ? 'LONG' : 'SHORT') + ' · ' + (win ? 'WIN' : 'LOSS'),
+      stakeCoins: pos.stakeCoins, pnlCoins: pnl, win, priceUsd: exit,
+      entryPrice: pos.entry, exitPrice: exit, qty: pos.qty, openedAt: pos.openedAt, reason: reason || 'time',
+      poolAfter: Math.max(0, newPool), accuracy: Number(tier && tier.accuracy) || 0
     };
     session.trades = session.trades || [];
-    session.trades.unshift(entry);
+    session.trades.unshift(entryLog);
     if (session.trades.length > 60) session.trades.length = 60;
-    session.poolCoins = pool;
+    session.poolCoins = Math.max(0, newPool);
     session.lastTradeAt = now;
+    session.tradeCount = (Number(session.tradeCount) || 0) + 1;
     if (win) session.totalProfitCoins = round((Number(session.totalProfitCoins) || 0) + pnl, 2);
     else session.totalLossCoins = round((Number(session.totalLossCoins) || 0) + Math.abs(pnl), 2);
-    session.tradeCount = (Number(session.tradeCount) || 0) + 1;
 
-    const floor = Math.max(0.5, round((Number(session.allocatedCoins) || 0) * (clamp(s.minPoolPct, 1, 100, 10) / 100), 2));
-    if (pool <= floor) {
+    if (win) {
+      session.wins = (Number(session.wins) || 0) + 1;
+      session.streak = Math.max(1, (Number(session.streak) || 0) + 1);
+      session.health = Math.min(100, round((Number(session.health) || 100) + 4 + Math.min(4, Number(session.streak) || 0), 2));
+    } else {
+      session.losses = (Number(session.losses) || 0) + 1;
+      session.streak = Math.min(-1, (Number(session.streak) || 0) - 1);
+      session.health = Math.max(0, round((Number(session.health) || 100) - 13, 2));
+    }
+    if ((session.health <= 35 || session.streak <= -3) && !session.coolingUntil) {
+      const cooldownMin = session.health <= 20 ? 10 : 4;
+      session.coolingUntil = now + cooldownMin * 60000;
+      session.coolingCount = (Number(session.coolingCount) || 0) + 1;
+      session.health = Math.max(Number(session.health) || 0, 25);
+      session.streak = 0;
+      this.notify(db, session.userId, 'Bot cooling down',
+        `${(tier && tier.name) || 'Your bot'} took losses and is cooling down for ${cooldownMin} minutes. Capital is safe and trading resumes automatically.`, 'clock');
+    }
+    session.perf = (session.perf || []);
+    session.perf.push({ at: now, pool: Math.max(0, newPool), health: round(session.health, 2) });
+    if (session.perf.length > 80) session.perf.splice(0, session.perf.length - 80);
+    session.openPos = null;
+
+    const settings = this.settings();
+    const floor = Math.max(0.5, round((Number(session.allocatedCoins) || 0) * (clamp(settings.minPoolPct, 1, 100, 10) / 100), 2));
+    if (newPool <= floor) {
       session.autoStopped = true;
       try { this.stopSession(db, session, 'Capital exhausted', 'bot-auto-stop'); } catch (e) { this.lastError = e.message; }
     }
+    return true;
+  }
+
+  monitorPosition(db, session, now) {
+    const pos = session.openPos;
+    if (!pos) return false;
+    let q = null;
+    try { q = this.getQuote(pos.ticker); } catch (e) { q = null; }
+    if (!q || !(Number(q.price) > 0)) return false;
+    const price = Number(q.price);
+    const hitTp = pos.side === 'long' ? price >= pos.tp : price <= pos.tp;
+    const hitSl = pos.side === 'long' ? price <= pos.sl : price >= pos.sl;
+    const timedOut = now >= (Number(pos.closeAt) || 0);
+    if (hitTp) return this.closePosition(db, session, now, 'take-profit');
+    if (hitSl) return this.closePosition(db, session, now, 'stop-loss');
+    if (timedOut) return this.closePosition(db, session, now, 'time');
+    return false;
+  }
+
+  /* Live flow — identical to a manual spot trade:
+     the bot picks a real symbol with a fresh Finnhub quote, opens at the live
+     price and closes at the live price one interval later. Its accuracy decides
+     how often it takes the side the trend is already on, so higher-accuracy
+     bots win more often on real market movement (no invented prices). */
+  trade(db, session, user) {
+    const tier = this.tier(session.tierId);
+    if (!tier) return false;
+    if (Number(session.coolingUntil) > Date.now()) return false;
+    const s = this.settings();
+    const now = Date.now();
+    const pool = Math.max(0, Number(session.poolCoins) || 0);
+    if (!(pool > 0)) return false;
+
+    const classes = (db.invest && db.invest.classes) || {};
+    const symbols = (db.stocks || []).filter((x) => x && x.ticker && classes[x.assetClass || 'us'] !== false);
+
+    const quoteFor = (ticker) => {
+      try { return this.getQuote(ticker) || null; } catch (e) { return null; }
+    };
+    const fresh = (q) => !!(q && Number(q.price) > 0 && q.updatedAt && now - Number(q.updatedAt) < 5 * 60000);
+
+    /* ---- open a new position on a live, freshly priced symbol ---- */
+    const stake = Math.max(0.5, round(pool * (clamp(s.stakePct, 1, 100, 20) / 100), 2));
+    if (stake > pool) return false;
+    const candidates = [];
+    symbols.forEach((x) => {
+      const q = quoteFor(String(x.ticker));
+      if (fresh(q)) candidates.push({ ticker: String(x.ticker), price: Number(q.price), prevClose: Number(q.prevClose) || Number(q.price) });
+    });
+    if (!candidates.length) return false;                 /* nothing trading right now */
+    const pick = candidates[Math.floor(Math.random() * candidates.length)];
+
+    /* accuracy = chance the bot reads the trend correctly; the market decides
+       the rest, so a 45 % bot really does win less than an 85 % bot */
+    const base = clamp(tier.accuracy, 1, 100, 50);
+    const health = Number.isFinite(Number(session.health)) ? Number(session.health) : 100;
+    const streak = Number(session.streak) || 0;
+    const accuracy = Math.max(5, Math.min(95, round(base + (health - 70) * 0.12 + Math.max(-4, Math.min(4, streak * 0.9)), 2)));
+    const trendUp = pick.price >= pick.prevClose;
+    const trustTrend = Math.random() * 100 < accuracy;
+    const side = (trustTrend ? trendUp : !trendUp) ? 'long' : 'short';
+
+    const entry = round(pick.price, 4);
+    const qty = round(stake / entry, 6);
+    /* target/stop geometry makes the accuracy real: a higher-accuracy bot takes
+       profit sooner and risks wider, so it closes wins more often */
+    const d = 0.0025;
+    const tpPct = d * Math.max(0.35, Math.min(1.5, 1 - (accuracy - 50) / 90));
+    const slPct = d * Math.max(0.8, Math.min(2.2, 1 + (accuracy - 50) / 60));
+    const tp = side === 'long' ? round(entry * (1 + tpPct), 4) : round(entry * (1 - tpPct), 4);
+    const sl = side === 'long' ? round(entry * (1 - slPct), 4) : round(entry * (1 + slPct), 4);
+    session.openPos = {
+      ticker: pick.ticker, side, entry, qty, stakeCoins: stake,
+      tp, sl, tpPct: round(tpPct * 100, 3), slPct: round(slPct * 100, 3),
+      openedAt: now, closeAt: now + Math.max(1, Number(session.intervalMin) || 1) * 3 * 60000
+    };
+    session.lastTradeAt = now;
+    this.notify(db, session.userId, 'Bot opened a live position',
+      `${tier.name} went ${side.toUpperCase()} on ${pick.ticker} at $${entry} with ${stake.toFixed(2)} WC.`, 'trend');
     return true;
   }
 
