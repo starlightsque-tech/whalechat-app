@@ -11,16 +11,17 @@
    ========================================================================= */
 
 const crypto = require('crypto');
+const BOT_AVATARS = require('./bot-avatars');
 
 const COINS_PER_USD = 2;                    // 1 WC = $0.50
 const CYCLE_MS = { daily: 86400000, weekly: 604800000, monthly: 2592000000, one_time: null };
 const CYCLE_LABEL = { daily: 'day', weekly: 'week', monthly: 'month', one_time: 'one-time' };
 
 const DEFAULT_TIERS = [
-  { id: 'low', name: 'Low-Level Grade Bot', accuracy: 45, priceUsd: 20, billingCycle: 'monthly', intervalMin: 0, enabled: true, sort: 1, blurb: 'Steady starter automation for small allocations.' },
-  { id: 'medium', name: 'Medium-Level Grade Bot', accuracy: 50, priceUsd: 50, billingCycle: 'monthly', intervalMin: 0, enabled: true, sort: 2, blurb: 'Balanced risk with more frequent simulated entries.' },
-  { id: 'premium', name: 'Premium-Level Grade Bot', accuracy: 70, priceUsd: 120, billingCycle: 'monthly', intervalMin: 0, enabled: true, sort: 3, blurb: 'Higher hit-rate for users scaling their capital.' },
-  { id: 'high', name: 'High-Performance Bot', accuracy: 85, priceUsd: 250, billingCycle: 'monthly', intervalMin: 0, enabled: true, sort: 4, blurb: 'Top tier accuracy for serious allocations.' }
+  { id: 'low', name: 'Low-Level Grade Bot', username: 'whale_scout', avatar: BOT_AVATARS.low, hot: false, accuracy: 45, priceUsd: 20, billingCycle: 'monthly', intervalMin: 0, enabled: true, sort: 1, blurb: 'Steady starter automation for small allocations.' },
+  { id: 'medium', name: 'Medium-Level Grade Bot', username: 'orca_trader', avatar: BOT_AVATARS.medium, hot: true, accuracy: 50, priceUsd: 50, billingCycle: 'monthly', intervalMin: 0, enabled: true, sort: 2, blurb: 'Balanced risk with more frequent simulated entries.' },
+  { id: 'premium', name: 'Premium-Level Grade Bot', username: 'deep_blue', avatar: BOT_AVATARS.premium, hot: true, accuracy: 70, priceUsd: 120, billingCycle: 'monthly', intervalMin: 0, enabled: true, sort: 3, blurb: 'Higher hit-rate for users scaling their capital.' },
+  { id: 'high', name: 'High-Performance Bot', username: 'apex_whale', avatar: BOT_AVATARS.high, hot: true, accuracy: 85, priceUsd: 250, billingCycle: 'monthly', intervalMin: 0, enabled: true, sort: 4, blurb: 'Top tier accuracy for serious allocations.' }
 ];
 
 const DEFAULT_SETTINGS = {
@@ -72,6 +73,23 @@ class BotService {
         }
       }
     }
+    for (const t of db.botTiers) {
+      if (!t) continue;
+      const def = DEFAULT_TIERS.find((x) => x.id === t.id) || {};
+      if (!t.username) { t.username = def.username || ('bot_' + t.id); changed = true; }
+      if (!t.avatar && !t.avatarCleared) { t.avatar = def.avatar || null; if (t.avatar) changed = true; }
+      if (t.hot === undefined) { t.hot = !!def.hot; changed = true; }
+    }
+    if (!db.botCooldowns || typeof db.botCooldowns !== 'object') { db.botCooldowns = {}; changed = true; }
+    if (Number(db.botAvatarSeed) !== 3) {
+      for (const t of db.botTiers) {
+        if (!t) continue;
+        const def = DEFAULT_TIERS.find((x) => x.id === t.id);
+        if (def && def.avatar) t.avatar = def.avatar;
+      }
+      db.botAvatarSeed = 3;
+      changed = true;
+    }
     db.botSettings = Object.assign({}, DEFAULT_SETTINGS, db.botSettings || {});
     if (!Array.isArray(db.botSubscriptions)) { db.botSubscriptions = []; changed = true; }
     if (!Array.isArray(db.botSessions)) { db.botSessions = []; changed = true; }
@@ -108,9 +126,13 @@ class BotService {
     return this.activeSubs(db, userId).find((s) => s.tierId === tierId) || null;
   }
 
-  sessionFor(db, userId) {
-    return (db.botSessions || []).find((s) => s && s.userId === userId && (s.status === 'running' || s.status === 'paused')) || null;
+  sessionsFor(db, userId) {
+    return (db.botSessions || []).filter((s) => s && s.userId === userId && (s.status === 'running' || s.status === 'paused'));
   }
+
+  sessionFor(db, userId) { return this.sessionsFor(db, userId)[0] || null; }
+
+  cooldownKey(userId, tierId) { return String(userId) + ':' + String(tierId); }
 
   notify(db, userId, title, body, icon) {
     db.notifications = db.notifications || [];
@@ -248,16 +270,22 @@ class BotService {
         } : null
       });
     });
-    const session = this.sessionFor(db, userId);
+    const sessions = this.sessionsFor(db, userId);
+    const session = sessions[0] || null;
     const history = (db.botSessions || [])
       .filter((s) => s && s.userId === userId && s.status === 'stopped')
       .sort((a, b) => (b.stoppedAt || 0) - (a.stoppedAt || 0))
       .slice(0, 10)
       .map((s) => this.sessionView(s));
     const auto = this.autoSecureView(db, userId);
+    const sessionView = session ? this.sessionView(session) : null;
+    const sessionViews = sessions.map((x) => this.sessionView(x));
     return {
       ok: true,
       balance: round(u.balance, 2),
+      cooldownUntil: this.cooldownFor(userId),
+      health: this.healthEngine(userId, sessionView, history),
+      performance: this.performance(userId, sessionView, history),
       coinsPerUsd: COINS_PER_USD,
       settings: {
         intervalMin: this.settings().intervalMin,
@@ -269,7 +297,8 @@ class BotService {
       autoSecure: auto,
       tiers,
       subscriptions: subs.map((s) => ({ id: s.id, tierId: s.tierId, startedAt: s.startedAt, expiresAt: s.expiresAt || null, billingCycle: s.billingCycle })),
-      session: session ? this.sessionView(session) : null,
+      session: sessionView,
+      sessions: sessionViews,
       history,
       serverTime: Date.now()
     };
@@ -284,8 +313,6 @@ class BotService {
     return {
       id: s.id, userId: s.userId, tierId: s.tierId,
       tierName: tier ? tier.name : s.tierId,
-      tierUsername: tier ? (tier.username || '') : '',
-      tierAvatar: tier ? (tier.avatar || '') : '',
       accuracy: tier ? Number(tier.accuracy) || 0 : 0,
       status: s.status, allocatedCoins: allocated, poolCoins: pool,
       profitCoins: round(pool - allocated, 2),
@@ -296,20 +323,92 @@ class BotService {
       stopReason: s.stopReason || '',
       intervalMin: interval,
       nextTradeAt: nextAt,
-      health: Math.round(Number.isFinite(Number(s.health)) ? Number(s.health) : 100),
-      coolingUntil: Number(s.coolingUntil) || 0,
-      cooling: Number(s.coolingUntil) > Date.now(),
-      coolingCount: Number(s.coolingCount) || 0,
-      streak: Number(s.streak) || 0,
-      wins: Number(s.wins) || 0,
-      losses: Number(s.losses) || 0,
-      observedAccuracy: ((Number(s.wins) || 0) + (Number(s.losses) || 0)) > 0
-        ? round(((Number(s.wins) || 0) / ((Number(s.wins) || 0) + (Number(s.losses) || 0))) * 100, 1)
-        : null,
-      hot: ((Number(s.wins) || 0) >= 3) && (((Number(s.wins) || 0) / ((Number(s.wins) || 0) + (Number(s.losses) || 1))) >= 0.6) && ((Number(s.health) || 0) >= 60),
-      openPosition: s.openPos || null,
-      perf: (s.perf || []).slice(-60),
+      energy: Math.max(0, Math.min(100, Number(s.energy != null ? s.energy : 100))),
+      health: Math.max(0, Math.min(100, Number(s.health != null ? s.health : 100))),
+      fatigue: Math.round(100 - Math.max(0, Math.min(100, Number(s.energy != null ? s.energy : 100)))),
+      winCount: Number(s.winCount) || 0,
+      lossCount: Number(s.lossCount) || 0,
+      winRate: (Number(s.winCount) + Number(s.lossCount)) ? Math.round((Number(s.winCount) / (Number(s.winCount) + Number(s.lossCount))) * 100) : null,
+      healthHistory: (s.healthHistory || []).slice(-40),
+      cooldownUntil: (() => { const m = this.getDb().botCooldowns || {};
+        const direct = Number(m[String(s.userId) + ':' + String(s.tierId)]) || 0;
+        const legacy = Number(m[s.userId]) || 0;
+        const cd = Math.max(direct, legacy); return cd > Date.now() ? cd : null; })(),
+      tierUsername: tier ? (tier.username || null) : null,
+      tierAvatar: tier ? (tier.avatar || null) : null,
       trades: (s.trades || []).slice(0, 60)
+    };
+  }
+
+  /* ------------------------- health engine + performance ------------------- */
+  cooldownFor(userId) {
+    const map = (this.getDb().botCooldowns || {});
+    let until = Number(map[userId]) || 0;
+    for (const k of Object.keys(map)) {
+      if (k.indexOf(String(userId) + ':') === 0) until = Math.max(until, Number(map[k]) || 0);
+    }
+    return until > Date.now() ? until : null;
+  }
+
+  healthEngine(userId, session, history) {
+    const cooldownUntil = this.cooldownFor(userId);
+    const src = session || (history && history[0]) || null;
+    const score = src ? Math.max(0, Math.min(100, Math.round(Number(src.health != null ? src.health : 100)))) : 100;
+    const energy = src ? Math.max(0, Math.min(100, Math.round(Number(src.energy != null ? src.energy : 100)))) : 100;
+    const winRate = src ? src.winRate : null;
+    const allocated = src ? Number(src.allocatedCoins) || 0 : 0;
+    const pool = src ? Number(src.poolCoins) || 0 : 0;
+    const drawdownPct = allocated > 0 ? round(Math.max(0, Math.min(100, (1 - pool / allocated) * 100)), 1) : 0;
+    const stamina = energy >= 75 ? 'high' : energy >= 45 ? 'medium' : energy >= 20 ? 'low' : 'critical';
+    const state = cooldownUntil ? 'cooling' : !src ? 'idle' : score >= 70 ? 'thriving' : score >= 45 ? 'stable' : 'fatigued';
+    const last = (src && Array.isArray(src.healthHistory)) ? src.healthHistory.slice(-40) : [];
+    return {
+      state, score, energy, stamina, winRate, drawdownPct, cooldownUntil,
+      plan: !cooldownUntil && src && src.status === 'running' && (energy <= 35 || score <= 45) ? 'cool' : 'trade',
+      history: last,
+      label: state === 'cooling' ? 'Cooling down' : state === 'thriving' ? 'Thriving' : state === 'stable' ? 'Stable' : state === 'fatigued' ? 'Fatigued' : 'Idle'
+    };
+  }
+
+  performance(userId, session, history) {
+    const sessions = (history || []).slice();
+    if (session) sessions.unshift(session);
+    const trades = [];
+    sessions.forEach((s) => {
+      (s.trades || []).forEach((t) => {
+        const at = Number(t.at) || Number(s.startedAt) || Date.now();
+        trades.push({ at, pnl: Number(t.pnlCoins) || 0, win: !!t.win });
+      });
+    });
+    trades.sort((a, b) => a.at - b.at);
+    let net = 0;
+    const points = [];
+    for (const t of trades) {
+      net = round(net + t.pnl, 2);
+      points.push({ t: t.at, v: net });
+    }
+    if (points.length) points.unshift({ t: points[0].t - 60000, v: 0 });
+    const winCount = trades.filter((t) => t.win).length;
+    const lossCount = trades.length - winCount;
+    const profitCoins = round(trades.filter((t) => t.pnl > 0).reduce((a, t) => a + t.pnl, 0), 2);
+    const lossCoins = round(trades.filter((t) => t.pnl < 0).reduce((a, t) => a + Math.abs(t.pnl), 0), 2);
+    const allocated = sessions.reduce((a, s) => a + (Number(s.allocatedCoins) || 0), 0);
+    const ranked = sessions.slice().sort((a, b) => (Number(b.profitCoins) || 0) - (Number(a.profitCoins) || 0));
+    const best = ranked[0] || null;
+    const worst = ranked[ranked.length - 1] || null;
+    return {
+      sessions: sessions.length,
+      tradeCount: trades.length,
+      winCount, lossCount,
+      winRate: trades.length ? Math.round((winCount / trades.length) * 100) : null,
+      netCoins: net,
+      profitCoins, lossCoins,
+      allocatedCoins: round(allocated, 2),
+      roiPct: allocated > 0 ? round((net / allocated) * 100, 2) : 0,
+      points: points.slice(-300),
+      best: best ? { tierName: best.tierName, coins: round(Number(best.profitCoins) || 0, 2) } : null,
+      worst: worst ? { tierName: worst.tierName, coins: round(Number(worst.profitCoins) || 0, 2) } : null,
+      cooldownUntil: this.cooldownFor(userId)
     };
   }
 
@@ -370,9 +469,12 @@ class BotService {
     if (!tier) throw nextError('Subscribe to a bot tier first');
     if (!this.subFor(db, userId, tier.id)) throw nextError('Your subscription for this bot is not active');
 
-    const current = this.sessionFor(db, userId);
-    if (current && current.status === 'running') throw nextError('Your bot is already running — stop it before starting a new session');
-    if (current && current.status === 'paused') throw nextError('Your bot is paused — stop it to return the reserved capital first');
+    const cds = db.botCooldowns || {};
+    const cdUntil = Math.max(Number(cds[this.cooldownKey(userId, tier.id)]) || 0, 0);
+    if (cdUntil > Date.now()) throw nextError('This bot is cooling down until ' + new Date(cdUntil).toLocaleTimeString() + ' — rest lets it trade accurately again');
+    const current = this.sessionsFor(db, userId).find((x) => x && x.tierId === tier.id);
+    if (current && current.status === 'running') throw nextError('This bot is already running — stop it before starting another session for this tier');
+    if (current && current.status === 'paused') throw nextError('This bot is paused — stop it to return the reserved capital first');
 
     let allocated = Number(opts.allocatedCoins);
     if (!(allocated > 0) && Number(opts.allocatedUsd) > 0) allocated = Number(opts.allocatedUsd) * COINS_PER_USD;
@@ -390,9 +492,8 @@ class BotService {
       allocatedCoins: allocated, poolCoins: allocated,
       startedAt: now, stoppedAt: null, lastTradeAt: now - interval * 60000,
       intervalMin: interval, totalProfitCoins: 0, totalLossCoins: 0,
-      trades: [], autoStopped: false,
-      health: 100, coolingUntil: 0, coolingCount: 0, streak: 0, wins: 0, losses: 0,
-      perf: [], openPos: null
+      energy: 100, health: 100, healthHistory: [], winCount: 0, lossCount: 0,
+      trades: [], autoStopped: false
     };
     db.botSessions.unshift(session);
     this.tx(db, userId, `Trading bot capital reserved · ${tier.name}`, -allocated, 'bot-reserve', { sessionId: session.id, tierId: tier.id, allocatedCoins: allocated });
@@ -405,9 +506,27 @@ class BotService {
     const db = this.getDb && this.getDb();
     if (!db) throw nextError('Database not ready');
     const userId = String(opts.userId || '');
-    const session = this.sessionFor(db, userId);
-    if (!session) throw nextError('No active bot session');
+    const list = this.sessionsFor(db, userId);
+    if (!list.length) throw nextError('No active bot session');
+    const session = opts.sessionId ? list.find((x) => x.id === opts.sessionId)
+      : (opts.tierId ? list.find((x) => x.tierId === opts.tierId) : list[list.length - 1]);
+    if (!session) throw nextError('Bot session not found');
     return this.stopSession(db, session, String(opts.reason || 'Stopped by user'), 'bot-stop');
+  }
+
+  cool(opts) {
+    const db = this.getDb && this.getDb();
+    if (!db) throw nextError('Database not ready');
+    const userId = String(opts.userId || '');
+    const list = this.sessionsFor(db, userId);
+    if (!list.length) throw nextError('No active bot session');
+    const session = opts.sessionId ? list.find((x) => x.id === opts.sessionId)
+      : (opts.tierId ? list.find((x) => x.tierId === opts.tierId) : list[list.length - 1]);
+    if (!session) throw nextError('Bot session not found');
+    const res = this.stopSession(db, session, 'Cooling down', 'bot-cool');
+    const cd = (db.botCooldowns || {})[this.cooldownKey(userId, session.tierId)] || null;
+    const mins = cd ? Math.max(1, Math.round((cd - Date.now()) / 60000)) : 0;
+    return Object.assign({}, res, { cooldownUntil: cd, cooldownMin: mins });
   }
 
   stopSession(db, session, reason, source) {
@@ -419,6 +538,15 @@ class BotService {
     session.status = 'stopped';
     session.stoppedAt = now;
     session.stopReason = reason;
+    if (/^(cooling|fatigued)/i.test(String(reason || ''))) {
+      const tier = this.tier(session.tierId) || {};
+      const mins = clamp(Math.round(40 - (Number(tier.accuracy) || 50) * 0.2), 15, 45);
+      db.botCooldowns = db.botCooldowns || {};
+      const ck = this.cooldownKey(session.userId, session.tierId);
+      db.botCooldowns[ck] = now + mins * 60000;
+      session.cooldownUntil = db.botCooldowns[ck];
+      try { this.notify(db, session.userId, 'Bot cooling down', 'Resting for ' + mins + ' minutes, then it is ready to trade again.', 'clock'); } catch (e) {}
+    }
     session.poolCoins = returned;
     session.lastTradeAt = now;
     this.tx(db, session.userId, `Trading bot stopped · ${reason}`, returned, 'bot-return', {
@@ -448,7 +576,9 @@ class BotService {
     });
     return {
       ok: true,
-      tiers: this.tiers(),
+      tiers: this.tiers().map((t) => Object.assign({}, t, {
+        subscribers: (db.botSubscriptions || []).filter((x) => x && x.tierId === t.id && x.status === 'active').length
+      })),
       settings: this.settings(),
       cycleOptions: Object.keys(CYCLE_MS),
       autoSecure: {
@@ -477,40 +607,56 @@ class BotService {
     if (!db) throw nextError('Database not ready');
     this.ensureDefaults(db);
     if (Array.isArray(opts.tiers)) {
-      if (!Array.isArray(db.botTiers)) db.botTiers = [];
-      let sort = Math.max(0, ...db.botTiers.map((x) => Number(x && x.sort) || 0));
+      let sort = 0;
       for (const incoming of opts.tiers) {
-        let t = db.botTiers.find((x) => x && x.id === incoming.id);
-        if (!t) {
-          if (db.botTiers.length >= 60) continue;
-          let id = String(incoming.id || '').trim().replace(/[^A-Za-z0-9_-]/g, '').slice(0, 28);
-          if (!id) id = nid('tier_');
-          while (db.botTiers.some((x) => x && x.id === id)) id = id.slice(0, 24) + '_' + Math.random().toString(36).slice(2, 5);
-          sort += 1;
+        sort += 1;
+        if (!incoming || typeof incoming !== 'object') continue;
+        const wantedId = String(incoming.id || '').trim();
+        let t = wantedId ? db.botTiers.find((x) => x && x.id === wantedId) : null;
+        const isNew = !t;
+        if (isNew) {
+          const name = String(incoming.name || '').trim();
+          if (!name) throw nextError('Every new bot needs a name');
+          const base = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 28) || 'bot';
+          let id = base, n = 2;
+          while (db.botTiers.some((x) => x && x.id === id)) id = base + '_' + (n++);
           t = {
-            id, name: 'Bot assistant', accuracy: 50, priceUsd: 50,
-            billingCycle: 'monthly', intervalMin: 0, enabled: true,
-            blurb: 'Automated trading assistant.', hot: false,
-            createdAt: Date.now(), sort
+            id, name, username: 'bot_' + id, avatar: null, hot: false,
+            accuracy: 50, priceUsd: 20, billingCycle: 'monthly', intervalMin: 0,
+            enabled: true, sort, blurb: '', createdAt: Date.now(), custom: true
           };
           db.botTiers.push(t);
         }
-        if (incoming.name != null) t.name = String(incoming.name).slice(0, 60) || t.name;
-        if (incoming.username != null) t.username = String(incoming.username).replace(/^@+/, '').replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 40);
-        if (incoming.avatar !== undefined) {
-          if (!incoming.avatar) delete t.avatar;
-          else {
-            const a = String(incoming.avatar);
-            if (/^data:image\//i.test(a) && a.length <= 320000) t.avatar = a;
-          }
+        if (incoming.name != null) {
+          const nm = String(incoming.name).trim().slice(0, 60);
+          if (!nm) throw nextError('Bot name cannot be empty');
+          t.name = nm;
+        }
+        if (incoming.username != null) {
+          const un = String(incoming.username).replace(/^@/, '').replace(/[^a-zA-Z0-9_]/g, '').slice(0, 32);
+          if (un) t.username = un;
         }
         if (incoming.accuracy != null) t.accuracy = clamp(incoming.accuracy, 1, 100, t.accuracy);
         if (incoming.priceUsd != null) t.priceUsd = Math.max(0, round(incoming.priceUsd, 2));
         if (incoming.billingCycle != null && CYCLE_MS.hasOwnProperty(incoming.billingCycle)) t.billingCycle = incoming.billingCycle;
         if (incoming.intervalMin != null) t.intervalMin = clamp(incoming.intervalMin, 0, 10080, t.intervalMin);
         if (incoming.enabled != null) t.enabled = !!incoming.enabled;
-        if (incoming.hot != null) t.hot = !!incoming.hot;
         if (incoming.blurb != null) t.blurb = String(incoming.blurb).slice(0, 140);
+        if (incoming.hot != null) t.hot = !!incoming.hot;
+        t.sort = sort;
+        if (incoming.avatar !== undefined) {
+          const av = String(incoming.avatar || '').trim();
+          if (av === '') { t.avatar = null; t.avatarCleared = true; }
+          else if (/^data:image\/(png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/=\s]+$/i.test(av)) {
+            if (av.length > 400000) throw nextError('Profile picture is too large for ' + t.name + ' — use a smaller image');
+            t.avatar = av; t.avatarCleared = false;
+          } else if (/^https?:\/\/[^\s]+$/i.test(av) || /^\.\/bots\/[a-z0-9-]+\.(jpg|jpeg|png|webp)$/i.test(av)) {
+            if (av.length > 500) throw nextError('Profile picture URL is too long for ' + t.name);
+            t.avatar = av; t.avatarCleared = false;
+          } else {
+            throw nextError('Profile picture for ' + t.name + ' must be an uploaded image or an https URL');
+          }
+        }
       }
     }
     if (opts.settings && typeof opts.settings === 'object') {
@@ -576,27 +722,6 @@ class BotService {
         changed = true;
         continue;
       }
-      /* an open position is monitored every tick: take-profit, stop-loss or
-         the time limit closes it at the live price */
-      if (session.status === 'running' && session.openPos) {
-        try { if (this.monitorPosition(db, session, now)) changed = true; } catch (e) { this.lastError = e.message; }
-      }
-
-      /* health recovers while the bot runs; cooling ends by itself */
-      if (session.status === 'running') {
-        const cooling = Number(session.coolingUntil) || 0;
-        if (cooling && now >= cooling) {
-          session.coolingUntil = 0;
-          session.health = Math.max(Number(session.health) || 0, 55);
-          session.streak = 0;
-          changed = true;
-        }
-        const h = Number(session.health);
-        if (Number.isFinite(h) && h < 100 && now >= (Number(session.coolingUntil) || 0)) {
-          session.health = Math.min(100, round(h + 0.6, 2));
-          changed = true;
-        }
-      }
       const interval = Math.max(1, Number(session.intervalMin) || 1);
       if (now - (Number(session.lastTradeAt) || 0) < interval * 60000) continue;
       if (this.trade(db, session, user)) changed = true;
@@ -606,146 +731,65 @@ class BotService {
     return changed ? 1 : 0;
   }
 
-  /* Close the open position at the live price and book the real result. */
-  closePosition(db, session, now, reason) {
-    const tier = this.tier(session.tierId);
-    const pos = session.openPos;
-    if (!pos) return false;
-    let q = null;
-    try { q = this.getQuote(pos.ticker); } catch (e) { q = null; }
-    if (!q || !(Number(q.price) > 0)) return false;
-    const exit = round(Number(q.price), 4);
-    const dir = pos.side === 'long' ? 1 : -1;
-    let pnl = round((exit - pos.entry) * dir * pos.qty, 2);
-    pnl = Math.max(-pos.stakeCoins, Math.min(pos.stakeCoins * 3 || pos.stakeCoins * 1.5, pnl));
-    const win = pnl >= 0;
-    const pool = Math.max(0, Number(session.poolCoins) || 0);
-    const newPool = Math.round((pool + pnl) * 100) / 100;
-
-    const entryLog = {
-      id: nid('btr_'), at: now, ticker: pos.ticker,
-      side: (pos.side === 'long' ? 'LONG' : 'SHORT') + ' · ' + (win ? 'WIN' : 'LOSS'),
-      stakeCoins: pos.stakeCoins, pnlCoins: pnl, win, priceUsd: exit,
-      entryPrice: pos.entry, exitPrice: exit, qty: pos.qty, openedAt: pos.openedAt, reason: reason || 'time',
-      poolAfter: Math.max(0, newPool), accuracy: Number(tier && tier.accuracy) || 0
-    };
-    session.trades = session.trades || [];
-    session.trades.unshift(entryLog);
-    if (session.trades.length > 60) session.trades.length = 60;
-    session.poolCoins = Math.max(0, newPool);
-    session.lastTradeAt = now;
-    session.tradeCount = (Number(session.tradeCount) || 0) + 1;
-    if (win) session.totalProfitCoins = round((Number(session.totalProfitCoins) || 0) + pnl, 2);
-    else session.totalLossCoins = round((Number(session.totalLossCoins) || 0) + Math.abs(pnl), 2);
-
-    if (win) {
-      session.wins = (Number(session.wins) || 0) + 1;
-      session.streak = Math.max(1, (Number(session.streak) || 0) + 1);
-      session.health = Math.min(100, round((Number(session.health) || 100) + 4 + Math.min(4, Number(session.streak) || 0), 2));
-    } else {
-      session.losses = (Number(session.losses) || 0) + 1;
-      session.streak = Math.min(-1, (Number(session.streak) || 0) - 1);
-      session.health = Math.max(0, round((Number(session.health) || 100) - 13, 2));
-    }
-    if ((session.health <= 35 || session.streak <= -3) && !session.coolingUntil) {
-      const cooldownMin = session.health <= 20 ? 10 : 4;
-      session.coolingUntil = now + cooldownMin * 60000;
-      session.coolingCount = (Number(session.coolingCount) || 0) + 1;
-      session.health = Math.max(Number(session.health) || 0, 25);
-      session.streak = 0;
-      this.notify(db, session.userId, 'Bot cooling down',
-        `${(tier && tier.name) || 'Your bot'} took losses and is cooling down for ${cooldownMin} minutes. Capital is safe and trading resumes automatically.`, 'clock');
-    }
-    session.perf = (session.perf || []);
-    session.perf.push({ at: now, pool: Math.max(0, newPool), health: round(session.health, 2) });
-    if (session.perf.length > 80) session.perf.splice(0, session.perf.length - 80);
-    session.openPos = null;
-
-    const settings = this.settings();
-    const floor = Math.max(0.5, round((Number(session.allocatedCoins) || 0) * (clamp(settings.minPoolPct, 1, 100, 10) / 100), 2));
-    if (newPool <= floor) {
-      session.autoStopped = true;
-      try { this.stopSession(db, session, 'Capital exhausted', 'bot-auto-stop'); } catch (e) { this.lastError = e.message; }
-    }
-    return true;
-  }
-
-  monitorPosition(db, session, now) {
-    const pos = session.openPos;
-    if (!pos) return false;
-    let q = null;
-    try { q = this.getQuote(pos.ticker); } catch (e) { q = null; }
-    if (!q || !(Number(q.price) > 0)) return false;
-    const price = Number(q.price);
-    const hitTp = pos.side === 'long' ? price >= pos.tp : price <= pos.tp;
-    const hitSl = pos.side === 'long' ? price <= pos.sl : price >= pos.sl;
-    const timedOut = now >= (Number(pos.closeAt) || 0);
-    if (hitTp) return this.closePosition(db, session, now, 'take-profit');
-    if (hitSl) return this.closePosition(db, session, now, 'stop-loss');
-    if (timedOut) return this.closePosition(db, session, now, 'time');
-    return false;
-  }
-
-  /* Live flow — identical to a manual spot trade:
-     the bot picks a real symbol with a fresh Finnhub quote, opens at the live
-     price and closes at the live price one interval later. Its accuracy decides
-     how often it takes the side the trend is already on, so higher-accuracy
-     bots win more often on real market movement (no invented prices). */
   trade(db, session, user) {
     const tier = this.tier(session.tierId);
     if (!tier) return false;
-    if (Number(session.coolingUntil) > Date.now()) return false;
     const s = this.settings();
     const now = Date.now();
-    const pool = Math.max(0, Number(session.poolCoins) || 0);
+    let pool = Math.max(0, Number(session.poolCoins) || 0);
     if (!(pool > 0)) return false;
 
-    const classes = (db.invest && db.invest.classes) || {};
-    const symbols = (db.stocks || []).filter((x) => x && x.ticker && classes[x.assetClass || 'us'] !== false);
-
-    const quoteFor = (ticker) => {
-      try { return this.getQuote(ticker) || null; } catch (e) { return null; }
-    };
-    const fresh = (q) => !!(q && Number(q.price) > 0 && q.updatedAt && now - Number(q.updatedAt) < 5 * 60000);
-
-    /* ---- open a new position on a live, freshly priced symbol ---- */
     const stake = Math.max(0.5, round(pool * (clamp(s.stakePct, 1, 100, 20) / 100), 2));
-    if (stake > pool) return false;
-    const candidates = [];
-    symbols.forEach((x) => {
-      const q = quoteFor(String(x.ticker));
-      if (fresh(q)) candidates.push({ ticker: String(x.ticker), price: Number(q.price), prevClose: Number(q.prevClose) || Number(q.price) });
-    });
-    if (!candidates.length) return false;                 /* nothing trading right now */
-    const pick = candidates[Math.floor(Math.random() * candidates.length)];
+    const accuracy = clamp(tier.accuracy, 1, 100, 50);
+    const energyBefore = Math.max(0, Math.min(100, Number(session.energy != null ? session.energy : 100)));
+    const effAccuracy = accuracy * (0.6 + 0.4 * (energyBefore / 100));
+    const win = Math.random() * 100 < effAccuracy;
+    const move = win ? clamp(s.winPct, 0.1, 100, 4) : -clamp(s.lossPct, 0.1, 100, 6);
+    const pnl = round(stake * (move / 100), 2);
+    pool = Math.round((pool + pnl) * 100) / 100;
+    if (pool < 0) pool = 0;
 
-    /* accuracy = chance the bot reads the trend correctly; the market decides
-       the rest, so a 45 % bot really does win less than an 85 % bot */
-    const base = clamp(tier.accuracy, 1, 100, 50);
-    const health = Number.isFinite(Number(session.health)) ? Number(session.health) : 100;
-    const streak = Number(session.streak) || 0;
-    const accuracy = Math.max(5, Math.min(95, round(base + (health - 70) * 0.12 + Math.max(-4, Math.min(4, streak * 0.9)), 2)));
-    const trendUp = pick.price >= pick.prevClose;
-    const trustTrend = Math.random() * 100 < accuracy;
-    const side = (trustTrend ? trendUp : !trendUp) ? 'long' : 'short';
+    const classes = (db.invest && db.invest.classes) || {};
+    const stocks = (db.stocks || []).filter((x) => x && x.ticker && classes[x.assetClass || 'us'] !== false);
+    const pick = stocks.length ? stocks[Math.floor(Math.random() * stocks.length)] : null;
+    const ticker = pick ? String(pick.ticker) : 'BTCUSDT';
+    let quote = null;
+    try { quote = this.getQuote(ticker); } catch (e) {}
+    const price = quote && Number(quote.price) > 0 ? round(quote.price, 4) : round(20 + Math.random() * 480, 2);
 
-    const entry = round(pick.price, 4);
-    const qty = round(stake / entry, 6);
-    /* target/stop geometry makes the accuracy real: a higher-accuracy bot takes
-       profit sooner and risks wider, so it closes wins more often */
-    const d = 0.0025;
-    const tpPct = d * Math.max(0.35, Math.min(1.5, 1 - (accuracy - 50) / 90));
-    const slPct = d * Math.max(0.8, Math.min(2.2, 1 + (accuracy - 50) / 60));
-    const tp = side === 'long' ? round(entry * (1 + tpPct), 4) : round(entry * (1 - tpPct), 4);
-    const sl = side === 'long' ? round(entry * (1 - slPct), 4) : round(entry * (1 + slPct), 4);
-    session.openPos = {
-      ticker: pick.ticker, side, entry, qty, stakeCoins: stake,
-      tp, sl, tpPct: round(tpPct * 100, 3), slPct: round(slPct * 100, 3),
-      openedAt: now, closeAt: now + Math.max(1, Number(session.intervalMin) || 1) * 3 * 60000
+    const entry = {
+      id: nid('btr_'), at: now, ticker, side: win ? 'SELL · WIN' : 'SELL · LOSS',
+      stakeCoins: stake, pnlCoins: pnl, win, priceUsd: price,
+      poolAfter: pool, accuracy
     };
+    session.trades = session.trades || [];
+    session.trades.unshift(entry);
+    if (session.trades.length > 60) session.trades.length = 60;
+    session.poolCoins = pool;
     session.lastTradeAt = now;
-    this.notify(db, session.userId, 'Bot opened a live position',
-      `${tier.name} went ${side.toUpperCase()} on ${pick.ticker} at $${entry} with ${stake.toFixed(2)} WC.`, 'trend');
+    if (win) session.totalProfitCoins = round((Number(session.totalProfitCoins) || 0) + pnl, 2);
+    else session.totalLossCoins = round((Number(session.totalLossCoins) || 0) + Math.abs(pnl), 2);
+    session.tradeCount = (Number(session.tradeCount) || 0) + 1;
+    if (win) session.winCount = (Number(session.winCount) || 0) + 1;
+    else session.lossCount = (Number(session.lossCount) || 0) + 1;
+    const durability = clamp(8 + ((accuracy - 40) * 0.55), 8, 42);
+    session.energy = Math.max(0, Math.round((energyBefore - (100 / durability)) * 100) / 100);
+    const allocatedNow = Math.max(0.01, Number(session.allocatedCoins) || 0.01);
+    const pnlPct = ((pool - allocatedNow) / allocatedNow) * 100;
+    const healthScore = Math.max(0, Math.min(100, Math.round((session.energy * 0.7) + (Math.max(0, Math.min(100, 50 + pnlPct * 1.5)) * 0.3))));
+    session.health = healthScore;
+    session.healthHistory = (session.healthHistory || []).concat([{ t: now, health: healthScore, energy: session.energy, pool }]).slice(-40);
+
+    if (Number(session.energy) <= 0) {
+      session.autoStopped = true;
+      try { this.stopSession(db, session, 'Fatigued — cooling down', 'bot-auto-stop'); } catch (e) { this.lastError = e.message; }
+      return true;
+    }
+    const floor = Math.max(0.5, round((Number(session.allocatedCoins) || 0) * (clamp(s.minPoolPct, 1, 100, 10) / 100), 2));
+    if (pool <= floor) {
+      session.autoStopped = true;
+      try { this.stopSession(db, session, 'Capital exhausted', 'bot-auto-stop'); } catch (e) { this.lastError = e.message; }
+    }
     return true;
   }
 
