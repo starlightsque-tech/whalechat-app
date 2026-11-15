@@ -16,7 +16,35 @@ automatically from `main` (`render.yaml`, Node runtime, disk at `/var/data`).
 | Cold start | The last real quotes and tick history are cached in `/var/data`, so the first paint after a restart already shows real prices |
 | Load size | Brotli: 1.42 MB bundle → **282 KB** |
 
-## Keep the instance awake (free plan sleeps after ~15 min idle)
+## UptimeRobot — copy-paste settings (free, keeps the instance awake)
+
+Create a free account at <https://uptimerobot.com> → **Add New Monitor** and paste:
+
+| Field | Value |
+|---|---|
+| **Monitor Type** | `HTTPS` |
+| **Friendly Name** | `WhaleChat Render` |
+| **URL (or IP)** | `https://whalechat-qkgd.onrender.com/api/health` |
+| **Monitoring Interval** | `5 minutes` |
+| **HTTP Method** | `GET` |
+| **Timeout** | `30 seconds` (covers a Render cold start) |
+| **Alert Contacts** | your email (default) |
+| **Keyword (optional)** | Type: `Keyword exists` · Keyword: `"ok":true` |
+| **Custom HTTP headers** | none |
+| **HTTP authentication** | none |
+
+That's it — a `GET` every 5 minutes counts as traffic on Render, so the free instance
+stays warm and no visitor meets a 30–60 s cold start. (UptimeRobot's free plan allows
+5-minute intervals and up to 50 monitors.)
+
+Quick check that the endpoint is the right one:
+
+```bash
+curl -s https://whalechat-qkgd.onrender.com/api/health
+# {"ok":true,"app":"whalechat","version":"3.37.0", ...}
+```
+
+## Other keep-alive options
 
 Render's free instances stop after 15 minutes without traffic, so the next visitor
 waits 30–60 s for a cold start. Pick one:
