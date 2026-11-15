@@ -987,3 +987,53 @@
   st.textContent='.guide-body{font-size:13px;line-height:1.75;color:var(--muted)}.guide-body b{color:var(--text)}.guide-body h3{color:var(--text)}.guide-body ul,.guide-body ol{padding-left:18px;margin:8px 0}.guide-body li{margin-bottom:6px}.guide-body p{margin:0 0 10px}.guide-body table{width:100%;border-collapse:collapse;margin:10px 0;font-size:12px}.guide-body th,.guide-body td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--border)}.guide-body th{color:var(--text);font-weight:700}';
   document.head.appendChild(st);
 }catch(e){}})();
+
+/* wc-fast-ui — instant tap feedback + slim action progress bar */
+(function () {
+  try {
+    if (window.__wcFastUI) return;
+    window.__wcFastUI = true;
+    var st = document.createElement('style');
+    st.id = 'wc-fast-ui-css';
+    st.textContent =
+      'button,a,[data-act],[data-nav],.list-item{touch-action:manipulation;-webkit-tap-highlight-color:transparent}' +
+      'button:active,.btn:active,[data-act]:active{transform:scale(.985);opacity:.92}' +
+      '.wc-tapped{opacity:.7!important}' +
+      '#wcActionBar{position:fixed;top:0;left:0;height:2.5px;width:0;z-index:99999;background:linear-gradient(90deg,#2ee6c9,#3aa0ff);box-shadow:0 0 8px rgba(46,230,201,.6);transition:width .25s ease,opacity .3s ease;opacity:0;pointer-events:none}' +
+      '#wcActionBar.on{opacity:1;width:75%}' +
+      '#wcActionBar.done{width:100%;opacity:0}';
+    document.head.appendChild(st);
+    var bar = document.createElement('div');
+    bar.id = 'wcActionBar';
+    document.addEventListener('DOMContentLoaded', function () { if (!bar.parentNode) document.body.appendChild(bar); });
+    var hideTimer = null;
+    function startBar() {
+      if (!bar.parentNode && document.body) document.body.appendChild(bar);
+      clearTimeout(hideTimer);
+      bar.classList.remove('done'); bar.classList.add('on');
+      hideTimer = setTimeout(finishBar, 1400);
+    }
+    function finishBar() {
+      clearTimeout(hideTimer);
+      bar.classList.add('done'); bar.classList.remove('on');
+      setTimeout(function () { bar.classList.remove('done'); bar.style.width = '0'; }, 320);
+    }
+    document.addEventListener('pointerdown', function (ev) {
+      var el = ev.target && ev.target.closest ? ev.target.closest('[data-act],[data-nav],button,a') : null;
+      if (!el) return;
+      el.classList.add('wc-tapped');
+      setTimeout(function () { el.classList.remove('wc-tapped'); }, 160);
+    }, true);
+    document.addEventListener('click', function (ev) {
+      var el = ev.target && ev.target.closest ? ev.target.closest('[data-act],[data-nav]') : null;
+      if (!el) return;
+      startBar();
+      /* when the app re-renders (the action completed) finish the bar right away */
+      var app = document.getElementById('app');
+      if (!app || typeof MutationObserver === 'undefined') return;
+      var obs = new MutationObserver(function () { obs.disconnect(); finishBar(); });
+      obs.observe(app, { childList: true, subtree: false });
+      setTimeout(function () { try { obs.disconnect(); } catch (e) {} }, 1800);
+    }, true);
+  } catch (e) {}
+})();
