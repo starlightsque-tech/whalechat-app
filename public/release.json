@@ -1,8 +1,8 @@
 {
-  "version": "3.36.6",
-  "build": "2026-11-14T09:45:00Z",
+  "version": "3.37.0",
+  "build": "2026-11-14T11:30:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.36.6 — instant first paint after a cold start (last real quotes are cached), a 10-minute keep-alive workflow so the Render app never sleeps, and the signup/login crash fix.",
-  "releasedAt": "2026-11-14T09:45:00Z",
+  "notes": "WhaleChat 3.37.0 — bots now trade live real market prices with the same flow as manual spot trades (entry, take-profit, stop-loss, live exit), with bot health, automatic cooling after losses, hot-bot ranking and a performance chart.",
+  "releasedAt": "2026-11-14T11:30:00Z",
   "minimum": "3.0.0"
 }
