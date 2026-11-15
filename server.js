@@ -3,8 +3,8 @@
 'use strict';
 const http = require('http');
 const fs = require('fs');
-const path = require('path');
 const zlib = require('zlib');
+const path = require('path');
 
 const PORT = Number(process.env.PORT || 8090);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -290,35 +290,6 @@ function handleBrandedRedirect(req, res, pathname) {
   return true;
 }
 
-/* Compressed HTML cache: the bundle is ~1.4 MB but ~250 KB brotli. The injected
-   server marker makes it per-process, so it is cached by file mtime. */
-const htmlCache = new Map();
-function encodingFor(req) {
-  const a = String(req.headers['accept-encoding'] || '');
-  if (/\bbr\b/.test(a)) return 'br';
-  if (/\bgzip\b/.test(a)) return 'gz';
-  return '';
-}
-function compressedHtml(file) {
-  const key = file + '|' + PUBLIC_URL;
-  const st = fs.statSync(file);
-  let hit = htmlCache.get(key);
-  if (hit && hit.mtime === st.mtimeMs) return hit;
-  let html = fs.readFileSync(file, 'utf8');
-  if (path.basename(file) === 'whalechat.html') {
-    html = html.replace('<head>', '<head>\n<script>window.__WC_SERVER__ = true; window.__WC_PUBLIC_URL__ = ' + JSON.stringify(PUBLIC_URL || '') + ';</script>');
-  }
-  const raw = Buffer.from(html);
-  hit = {
-    raw, mtime: st.mtimeMs,
-    br: zlib.brotliCompressSync(raw, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 6, [zlib.constants.BROTLI_PARAM_SIZE_HINT]: raw.length } }),
-    gz: zlib.gzipSync(raw, { level: 6 })
-  };
-  htmlCache.clear();
-  htmlCache.set(key, hit);
-  return hit;
-}
-
 function serveStatic(req, res, pathname) {
   let rel = decodeURIComponent(pathname);
   if (rel === '/' || rel === '') rel = '/index.html';
@@ -329,23 +300,46 @@ function serveStatic(req, res, pathname) {
     if (err || !st.isFile()) { if (!path.extname(rel)) return serveStatic(req, res, '/index.html'); return notFound(res); }
     const ext = path.extname(file).toLowerCase();
     const isHtml = ext === '.html';
-    const headers = { 'content-type': mime(file), 'content-length': st.size, 'x-content-type-options': 'nosniff', 'vary': 'Accept-Encoding', 'cache-control': isHtml || ext === '.webmanifest' ? 'no-cache' : (rel === '/sw.js' ? 'no-cache' : 'public, max-age=3600') };
-    if (isHtml) {
-      try {
-        const pack = compressedHtml(file);
-        const enc = encodingFor(req);
-        const body = enc === 'br' ? pack.br : enc === 'gz' ? pack.gz : pack.raw;
-        if (enc) headers['content-encoding'] = enc === 'gz' ? 'gzip' : 'br';
-        headers['content-length'] = body.length;
-        res.writeHead(200, headers);
-        return res.end(body);
-      } catch (e) {
-        return fs.readFile(file, (e2, buf) => {
-          if (e2) return notFound(res);
-          headers['content-length'] = buf.length;
-          res.writeHead(200, headers); res.end(buf);
+    const etag = 'W/"' + st.size.toString(16) + '-' + Math.round(st.mtimeMs).toString(16) + '"';
+    if (req.headers['if-none-match'] === etag) {
+      res.writeHead(304, { etag, 'cache-control': isHtml ? 'no-cache' : 'public, max-age=3600' });
+      return res.end();
+    }
+    const headers = {
+      'content-type': mime(file), etag,
+      'x-content-type-options': 'nosniff',
+      'cache-control': isHtml || ext === '.webmanifest' ? 'no-cache' : (rel === '/sw.js' ? 'no-cache' : 'public, max-age=3600')
+    };
+    const send = (buf) => {
+      const compressed = /^(text\/|application\/(json|javascript|manifest))/i.test(headers['content-type'])
+        && /\bgzip\b/i.test(String(req.headers['accept-encoding'] || '')) && buf.length > 1024;
+      if (compressed) {
+        zlib.gzip(buf, { level: 6 }, (e2, gz) => {
+          if (e2) { headers['content-length'] = buf.length; res.writeHead(200, headers); return res.end(buf); }
+          res.writeHead(200, Object.assign({}, headers, { 'content-encoding': 'gzip', 'content-length': gz.length, vary: 'Accept-Encoding' }));
+          res.end(gz);
         });
+        return;
       }
+      headers['content-length'] = buf.length;
+      res.writeHead(200, headers);
+      res.end(buf);
+    };
+    if (isHtml) {
+      fs.readFile(file, (e2, buf) => {
+        if (e2) return notFound(res);
+        let html = buf.toString('utf8');
+        if (path.basename(file) === 'whalechat.html') {
+          html = html.replace('<head>', '<head>\n<script>window.__WC_SERVER__ = true; window.__WC_PUBLIC_URL__ = ' + JSON.stringify(PUBLIC_URL || '') + ';</script>');
+        }
+        send(Buffer.from(html));
+      });
+      return;
+    }
+    /* small static files are fully buffered so they can be compressed; big binaries stream */
+    if (st.size <= 4 * 1024 * 1024) {
+      fs.readFile(file, (e2, buf) => { if (e2) return notFound(res); send(buf); });
+      return;
     }
     res.writeHead(200, headers);
     fs.createReadStream(file).pipe(res);
