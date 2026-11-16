@@ -1,4 +1,4 @@
-# WhaleChat 3.32.0 — web app + mobile apps
+# WhaleChat 3.33.0 — web app + mobile apps
 
 WhaleChat is a social + marketplace + wallet product built as a single-page app with a
 Node sync server and native Android/iOS shells.
@@ -304,20 +304,23 @@ The Invest dashboard and Trading Bots page show an **Account health analysis** c
 * a **rest recommendation**: Healthy / Watch closely / Rest recommended, so users know when
   to stop the bot and let it refresh before restarting.
 
-## WhaleChat Shares admin plans
+## WhaleChat Shares admin plans & daily payout
 
 Admin → Stocks → **WhaleChat share investment plans** can add/edit plans with name, min/max
-USD amount, duration (days/months/years) and return %. Saving publishes the plan to every
-user's Shares page; the Shares page checks for plan changes every 6 seconds and re-renders,
-and a server broadcast also refreshes connected clients. New investments copy the plan's
-return % and duration, and the maturity payout uses those exact terms.
+USD amount, duration (days/months/years) and **daily return %**. Saving publishes the plan to
+every user's Shares page; the page checks for plan changes every 6 seconds and re-renders.
+New investments copy the daily rate and duration:
+`daily profit = principal × daily %`, `total profit = daily profit × days`,
+`payout = principal + total profit`. Example: $100 at 2.5% daily for 7 days =
+$2.50/day × 7 = $17.50 profit → $117.50 (235 WC). Existing active investments keep the terms
+they were purchased under.
 
 ## WhaleChat Shares profit example
 
 The Shares page now includes an interactive **How your investment profit is calculated** card:
-choose a plan and a USD amount and it shows the principal, plan return %, profit and maturity
-payout in both USD and WC, step by step. Example: $100 (200 WC) at 20% → +$20 (40 WC) profit;
-maturity payout $120 (240 WC). Each plan card also shows a `$100 → $X at maturity` example.
+choose a plan and a USD amount and it shows the principal, daily return %, duration days,
+total profit and maturity payout in both USD and WC, step by step. Example: **$100 (200 WC) at
+2.5% daily for 7 days** → $2.50/day → +$17.50 (35 WC) profit → $117.50 (235 WC) payout.
 
 ## Shared portfolio audit trail
 
