@@ -1,4 +1,4 @@
-# WhaleChat 3.29.0 — web app + mobile apps
+# WhaleChat 3.32.0 — web app + mobile apps
 
 WhaleChat is a social + marketplace + wallet product built as a single-page app with a
 Node sync server and native Android/iOS shells.
@@ -32,30 +32,6 @@ mobile/
 whalechat-release.apk   signed release APK (v3.2.0, code 6)
 Dockerfile · docker-compose.yml · Caddyfile · render.yaml
 ```
-
-### Any-device access + non-disruptive updates (`public/session-guard.js`)
-
-Injected last by `scripts/prepare-assets.js` (marker `wc-session-guard`).
-
-**Any device, any time.** Sign up / sign in works from any browser with the link — there is no
-device registration step. If a login is submitted while the server database is still syncing, the
-guard holds the form, forces a refresh, then re-submits it, so a brand-new device never sees a false
-“no account found”. A backup of the session is kept in `sessionStorage`, so a sync race cannot log
-someone out.
-
-**Updates never interrupt.** `applyUpdate()` is wrapped: while a field is focused, a form is dirty, a
-modal is open or the user typed in the last 9 s, the update is deferred (a toast explains why) and an
-idle watcher applies it 15 s after the screen goes quiet — never on the sign-up/login screens. Every
-field, checkbox, select, scroll position and route is snapshotted to `sessionStorage` while typing and
-restored after *any* reload (update, admin force-refresh, crash, offline bounce), so a refresh is
-invisible to the user.
-
-**Always alive.** A 40 s keep-alive hits `/api/health` (and re-refreshes the sync when the stream is
-offline), plus a 45 s SSE watchdog. Combined with `auto_stop_machines = false` on Fly, one machine is
-always warm.
-
-**Deploy:** see `DEPLOY-FLY.md` (`fly.toml` ships with a `/data` volume, HTTP health checks,
-always-on machine, and `FINNHUB_API_KEY` as a secret).
 
 ## Market data (Finnhub + 24/7 OTC fallback)
 
@@ -233,26 +209,6 @@ is closed. Admin → Stocks includes the bot configuration panel. Endpoints:
 `/api/bots/state`, `/api/bots/subscribe`, `/api/bots/start`, `/api/bots/stop`,
 `/api/bots/admin`, `/api/bots/admin/config`.
 
-**Bot profiles, health engine and performance page (3.30.0).** Every tier is a full trading
-identity with a profile picture (`public/bots/*.jpg`, admin-overridable with an uploaded photo):
-
-- `#/bots` — all bot identities as cards (avatar, `@username`, accuracy, price, HOT/Owned).
-- `#/bots/<tierId>` — profile page: large picture, accuracy, subscription state, health, energy,
-  net P/L and trade count, a per-bot equity chart, session history and subscribe / start / stop /
-  cool-down actions.
-- **Cooling** — `POST /api/bots/cool` stops the session, stores `db.botCooldowns[userId]`, and the
-  UI shows a live `m:ss` countdown until the bot is ready again. Cooling also restores energy so
-  the next session trades closer to its target accuracy.
-- **Health engine** (`BotService.healthEngine`) — derives `state` (`thriving` / `stable` /
-  `fatigued` / `cooling` / `idle`), score, energy, stamina band, win rate, drawdown and the
-  cooldown deadline, plus the 40-point health history sparkline. Exposed as `health` in
-  `GET /api/bots/state` and rendered as its own card on the bot, profile and performance pages.
-- **Performance page** — `#/invest/bots/performance`: net bot P/L, ROI on allocated capital,
-  win rate, trades/sessions, a Lightweight Charts v5 equity curve (`WC_PRO_CHART.mountEquity`)
-  with a break-even line, the health engine, the cooling banner and a per-session table with
-  avatars. Aggregation is computed server-side in `BotService.performance` from every session's
-  trade log (`poolAfter`, `pnlCoins`) and exposed as `performance` on the bot state.
-
 ### Auto Secure Take Profit (bot tool)
 
 A dedicated bot tool users can subscribe to (default **$20 / month → 40 WC**, stored in
@@ -285,62 +241,12 @@ securing any profit of at least **0.01 WC**, with a 2-second per-trade cooldown 
 meaningful. Secured amounts are re-based out of the position, so later price movement can never
 take them back.
 
-### WhaleChat share investment portfolio (market-linked payout)
+### WhaleChat share investment portfolio (restored)
 
 `shares.js` + `public/whalechat-shares.js` provide admin-defined investment plans
-(min/max USD, duration, fixed **plan %**) and the `#/invest/shares` dashboard. Profit is
-**not fixed** — it follows the live WhaleChat share price:
-
-```
-market move      = (share price now − entry price) ÷ entry price
-daily turn-up %  = (price today − price yesterday) ÷ price yesterday × 100
-daily ROI %      = plan % × daily turn-up %
-total ROI %      = Σ daily ROI % = plan % × cumulative market move
-profit           = capital × total ROI %          (negative when the price falls)
-payout at maturity = capital + profit             (floor 0)
-```
-
-The worker ticks every 5 s, accrues per investment (`profitCoins`), snapshots `equityHistory`
-every 30 s, and at `endAt` credits `capital + profit` with a `share-maturity` transaction and a
-notification — even with every app closed. The admin plan % is the fixed participation rate
-(e.g. 3%); active investments keep the percentage, duration and entry price they were bought
-under. Endpoints: `/api/shares/state`, `/api/shares/invest`, `/api/shares/admin`,
-`/api/shares/admin/plans`. The admin Trade guide (Admin → Stocks) documents the same flow with
-worked examples.
-
-### Typography (3.33.0)
-
-`public/typography.js` (module `wc-typography`, loaded after `readability.js`) applies a fluid type
-scale with `clamp()`: base copy is ~15px on a 360px phone and ~16.5px on desktop, helper text never
-drops below 12px, and desktop growth is capped. Every text layer is one weight step bolder
-(body 500, labels/buttons 700, headings 750–800, badges 750), tables and stat blocks keep tabular
-figures, and `-webkit-text-size-adjust:100%` stops iOS from re-scaling. 
-
-**Text size preference.** Settings → **Appearance** (also linked from Profile → Appearance) offers
-**Compact / Default / Large**. The choice sets `html[data-textsize]`, which overrides the fluid scale:
-compact ≈ 14px base, default 15–16.5px, large ≈ 17.5px, with matching `.tiny`, button and KPI sizes.
-It is stored in `localStorage` for instant paint (early `<head>` script) and in `user.settings.textSize`
-so it follows the account across devices.
-
-### Stock chart source (3.35.0)
-
-The stock trading view is the **Finnhub price chart** from `public/market-live.js` (lightweight-charts
-v4 baseline, live quotes + server tick history, TP/SL price lines). The v5 "pro chart" no longer
-mounts on stock pages — `WC_PRO_CHART.disableStock = true` — and is used only for equity curves
-(portfolio, WhaleChat plan ROI, bot performance). This restores the plain Finnhub trade chart that
-shipped before 3.34.
-
-### Live-only markets (3.36.0)
-
-The Market page and stock pages only list symbols whose quote is **live and active**:
-`INV.isLive()` requires a fresh server quote (≤20 min), `active !== false` and not paused. The list
-re-renders as soon as the first quote batch arrives, so Buy / TP / SL can never open on a symbol
-without a feed. Direct links to a stale symbol show a "market not live" card instead of a ticket.
-
-Portfolio performance now uses the **same Finnhub trade-view chart** as stocks
-(lightweight-charts v4 in `market-live.js`) on both the Invest dashboard
-(`[data-chart^="__portfolio__"]`) and the Live-trade dashboard (`#ltDashChart`); the v5 chart is
-limited to the WhaleChat plan ROI and bot performance pages.
+(min/max, duration, % return), real-time accrual, automatic maturity payout and the
+`#/invest/shares` dashboard, plus a summary card on the Invest dashboard. Endpoints:
+`/api/shares/state`, `/api/shares/invest`, `/api/shares/admin`, `/api/shares/admin/plans`.
 
 ### Local verification
 
@@ -359,6 +265,59 @@ displayed price from the previous tick to the new tick over an 850 ms ease-out w
 last point of the active lightweight-chart (stock chart and portfolio chart) is updated in
 place, and price/percentage labels are repainted at ~10 fps, so the trade view moves
 smoothly while server settlement and TP/SL continue to use the authoritative quote.
+
+## Bot trading account: capital vs profit balances
+
+Each user has a persistent bot account with **two balances**:
+
+1. **Bot trading capital balance** — each trade stake is deducted from here.
+2. **Bot profit balance** — every completed trade credits `stake + P/L` (the payout) here.
+
+Users top up capital from their stock trading balance, choose an assistant, minimum/maximum
+stake per trade and an optional time limit, then press **Start trading now**. Trades pick real
+stocks from the available market; when capital is exhausted or the time limit is reached the
+bot enters **cooling down**. Users top up and press **Resume trading**. The dashboard has
+**Top up**, **Transfer** (capital or profit → stock trading balance) and **History** buttons;
+history includes trades/payouts, top-ups/transfers, subscription renewals, start/stop uptime
+and cooling events.
+
+## Navigation
+
+A global **Back** button in the topbar returns to the previous page. The Market header has an
+**Asset lists** button opening a full asset table with a **Buy / Sell** action per symbol.
+
+## Bot assistants: usernames, profile pictures, HOT tools
+
+Admin → Stocks → **Trading bots** now includes **+ Add bot assistant** and an **Edit** action per
+tier. Admins can set the assistant **name**, **@username**, **profile picture**, description,
+price, accuracy, billing cycle, speed, HOT flag and live status. Images are resized to 160×160
+JPEG in the browser and stored on the synced bot tier. New assistants appear in the
+marketplace immediately and can be marked **HOT** to feature them.
+
+## Account health analysis
+
+The Invest dashboard and Trading Bots page show an **Account health analysis** card with:
+
+* a 0–100 health score (bot equity growth, drawdown, win rate and losing streaks),
+* bot equity, P/L, drawdown, win rate, account growth and open positions,
+* an equity/drawdown SVG chart from the bot session trades,
+* a **rest recommendation**: Healthy / Watch closely / Rest recommended, so users know when
+  to stop the bot and let it refresh before restarting.
+
+## WhaleChat Shares admin plans
+
+Admin → Stocks → **WhaleChat share investment plans** can add/edit plans with name, min/max
+USD amount, duration (days/months/years) and return %. Saving publishes the plan to every
+user's Shares page; the Shares page checks for plan changes every 6 seconds and re-renders,
+and a server broadcast also refreshes connected clients. New investments copy the plan's
+return % and duration, and the maturity payout uses those exact terms.
+
+## WhaleChat Shares profit example
+
+The Shares page now includes an interactive **How your investment profit is calculated** card:
+choose a plan and a USD amount and it shows the principal, plan return %, profit and maturity
+payout in both USD and WC, step by step. Example: $100 (200 WC) at 20% → +$20 (40 WC) profit;
+maturity payout $120 (240 WC). Each plan card also shows a `$100 → $X at maturity` example.
 
 ## Shared portfolio audit trail
 
@@ -752,58 +711,3 @@ is always distinguishable from real vendor inventory. Demo shopper orders remain
 
 Product photos and portraits are studio-style renders shipped with the app — no emoji and no
 placeholder graphics. Owner avatars live at `./demo/sellers/<seller-slug>.jpg`.
-
-## 24/7 live market + Auto-updating Trade Guide — 3.38.0
-
-### Only continuously-open instruments are listed
-The tradable catalogue is now restricted to markets that never close. Legacy NYSE/NASDAQ
-listings stay in the database (so old positions and history are preserved) but are marked
-`hidden` and never appear on the Trading screen.
-
-| Category | Instruments |
-|---|---|
-| Crypto 24/7 | BTC/USD, ETH/USD, SOL/USD, BNB/USD, DOGE/USD, XRP/USD |
-| Forex 24/7 synthetic | EUR/USD Synthetic, GBP/USD Synthetic, USD/JPY Synthetic |
-| Synthetic stocks | MARA 24/7, SHOP 24/7, TSLA 24/7, AAPL 24/7, NVDA 24/7, AMZN 24/7 |
-| Indices 24/7 | US30 24/7, US100 24/7, GOLD 24/7, OIL 24/7 |
-
-`server.js → ensure247Assets()` owns the universe. `market.js → simulateTick()` now runs in
-**every** data mode (previously it only ran without a Finnhub key, which is why synthetic
-symbols froze and real symbols held over the weekend). The engine:
-
-* ticks every **2 seconds**, 7 days a week, including nights and holidays;
-* skips only symbols with a fresh real tick (12 s), so real Finnhub prices still win when live;
-* never sends synthetic tickers to Finnhub (no wasted calls, no rate-limit starvation);
-* reports `marketOpen: true` / `alwaysOpen: true` and a notice that never says "Market closed".
-
-`public/market-247.js` filters the UI to that universe, adds the
-"All Markets Are Live 24/7 — No Weekend Closure — No Overnight Closure" banner, the
-[All Live] [Crypto] [US Stocks] [Forex] [Indices] filter, the pulsing **LIVE — 24/7** dot,
-the **24/7 SYNTHETIC · ALWAYS LIVE** badge on every synthetic card/chart, and a watchdog
-that forces a feed refresh when a quote is older than 5 seconds. Trade flow, TP/SL, wallet,
-marketplace, vendor and admin logic are untouched.
-
-### Auto-updating Trade Guide
-`public/trade-guide.js` adds:
-
-* **#/how-it-works** — public 4-section guide (also linked from My Account and the sidebar);
-* **#/admin/trade-guide** — the admin guide with the same content plus section 5, an editable
-  recommendation message with **Copy** and **Share to WhatsApp**, and auto-update settings.
-
-Every number is read from the database at render time: WC price (`settings.tradeGuide.wcUsd`),
-stock-trade fee (`invest.feePct`, default **0.12%**), default leverage (`invest.leverage`,
-default **5x**, selectable 1x–100x per trade), minimum deposit/withdrawal, the live asset list
-and the WhaleChat Shares plans/share price. The guide also contains live payout calculators
-for stock trades and for WhaleChat Shares.
-
-### WhaleChat Shares payout
-`shares.js → planPnl()` now uses the approved flow:
-
-```
-daily profit = share price (USD) × plan rate %
-total profit = daily profit × plan days × capital (USD)
-payout       = capital + total profit
-```
-
-Example: $12.45 price, 3% plan, $100 capital, 7 days → $0.3735/day → **$261.45 profit**.
-Profit is converted to WC at the app rate and credited with capital at maturity.
