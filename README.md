@@ -1,4 +1,4 @@
-# WhaleChat 3.34.0 — web app + mobile apps
+# WhaleChat 3.34.1 — web app + mobile apps
 
 WhaleChat is a social + marketplace + wallet product built as a single-page app with a
 Node sync server and native Android/iOS shells.
@@ -351,7 +351,9 @@ owner can review exactly what was done through the shared link.
 
 When Finnhub ticks are unavailable (no API key, market closed, rate limit or a quiet
 WebSocket) the backend now generates a **24/7 fallback tick every 2 seconds** for every
-asset class and seeds an intraday history tail. US stocks and global stocks therefore always
+asset class and seeds an intraday history tail. Newly-synced catalogue rows also receive a
+quote immediately (`onAssetsChanged` re-seeds base quotes), so US/global cards and charts
+never remain at $0 after an admin adds a stock. US stocks and global stocks therefore always
 have a price, volume and a moving trade-view chart; real Finnhub prints take over the moment
 they arrive. Symbols with no stored price get a deterministic base price.
 
