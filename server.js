@@ -355,15 +355,17 @@ function ensure247Assets(db) {
   if (!db || !Array.isArray(db.stocks)) return;
   /* The single tradable universe: instruments that never close. */
   const spec = [
-    ['BTCUSD', 'BTC/USD', 'Crypto', 64250, 'crypto', false],
-    ['ETHUSD', 'ETH/USD', 'Crypto', 3120, 'crypto', false],
-    ['SOLUSD', 'SOL/USD', 'Crypto', 148, 'crypto', false],
-    ['BNBUSD', 'BNB/USD', 'Crypto', 585, 'crypto', false],
-    ['DOGEUSD', 'DOGE/USD', 'Crypto', 0.14, 'crypto', false],
-    ['XRPUSD', 'XRP/USD', 'Crypto', 0.52, 'crypto', false],
-    ['EURUSD24', 'EUR/USD Synthetic', 'Forex', 1.086, 'forex', false],
-    ['GBPUSD24', 'GBP/USD Synthetic', 'Forex', 1.271, 'forex', false],
-    ['USDJPY24', 'USD/JPY Synthetic', 'Forex', 156.4, 'forex', false],
+    /* crypto keeps its real Binance feed (24/7) — the display ticker stays BTC/USD */
+    ['BTCUSD', 'BTC/USD', 'Crypto', 64250, 'crypto', false, 'BINANCE:BTCUSDT'],
+    ['ETHUSD', 'ETH/USD', 'Crypto', 3120, 'crypto', false, 'BINANCE:ETHUSDT'],
+    ['SOLUSD', 'SOL/USD', 'Crypto', 148, 'crypto', false, 'BINANCE:SOLUSDT'],
+    ['BNBUSD', 'BNB/USD', 'Crypto', 585, 'crypto', false, 'BINANCE:BNBUSDT'],
+    ['DOGEUSD', 'DOGE/USD', 'Crypto', 0.14, 'crypto', false, 'BINANCE:DOGEUSDT'],
+    ['XRPUSD', 'XRP/USD', 'Crypto', 0.52, 'crypto', false, 'BINANCE:XRPUSDT'],
+    /* the synthetic forex pairs never go to Finnhub */
+    ['EURUSD24', 'EUR/USD Synthetic', 'Forex', 1.086, 'forex', true, ''],
+    ['GBPUSD24', 'GBP/USD Synthetic', 'Forex', 1.271, 'forex', true, ''],
+    ['USDJPY24', 'USD/JPY Synthetic', 'Forex', 156.4, 'forex', true, ''],
     ['MARA24', 'MARA 24/7', 'Synthetic Stocks', 22.4, 'us', true],
     ['SHOP24', 'SHOP 24/7', 'Synthetic Stocks', 78.2, 'us', true],
     ['TSLA24', 'TSLA 24/7', 'Synthetic Stocks', 248.5, 'us', true],
@@ -377,12 +379,13 @@ function ensure247Assets(db) {
   ];
   const keep = new Set(spec.map((x) => x[0]));
   const colors = { crypto: '#f7931a', forex: '#3aa0ff', us: '#8b7bff', index: '#2ee6c9' };
-  for (const [ticker, name, sector, price, cls, synthetic] of spec) {
+  for (const [ticker, name, sector, price, cls, synthetic, finnhubSymbol] of spec) {
     let s = db.stocks.find((x) => x && x.ticker === ticker);
     if (!s) {
       s = {
         id: 'st_' + ticker.toLowerCase(), ticker, name, sector, assetClass: cls,
         price, prevClose: price, twentyFourSeven: true, synthetic: !!synthetic,
+        finnhubSymbol: finnhubSymbol || ticker,
         hidden: false, active: true, paused: false, custom: false,
         color: colors[cls] || '#3aa0ff', exchange: cls === 'crypto' ? 'WhaleChat 24/7' : cls === 'forex' ? 'WhaleChat Synthetic' : 'WhaleChat 24/7',
         currency: 'USD', div: 0, pe: 0, mcap: 0, ceo: '', website: '',
@@ -392,6 +395,7 @@ function ensure247Assets(db) {
     } else {
       Object.assign(s, {
         name, sector, assetClass: cls, twentyFourSeven: true, synthetic: !!synthetic,
+        finnhubSymbol: finnhubSymbol || s.finnhubSymbol || ticker,
         hidden: false, active: s.active !== false, paused: false,
         color: s.color || colors[cls] || '#3aa0ff',
         displayTicker: s.displayTicker || (cls === 'crypto' ? name : ticker),

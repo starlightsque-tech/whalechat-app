@@ -279,7 +279,9 @@ class MarketService {
       synthetic: !!s.synthetic,
       hidden: !!s.hidden
     }));
-    this.byFinnhub = new Map(this.assets.map((a) => [String(a.finnhubSymbol).toUpperCase(), a.ticker]));
+    /* only visible assets may claim a Finnhub symbol, so a hidden legacy row
+       (e.g. the old BTCUSDT listing) can never swallow the real ticks */
+    this.byFinnhub = new Map(this.assets.filter((a) => !a.hidden).map((a) => [String(a.finnhubSymbol).toUpperCase(), a.ticker]));
     return this.assets;
   }
 
