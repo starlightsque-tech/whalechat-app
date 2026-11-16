@@ -10,6 +10,7 @@
   window.__wcInvestHub = true;
 
   var RATE = 0.5; // 1 WC = $0.50
+  var b2bFilter = 'All';
   function escH(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
   function money(n) { return '$' + (Math.round((Number(n) || 0) * 100) / 100).toFixed(2); }
   function wc(n) { return (Math.round((Number(n) || 0) * 100) / 100).toFixed(2); }
@@ -17,11 +18,12 @@
   function save() { try { persist(); } catch (e) {} try { sync(); } catch (e) {} }
   function toastH(msg, type) { try { toast(msg, type || 'ok'); } catch (e) {} }
   function account(u) {
+    try { if (typeof DB !== 'undefined' && DB && !DB.settings) DB.settings = {}; } catch (e) {}
     if (!u.investAcct) {
       u.investAcct = {
         usd: 0, payout: 0, wcBalance: 0,
         portfolios: { stock: 0, wc: 0, b2b: 0, bot: 0 },
-        tools: {}, b2b: {}, disputes: [], requests: [], ledger: [], autoReinvest: false
+        tools: {}, b2b: {}, b2bFav: [], b2bAlerts: [], b2bProfit: 0, disputes: [], requests: [], ledger: [], autoReinvest: false
       };
     }
     var a = u.investAcct;
@@ -29,6 +31,9 @@
     ['stock', 'wc', 'b2b', 'bot'].forEach(function (k) { if (!(Number(a.portfolios[k]) >= 0)) a.portfolios[k] = 0; });
     if (!a.tools) a.tools = {};
     if (!a.b2b) a.b2b = {};
+    if (!Array.isArray(a.b2bFav)) a.b2bFav = [];
+    if (!Array.isArray(a.b2bAlerts)) a.b2bAlerts = [];
+    if (!(Number(a.b2bProfit) >= 0)) a.b2bProfit = Number(a.b2bProfit) || 0;
     if (!Array.isArray(a.disputes)) a.disputes = [];
     if (!Array.isArray(a.requests)) a.requests = [];
     if (!Array.isArray(a.ledger)) a.ledger = [];
@@ -209,14 +214,72 @@
       return list.filter(function (s) { return !/24\/7$/.test(s.name || '') || /Crypto|Stock|Indices/i.test(s.sector || ''); }).slice(0, 40);
     } catch (e) { return []; }
   }
-  function b2bPage(u) {
+  function b2bAssets() {
+    try {
+      var list = (INV.visibleStocks ? INV.visibleStocks() : INV.stocks());
+      return list.slice(0, 40);
+    } catch (e) { return []; }
+  }
+  function b2bQuote(t) { try { return INV.quote(t); } catch (e) { return null; } }
+  function b2bLabel(s) { return (s && (s.displayTicker || s.name)) || s.ticker; }
+  function b2bCategory(s) {
+    var sec = String((s && s.sector) || '').toLowerCase();
+    if (sec.indexOf('crypto') >= 0) return 'Crypto';
+    if (sec.indexOf('forex') >= 0) return 'Forex';
+    if (sec.indexOf('index') >= 0 || sec.indexOf('indices') >= 0) return 'Indices';
+    return 'Stocks';
+  }
+  function b2bPath(ticker) {
+    var vals = [];
+    try { vals = INV.series(ticker, '1D') || []; } catch (e) {}
+    if (!vals || vals.length < 2) return '';
+    var min = Math.min.apply(null, vals), max = Math.max.apply(null, vals);
+    var spread = max - min || 1;
+    return vals.map(function (v, i) { return ((i / (vals.length - 1)) * 300).toFixed(1) + ',' + (58 - ((v - min) / spread) * 52).toFixed(1); }).join(' ');
+  }
+  function b2bCard(s, a) {
+    var q = b2bQuote(s.ticker) || {}; var fav = (a.b2bFav || []).indexOf(s.ticker) >= 0;
+    return '<div class="b2b-card">' +
+      '<div class="between"><a href="#/investment/b2b?asset=' + encodeURIComponent(s.ticker) + '" class="b2b-name">' + escH(b2bLabel(s)) + '</a>' +
+      '<button class="b2b-star ' + (fav ? 'on' : '') + '" data-act="ih-b2b-fav" data-t="' + escH(s.ticker) + '">' + (fav ? '★' : '☆') + '</button></div>' +
+      '<div class="tiny muted">' + escH(b2bCategory(s)) + '</div>' +
+      '<div class="b2b-price" data-b2b-price="' + escH(s.ticker) + '">' + (q.price > 0 ? money(q.price) : '—') + '</div>' +
+      '<div class="tiny ' + ((q.changePct || 0) >= 0 ? 'up' : 'down') + '">' + ((q.changePct || 0) >= 0 ? '+' : '') + (Number(q.changePct) || 0).toFixed(2) + '%</div>' +
+      '<svg viewBox="0 0 300 60" class="b2b-spark"><polyline points="' + b2bPath(s.ticker) + '" fill="none" stroke="' + ((q.changePct || 0) >= 0 ? '#22c55e' : '#ef4444') + '" stroke-width="1.6"/></svg>' +
+    '</div>';
+  }
+  function b2bPage(u, params) {
     var a = account(u); var assets = b2bAssets();
-    var holdings = Object.keys(a.b2b).map(function (t) { var h = a.b2b[t]; if (!h || !(h.units > 0)) return ''; var q = null; try { q = INV.quote(t); } catch (e) {} var p = q ? q.price : h.avgPrice; return '<div class="ih-row"><div class="grow"><b>' + escH(t) + '</b><div class="tiny muted">' + Number(h.units).toLocaleString(undefined, { maximumFractionDigits: 6 }) + ' units · entry ' + money(h.avgPrice) + '</div></div><div style="text-align:right"><b>' + money(h.units * p) + '</b><div class="tiny muted">' + wc(h.units * p / RATE) + ' WC</div></div><button class="btn btn-xs btn-danger" data-act="ih-b2b-sell" data-t="' + escH(t) + '">Sell</button></div>'; }).join('');
-    return head('B2B-Investing', 'Buy and sell 24/7 digital assets from your B2B portfolio balance.', '#/investment') +
-      '<div class="ih-cards"><div class="ih-card"><span>Capital balance</span><b>' + money(a.portfolios.b2b) + '</b></div><div class="ih-card"><span>Total assets balance</span><b>' + money(Object.keys(a.b2b).reduce(function (sum, t) { var h = a.b2b[t]; var q = null; try { q = INV.quote(t); } catch (e) {} return sum + (h.units || 0) * ((q && q.price) || h.avgPrice || 0); }, 0)) + '</b></div><div class="ih-card"><span>Profit balance</span><b class="' + ((Number(a.b2bProfit) || 0) >= 0 ? 'up' : 'down') + '">' + money(a.b2bProfit || 0) + '</b></div></div>' +
+    if (b2bFilter !== 'All') assets = assets.filter(function (s) { return b2bCategory(s) === b2bFilter; });
+    if (params && params.asset) {
+      var asset = assets.find(function (s) { return s.ticker === String(params.asset).toUpperCase(); }) || (INV.stock ? INV.stock(String(params.asset).toUpperCase()) : null);
+      if (asset) {
+        var q = b2bQuote(asset.ticker) || {};
+        var holding = a.b2b[asset.ticker];
+        var alert = (a.b2bAlerts || []).find(function (x) { return x.ticker === asset.ticker; }) || {};
+        return head(b2bLabel(asset), 'Live market data · B2B marketplace', '#/investment/b2b') +
+          '<div class="ih-cards"><div class="ih-card"><span>Live price</span><b data-b2b-price="' + escH(asset.ticker) + '">' + (q.price > 0 ? money(q.price) : '—') + '</b><small class="' + ((q.changePct || 0) >= 0 ? 'up' : 'down') + '">' + ((q.changePct || 0) >= 0 ? '+' : '') + (Number(q.changePct) || 0).toFixed(2) + '% today</small></div>' +
+            '<div class="ih-card"><span>Your holding</span><b>' + (holding ? Number(holding.units).toLocaleString(undefined, { maximumFractionDigits: 6 }) + ' ' + b2bLabel(asset) : 'None') + '</b></div></div>' +
+          '<div class="card"><svg viewBox="0 0 300 60" class="b2b-bigspark"><polyline id="b2bDetailPath" points="' + b2bPath(asset.ticker) + '" fill="none" stroke="' + ((q.changePct || 0) >= 0 ? '#22c55e' : '#ef4444') + '" stroke-width="1.8"/></svg></div>' +
+          '<div class="card"><div class="card-title">Buy from company</div><div class="field"><label class="label">Amount (USD from B2B balance)</label><input class="input" id="ihB2bAmount" type="number" step="0.01" min="0" placeholder="0.00"/></div><button class="btn btn-primary" data-act="ih-b2b-buy" data-t="' + escH(asset.ticker) + '" style="width:100%">Buy now</button></div>' +
+          (holding ? '<div class="card"><div class="card-title">Sell to company</div><button class="btn btn-danger" data-act="ih-b2b-sell" data-t="' + escH(asset.ticker) + '" style="width:100%">Sell all ' + Number(holding.units).toLocaleString(undefined, { maximumFractionDigits: 6 }) + '</button></div>' : '') +
+          '<div class="card"><div class="card-title">Price alerts</div><div class="row" style="gap:8px"><div class="field grow"><label class="label">Buy below (USD)</label><input class="input" id="ihB2bBuyAlert" type="number" step="0.0001" value="' + (alert.buy || '') + '"/></div><div class="field grow"><label class="label">Sell above (USD)</label><input class="input" id="ihB2bSellAlert" type="number" step="0.0001" value="' + (alert.sell || '') + '"/></div></div><button class="btn btn-soft" data-act="ih-b2b-alert" data-t="' + escH(asset.ticker) + '" style="width:100%">Save alerts</button><div class="tiny muted mt6">We notify you in-app when the live price reaches either target.</div></div>';
+      }
+    }
+    var holdings = Object.keys(a.b2b).map(function (t) {
+      var h = a.b2b[t]; if (!h || !(Number(h.units) > 0)) return '';
+      var q = b2bQuote(t) || {}; var p = q.price || h.avgPrice;
+      return '<div class="ih-row"><div class="grow"><b>' + escH(t) + '</b><div class="tiny muted">' + Number(h.units).toLocaleString(undefined, { maximumFractionDigits: 6 }) + ' units · entry ' + money(h.avgPrice) + '</div></div><div style="text-align:right"><b>' + money(h.units * p) + '</b><div class="tiny muted">' + wc(h.units * p / RATE) + ' WC</div></div><button class="btn btn-xs btn-danger" data-act="ih-b2b-sell" data-t="' + escH(t) + '">Sell</button></div>';
+    }).join('');
+    var alerts = (a.b2bAlerts || []).map(function (x) { return '<div class="ih-row"><span class="grow">' + escH(x.ticker) + '<div class="tiny muted">buy ≤ ' + money(x.buy || 0) + ' · sell ≥ ' + money(x.sell || 0) + '</div></span><button class="btn btn-xs btn-ghost" data-act="ih-b2b-alert-clear" data-t="' + escH(x.ticker) + '">Remove</button></div>'; }).join('');
+    var cats = ['All','Crypto','Stocks','Indices','Forex'];
+    return head('B2B-Investing', 'Buy and sell digital assets from the WhaleChat company contract.', '#/investment') +
+      '<div class="ih-cards"><div class="ih-card"><span>Capital balance</span><b>' + money(a.portfolios.b2b) + '</b></div><div class="ih-card"><span>Total assets balance</span><b>' + money(Object.keys(a.b2b).reduce(function (sum, t) { var h = a.b2b[t]; var q = b2bQuote(t) || {}; return sum + (h.units || 0) * (q.price || h.avgPrice || 0); }, 0)) + '</b></div><div class="ih-card"><span>Profit balance</span><b class="' + ((a.b2bProfit || 0) >= 0 ? 'up' : 'down') + '">' + money(a.b2bProfit || 0) + '</b></div></div>' +
       '<div class="card ih-actions"><div class="ih-btn-grid"><a href="#/investment/b2b" class="btn btn-ghost btn-sm">Asset lists</a><a href="#/investment/b2b" class="btn btn-ghost btn-sm">Buy / Sell</a><a href="#/investment/transfer" class="btn btn-ghost btn-sm">Transfer</a><a href="#/investment/history" class="btn btn-ghost btn-sm">History</a></div></div>' +
-      '<div class="card"><div class="card-title">Buy asset</div><div class="field"><label class="label">Asset</label><select class="input" id="ihB2bAsset">' + assets.map(function (s) { return '<option value="' + escH(s.ticker) + '">' + escH(s.displayTicker || s.ticker) + ' — $' + (Number((INV.quote(s.ticker) || {}).price) || 0).toFixed(4) + '</option>'; }).join('') + '</select></div><div class="field"><label class="label">Amount (USD from B2B balance)</label><input class="input" id="ihB2bAmount" type="number" step="0.01" min="0" placeholder="0.00"/></div><button class="btn btn-primary" data-act="ih-b2b-buy" style="width:100%">Buy now</button></div>' +
-      '<div class="card"><div class="card-title">Your assets</div>' + (holdings ? '<div class="ih-list">' + holdings + '</div>' : '<div class="empty" style="padding:18px"><p>No B2B holdings yet.</p></div>') + '</div>';
+      '<div class="row b2b-cats" style="gap:6px;flex-wrap:wrap;margin-bottom:8px">' + cats.map(function (c) { return '<button class="chip b2b-cat '+(b2bFilter===c?'on':'')+'" data-act="ih-b2b-cat" data-cat="'+c+'">' + c + '</button>'; }).join('') + '</div>' +
+      '<div class="b2b-grid">' + assets.map(function (s) { return b2bCard(s, a); }).join('') + '</div>' +
+      '<div class="card"><div class="card-title">Your assets</div>' + (holdings ? '<div class="ih-list">' + holdings + '</div>' : '<div class="tiny muted">No B2B holdings yet.</div>') + '</div>' +
+      (alerts ? '<div class="card"><div class="card-title">Price alerts</div><div class="ih-list">' + alerts + '</div></div>' : '');
   }
 
   function historyPage(u) {
@@ -304,6 +367,15 @@
         }).join('') : '<div class="tiny muted">No tool subscribers yet.</div>') + '</div></div>';
   }
 
+  function adminB2BInventory() {
+    var assets = b2bAssets(); var inv = (DB.settings && DB.settings.b2bInventory) || {};
+    return head('B2B company inventory', 'Available asset units in the WhaleChat company contract.', '#/admin') +
+      '<div class="card"><div class="ih-list">' + assets.map(function (s) {
+        var v = Number(inv[s.ticker]); if (!(v >= 0)) v = 100000;
+        return '<div class="ih-row"><b class="grow">' + escH(s.displayTicker || s.ticker) + '</b><input class="input" style="max-width:140px" id="inv_' + escH(s.ticker) + '" type="number" step="0.00000001" min="0" value="' + v + '"/></div>';
+      }).join('') + '</div><button class="btn btn-primary" data-act="ih-admin-b2b-save" style="margin-top:10px">Save inventory</button></div>';
+  }
+
   function adminDisputes() {
     var rows = [];
     (DB.users || []).forEach(function (u) { account(u).disputes.forEach(function (d) { rows.push({ u: u, d: d }); }); });
@@ -366,7 +438,7 @@
       if (sub === 'convert') return convertPage(u);
       if (sub === 'topup') return topupPage(u, params);
       if (sub === 'tools') return toolsPage(u);
-      if (sub === 'b2b') return b2bPage(u);
+      if (sub === 'b2b') return b2bPage(u, params);
       if (sub === 'history') return historyPage(u);
       if (sub === 'more') return morePage(u);
       if (sub === 'statement') return statementPage(u);
@@ -379,6 +451,7 @@
         if ((parts && parts[1]) === 'invest-disputes') return adminDisputes();
         if ((parts && parts[1]) === 'tools') return adminTools();
         if ((parts && parts[1]) === 'server-details') return serverDetailsPage();
+        if ((parts && parts[1]) === 'b2b-inventory') return adminB2BInventory();
         return baseAdmin.apply(this, arguments);
       };
     }
@@ -488,7 +561,7 @@
     };
     App.ihB2bBuy = function () {
       var u = me(); var a = account(u);
-      var t = (document.getElementById('ihB2bAsset') || {}).value;
+      var t = (id && ds && ds.t) ? ds.t : (document.getElementById('ihB2bAsset') || {}).value;
       var amount = Number((document.getElementById('ihB2bAmount') || {}).value || 0);
       var q = null; try { q = INV.quote(t); } catch (e) {}
       if (!t || !q || !(q.price > 0)) return toastH('Select a live asset', 'err');
@@ -497,6 +570,10 @@
       a.portfolios.b2b = Math.round((a.portfolios.b2b - amount) * 100) / 100;
       var usd = amount;
       var units = usd / q.price;
+      var inv = (DB.settings.b2bInventory = DB.settings.b2bInventory || {});
+      var avail = (Number(inv[t]) >= 0) ? Number(inv[t]) : 100000;
+      if (units > avail) return toastH('Company contract does not have enough ' + t + ' available', 'err');
+      inv[t] = Math.round((avail - units) * 1e8) / 1e8;
       var h = a.b2b[t] || { units: 0, avgPrice: q.price };
       h.avgPrice = ((h.units * h.avgPrice) + usd) / (h.units + units);
       h.units += units; a.b2b[t] = h;
@@ -510,8 +587,29 @@
       var basis = h.units * h.avgPrice;
       a.b2bProfit = Math.round(((Number(a.b2bProfit) || 0) + (usd - basis)) * 100) / 100;
       a.portfolios.b2b = Math.round((a.portfolios.b2b + usd) * 100) / 100;
+      var inv = (DB.settings.b2bInventory = DB.settings.b2bInventory || {});
+      inv[ds.t] = Math.round(((Number(inv[ds.t]) >= 0 ? Number(inv[ds.t]) : 100000) + h.units) * 1e8) / 1e8;
       delete a.b2b[ds.t];
       ledger(u, 'B2B sell ' + ds.t, usd, 0); save(); toastH('Sold ' + ds.t, 'ok'); render();
+    };
+    App.ihB2bFav = function (id, ds) {
+      var u = me(); var a = account(u); var i = a.b2bFav.indexOf(ds.t);
+      if (i >= 0) a.b2bFav.splice(i, 1); else a.b2bFav.push(ds.t);
+      save(); render();
+    };
+    App.ihB2bCat = function (id, ds) { b2bFilter = ds.cat || 'All'; render(); };
+    App.ihB2bAlert = function (id, ds) {
+      var u = me(); var a = account(u);
+      var buy = Number((document.getElementById('ihB2bBuyAlert') || {}).value) || 0;
+      var sell = Number((document.getElementById('ihB2bSellAlert') || {}).value) || 0;
+      if (buy <= 0 && sell <= 0) return toastH('Enter a buy or sell target', 'err');
+      var ex = a.b2bAlerts.find(function (x) { return x.ticker === ds.t; });
+      if (ex) { ex.buy = buy; ex.sell = sell; ex.buyHit = false; ex.sellHit = false; }
+      else a.b2bAlerts.push({ id: nowId('al_'), ticker: ds.t, buy: buy, sell: sell, buyHit: false, sellHit: false, createdAt: Date.now() });
+      save(); toastH('Price alert saved', 'ok'); render();
+    };
+    App.ihB2bAlertClear = function (id, ds) {
+      var u = me(); var a = account(u); a.b2bAlerts = a.b2bAlerts.filter(function (x) { return x.ticker !== ds.t; }); save(); render();
     };
     App.ihDispute = function () {
       var u = me(); var a = account(u);
@@ -544,6 +642,15 @@
       else if (ds.op === 'extend') { s.active = true; s.paused = false; s.expiresAt = Math.max(Date.now(), Number(s.expiresAt) || 0) + 30 * 864e5; s.reminded = false; }
       notifyH(u, 'Tool subscription updated', (t ? t.name : ds.tool) + ': ' + ds.op, '#/investment/tools', 'shield');
       save(); toastH('Subscription updated', 'ok'); render();
+    };
+    App.ihAdminB2bSave = function () {
+      DB.settings.b2bInventory = DB.settings.b2bInventory || {};
+      b2bAssets().forEach(function (s) {
+        var el = document.getElementById('inv_' + s.ticker);
+        var v = Number(el && el.value);
+        if (v >= 0) DB.settings.b2bInventory[s.ticker] = v;
+      });
+      save(); toastH('B2B inventory updated', 'ok'); render();
     };
     App.ihServerSave = function () {
       if (!DB.settings) DB.settings = {};
@@ -604,6 +711,16 @@
     .ih-ovbtn{display:block;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--surface);text-decoration:none;color:var(--text);font-size:11px}
     .ih-tool-adminbtns{display:flex;gap:4px;flex-wrap:wrap;width:100%;margin-top:5px}
     @media(min-width:600px){.ih-overview-grid{grid-template-columns:1fr 1fr 1fr}}
+    .b2b-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:12px}
+    .b2b-card{padding:10px;border:1px solid var(--border);border-radius:11px;background:var(--surface-2);display:flex;flex-direction:column;gap:3px}
+    .b2b-name{font-size:12px;font-weight:700;color:var(--text);text-decoration:none}
+    .b2b-star{margin-left:auto;background:none;border:none;color:var(--muted);font-size:16px;cursor:pointer}
+    .b2b-star.on{color:#ffc861}
+    .b2b-price{font-size:14px;font-weight:700;font-variant-numeric:tabular-nums}
+    .b2b-spark{width:100%;height:44px;margin-top:2px}
+    .b2b-bigspark{width:100%;height:110px}
+    .b2b-cat.on{border-color:var(--accent);color:var(--accent)}
+    @media(max-width:420px){.b2b-grid{grid-template-columns:1fr 1fr}}
     `;
     document.head.appendChild(st);
   })();
@@ -616,9 +733,22 @@
           ADMIN_NAV.splice(Math.max(0, ADMIN_NAV.length - 2), 0, { key: 'admin-invest-disputes', label: 'Invest disputes', icon: 'shield', href: '#/admin/invest-disputes' });
           ADMIN_NAV.splice(Math.max(0, ADMIN_NAV.length - 2), 0, { key: 'admin-tools-pricing', label: 'Tool pricing', icon: 'settings', href: '#/admin/tools' });
           ADMIN_NAV.splice(Math.max(0, ADMIN_NAV.length - 2), 0, { key: 'admin-server-details', label: 'Server details', icon: 'shield', href: '#/admin/server-details' });
+          ADMIN_NAV.splice(Math.max(0, ADMIN_NAV.length - 2), 0, { key: 'admin-b2b-inventory', label: 'B2B inventory', icon: 'box', href: '#/admin/b2b-inventory' });
         }
       } catch (e) {}
       try { [BOTTOM_NAV, USER_NAV, VENDOR_NAV].forEach(function(arr){ if(!Array.isArray(arr))return; arr.forEach(function(n){ if(n && n.key==='invest') n.href='#/investment'; }); }); } catch(e){}
+      setInterval(function () {
+        try {
+          var u = me(); if (!u) return; var a = account(u); var changed = false;
+          (a.b2bAlerts || []).forEach(function (al) {
+            var q = null; try { q = INV.quote(al.ticker); } catch (e) {}
+            if (!q || !(q.price > 0)) return;
+            if (al.buy > 0 && !al.buyHit && q.price <= al.buy) { al.buyHit = true; changed = true; notifyH(u, 'Buy target reached', al.ticker + ' is ' + money(q.price) + ' — tap to buy now.', '#/investment/b2b?asset=' + encodeURIComponent(al.ticker), 'trend'); }
+            if (al.sell > 0 && !al.sellHit && q.price >= al.sell) { al.sellHit = true; changed = true; notifyH(u, 'Sell target reached', al.ticker + ' is ' + money(q.price) + ' — tap to sell now.', '#/investment/b2b?asset=' + encodeURIComponent(al.ticker), 'wallet'); }
+          });
+          if (changed) save();
+        } catch (e) {}
+      }, 10000);
       setTimeout(function(){ try { render(); } catch(e){} }, 300);
       if (typeof Remote === 'undefined' || !Remote.enabled) {
         try { if (typeof me === 'function' && me()) renewTools(me()); } catch (e) {}
