@@ -177,8 +177,9 @@
       <div class="bot-account-grid">
         <div class="field" style="margin:0"><label class="label">Bot assistant</label>
           <select class="input" id="botTier">${owned.length ? owned.map((t) => `<option value="${escB(t.id)}">${escB(t.name)}${t.username ? ' @' + escB(t.username) : ''}</option>`).join('') : '<option value="">Subscribe to an assistant first</option>'}</select></div>
-        <div class="field" style="margin:0"><label class="label">Optional top-up from stock balance (WC)</label>
-          <input class="input" id="botStartTopup" type="number" min="0" step="0.01" placeholder="0"/></div>
+        <div class="field" style="margin:0"><label class="label">Top-up from stock balance to start (WC)</label>
+          <input class="input" id="botStartTopup" type="number" min="0" step="0.01" value="${acc.capitalCoins < 5 ? 100 : ''}" placeholder="${acc.capitalCoins < 5 ? 'e.g. 100' : '0'}"/>
+          <div class="tiny muted" style="margin-top:3px">Capital now ${num(acc.capitalCoins)} WC · available ${num(st.balance)} WC</div></div>
         <div class="field" style="margin:0"><label class="label">Minimum per trade (WC)</label>
           <input class="input" id="botMin" type="number" min="1" step="0.01" value="${num(acc.capitalCoins > 0 ? Math.max(1, acc.capitalCoins * 0.05) : 5)}"/></div>
         <div class="field" style="margin:0"><label class="label">Maximum per trade (WC)</label>
@@ -204,7 +205,11 @@
         <button class="btn btn-sm btn-primary" data-act="bot-topup">${typeof ic === 'function' ? ic('plus', 14) : ''} Top up</button>
         <button class="btn btn-sm btn-soft" data-act="bot-transfer">${typeof ic === 'function' ? ic('send', 14) : ''} Transfer</button>
         <button class="btn btn-sm btn-ghost" data-act="bot-history">${typeof ic === 'function' ? ic('clock', 14) : ''} History</button>
+        <button class="btn btn-sm ${running ? 'btn-danger' : 'btn-primary'}" data-act="bot-toggle">${running ? 'Turn off bot' : 'Turn on bot'}</button>
       </div>
+      ${acc.capitalCoins < 5 ? `<div class="bot-cooling" style="margin-top:10px"><b>Bot trading capital is ${num(acc.capitalCoins)} WC</b>
+        <span>Top up at least 5 WC from your stock trading balance, then press Start trading now.</span>
+        <button class="btn btn-sm btn-primary" data-act="bot-topup">Top up bot capital</button></div>` : ''}
       ${cooling ? `<div class="bot-cooling"><b>Cooling down — ${escB(session.coolingReason || 'waiting for capital')}</b>
         <span>Top up the capital balance, then resume trading. Capital ${num(session.capitalCoins)} WC · profit ${num(session.profitCoins)} WC.</span>
         <button class="btn btn-sm btn-primary" data-act="bot-resume">Resume trading</button></div>` : ''}
@@ -345,14 +350,19 @@
     const sess = s && s.session;
     const running = sess && sess.status === 'running';
     const owned = s ? (s.tiers || []).filter((t) => t.owned).length : 0;
-    return `<a class="card bot-dash" href="#/invest/bots">
+    const acc = (s && s.account) || { capitalCoins: 0, profitCoins: 0 };
+    return `<div class="card bot-dash">
       <div class="between" style="align-items:flex-start">
         <div class="row" style="gap:9px;align-items:center">
           <span class="bot-dash-ic">${typeof ic === 'function' ? ic('trend', 16) : ''}</span>
-          <div><div class="card-title" style="margin:0">Trading Bot Assistant</div>
-            <div class="tiny muted">${running ? 'Bot running · ' + num(sess.poolCoins) + ' WC allocated' : (owned ? owned + ' tier' + (owned === 1 ? '' : 's') + ' owned · ready to configure' : 'Subscribe to an automated bot tier')}</div></div>
+          <div><div class="card-title" style="margin:0">Bot trading dashboard</div>
+            <div class="tiny muted">${running ? 'Bot running · ' + num(sess.capitalCoins) + ' WC capital' : (owned ? owned + ' tier' + (owned === 1 ? '' : 's') + ' owned · ready to configure' : 'Subscribe to an automated bot tier')}</div></div>
         </div>
         ${statusBadge(sess)}
+      </div>
+      <div class="bot-dash-bals">
+        <span>Capital <b>${num(acc.capitalCoins)} WC</b></span>
+        <span>Profit <b class="up">${num(acc.profitCoins)} WC</b></span>
       </div>
       ${s && s.autoSecure && s.autoSecure.active ? `<div class="tiny ${s.autoSecure.enabled ? 'up' : 'muted'}" style="margin-top:6px">
         ${s.autoSecure.enabled ? 'Auto Secure ON' : 'Auto Secure paused'} · <b data-bot-secured>${num(s.autoSecure.securedCoins)}</b> WC secured ·
@@ -363,8 +373,8 @@
         <span class="tiny muted">${num(sess.tradeCount)} trade${Number(sess.tradeCount) === 1 ? '' : 's'}</span>
         ${sess.trades && sess.trades.length ? `<span class="tiny muted">last ${escB(sess.trades[0].ticker || '')} <b class="${Number(sess.trades[0].pnlCoins) >= 0 ? 'up' : 'down'}">${Number(sess.trades[0].pnlCoins) >= 0 ? '+' : '−'}${num(Math.abs(Number(sess.trades[0].pnlCoins) || 0))} WC</b></span>` : ''}
       </div>` : ''}
-      <div class="tiny" style="margin-top:8px;color:var(--accent);font-weight:650">Open Trading Bots →</div>
-    </a>`;
+      <a class="btn btn-sm btn-primary" href="#/invest/bots" style="margin-top:9px;width:100%">Open bot trading dashboard</a>
+    </div>`;
   }
 
   /* ------------------------------ admin markup ------------------------------ */
@@ -499,6 +509,11 @@
       const tierId = tierEl ? tierEl.value : '';
       if (!tierId) return tmsg('Select a bot assistant you own', 'err');
       const topup = Number(topupEl && topupEl.value) || 0;
+      const capitalNow = Number((B.state && B.state.account && B.state.account.capitalCoins) || 0);
+      if (!(topup > 0) && capitalNow < 5) {
+        tmsg('Bot trading capital is 0 WC — top up at least 5 WC to start', 'err');
+        return App.botTopup();
+      }
       const minTrade = Number(minEl && minEl.value) || 0;
       const maxTrade = Number(maxEl && maxEl.value) || 0;
       const duration = Number(durEl && durEl.value) || 0;
@@ -530,6 +545,17 @@
         if (!r.res || !r.res.ok || !r.data || !r.data.ok) return tmsg((r.data && r.data.error) || 'Could not resume', 'err');
         await Remote.refresh(true); await load(true); tmsg('Bot resumed', 'ok'); render();
       } catch (e) { tmsg('Could not resume: ' + e.message, 'err'); }
+    };
+
+    App.botToggle = async function () {
+      const sess = B.state && B.state.session;
+      const acc = (B.state && B.state.account) || { capitalCoins: 0 };
+      if (sess && sess.status === 'running') return App.botStop();
+      if (sess && sess.status === 'cooling') return App.botResume();
+      if (!(Number(acc.capitalCoins) >= 5)) return App.botTopup();
+      const form = document.getElementById('botTier');
+      if (form) { try { form.scrollIntoView({ behavior: 'smooth', block: 'center' }); form.focus(); } catch (e) {} }
+      tmsg('Set your trade limits and press Start trading now', 'ok');
     };
 
     App.botStop = async function () {
@@ -922,6 +948,9 @@
     st.id = 'wc-bot-style';
     st.textContent = `
     .bot-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:12px}
+    .bot-dash-bals{display:flex;gap:14px;flex-wrap:wrap;margin-top:8px}
+    .bot-dash-bals span{font-size:11px;color:var(--muted)}
+    .bot-dash-bals b{color:var(--text);font-size:12.5px}
     .bot-balance-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
     .bot-balance-grid div{display:flex;flex-direction:column;gap:1px;padding:9px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);min-width:0}
     .bot-balance-grid span{font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted-2);font-weight:700}
