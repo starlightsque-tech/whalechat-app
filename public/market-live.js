@@ -816,9 +816,8 @@
       <div class="mkt-status" id="mktStatus">Reading feed status…</div>
       <div class="tiny muted" style="margin-top:6px;line-height:1.6">
         Hybrid mode seeds every listed asset from Finnhub REST, then keeps one shared WebSocket open for
-        second-by-second ticks. Every WhaleChat instrument trades 24/7: when a venue is shut or a real
-        print goes stale, the backend keeps a continuous synthetic feed running so charts and trades never
-        freeze. All browser prices come from this backend cache.
+        second-by-second ticks. Crypto streams 24/7 and Forex 24/5; closed stock venues hold the last real
+        print instead of generating fake movement. All browser prices come from this backend cache.
       </div>
     </div>`;
   }
@@ -839,7 +838,7 @@
     const when = (ms) => ms ? new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
     box.innerHTML = `
       <div class="mkt-stat"><span>Notice</span><b>${escMarket(st.notice || noticeText())}</b></div>
-      <div class="mkt-stat"><span>Session</span><b class="up">${st.session === '24/7' || st.alwaysLive ? 'LIVE 24/7 · always open' : (st.marketOpen ? 'US session open' : 'US market closed')}</b></div>
+      <div class="mkt-stat"><span>Market</span><b>${st.marketOpen ? 'US session open' : 'US market closed'}</b></div>
       <div class="mkt-stat"><span>WebSocket</span><b class="${st.wsConnected ? 'up' : 'down'}">${st.wsConnected ? 'connected' : 'offline'}</b></div>
       <div class="mkt-stat"><span>Last real tick</span><b>${when(st.lastRealAt)}</b></div>
       <div class="mkt-stat"><span>Server price tick</span><b>${when(st.lastTickAt)}</b></div>

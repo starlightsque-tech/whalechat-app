@@ -1,4 +1,4 @@
-# WhaleChat 3.32.1 — web app + mobile apps
+# WhaleChat 3.33.1 — web app + mobile apps
 
 WhaleChat is a social + marketplace + wallet product built as a single-page app with a
 Node sync server and native Android/iOS shells.
@@ -209,48 +209,6 @@ is closed. Admin → Stocks includes the bot configuration panel. Endpoints:
 `/api/bots/state`, `/api/bots/subscribe`, `/api/bots/start`, `/api/bots/stop`,
 `/api/bots/admin`, `/api/bots/admin/config`.
 
-**Bot profiles, health engine and performance page (3.30.0).** Every tier is a full trading
-identity with a profile picture (`public/bots/*.jpg`, admin-overridable with an uploaded photo or https URL).
-Admins can also press **Add new bot** in **Admin → Stocks → Trading bots** to create extra tiers — set the name,
-@username, photo, accuracy, price and billing cycle, then save; the bot appears in the marketplace for users to subscribe.
-Each bot row has an **Upload** button for a custom photo, a **Preset gallery** of the built-in bot pictures, and a live
-preview that updates before **Save bot settings** is pressed.
-
-- `#/bots` — all bot identities as cards (avatar, `@username`, accuracy, price, HOT/Owned).
-- `#/bots/<tierId>` — profile page: large picture, accuracy, subscription state, health, energy,
-  net P/L and trade count, a per-bot equity chart, session history and subscribe / start / stop /
-  cool-down actions.
-- **Cooling** — `POST /api/bots/cool` stops the session, stores `db.botCooldowns[userId]`, and the
-  UI shows a live `m:ss` countdown until the bot is ready again. Cooling also restores energy so
-  the next session trades closer to its target accuracy.
-- **Health engine** (`BotService.healthEngine`) — derives `state` (`thriving` / `stable` /
-  `fatigued` / `cooling` / `idle`), score, energy, stamina band, win rate, drawdown and the
-  cooldown deadline, plus the 40-point health history sparkline. Exposed as `health` in
-  `GET /api/bots/state` and rendered as its own card on the bot, profile and performance pages.
-- **Performance page** — `#/invest/bots/performance`: net bot P/L, ROI on allocated capital,
-  win rate, trades/sessions, a Lightweight Charts v5 equity curve (`WC_PRO_CHART.mountEquity`)
-  with a break-even line, the health engine, the cooling banner and a per-session table with
-  avatars. Aggregation is computed server-side in `BotService.performance` from every session's
-  trade log (`poolAfter`, `pnlCoins`) and exposed as `performance` on the bot state.
-
-### B2B Investing Account (3.32.0)
-
-`public/b2b-invest.js` adds a business investing dashboard at **Invest → B2B Investing Account**
-(`#/invest/b2b`). It treats the stock trading account's USD trade capital as the same cash ledger as the
-WC wallet (`USD = WC × 0.50`) and provides:
-
-- **Dashboard** — trade capital in USD + WC, holdings value, unrealized P/L and total account value.
-- **All digital assets** — `#/invest/b2b/assets`, with every listed asset showing live price in USD/WC and
-  **separate Buy and Sell buttons**; tapping the asset opens its chart.
-- **Buy page** (`#/invest/b2b/buy`) — select one asset or several, enter a USD amount per asset, review the
-  WC cost (`USD ÷ 0.50`) and confirm. Each purchase executes through the spot engine and appears in holdings.
-- **Sell page** (`#/invest/b2b/sell`) — select one or more current holdings and confirm; each position closes
-  at the live effective price and the WC payout is credited to the stock trading account wallet.
-
-Bots now draw their reserved capital from this same **stock trading account USD trade capital**. The bot panel
-accepts a USD amount, converts it to WC, and if the field is empty on start it automatically tops up the minimum
-(5 WC / $2.50) instead of failing with “0 WC”.
-
 ### Auto Secure Take Profit (bot tool)
 
 A dedicated bot tool users can subscribe to (default **$20 / month → 40 WC**, stored in
@@ -307,6 +265,65 @@ displayed price from the previous tick to the new tick over an 850 ms ease-out w
 last point of the active lightweight-chart (stock chart and portfolio chart) is updated in
 place, and price/percentage labels are repainted at ~10 fps, so the trade view moves
 smoothly while server settlement and TP/SL continue to use the authoritative quote.
+
+## Bot trading account: capital vs profit balances
+
+Each user has a persistent bot account with **two balances**:
+
+1. **Bot trading capital balance** — each trade stake is deducted from here.
+2. **Bot profit balance** — every completed trade credits `stake + P/L` (the payout) here.
+
+Users top up capital from their stock trading balance (or use the top-up field on the start
+form), choose an assistant, minimum/maximum stake per trade and an optional time limit, then
+press **Start trading now**. The Invest dashboard also has a **Bot trading dashboard** card
+with capital/profit balances and a direct button to the bot account. Users can turn the bot
+off and on at any time; stopping keeps the balances for transfer/top-up. Trades pick real
+stocks from the available market; when capital is exhausted or the time limit is reached the
+bot enters **cooling down**. Users top up and press **Resume trading**. The dashboard has
+**Top up**, **Transfer** (capital or profit → stock trading balance) and **History** buttons;
+history includes trades/payouts, top-ups/transfers, subscription renewals, start/stop uptime
+and cooling events.
+
+## Navigation
+
+A global **Back** button in the topbar returns to the previous page. The Market header has an
+**Asset lists** button opening a full asset table with a **Buy / Sell** action per symbol.
+
+## Bot assistants: usernames, profile pictures, HOT tools
+
+Admin → Stocks → **Trading bots** now includes **+ Add bot assistant** and an **Edit** action per
+tier. Admins can set the assistant **name**, **@username**, **profile picture**, description,
+price, accuracy, billing cycle, speed, HOT flag and live status. Images are resized to 160×160
+JPEG in the browser and stored on the synced bot tier. New assistants appear in the
+marketplace immediately and can be marked **HOT** to feature them.
+
+## Account health analysis
+
+The Invest dashboard and Trading Bots page show an **Account health analysis** card with:
+
+* a 0–100 health score (bot equity growth, drawdown, win rate and losing streaks),
+* bot equity, P/L, drawdown, win rate, account growth and open positions,
+* an equity/drawdown SVG chart from the bot session trades,
+* a **rest recommendation**: Healthy / Watch closely / Rest recommended, so users know when
+  to stop the bot and let it refresh before restarting.
+
+## WhaleChat Shares admin plans & daily payout
+
+Admin → Stocks → **WhaleChat share investment plans** can add/edit plans with name, min/max
+USD amount, duration (days/months/years) and **daily return %**. Saving publishes the plan to
+every user's Shares page; the page checks for plan changes every 6 seconds and re-renders.
+New investments copy the daily rate and duration:
+`daily profit = principal × daily %`, `total profit = daily profit × days`,
+`payout = principal + total profit`. Example: $100 at 2.5% daily for 7 days =
+$2.50/day × 7 = $17.50 profit → $117.50 (235 WC). Existing active investments keep the terms
+they were purchased under.
+
+## WhaleChat Shares profit example
+
+The Shares page now includes an interactive **How your investment profit is calculated** card:
+choose a plan and a USD amount and it shows the principal, daily return %, duration days,
+total profit and maturity payout in both USD and WC, step by step. Example: **$100 (200 WC) at
+2.5% daily for 7 days** → $2.50/day → +$17.50 (35 WC) profit → $117.50 (235 WC) payout.
 
 ## Shared portfolio audit trail
 

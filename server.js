@@ -512,26 +512,6 @@ async function api(req, res, pathname, query) {
     broadcast('change', { rev: store.rev, source: 'bonus-claim', at: now });
     return json(res, 200, { ok: true, coins: coinsAmt, balance: user.balance, status: claim.status, bonus: bonus.title });
   }
-  // --- price alerts (email delivery via Brevo/SMTP) --------------------
-  if (pathname === '/api/alerts/notify' && req.method === 'POST') {
-    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
-    if (!email || !email.configured()) return json(res, 200, { ok: false, error: 'email_not_configured' });
-    const body = await readBody(req);
-    const user = (store.db.users || []).find((u) => u && u.id === body.userId);
-    if (!user) return json(res, 400, { ok: false, error: 'user_not_found' });
-    if (!user.email) return json(res, 200, { ok: false, error: 'no_email' });
-    const alert = (store.db.alerts || []).find((a) => a && a.id === body.alertId && a.userId === user.id);
-    if (!alert) return json(res, 404, { ok: false, error: 'alert_not_found' });
-    const appUrl = PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || ('http://localhost:' + PORT);
-    const queued = email.enqueue({
-      key: 'price-alert:' + alert.id + ':' + Math.floor(Date.now() / 60000),
-      to: user.email, template: 'price_alert',
-      data: { ticker: alert.ticker, dir: alert.dir, target: alert.target, price: body.price },
-      appUrl
-    });
-    return json(res, 200, { ok: true, queued, email: user.email.replace(/(^.).*(@.*$)/, '$1***$2') });
-  }
-
   // --- email -----------------------------------------------------------
   if (pathname === '/api/email/status' && req.method === 'GET') {
     return json(res, 200, email ? email.status() : { ok: true, configured: false, queued: 0 });

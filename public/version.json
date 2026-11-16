@@ -1,8 +1,8 @@
 {
-  "version": "3.33.2",
-  "build": "2026-11-16T10:07:27Z",
+  "version": "3.33.0",
+  "build": "2026-11-16T06:11:51Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.33.2 - published build with the 24/7 market UI (top banner, All Live/Crypto/US Stocks/Forex/Indices filters, pulsing LIVE - 24/7 dot, trading disclaimer) and the auto-updating Trade Guide (public How WhaleChat Works + admin Trade Guide - Auto Updated) with live payout calculators, copy/WhatsApp sharing and admin-editable recommendation message.",
-  "releasedAt": "2026-11-16T10:07:27Z",
+  "notes": "WhaleChat 3.33.0 - WhaleChat Shares daily-return plans (principal x daily % x days) with updated examples and bot account workflows.",
+  "releasedAt": "2026-11-16T06:11:51Z",
   "minimum": "3.0.0"
 }
