@@ -71,7 +71,17 @@
   function statusBadge(session) {
     if (!session) return '<span class="bot-badge off"><i></i> Offline</span>';
     if (session.status === 'running') return '<span class="bot-badge on"><i></i> Bot Running</span>';
+    if (session.status === 'cooling') return '<span class="bot-badge cool"><i></i> Cooling down</span>';
     return '<span class="bot-badge paused"><i></i> Paused</span>';
+  }
+
+  function initialsOf(name) {
+    return String(name || 'Bot').split(/\s+/).filter(Boolean).slice(0, 2).map((x) => x[0]).join('').toUpperCase() || 'B';
+  }
+  function avatarHTML(t, size) {
+    const sz = size || 40;
+    if (t && t.avatar) return `<img src="${t.avatar}" alt="" style="width:${sz}px;height:${sz}px;border-radius:12px;object-fit:cover;flex:none"/>`;
+    return `<span class="bot-avatar-fb" style="width:${sz}px;height:${sz}px;font-size:${Math.round(sz * 0.34)}px">${initialsOf(t && t.name)}</span>`;
   }
 
   function tierCard(t) {
@@ -80,15 +90,16 @@
     const disabled = t.enabled === false;
     return `<div class="bot-tier ${owned ? 'owned' : ''} ${disabled ? 'disabled' : ''}">
       <div class="between" style="align-items:flex-start;gap:8px">
-        <div class="row" style="gap:8px;align-items:center">
-          <span class="bot-av">${t.avatar ? `<img src="${t.avatar}" alt=""/>` : escB(String(t.username || t.name || '?').slice(0,2).toUpperCase())}</span>
-          <div><div class="bot-tier-name">${escB(t.name)}</div>
-            <div class="tiny muted" style="margin-top:2px">@${escB(t.username || 'bot')} · ${escB(t.blurb || '')}</div></div>
+        <div class="row" style="gap:9px;align-items:flex-start;min-width:0">
+          ${avatarHTML(t, 42)}
+          <div style="min-width:0">
+            <div class="bot-tier-name">${escB(t.name)}
+              ${t.hot ? '<span class="badge badge-warn" style="font-size:9px;margin-left:4px">HOT</span>' : ''}</div>
+            <div class="tiny muted">${t.username ? '@' + escB(t.username) : 'WhaleChat bot'}</div>
+            <div class="tiny muted" style="margin-top:2px">${escB(t.blurb || '')}</div>
+          </div>
         </div>
-        <div class="row" style="gap:4px;flex-direction:column;align-items:flex-end">
-          ${t.hot ? '<span class="bot-hot-badge">HOT</span>' : ''}
-          <span class="badge ${owned ? 'badge-success' : 'badge'}">${num(t.accuracy, 0)}%</span>
-        </div>
+        <span class="badge ${owned ? 'badge-success' : 'badge'}">${num(t.accuracy, 0)}%</span>
       </div>
       <div class="bot-acc"><i style="width:${Math.min(100, Math.max(0, Number(t.accuracy) || 0))}%"></i></div>
       <div class="tiny muted" style="margin-top:4px">Simulated trade accuracy</div>
@@ -155,138 +166,81 @@
     </svg>`;
   }
 
-  function healthSpark(hist) {
-    const pts = (hist || []).slice(-24);
-    if (pts.length < 2) return '';
-    const W = 300, H = 54;
-    const xs = (i) => 4 + (i / (pts.length - 1)) * (W - 8);
-    const ys = (v) => 4 + (1 - Math.max(0, Math.min(100, v)) / 100) * (H - 10);
-    const d = pts.map((p, i) => (i ? 'L' : 'M') + xs(i).toFixed(1) + ' ' + ys(p.health).toFixed(1)).join(' ');
-    const last = pts[pts.length - 1].health;
-    return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:54px;margin-top:6px">
-      <path d="${d} L${xs(pts.length - 1)} ${H} L${xs(0)} ${H} Z" fill="${last >= 50 ? 'rgba(34,197,94,.18)' : 'rgba(239,68,68,.16)'}"/>
-      <path d="${d}" fill="none" stroke="${last >= 50 ? '#22c55e' : '#ef4444'}" stroke-width="2" stroke-linejoin="round"/>
-    </svg>`;
-  }
-  function botHealthHTML(session) {
-    const h = Number(session.health != null ? session.health : 100);
-    const e = Number(session.energy != null ? session.energy : 100);
-    const wr = session.winRate;
-    const need = (e <= 35 || h <= 45) && session.status === 'running';
-    const cls = h >= 65 ? 'ok' : h >= 45 ? 'warn' : 'bad';
-    return `<div class="bot-health ${cls}">
-      <div class="between" style="align-items:center"><b style="font-size:12px">Account health</b>
-        <span class="bot-health-val">${h}%</span></div>
-      <div class="bot-health-bar"><i style="width:${Math.max(0, Math.min(100, h))}%"></i></div>
-      <div class="tiny muted" style="margin-top:4px">Energy ${Math.round(e)}%${wr != null ? ' · win rate ' + wr + '%' : ''} · ${h >= 65 ? 'growing steadily' : h >= 45 ? 'cooling recommended soon' : 'rest needed — losing more'}</div>
-      ${healthSpark(session.healthHistory)}
-      ${need ? `<button class="btn btn-primary btn-sm" data-act="bot-cool" data-session="${session.id}" style="width:100%;margin-top:8px">${ic('clock', 14)} Cool down &amp; refresh</button>` : ''}
-      ${session.cooldownUntil ? `<div class="tiny" style="margin-top:6px;color:var(--warn)">Cooling down until ${new Date(session.cooldownUntil).toLocaleTimeString()} — ready to trade after rest.</div>` : ''}
-    </div>`;
-  }
-
-  function tradeChart(session) {
-    const tr = (session.trades || []).slice().reverse();
-    if (!tr.length) return '<div class="tiny muted" style="padding:10px 0">No trades yet — the chart draws each trade as it settles.</div>';
-    const W = 320, H = 96, mid = H / 2;
-    const maxAbs = Math.max.apply(null, tr.map((t) => Math.abs(Number(t.pnlCoins) || 0)).concat([0.01]));
-    const bw = Math.max(2, Math.min(10, (W - 20) / tr.length - 2));
-    let bars = '';
-    tr.forEach((t, i) => {
-      const v = Number(t.pnlCoins) || 0;
-      const h = Math.max(1, (Math.abs(v) / maxAbs) * (mid - 8));
-      const x = 10 + i * ((W - 20) / tr.length) + ((W - 20) / tr.length - bw) / 2;
-      bars += `<rect x="${x.toFixed(1)}" y="${(v >= 0 ? mid - h : mid).toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="1" fill="${v >= 0 ? '#22c55e' : '#ef4444'}"/>`;
-    });
-    /* pool line */
-    const pools = tr.map((t) => Number(t.poolAfter) || 0);
-    let pmin = Math.min.apply(null, pools), pmax = Math.max.apply(null, pools);
-    if (pmax - pmin < 0.01) { pmin -= 0.5; pmax += 0.5; }
-    const px = (i) => 10 + (i / Math.max(1, tr.length - 1)) * (W - 20);
-    const py = (v) => 6 + (1 - (v - pmin) / (pmax - pmin)) * (H - 22);
-    const line = pools.map((v, i) => (i ? 'L' : 'M') + px(i).toFixed(1) + ' ' + py(v).toFixed(1)).join(' ');
-    const last = pools[pools.length - 1];
-    return `<div class="bot-tradechart">
-      <div class="between" style="margin-bottom:2px"><span class="tiny muted">Trade chart</span>
-        <span class="tiny" style="font-weight:700">${num(last)} WC</span></div>
-      <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:96px">
-        <line x1="10" y1="${mid}" x2="${W - 10}" y2="${mid}" stroke="rgba(255,255,255,.12)" stroke-dasharray="3 3"/>
-        ${bars}
-        <path d="${line}" fill="none" stroke="#2ee6c9" stroke-width="1.6" stroke-linejoin="round"/>
-      </svg>
-      <div class="tiny muted">${tr.length} trade${tr.length === 1 ? '' : 's'} · green = win, red = loss · line = capital</div>
-    </div>`;
-  }
-
-  function startPanelHTML(tiers) {
-    if (!tiers.length) return '';
-    return `<div class="card" id="botStartCard">
-      <div class="card-title" style="margin:0 0 4px">Start another bot</div>
-      <div class="tiny muted" style="margin-bottom:10px">You can run several bots at the same time — each one trades its own capital and keeps its own chart.</div>
-      <div class="field"><label class="label">Bot</label>
-        <select class="input" id="botTier">${tiers.map((t) => `<option value="${escB(t.id)}">${escB(t.name)} · ${num(t.accuracy, 0)}% accuracy</option>`).join('')}</select></div>
-      <div class="field"><label class="label">Capital to reserve (WC)</label>
-        <div class="row" style="gap:6px"><input class="input grow" id="botAmount" type="number" min="0" step="0.01" placeholder="e.g. 100"/>
-        <button class="btn btn-ghost btn-sm" data-act="bot-max">Max</button></div>
-        <div class="tiny muted" style="margin-top:4px">Available ${num(B.state.balance)} WC</div></div>
-      <button class="btn btn-primary" data-act="bot-start" style="width:100%">${ic('trend', 15)} Turn on bot</button>
-    </div>`;
-  }
-
-  function sessionsHTML() {
+  function accountHTML() {
     const st = B.state || {};
-    const list = (st.sessions && st.sessions.length ? st.sessions : (st.session ? [st.session] : []));
-    if (!list.length) return sessionHTML(null);
-    const running = new Set(list.map((x) => x.tierId));
-    const available = (st.tiers || []).filter((t) => t.owned && !running.has(t.id));
-    return `<div class="between" style="margin:2px 0 8px"><b style="font-size:12px">Active bots · ${list.length}</b>
-        <span class="tiny muted">Each bot has its own chart</span></div>` +
-      list.map(sessionHTML).join('') + startPanelHTML(available);
+    const acc = st.account || { capitalCoins: 0, profitCoins: 0, totalPayoutCoins: 0 };
+    const session = st.session;
+    const owned = (st.tiers || []).filter((t) => t.owned && t.enabled !== false);
+    const running = session && session.status === 'running';
+    const cooling = session && session.status === 'cooling';
+    const startForm = !session ? `<div class="bot-account-start">
+      <div class="bot-account-grid">
+        <div class="field" style="margin:0"><label class="label">Bot assistant</label>
+          <select class="input" id="botTier">${owned.length ? owned.map((t) => `<option value="${escB(t.id)}">${escB(t.name)}${t.username ? ' @' + escB(t.username) : ''}</option>`).join('') : '<option value="">Subscribe to an assistant first</option>'}</select></div>
+        <div class="field" style="margin:0"><label class="label">Optional top-up from stock balance (WC)</label>
+          <input class="input" id="botStartTopup" type="number" min="0" step="0.01" placeholder="0"/></div>
+        <div class="field" style="margin:0"><label class="label">Minimum per trade (WC)</label>
+          <input class="input" id="botMin" type="number" min="1" step="0.01" value="${num(acc.capitalCoins > 0 ? Math.max(1, acc.capitalCoins * 0.05) : 5)}"/></div>
+        <div class="field" style="margin:0"><label class="label">Maximum per trade (WC)</label>
+          <input class="input" id="botMax" type="number" min="1" step="0.01" value="${num(acc.capitalCoins > 0 ? Math.max(1, acc.capitalCoins * 0.25) : 50)}"/></div>
+        <div class="field" style="margin:0"><label class="label">Stop after (minutes, optional)</label>
+          <input class="input" id="botDuration" type="number" min="0" step="1" placeholder="No limit"/></div>
+      </div>
+      <button class="btn btn-primary" data-act="bot-start" style="width:100%;margin-top:10px" ${owned.length ? '' : 'disabled'}>${typeof ic === 'function' ? ic('play', 15) : ''} Start trading now</button>
+      <div class="tiny muted" style="margin-top:6px;line-height:1.6">The bot trades real stocks from the available market. Each trade stake comes from the capital balance; the payout (stake + profit) goes to the profit balance. Trades run every ${(st.settings || {}).intervalMin || 5} minutes.</div>
+    </div>` : '';
+    return `<div class="card" id="botAccountCard">
+      <div class="between" style="align-items:flex-start;gap:10px">
+        <div><div class="card-title" style="margin:0">Bot trading account</div>
+          <div class="tiny muted">Two balances: trading capital and profit. Transfers go to your stock trading balance.</div></div>
+        ${session ? statusBadge(session) : '<span class="badge">Ready</span>'}
+      </div>
+      <div class="bot-balance-grid">
+        <div><span>Bot capital balance</span><b data-bot-capital>${num(acc.capitalCoins)} WC</b><i>${money(acc.capitalCoins * 0.5)}</i></div>
+        <div><span>Bot profit balance</span><b class="up" data-bot-profit>${num(acc.profitCoins)} WC</b><i>${money(acc.profitCoins * 0.5)}</i></div>
+        <div><span>Total payouts</span><b>${num(acc.totalPayoutCoins)} WC</b><i>all bot trades</i></div>
+      </div>
+      <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
+        <button class="btn btn-sm btn-primary" data-act="bot-topup">${typeof ic === 'function' ? ic('plus', 14) : ''} Top up</button>
+        <button class="btn btn-sm btn-soft" data-act="bot-transfer">${typeof ic === 'function' ? ic('send', 14) : ''} Transfer</button>
+        <button class="btn btn-sm btn-ghost" data-act="bot-history">${typeof ic === 'function' ? ic('clock', 14) : ''} History</button>
+      </div>
+      ${cooling ? `<div class="bot-cooling"><b>Cooling down — ${escB(session.coolingReason || 'waiting for capital')}</b>
+        <span>Top up the capital balance, then resume trading. Capital ${num(session.capitalCoins)} WC · profit ${num(session.profitCoins)} WC.</span>
+        <button class="btn btn-sm btn-primary" data-act="bot-resume">Resume trading</button></div>` : ''}
+      ${startForm}
+      ${running ? `<div class="tiny muted" style="margin-top:8px;line-height:1.6">Bot is trading. Stop it below to hold the remaining capital and profit in the bot balances.</div>` : ''}
+    </div>`;
   }
 
   function sessionHTML(session) {
-    if (!session) {
-      const owned = (B.state && B.state.tiers || []).filter((t) => t.owned);
-      return `<div class="card" id="botSessionCard">
-        <div class="between"><div class="card-title" style="margin:0">Bot control</div>${statusBadge(null)}</div>
-        ${owned.length ? `<div class="tiny muted" style="margin-top:6px;line-height:1.6">You own ${owned.length} bot tier${owned.length === 1 ? '' : 's'}. Allocate capital below and turn a bot on — it keeps trading while the app is closed.</div>
-          <div class="field" style="margin-top:12px"><label class="label">Bot tier</label>
-            <select class="input" id="botTier">${owned.map((t) => `<option value="${escB(t.id)}">${escB(t.name)} · ${num(t.accuracy, 0)}% accuracy</option>`).join('')}</select></div>
-          <div class="field"><label class="label">Allocated trading capital (WC)</label>
-            <div class="row" style="gap:6px">
-              <input class="input grow" id="botAmount" type="number" min="0" step="0.01" placeholder="e.g. 100"/>
-              <button class="btn btn-ghost btn-sm" data-act="bot-max">Max</button>
-            </div>
-            <div class="tiny muted" style="margin-top:4px">Available ${num(B.state.balance)} WC · reserved funds are locked from manual trading while the bot runs.</div></div>
-          <button class="btn btn-primary" data-act="bot-start" style="width:100%">${typeof ic === 'function' ? ic('trend', 15) : ''} Turn On Bot</button>`
-          : `<div class="tiny muted" style="margin-top:6px;line-height:1.6">Subscribe to a bot tier first. Your subscription unlocks the control panel and the automated trader.</div>`}
-      </div>`;
-    }
+    if (!session) return '';
     const up = Number(session.profitCoins) >= 0;
     const pct = session.allocatedCoins > 0 ? Math.max(0, Math.min(150, (session.poolCoins / session.allocatedCoins) * 100)) : 0;
     return `<div class="card bot-live" id="botSessionCard">
       <div class="between" style="align-items:flex-start">
-        <div><div class="card-title" style="margin:0">${escB(session.tierName)}</div>
-          <div class="tiny muted" style="margin-top:2px">${session.tradeCount} automated trade${session.tradeCount === 1 ? '' : 's'} · every ${session.intervalMin} min</div></div>
+        <div class="row" style="gap:9px;align-items:center;min-width:0">
+          ${avatarHTML({ name: session.tierName, avatar: session.tierAvatar }, 40)}
+          <div style="min-width:0"><div class="card-title" style="margin:0">${escB(session.tierName)}</div>
+            <div class="tiny muted" style="margin-top:2px">${session.tierUsername ? '@' + escB(session.tierUsername) + ' · ' : ''}${session.tradeCount} automated trade${session.tradeCount === 1 ? '' : 's'} · every ${session.intervalMin} min</div></div>
+        </div>
         ${statusBadge(session)}
       </div>
       <div class="bot-stats">
-        <div><span>Allocated capital</span><b data-bot-pool>${num(session.poolCoins)} WC</b></div>
-        <div><span>Total P/L</span><b class="${up ? 'up' : 'down'}" data-bot-pnl>${up ? '+' : '−'}${num(Math.abs(session.profitCoins))} WC</b></div>
+        <div><span>Capital balance</span><b data-bot-pool>${num(session.capitalCoins)} WC</b></div>
+        <div><span>Profit balance</span><b class="up" data-bot-pnl>${num(session.profitCoins)} WC</b></div>
         <div><span>Wins / losses</span><b>${num(session.totalProfitCoins)} / ${num(session.totalLossCoins)} WC</b></div>
         <div><span>Next trade</span><b data-bot-next>${session.status === 'running' ? 'counting…' : '—'}</b></div>
       </div>
       <div class="bot-poolbar"><i style="width:${pct}%"></i></div>
-      ${botHealthHTML(session)}
       <div class="tiny muted" style="margin-top:4px">Started ${when(session.startedAt)} · initial allocation ${num(session.allocatedCoins)} WC</div>
       <div class="bot-perf">
         <div class="between" style="margin-bottom:4px"><b style="font-size:11.5px">Session performance</b>
           <span class="tiny muted">allocated capital · cumulative P/L</span></div>
         ${perfSVG(session)}
       </div>
-      ${tradeChart(session)}
       <div class="row" style="gap:8px;margin-top:12px">
-        <button class="btn btn-danger grow" data-act="bot-stop" data-session="${session.id}">Stop Bot &amp; return capital</button>
+        <button class="btn btn-danger grow" data-act="bot-stop">Stop bot</button>
         <button class="btn btn-ghost" data-act="bot-refresh">${typeof ic === 'function' ? ic('refresh', 14) : ''}</button>
       </div>
       <div class="bot-log">
@@ -294,7 +248,7 @@
           <span class="tiny muted">${session.trades.length ? 'latest first' : 'waiting for the first trade'}</span></div>
         ${session.trades.length ? session.trades.slice(0, 12).map((t) => `<div class="bot-log-row">
           <div class="grow" style="min-width:0"><b>${escB(t.ticker)}</b>
-            <div class="tiny muted">${escB(t.side)} · stake ${num(t.stakeCoins)} WC · ${when(t.at)}</div></div>
+            <div class="tiny muted">${escB(t.side)} · stake ${num(t.stakeCoins)} WC · payout ${num(t.payoutCoins || (t.stakeCoins + t.pnlCoins))} WC · ${when(t.at)}</div></div>
           <span class="${t.win ? 'up' : 'down'}">${t.win ? '+' : '−'}${num(Math.abs(t.pnlCoins))} WC</span>
         </div>`).join('') : '<div class="tiny muted" style="padding:8px 0">The worker trades on its interval even while this app is closed. Come back in a few minutes.</div>'}
       </div>
@@ -370,16 +324,11 @@
         <button class="btn btn-sm btn-ghost" data-act="bot-refresh">${ic('refresh', 14)} Refresh</button></div>
     </div></div>
 
-    <div id="botSessionMount">${sessionsHTML()}</div>
+    <div id="botAccountMount">${accountHTML()}</div>
+    <div id="botSessionMount">${sessionHTML(B.state.session)}</div>
 
     ${autoSecureHTML()}
 
-    ${tiers.filter((t) => t.hot).length ? `<div class="card"><div class="between"><div class="card-title" style="margin:0">Hot trading assistants</div><span class="tiny muted">${tiers.filter((t) => t.hot).length} trending</span></div>
-      <div class="bot-hot-list">${tiers.filter((t) => t.hot).map((t) => `<a class="bot-hot-item" href="#/bots">
-        <span class="bot-av">${t.avatar ? `<img src="${t.avatar}" alt=""/>` : escB(String(t.username || t.name || '?').slice(0, 2).toUpperCase())}</span>
-        <span class="grow" style="min-width:0"><span class="small" style="font-weight:650;display:block">@${escB(t.username || 'bot')}</span>
-        <span class="tiny muted">${escB(t.name)} · ${num(t.accuracy, 0)}%</span></span>
-        <span class="bot-hot-badge">HOT</span></a>`).join('')}</div></div>` : ''}
     <div class="card" id="botMarketCard">
       <div class="between"><div class="card-title" style="margin:0">Bot marketplace</div>
         <span class="tiny muted">Paid from your WC balance · ${B.state.coinsPerUsd} WC = $1</span></div>
@@ -422,16 +371,37 @@
   function adminCard() {
     return `<div class="card" id="botAdminCard">
       <div class="between" style="align-items:flex-start;gap:10px">
-        <div><div class="card-title" style="margin:0">Trading bots · pictures, identity &amp; pricing</div>
+        <div><div class="card-title" style="margin:0">Trading bots · pricing &amp; speed</div>
           <div class="tiny muted" style="margin-top:3px">Edit tier pricing, billing cycle, accuracy and how fast offline bots place trades.</div></div>
         <span class="badge badge-accent">Admin</span>
       </div>
-      <div class="row gap8" style="margin-top:8px;flex-wrap:wrap">
-        <a class="btn btn-xs btn-ghost" href="#/admin/trade-guide">Read the trade guide</a>
-        <span class="tiny muted" style="align-self:center">Explains the wallet, stock investing and bot trading flow</span>
-      </div>
       <div id="botAdminBody"><div class="tiny muted" style="margin-top:10px">Loading bot configuration…</div></div>
     </div>`;
+  }
+
+  function adminTierRow(t) {
+    return `<tr data-bot-tier="${escB(t.id)}">
+      <td>
+        <div class="bot-admin-assist">
+          <span data-bot-avatar>${avatarHTML(t, 34)}</span>
+          <div style="min-width:0"><b data-bot-name>${escB(t.name)}</b>
+            <div class="tiny muted" data-bot-username>${t.username ? '@' + escB(t.username) : 'no username'}</div></div>
+        </div>
+        <input type="hidden" data-f="name" value="${escB(t.name)}"/>
+        <input type="hidden" data-f="username" value="${escB(t.username || '')}"/>
+        <input type="hidden" data-f="avatar" value="${escB(t.avatar || '')}"/>
+        <input type="hidden" data-f="blurb" value="${escB(t.blurb || '')}"/>
+      </td>
+      <td><input class="input bot-mini" data-f="accuracy" type="number" min="1" max="100" step="1" value="${num(t.accuracy, 0)}"/></td>
+      <td><input class="input bot-mini" data-f="priceUsd" type="number" min="0" step="0.01" value="${num(t.priceUsd)}"/></td>
+      <td><select class="input bot-mini" data-f="billingCycle">
+        ${['daily', 'weekly', 'monthly', 'one_time'].map((c) => `<option value="${c}" ${t.billingCycle === c ? 'selected' : ''}>${c.replace('_', '-')}</option>`).join('')}
+      </select></td>
+      <td><input class="input bot-mini" data-f="intervalMin" type="number" min="0" max="10080" step="1" value="${Number(t.intervalMin) || 0}" placeholder="global"/></td>
+      <td><label class="checkline" style="margin:0"><input type="checkbox" data-f="hot" ${t.hot ? 'checked' : ''}/></label></td>
+      <td><label class="checkline" style="margin:0"><input type="checkbox" data-f="enabled" ${t.enabled !== false ? 'checked' : ''}/></label></td>
+      <td><button class="btn btn-xs btn-ghost" data-act="bot-edit-assistant" data-id="${escB(t.id)}">Edit</button></td>
+    </tr>`;
   }
 
   function adminBodyHTML(a) {
@@ -444,27 +414,12 @@
         <div><span>Reserved capital</span><b>${num(a.stats.reservedCoins)} WC</b></div>
         <div><span>Subscription revenue</span><b>${num(a.stats.revenueCoins)} WC</b></div>
       </div>
-      <div class="table-wrap"><table class="tbl bot-admin-table"><thead><tr><th>Tier &amp; identity</th><th>Hot</th><th>Accuracy %</th><th>Price (USD)</th><th>Billing cycle</th><th>Speed override (min)</th><th>Live</th></tr></thead><tbody>
-        ${a.tiers.map((t) => `<tr data-bot-tier="${escB(t.id)}">
-          <td style="font-weight:650">
-            <div class="row" style="gap:6px;align-items:center">
-              <span class="bot-av" data-bot-av>${t.avatar ? `<img src="${t.avatar}" alt=""/>` : escB(String(t.username || t.name || '?').slice(0,2).toUpperCase())}</span>
-              <label class="btn btn-xs btn-ghost" style="cursor:pointer">Upload<input type="file" accept="image/*" data-f="avatarFile" style="display:none" onchange="App.botAvatarPick(this)"/></label>
-              <button type="button" class="btn btn-xs btn-ghost" data-act="bot-avatar-remove" title="Remove picture">×</button>
-            </div>
-            <div style="margin-top:4px">${escB(t.name)}</div>
-            <input class="input bot-mini" data-f="username" value="${escB(t.username || '')}" placeholder="username" style="margin-top:4px"/>
-            <div class="tiny muted">${num(t.priceUsd * 2)} WC</div>
-          </td>
-          <td><label class="checkline" style="margin:0"><input type="checkbox" data-f="hot" ${t.hot ? 'checked' : ''}/></label></td>
-          <td><input class="input bot-mini" data-f="accuracy" type="number" min="1" max="100" step="1" value="${t.accuracy}"/></td>
-          <td><input class="input bot-mini" data-f="priceUsd" type="number" min="0" step="0.01" value="${t.priceUsd}"/></td>
-          <td><select class="input bot-mini" data-f="billingCycle">
-            ${['daily', 'weekly', 'monthly', 'one_time'].map((c) => `<option value="${c}" ${t.billingCycle === c ? 'selected' : ''}>${c.replace('_', '-')}</option>`).join('')}
-          </select></td>
-          <td><input class="input bot-mini" data-f="intervalMin" type="number" min="0" max="10080" step="1" value="${Number(t.intervalMin) || 0}" placeholder="global"/></td>
-          <td><label class="checkline" style="margin:0"><input type="checkbox" data-f="enabled" ${t.enabled !== false ? 'checked' : ''}/></label></td>
-        </tr>`).join('')}
+      <div class="between" style="margin-top:12px;gap:8px;flex-wrap:wrap">
+        <div class="tiny muted">Add trading assistants with their own username and profile picture. Mark them HOT to feature them in the marketplace.</div>
+        <button class="btn btn-sm btn-primary" data-act="bot-add-assistant">+ Add bot assistant</button>
+      </div>
+      <div class="table-wrap"><table class="tbl bot-admin-table"><thead><tr><th>Assistant</th><th>Accuracy %</th><th>Price (USD)</th><th>Billing cycle</th><th>Speed (min)</th><th>Hot</th><th>Live</th><th></th></tr></thead><tbody>
+        ${a.tiers.map(adminTierRow).join('')}
       </tbody></table></div>
       <div class="bot-admin-grid">
         <div class="field"><label class="label">Offline trade speed (default)</label>
@@ -496,61 +451,7 @@
       <div class="tiny muted" style="margin-top:8px;line-height:1.6">Speed changes apply to sessions started after saving. Existing running sessions keep their interval until the user stops and starts again.</div>`;
   }
 
-  function ensureAdminNav() {
-    try {
-      const nav = document.querySelector('.admin-nav');
-      if (!nav) return;
-      if (!nav.querySelector('[data-wc-bots-nav]')) {
-        const a = document.createElement('a');
-        a.href = '#/admin/trading-bots';
-        a.setAttribute('data-wc-bots-nav', '1');
-        a.textContent = 'Trading bots';
-        if ((location.hash || '').indexOf('#/admin/trading-bots') === 0) a.className = 'on';
-        nav.appendChild(a);
-      }
-      if (!nav.querySelector('[data-wc-guide-nav]')) {
-        const g = document.createElement('a');
-        g.href = '#/admin/trade-guide';
-        g.setAttribute('data-wc-guide-nav', '1');
-        g.textContent = 'Trade guide';
-        if ((location.hash || '').indexOf('#/admin/trade-guide') === 0) g.className = 'on';
-        nav.appendChild(g);
-      }
-    } catch (e) {}
-  }
-
-  function guideShell() {
-    return '<div class="page-head"><div class="between wrap"><div><div class="section-title" style="margin:0">Trade & investment guide</div>' +
-      '<div class="tiny muted">Auto-generated from the live app settings — updated whenever the admin changes bots, fees or rules</div></div>' +
-      '<span class="badge badge-success" id="wcGuideStamp">Auto-updating</span></div></div>' +
-      '<div id="wcGuideBody"><div class="card"><div class="tiny muted">Loading the guide…</div></div></div>';
-  }
-
-  async function loadGuide() {
-    const body = document.getElementById('wcGuideBody');
-    if (!body) return;
-    try {
-      const r = await fetch('/api/guide?t=' + Date.now(), { cache: 'no-store' });
-      const d = await r.json();
-      if (!d || !d.ok) throw new Error((d && d.error) || 'unavailable');
-      body.innerHTML = (d.sections || []).map((sec) => '<div class="card" style="margin-bottom:12px"><h3 style="font-size:15px;margin:0 0 8px">' +
-        String(sec.title).replace(/[<>&]/g, '') + '</h3><div class="guide-body">' + sec.html + '</div></div>').join('');
-      const stamp = document.getElementById('wcGuideStamp');
-      if (stamp) stamp.textContent = 'Live · updated ' + new Date(d.generatedAt).toLocaleTimeString();
-    } catch (e) {
-      body.innerHTML = '<div class="card"><div class="small">Could not load the guide: ' + String(e.message).replace(/[<>&]/g, '') + '</div></div>';
-    }
-  }
-  let guideTimer = null;
-  function startGuideAuto() {
-    if (guideTimer) return;
-    guideTimer = setInterval(() => {
-      if ((location.hash || '').indexOf('#/admin/trade-guide') === 0) loadGuide();
-    }, 30000);
-  }
-
   async function mountAdmin(force) {
-    ensureAdminNav();
     const body = document.getElementById('botAdminBody');
     if (!body) return;
     const a = await loadAdmin(force);
@@ -588,95 +489,140 @@
       } catch (e) { tmsg('Subscription failed: ' + e.message, 'err'); }
     };
 
-    App.botMax = function () {
-      const el = document.getElementById('botAmount');
-      if (el && B.state) { el.value = num(B.state.balance); el.focus(); }
-    };
-
     App.botStart = async function () {
       if (typeof Remote === 'undefined' || !Remote.enabled) return tmsg('Connect the sync server to start the bot', 'err');
       const tierEl = document.getElementById('botTier');
-      const amtEl = document.getElementById('botAmount');
+      const topupEl = document.getElementById('botStartTopup');
+      const minEl = document.getElementById('botMin');
+      const maxEl = document.getElementById('botMax');
+      const durEl = document.getElementById('botDuration');
       const tierId = tierEl ? tierEl.value : '';
-      const amount = Number(amtEl && amtEl.value) || 0;
-      if (!(amount > 0)) return tmsg('Enter the capital the bot may trade with', 'err');
-      if (B.state && amount > Number(B.state.balance)) return tmsg('Allocation exceeds your available balance', 'err');
+      if (!tierId) return tmsg('Select a bot assistant you own', 'err');
+      const topup = Number(topupEl && topupEl.value) || 0;
+      const minTrade = Number(minEl && minEl.value) || 0;
+      const maxTrade = Number(maxEl && maxEl.value) || 0;
+      const duration = Number(durEl && durEl.value) || 0;
+      if (!(minTrade > 0) || maxTrade < minTrade) return tmsg('Set a valid minimum and maximum amount per trade', 'err');
       if (typeof confirmDialog === 'function') {
         const ok = await confirmDialog({
-          title: 'Turn on the bot?',
-          body: `${num(amount)} WC will be reserved and locked from manual trading. The bot trades automatically every ${(B.state.settings || {}).intervalMin || 5} minutes.`,
-          ok: 'Turn On Bot'
+          title: 'Start trading now?',
+          body: `${tierEl.options[tierEl.selectedIndex].text} will trade real stocks between ${num(minTrade)} and ${num(maxTrade)} WC per trade${duration ? ', then stop after ' + duration + ' minutes' : ''}. Payouts go to the bot profit balance.`,
+          ok: 'Start trading'
         });
         if (!ok) return;
       }
       try {
-        const r = await api('/api/bots/start', { method: 'POST', body: JSON.stringify({ userId: uidNow(), tierId, allocatedCoins: amount }) }, 25000);
+        const r = await api('/api/bots/start', { method: 'POST', body: JSON.stringify({
+          userId: uidNow(), tierId, topupCoins: topup, minTradeCoins: minTrade, maxTradeCoins: maxTrade, durationMinutes: duration
+        }) }, 25000);
         if (!r.res || !r.res.ok || !r.data || !r.data.ok) return tmsg((r.data && r.data.error) || 'Could not start bot', 'err');
         await Remote.refresh(true);
         await load(true);
-        tmsg('Bot running — it trades even when the app is closed', 'ok');
+        tmsg('Bot trading started — real stocks will be traded automatically', 'ok');
         render();
       } catch (e) { tmsg('Could not start bot: ' + e.message, 'err'); }
     };
 
-    App.botAvatarRemove = function (ds, el) {
-      const row = el && el.closest ? el.closest('[data-bot-tier]') : null;
-      if (!row) return;
-      row.dataset.avatar = '';
-      const av = row.querySelector('[data-bot-av]');
-      const uname = row.querySelector('[data-f="username"]');
-      if (av) av.textContent = String((uname && uname.value) || '?').slice(0, 2).toUpperCase();
-      tmsg('Picture cleared — press Save bot settings to publish', 'ok');
-    };
-
-    App.botAvatarPick = async function (input) {
-      const f = input.files && input.files[0];
-      if (!f) return;
+    App.botResume = async function () {
+      if (typeof Remote === 'undefined' || !Remote.enabled) return tmsg('Connect the sync server to resume', 'err');
       try {
-        const c = await compressImage(f, 128, 0.82);
-        const d = await fileToDataURL(c);
-        const row = input.closest('[data-bot-tier]');
-        if (row) { row.dataset.avatar = d; const av = row.querySelector('[data-bot-av]'); if (av) av.innerHTML = `<img src="${d}" alt=""/>`; }
-        tmsg('Avatar ready — press Save changes to publish it', 'ok');
-      } catch (e) { tmsg('Could not read that image', 'err'); }
+        const r = await api('/api/bots/resume', { method: 'POST', body: JSON.stringify({ userId: uidNow() }) }, 20000);
+        if (!r.res || !r.res.ok || !r.data || !r.data.ok) return tmsg((r.data && r.data.error) || 'Could not resume', 'err');
+        await Remote.refresh(true); await load(true); tmsg('Bot resumed', 'ok'); render();
+      } catch (e) { tmsg('Could not resume: ' + e.message, 'err'); }
     };
 
-    App.botCool = async function (id, ds) {
-      if (typeof Remote === 'undefined' || !Remote.enabled) return tmsg('Connect the sync server first', 'err');
-      if (typeof confirmDialog === 'function') {
-        const ok = await confirmDialog({ title: 'Cool the bot down?', body: 'The bot stops, returns its capital to your balance and rests. After the cooldown it trades with fresh energy and better accuracy.', ok: 'Cool down' });
-        if (!ok) return;
-      }
-      try {
-        const sid = (ds && (ds.session || ds.sessionId)) || null;
-        const r = await api('/api/bots/cool', { method: 'POST', body: JSON.stringify({ userId: uidNow(), sessionId: sid }) }, 25000);
-        if (!r.res || !r.res.ok || !r.data || !r.data.ok) return tmsg((r.data && r.data.error) || 'Could not cool the bot', 'err');
-        await Remote.refresh(true);
-        await load(true);
-        tmsg('Bot cooled down for ' + (r.data.cooldownMin || 30) + ' min', 'ok');
-        render();
-      } catch (e) { tmsg('Could not cool the bot: ' + e.message, 'err'); }
-    };
-
-    App.botStop = async function (id, ds) {
+    App.botStop = async function () {
       if (typeof Remote === 'undefined' || !Remote.enabled) return tmsg('Connect the sync server to stop the bot', 'err');
       if (typeof confirmDialog === 'function') {
         const ok = await confirmDialog({
           title: 'Stop the bot?',
-          body: 'Automated trading will stop immediately and the remaining allocated capital (plus profit or minus loss) returns to your available balance.',
-          ok: 'Stop Bot', danger: true
+          body: 'Trading stops immediately. The remaining capital and profit stay in the bot balances so you can transfer or top up later.',
+          ok: 'Stop bot', danger: true
         });
         if (!ok) return;
       }
       try {
-        const sid = (ds && (ds.session || ds.sessionId)) || null;
-        const r = await api('/api/bots/stop', { method: 'POST', body: JSON.stringify({ userId: uidNow(), sessionId: sid }) }, 25000);
+        const r = await api('/api/bots/stop', { method: 'POST', body: JSON.stringify({ userId: uidNow() }) }, 25000);
         if (!r.res || !r.res.ok || !r.data || !r.data.ok) return tmsg((r.data && r.data.error) || 'Could not stop bot', 'err');
-        await Remote.refresh(true);
-        await load(true);
-        tmsg(num(r.data.returnedCoins) + ' WC returned to your balance', 'ok');
+        await Remote.refresh(true); await load(true);
+        tmsg('Bot stopped — capital and profit remain in the bot balances', 'ok');
         render();
       } catch (e) { tmsg('Could not stop bot: ' + e.message, 'err'); }
+    };
+
+    App.botTopup = function () {
+      const acc = (B.state && B.state.account) || { capitalCoins: 0 };
+      openModal(modalShell('Top up bot trading capital', `
+        <div class="tiny muted" style="margin-bottom:10px;line-height:1.6">Move funds from your <b>stock trading balance</b> (${num(B.state && B.state.balance)} WC) into the bot trading capital balance.</div>
+        <div class="bot-balance-grid" style="margin-top:0">
+          <div><span>Bot capital now</span><b>${num(acc.capitalCoins)} WC</b></div>
+          <div><span>Stock trading balance</span><b>${num(B.state && B.state.balance)} WC</b></div>
+        </div>
+        <div class="field" style="margin-top:12px"><label class="label">Top-up amount (USD)</label>
+          <div class="input-wrap"><span class="inv-prefix">$</span><input class="input" id="botTopupUsd" type="number" min="0.5" step="0.01" placeholder="10.00"/></div>
+          <div class="tiny muted" style="margin-top:4px">1 WC = $0.50</div></div>`,
+        `<button class="btn btn-ghost" data-close style="flex:1">Cancel</button><button class="btn btn-primary" id="botTopupSend" style="flex:1">Send top-up</button>`), { locked: false });
+      const btn = document.getElementById('botTopupSend');
+      if (btn) btn.onclick = async () => {
+        const usd = Number((document.getElementById('botTopupUsd') || {}).value) || 0;
+        if (!(usd > 0)) return tmsg('Enter an amount', 'err');
+        try {
+          const r = await api('/api/bots/topup', { method: 'POST', body: JSON.stringify({ userId: uidNow(), amountUsd: usd }) }, 20000);
+          if (!r.res || !r.res.ok || !r.data || !r.data.ok) return tmsg((r.data && r.data.error) || 'Top-up failed', 'err');
+          closeModal(); await Remote.refresh(true); await load(true); tmsg('Bot capital topped up', 'ok'); render();
+        } catch (e) { tmsg('Top-up failed: ' + e.message, 'err'); }
+      };
+    };
+
+    App.botTransfer = function () {
+      const acc = (B.state && B.state.account) || { capitalCoins: 0, profitCoins: 0 };
+      openModal(modalShell('Transfer from bot balances', `
+        <div class="tiny muted" style="margin-bottom:10px;line-height:1.6">Choose which bot balance to transfer from. Funds go to your stock trading balance.</div>
+        <div class="field"><label class="label">Transfer from</label>
+          <select class="input" id="botTransferSource">
+            <option value="capital">Bot trading capital · ${num(acc.capitalCoins)} WC</option>
+            <option value="profit">Bot profit balance · ${num(acc.profitCoins)} WC</option>
+          </select></div>
+        <div class="field"><label class="label">Amount (USD)</label>
+          <div class="input-wrap"><span class="inv-prefix">$</span><input class="input" id="botTransferUsd" type="number" min="0.01" step="0.01" placeholder="10.00"/></div>
+          <div class="tiny muted" style="margin-top:4px">1 WC = $0.50</div></div>`,
+        `<button class="btn btn-ghost" data-close style="flex:1">Cancel</button><button class="btn btn-primary" id="botTransferSend" style="flex:1">Send</button>`), { locked: false });
+      const btn = document.getElementById('botTransferSend');
+      if (btn) btn.onclick = async () => {
+        const source = (document.getElementById('botTransferSource') || {}).value || 'capital';
+        const usd = Number((document.getElementById('botTransferUsd') || {}).value) || 0;
+        if (!(usd > 0)) return tmsg('Enter an amount', 'err');
+        try {
+          const r = await api('/api/bots/transfer', { method: 'POST', body: JSON.stringify({ userId: uidNow(), source, amountUsd: usd }) }, 20000);
+          if (!r.res || !r.res.ok || !r.data || !r.data.ok) return tmsg((r.data && r.data.error) || 'Transfer failed', 'err');
+          closeModal(); await Remote.refresh(true); await load(true); tmsg('Transfer sent to your stock trading balance', 'ok'); render();
+        } catch (e) { tmsg('Transfer failed: ' + e.message, 'err'); }
+      };
+    };
+
+    App.botHistory = async function () {
+      if (typeof Remote === 'undefined' || !Remote.enabled) return tmsg('Connect the sync server to view history', 'err');
+      try {
+        const r = await api('/api/bots/history?userId=' + encodeURIComponent(uidNow()), {}, 15000);
+        const h = (r.data && r.data.ok) ? r.data : { events: (B.state && B.state.events) || [], sessions: [], txs: [] };
+        const ev = (h.events || []).slice(0, 120);
+        const txs = (h.txs || []).slice(0, 60);
+        openModal(modalShell('Bot trading history', `
+          <div class="tiny muted" style="margin-bottom:10px">Top-ups, transfers, trade payouts, subscription renewals, start/stop and cooling events.</div>
+          <div class="card-title" style="margin:0 0 6px">Bot events</div>
+          <div class="bot-log" style="max-height:260px;overflow:auto">
+            ${ev.length ? ev.map((e) => `<div class="bot-log-row"><div class="grow" style="min-width:0"><b>${escB(e.type)}</b>
+              <div class="tiny muted">${escB(e.label || '')} · ${when(e.at)}</div></div>
+              <span class="${e.amountCoins >= 0 ? 'up' : 'down'}">${e.amountCoins ? (e.amountCoins > 0 ? '+' : '−') + num(Math.abs(e.amountCoins)) + ' WC' : ''}</span></div>`).join('') : '<div class="tiny muted">No bot events yet.</div>'}
+          </div>
+          <div class="card-title" style="margin:14px 0 6px">Subscription &amp; renewal records</div>
+          <div class="bot-log" style="max-height:160px;overflow:auto">
+            ${txs.length ? txs.map((t) => `<div class="bot-log-row"><div class="grow"><div class="tiny muted">${escB(t.label || t.type)} · ${when(t.createdAt)}</div></div>
+              <span class="${Number(t.coins) >= 0 ? 'up' : 'down'}">${Number(t.coins) >= 0 ? '+' : '−'}${num(Math.abs(Number(t.coins) || 0))} WC</span></div>`).join('') : '<div class="tiny muted">No subscription records yet.</div>'}
+          </div>`,
+          `<button class="btn btn-ghost" data-close style="width:100%">Close</button>`), { locked: false });
+      } catch (e) { tmsg('Could not load history: ' + e.message, 'err'); }
     };
 
     App.botAutoSubscribe = async function () {
@@ -714,16 +660,112 @@
 
     App.botAdminReload = function () { mountAdmin(true); };
 
+    function resizeAvatar(file, cb) {
+      try {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const img = new Image();
+          img.onload = () => {
+            try {
+              const size = 160;
+              const c = document.createElement('canvas');
+              c.width = size; c.height = size;
+              const ctx = c.getContext('2d');
+              const s = Math.min(img.width, img.height);
+              ctx.drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, size, size);
+              cb(c.toDataURL('image/jpeg', 0.82));
+            } catch (e) { cb(''); }
+          };
+          img.onerror = () => cb('');
+          img.src = reader.result;
+        };
+        reader.onerror = () => cb('');
+        reader.readAsDataURL(file);
+      } catch (e) { cb(''); }
+    }
+
+    function openAssistantModal(t) {
+      const isNew = !t;
+      const av = { data: t && t.avatar ? t.avatar : '' };
+      const body = `<div class="row" style="gap:12px;align-items:center;margin-bottom:12px">
+          <span id="baAvatarPreview">${avatarHTML({ name: (t && t.name) || 'Bot', avatar: av.data }, 64)}</span>
+          <div class="grow"><label class="label">Profile picture</label>
+            <input class="input" id="baAvatarFile" type="file" accept="image/*"/>
+            <div class="tiny muted" style="margin-top:4px">Square JPG/PNG, resized to 160×160 automatically. <button type="button" class="link" id="baAvatarClear">Remove</button></div></div>
+        </div>
+        <div class="field"><label class="label">Assistant name</label><input class="input" id="baName" maxlength="60" value="${escB((t && t.name) || '')}" placeholder="e.g. Tokyo Scalper"/></div>
+        <div class="field"><label class="label">Bot username</label><input class="input" id="baUsername" maxlength="40" value="${escB((t && t.username) || '')}" placeholder="e.g. tokyo_scalper"/></div>
+        <div class="field"><label class="label">Description</label><input class="input" id="baBlurb" maxlength="140" value="${escB((t && t.blurb) || '')}" placeholder="Short description shown to users"/></div>
+        <label class="checkline"><input type="checkbox" id="baHot" ${t && t.hot ? 'checked' : ''}/> <span class="small">Mark as HOT trading assistant</span></label>
+        <div class="tiny" id="baErr" style="color:var(--danger);min-height:16px;margin-top:6px"></div>`;
+      openModal(modalShell(isNew ? 'Add bot assistant' : 'Edit bot assistant', body,
+        `<button class="btn btn-ghost" data-close style="flex:1">Cancel</button>
+         <button class="btn btn-primary" id="baSave" style="flex:1">${isNew ? 'Add assistant' : 'Save assistant'}</button>`), { locked: false });
+      const preview = document.getElementById('baAvatarPreview');
+      const file = document.getElementById('baAvatarFile');
+      if (file) file.onchange = () => {
+        const f = file.files && file.files[0];
+        if (!f) return;
+        resizeAvatar(f, (data) => {
+          if (!data) { document.getElementById('baErr').textContent = 'Could not read that image.'; return; }
+          av.data = data;
+          preview.innerHTML = avatarHTML({ name: (document.getElementById('baName') || {}).value || 'Bot', avatar: data }, 64);
+        });
+      };
+      const clear = document.getElementById('baAvatarClear');
+      if (clear) clear.onclick = () => { av.data = ''; preview.innerHTML = avatarHTML({ name: 'Bot' }, 64); };
+      const save = async () => {
+        const name = String((document.getElementById('baName') || {}).value || '').trim();
+        const username = String((document.getElementById('baUsername') || {}).value || '').trim().replace(/^@+/, '');
+        const blurb = String((document.getElementById('baBlurb') || {}).value || '').trim();
+        const hot = !!(document.getElementById('baHot') || {}).checked;
+        const err = document.getElementById('baErr');
+        if (!name) { if (err) err.textContent = 'Enter an assistant name.'; return; }
+        if (username && !/^[A-Za-z0-9_.-]{2,40}$/.test(username)) { if (err) err.textContent = 'Username may use letters, numbers, dot, underscore and dash.'; return; }
+        const row = isNew ? null : document.querySelector('[data-bot-tier="' + t.id + '"]');
+        if (isNew) {
+          const tbody = document.querySelector('.bot-admin-table tbody');
+          if (!tbody) return;
+          const rec = {
+            id: 'ba_' + Date.now().toString(36), name, username, avatar: av.data, blurb, hot,
+            accuracy: 50, priceUsd: 50, billingCycle: 'monthly', intervalMin: 0, enabled: true
+          };
+          tbody.insertAdjacentHTML('beforeend', adminTierRow(rec));
+        } else if (row) {
+          const set = (f, v) => { const el = row.querySelector('[data-f="' + f + '"]'); if (el) el.value = v; };
+          set('name', name); set('username', username); set('avatar', av.data); set('blurb', blurb);
+          const hotEl = row.querySelector('[data-f="hot"]'); if (hotEl) hotEl.checked = hot;
+          const nEl = row.querySelector('[data-bot-name]'); if (nEl) nEl.textContent = name;
+          const uEl = row.querySelector('[data-bot-username]'); if (uEl) uEl.textContent = username ? '@' + username : 'no username';
+          const aEl = row.querySelector('[data-bot-avatar]'); if (aEl) aEl.innerHTML = avatarHTML({ name, avatar: av.data }, 34);
+        }
+        closeModal();
+        await App.botAdminSave();
+      };
+      const btn = document.getElementById('baSave');
+      if (btn) btn.onclick = save;
+    }
+
+    App.botAddAssistant = function () { openAssistantModal(null); };
+    App.botEditAssistant = function (id, ds) {
+      const tier = (B.admin && B.admin.tiers || []).find((x) => x.id === (ds && ds.id));
+      if (!tier) return tmsg('Assistant not found', 'err');
+      openAssistantModal(tier);
+    };
+
     App.botAdminSave = async function () {
       if (!isAdmin()) return tmsg('Admin only', 'err');
       const tiers = [];
       document.querySelectorAll('[data-bot-tier]').forEach((row) => {
         const get = (f) => row.querySelector('[data-f="' + f + '"]');
+        if (!get('accuracy')) return;
         tiers.push({
           id: row.getAttribute('data-bot-tier'),
-          username: (get('username') || {}).value || '',
-          hot: !!((get('hot') || {}).checked),
-          avatar: row.dataset.avatar || undefined,
+          name: (get('name') && get('name').value) || '',
+          username: (get('username') && get('username').value) || '',
+          avatar: (get('avatar') && get('avatar').value) || '',
+          blurb: (get('blurb') && get('blurb').value) || '',
+          hot: !!(get('hot') && get('hot').checked),
           accuracy: Number(get('accuracy').value),
           priceUsd: Number(get('priceUsd').value),
           billingCycle: get('billingCycle').value,
@@ -784,35 +826,14 @@
 
   function patchAdmin() {
     if (typeof INV === 'undefined' || !INV.viewAdminStocks) return false;
-    if (!INV.__wcBotsAdmin) {
-      const base = INV.viewAdminStocks;
-      INV.viewAdminStocks = function () {
-        const html = base.apply(this, arguments);
-        if (/Admin access only/.test(html)) return html;
-        return html + adminCard();
-      };
-      INV.__wcBotsAdmin = true;
-    }
-    /* dedicated admin screen so the controls are easy to find */
-    if (typeof VIEWS !== 'undefined' && !VIEWS.__wcBotsAdminPage) {
-      const baseAdmin = VIEWS.admin;
-      VIEWS.admin = function (parts) {
-        if ((parts && parts[1] || '') === 'trade-guide') {
-          const u2 = (typeof me === 'function') ? me() : null;
-          if (!u2 || u2.role !== 'admin') return '<div class="card empty"><h3>Admin only</h3></div>';
-          return guideShell();
-        }
-        if ((parts && parts[1] || '') === 'trading-bots') {
-          const u = (typeof me === 'function') ? me() : null;
-          if (!u || u.role !== 'admin') return '<div class="card empty"><div class="ic">' + (typeof ic === 'function' ? ic('lock', 24) : '') + '</div><h3>Admin only</h3></div>';
-          return '<div class="page-head"><div><div class="section-title" style="margin:0">Trading bots</div>' +
-            '<div class="tiny muted">Bot identities, profile pictures, hot assistants, accuracy and pricing</div></div>' +
-            '<span class="badge badge-accent">Admin</span></div>' + adminCard();
-        }
-        return baseAdmin.apply(this, arguments);
-      };
-      VIEWS.__wcBotsAdminPage = true;
-    }
+    if (INV.__wcBotsAdmin) return true;
+    const base = INV.viewAdminStocks;
+    INV.viewAdminStocks = function () {
+      const html = base.apply(this, arguments);
+      if (/Admin access only/.test(html)) return html;
+      return html + adminCard();
+    };
+    INV.__wcBotsAdmin = true;
     return true;
   }
 
@@ -849,7 +870,7 @@
               load(true).then(() => {
                 const mount = document.getElementById('botSessionMount');
                 const hist = document.getElementById('botHistoryMount');
-                if (mount && B.state) mount.innerHTML = sessionsHTML();
+                if (mount && B.state) mount.innerHTML = sessionHTML(B.state.session);
                 if (hist && B.state) hist.innerHTML = historyHTML();
               });
             } else if (!B.state) {
@@ -861,16 +882,7 @@
           const prevAdmin = AFTER.admin;
           AFTER.admin = function (parts, params) {
             try { if (prevAdmin) prevAdmin(parts, params); } catch (e) {}
-            const nav = document.querySelector('.admin-nav');
-            if (nav && !nav.querySelector('[data-wc-bots-nav]')) {
-              const a = document.createElement('a');
-              a.href = '#/admin/trading-bots'; a.setAttribute('data-wc-bots-nav', '1'); a.textContent = 'Trading bots';
-              if ((parts[1] || '') === 'trading-bots') a.className = 'on';
-              nav.appendChild(a);
-            }
-            const sub = (parts[1] || '');
-            if (sub === 'stocks' || sub === 'trading-bots') setTimeout(() => mountAdmin(false), 120);
-            if (sub === 'trade-guide') { ensureAdminNav(); setTimeout(loadGuide, 80); startGuideAuto(); }
+            if ((parts[1] || '') === 'stocks') setTimeout(() => mountAdmin(false), 120);
           };
         }
       }
@@ -897,7 +909,7 @@
       if (!onBotsPage() || !B.state) return;
       const mount = document.getElementById('botSessionMount');
       const hist = document.getElementById('botHistoryMount');
-      if (mount) mount.innerHTML = sessionsHTML();
+      if (mount) mount.innerHTML = sessionHTML(B.state.session);
       if (hist) hist.innerHTML = historyHTML();
       const after = B.state.session ? B.state.session.poolCoins + '|' + B.state.session.tradeCount : '';
       if (before && after && before !== after) tmsg('Bot activity updated', 'ok');
@@ -910,6 +922,20 @@
     st.id = 'wc-bot-style';
     st.textContent = `
     .bot-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:12px}
+    .bot-balance-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
+    .bot-balance-grid div{display:flex;flex-direction:column;gap:1px;padding:9px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);min-width:0}
+    .bot-balance-grid span{font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted-2);font-weight:700}
+    .bot-balance-grid b{font-size:14px;font-variant-numeric:tabular-nums}
+    .bot-balance-grid i{font-style:normal;font-size:10px;color:var(--muted)}
+    .bot-account-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:9px;margin-top:10px}
+    .bot-cooling{margin-top:10px;padding:10px;border-radius:10px;border:1px solid rgba(255,176,32,.35);background:rgba(255,176,32,.10);display:flex;flex-direction:column;gap:5px;font-size:11.5px}
+    .bot-cooling b{font-size:12.5px}
+    .bot-badge.cool{color:var(--warn);background:rgba(255,176,32,.12)}
+    @media(max-width:560px){.bot-balance-grid{grid-template-columns:1fr 1fr}.bot-account-grid{grid-template-columns:1fr}}
+    .bot-avatar-fb{display:inline-flex;align-items:center;justify-content:center;border-radius:12px;flex:none;
+      background:linear-gradient(135deg,#2ee6c9,#3aa0ff);color:#03221d;font-weight:800;letter-spacing:-.02em}
+    .bot-admin-assist{display:flex;gap:8px;align-items:center;min-width:170px}
+    .bot-admin-assist b{display:block;font-size:12.5px;line-height:1.2}
     .bot-autosecure-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-top:10px}
     .bot-autosecure-grid div{display:flex;flex-direction:column;gap:1px;padding:8px;border:1px solid var(--border);border-radius:9px;background:var(--surface-2);min-width:0}
     .bot-autosecure-grid span{font-size:9px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted-2);font-weight:700}
@@ -971,71 +997,3 @@
 
   init();
 })();
-
-/* wc-bot-health-ui */
-(function(){try{
-  if(document.getElementById('wc-bot-health-css')) return;
-  var st=document.createElement('style'); st.id='wc-bot-health-css';
-  st.textContent='.bot-av{width:34px;height:34px;border-radius:50%;background:var(--surface-2);display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;overflow:hidden;flex:none}.bot-av img{width:100%;height:100%;object-fit:cover}.bot-hot-badge{background:linear-gradient(135deg,#ff7a18,#ff3d71);color:#fff;font-size:9px;font-weight:800;letter-spacing:.08em;padding:2px 6px;border-radius:6px}.bot-hot-list{display:flex;flex-direction:column;gap:6px;margin-top:10px}.bot-hot-item{display:flex;align-items:center;gap:10px;padding:8px;border:1px solid var(--border);border-radius:12px;text-decoration:none;color:inherit}.bot-health{margin-top:10px;padding:10px;border-radius:12px;border:1px solid var(--border);background:var(--surface-2)}.bot-health.ok{border-color:rgba(34,197,94,.35)}.bot-health.warn{border-color:rgba(234,179,8,.35)}.bot-health.bad{border-color:rgba(239,68,68,.4)}.bot-health-val{font-weight:800;font-size:13px}.bot-health-bar{height:7px;border-radius:6px;background:rgba(255,255,255,.1);overflow:hidden;margin-top:6px}.bot-health-bar i{display:block;height:100%;background:linear-gradient(90deg,#2ee6c9,#22c55e)}.bot-health.bad .bot-health-bar i{background:linear-gradient(90deg,#f59e0b,#ef4444)}';
-  document.head.appendChild(st);
-}catch(e){}})();
-
-/* wc-guide-css */
-(function(){try{
-  if(document.getElementById('wc-guide-css')) return;
-  var st=document.createElement('style'); st.id='wc-guide-css';
-  st.textContent='.guide-body{font-size:13px;line-height:1.75;color:var(--muted)}.guide-body b{color:var(--text)}.guide-body h3{color:var(--text)}.guide-body ul,.guide-body ol{padding-left:18px;margin:8px 0}.guide-body li{margin-bottom:6px}.guide-body p{margin:0 0 10px}.guide-body table{width:100%;border-collapse:collapse;margin:10px 0;font-size:12px}.guide-body th,.guide-body td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--border)}.guide-body th{color:var(--text);font-weight:700}';
-  document.head.appendChild(st);
-}catch(e){}})();
-
-/* wc-fast-ui — instant tap feedback + slim action progress bar */
-(function () {
-  try {
-    if (window.__wcFastUI) return;
-    window.__wcFastUI = true;
-    var st = document.createElement('style');
-    st.id = 'wc-fast-ui-css';
-    st.textContent =
-      'button,a,[data-act],[data-nav],.list-item{touch-action:manipulation;-webkit-tap-highlight-color:transparent}' +
-      'button:active,.btn:active,[data-act]:active{transform:scale(.985);opacity:.92}' +
-      '.wc-tapped{opacity:.7!important}' +
-      '#wcActionBar{position:fixed;top:0;left:0;height:2.5px;width:0;z-index:99999;background:linear-gradient(90deg,#2ee6c9,#3aa0ff);box-shadow:0 0 8px rgba(46,230,201,.6);transition:width .25s ease,opacity .3s ease;opacity:0;pointer-events:none}' +
-      '#wcActionBar.on{opacity:1;width:75%}' +
-      '#wcActionBar.done{width:100%;opacity:0}';
-    document.head.appendChild(st);
-    var bar = document.createElement('div');
-    bar.id = 'wcActionBar';
-    document.addEventListener('DOMContentLoaded', function () { if (!bar.parentNode) document.body.appendChild(bar); });
-    var hideTimer = null;
-    function startBar() {
-      if (!bar.parentNode && document.body) document.body.appendChild(bar);
-      clearTimeout(hideTimer);
-      bar.classList.remove('done'); bar.classList.add('on');
-      hideTimer = setTimeout(finishBar, 1400);
-    }
-    function finishBar() {
-      clearTimeout(hideTimer);
-      bar.classList.add('done'); bar.classList.remove('on');
-      setTimeout(function () { bar.classList.remove('done'); bar.style.width = '0'; }, 320);
-    }
-    document.addEventListener('pointerdown', function (ev) {
-      var el = ev.target && ev.target.closest ? ev.target.closest('[data-act],[data-nav],button,a') : null;
-      if (!el) return;
-      el.classList.add('wc-tapped');
-      setTimeout(function () { el.classList.remove('wc-tapped'); }, 160);
-    }, true);
-    document.addEventListener('click', function (ev) {
-      var el = ev.target && ev.target.closest ? ev.target.closest('[data-act],[data-nav]') : null;
-      if (!el) return;
-      startBar();
-      /* when the app re-renders (the action completed) finish the bar right away */
-      var app = document.getElementById('app');
-      if (!app || typeof MutationObserver === 'undefined') return;
-      var obs = new MutationObserver(function () { obs.disconnect(); finishBar(); });
-      obs.observe(app, { childList: true, subtree: false });
-      setTimeout(function () { try { obs.disconnect(); } catch (e) {} }, 1800);
-    }, true);
-  } catch (e) {}
-})();
-
-/* wc-market-247 moved to public/market-247.js (registered in scripts/prepare-assets.js) */
