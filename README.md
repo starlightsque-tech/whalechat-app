@@ -1,4 +1,4 @@
-# WhaleChat 3.33.0 — web app + mobile apps
+# WhaleChat 3.33.1 — web app + mobile apps
 
 WhaleChat is a social + marketplace + wallet product built as a single-page app with a
 Node sync server and native Android/iOS shells.
@@ -273,8 +273,11 @@ Each user has a persistent bot account with **two balances**:
 1. **Bot trading capital balance** — each trade stake is deducted from here.
 2. **Bot profit balance** — every completed trade credits `stake + P/L` (the payout) here.
 
-Users top up capital from their stock trading balance, choose an assistant, minimum/maximum
-stake per trade and an optional time limit, then press **Start trading now**. Trades pick real
+Users top up capital from their stock trading balance (or use the top-up field on the start
+form), choose an assistant, minimum/maximum stake per trade and an optional time limit, then
+press **Start trading now**. The Invest dashboard also has a **Bot trading dashboard** card
+with capital/profit balances and a direct button to the bot account. Users can turn the bot
+off and on at any time; stopping keeps the balances for transfer/top-up. Trades pick real
 stocks from the available market; when capital is exhausted or the time limit is reached the
 bot enters **cooling down**. Users top up and press **Resume trading**. The dashboard has
 **Top up**, **Transfer** (capital or profit → stock trading balance) and **History** buttons;
