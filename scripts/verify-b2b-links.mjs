@@ -68,7 +68,9 @@ function check(name, ok, detail) { checks.push({ name, ok, detail }); console.lo
     ['marketplace route', '#/investment/b2b/market'],
     ['asset data route', '#/investment/b2b/asset'],
     ['multi-asset alerts route', '#/investment/b2b/alerts'],
-    ['Binance feed', '/api/market/binance']
+    ['Binance feed', '/api/market/binance'],
+    ['connections admin page', 'wc-connections-admin'],
+    ['connections API', '/api/connections']
   ];
   for (const [name, needle] of routes) check(name + ' present in the bundle', page.includes(needle));
 

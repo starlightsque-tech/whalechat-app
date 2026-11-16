@@ -75,6 +75,7 @@ const MODULES = [
   { file: 'pro-chart.js', marker: 'wc-pro-chart' },
   { file: 'readability.js', marker: 'wc-readability' },
   { file: 'b2b-market.js', marker: 'wc-b2b-market' },
+  { file: 'connections-admin.js', marker: 'wc-connections-admin' },
   { file: 'wc-invest-plans.js', marker: 'wc-invest-plans' },
   { file: 'wc-invest-ui.js', marker: 'wc-invest-ui' },
   { file: 'typography.js', marker: 'wc-typography' },

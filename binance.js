@@ -112,13 +112,68 @@ function createBinanceFeed(opts) {
     return state;
   }
 
+  /* ---- live websocket stream (miniTicker) --------------------------------
+     REST gives the 24h snapshot, the websocket gives every trade so the chart
+     and the alerts move with the real market between polls. */
+  let ws = null, wsRetry = 0, wsStop = false;
+  function wsStatus() {
+    return { connected: !!(ws && ws.readyState === 1), retry: wsRetry, url: state.wsUrl || null, ticks: state.wsTicks || 0 };
+  }
+  function connectWS() {
+    if (wsStop) return;
+    let WebSocket = null;
+    try { WebSocket = require('ws'); } catch (e) { return; }
+    const syms = Object.keys(map()).map(s => s.toLowerCase() + '@miniTicker').join('/');
+    const url = 'wss://stream.binance.com:9443/stream?streams=' + syms;
+    state.wsUrl = url;
+    try { ws = new WebSocket(url); } catch (e) { return; }
+    ws.on('open', () => { wsRetry = 0; state.wsConnected = true; state.lastError = ''; });
+    ws.on('message', (buf) => {
+      try {
+        const msg = JSON.parse(buf.toString());
+        const d = msg && msg.data;
+        if (!d || !d.s) return;
+        const symbol = String(d.s).toUpperCase();
+        const price = Number(d.c);
+        if (!(price > 0)) return;
+        const open = Number(d.o) || price;
+        state.prices[symbol] = {
+          price,
+          openPrice: open,
+          changePct: open ? ((price - open) / open) * 100 : 0,
+          high: Number(d.h) || price,
+          low: Number(d.l) || price,
+          quoteVolume: Number(d.q) || 0,
+          at: Date.now(),
+          source: 'binance-ws'
+        };
+        state.wsTicks = (state.wsTicks || 0) + 1;
+        state.lastAt = Date.now();
+        state.source = 'binance-ws';
+      } catch (e) {}
+    });
+    ws.on('close', () => {
+      state.wsConnected = false;
+      if (wsStop) return;
+      wsRetry++;
+      const wait = Math.min(30000, 1000 * Math.pow(2, Math.min(5, wsRetry)));
+      setTimeout(connectWS, wait).unref && setTimeout(connectWS, wait).unref();
+    });
+    ws.on('error', () => { state.lastError = 'ws error'; state.wsConnected = false; });
+  }
+
   function start() {
     if (timer) return;
     poll();
+    connectWS();
     timer = setInterval(() => { poll().catch(() => {}); }, everyMs);
     if (timer.unref) timer.unref();
   }
-  function stop() { if (timer) clearInterval(timer); timer = null; }
+  function stop() {
+    if (timer) clearInterval(timer); timer = null;
+    wsStop = true;
+    try { if (ws) ws.close(); } catch (e) {}
+  }
 
   function status() {
     const c = cfg();
@@ -131,6 +186,7 @@ function createBinanceFeed(opts) {
       lastError: state.lastError,
       source: state.source,
       host: state.host || null,
+      ws: wsStatus(),
       prices: state.prices
     };
   }

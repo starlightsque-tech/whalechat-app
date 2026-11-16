@@ -1,8 +1,8 @@
 {
-  "version": "3.36.0",
-  "build": "2026-11-16T13:29:55Z",
+  "version": "3.37.0",
+  "build": "2026-11-16T13:59:51Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.36.0 - B2B marketplace with named stocks, WhaleChat and crypto/meme coins at real live prices, asset data pages with live charts, multi-asset buy/sell price alerts with email buttons, and a Binance price feed alongside Finnhub.",
-  "releasedAt": "2026-11-16T13:29:55Z",
+  "notes": "WhaleChat 3.37.0 - admin Connections page for Binance (REST + websocket), Finnhub (REST + websocket) and Brevo email, all stored durably so a new release never clears connections, settings, accounts or balances.",
+  "releasedAt": "2026-11-16T13:59:51Z",
   "minimum": "3.0.0"
 }

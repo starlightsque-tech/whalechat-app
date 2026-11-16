@@ -22,6 +22,8 @@ const { MarketService, DEFAULT_ASSETS, assetKey, displayTickerFor } = require('.
 const { SpotService } = require('./spot');
 const { BotService } = require('./bots');
 const { ShareService } = require('./shares');
+let createConnections = null;
+try { createConnections = require('./connections').createConnections; } catch (e) { console.error('[connections] module unavailable:', e.message); }
 let createBinanceFeed = null;
 try { createBinanceFeed = require('./binance').createBinanceFeed; } catch (e) { console.error('[binance] module unavailable:', e.message); }
 let createB2BAlertWatcher = null;
@@ -52,6 +54,17 @@ const shares = new ShareService({
 });
 /* Binance live crypto prices alongside Finnhub (charts stay on Finnhub). */
 const binance = createBinanceFeed ? createBinanceFeed({ getDb: () => store.db, everyMs: Number(process.env.BINANCE_MS || 15000) }) : null;
+
+/* Durable third-party connection settings (Finnhub, Binance, Brevo, SMTP).
+   Applied on every boot so a new release never comes up disconnected. */
+const connections = createConnections ? createConnections({
+  getDb: () => store.db,
+  persist: () => persist(),
+  dataDir: DATA_DIR,
+  market, email, binance,
+  log: (m) => console.log(m),
+  storageBackend: () => (pool ? 'postgres' : 'file')
+}) : null;
 
 /* B2B price alerts: evaluate on the server so email + in-app notification are
    delivered even when the user's app is closed. */
@@ -397,6 +410,44 @@ async function dispatchPushes(pushes, db) {
 }
 
 async function api(req, res, pathname, query) {
+  /* --- durable connection settings (admin only) -------------------------- */
+  if (pathname === '/api/connections' && req.method === 'GET') {
+    const adminId = query.get('adminId') || '';
+    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === adminId && u.role === 'admin') : null;
+    if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
+    return json(res, 200, connections ? connections.status() : { ok: false, error: 'connections_disabled' });
+  }
+  if (pathname === '/api/connections' && req.method === 'POST') {
+    const body = await readBody(req);
+    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === body.adminId && u.role === 'admin') : null;
+    if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
+    if (!connections) return json(res, 503, { ok: false, error: 'connections_disabled' });
+    try { return json(res, 200, connections.saveFrom(body)); }
+    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+  if (pathname === '/api/connections/test' && req.method === 'POST') {
+    const body = await readBody(req);
+    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === body.adminId && u.role === 'admin') : null;
+    if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
+    const which = String(body.which || 'all');
+    const out = { ok: true, at: Date.now(), results: {} };
+    if (which === 'all' || which === 'binance') {
+      if (binance) { await binance.poll().catch(() => {}); out.results.binance = binance.status(); }
+    }
+    if (which === 'all' || which === 'finnhub') {
+      try { out.results.finnhub = market.status(); } catch (e) { out.results.finnhub = { error: e.message }; }
+    }
+    if (which === 'all' || which === 'brevo') {
+      try {
+        out.results.email = email ? email.status() : { configured: false };
+        if (email && email.configured && email.configured() && body.to) {
+          out.results.emailTestQueued = email.enqueue({ key: 'test:' + Date.now(), to: String(body.to), template: 'test', data: {}, appUrl: PUBLIC_URL || ('http://localhost:' + PORT) });
+        }
+      } catch (e) { out.results.email = { error: e.message }; }
+    }
+    return json(res, 200, out);
+  }
+
   /* --- Binance live crypto prices ---------------------------------------- */
   if (pathname === '/api/market/binance' && req.method === 'GET') {
     if (!binance) return json(res, 503, { ok: false, error: 'binance_disabled' });
@@ -929,6 +980,7 @@ server.headersTimeout = 70000;
   }
   market.start();
   if (binance) { binance.start(); console.log('[binance] live crypto price feed started'); }
+  if (connections) { try { connections.boot(); } catch (e) { console.error('[connections] boot:', e.message); } }
   if (b2bAlerts) { b2bAlerts.start(); console.log('[b2b-alerts] watcher started (email + in-app)'); }
   ensureServices(store.db);
   spot.startTimers();
