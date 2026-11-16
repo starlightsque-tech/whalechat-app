@@ -19,7 +19,7 @@
   function account(u) {
     if (!u.investAcct) {
       u.investAcct = {
-        usd: 0, payout: 0,
+        usd: 0, payout: 0, wcBalance: 0,
         portfolios: { stock: 0, wc: 0, b2b: 0, bot: 0 },
         tools: {}, b2b: {}, disputes: [], requests: [], ledger: [], autoReinvest: false
       };
@@ -59,11 +59,26 @@
     return (Number(a.usd) || 0) + (Number(a.payout) || 0) + (Number(p.b2b) || 0) + ((Number(u && u.balance) || 0) * RATE);
   }
 
+  function depositSummary(u) {
+    var map = {};
+    try {
+      (DB.deposits || []).filter(function (d) { return d.userId === u.id && d.status === 'approved'; }).forEach(function (d) {
+        var coin = String(d.coin || d.methodLabel || d.method || 'USD').toUpperCase().replace(/ .*/, '');
+        var usd = Number(d.amountUsd);
+        if (!(usd > 0)) usd = (Number(d.coins) || 0) * RATE;
+        map[coin] = (map[coin] || 0) + usd;
+      });
+    } catch (e) {}
+    var keys = Object.keys(map);
+    if (!keys.length) return '$0.00';
+    return keys.map(function (k) { return money(map[k]) + ' || ' + k; }).join('<br>');
+  }
+
   function quickActionsHTML() {
     var items = [
       ['download', 'Deposit', '#/deposit'], ['send', 'Withdraw', '#/withdraw'],
-      ['trend', 'Transfer', '#/investment/transfer'], ['briefcase', 'Invest', '#/investment'],
-      ['gift', 'Referrals', '#/referrals'], ['more', 'More', '#/investment/more']
+      ['briefcase', 'Invest', '#/investment'], ['refresh', 'Convert', '#/investment/convert'],
+      ['trend', 'Transfer', '#/investment/transfer'], ['gift', 'Referrals', '#/referrals'], ['more', 'More', '#/investment/more']
     ];
     return '<div class="card ih-quick"><div class="card-title" style="margin:0 0 8px">Quick actions</div><div class="ih-quickgrid">' +
       items.map(function (x) { return '<a href="' + x[2] + '" class="ih-quickbtn"><span>' + (typeof ic === 'function' ? ic(x[0], 17) : '') + '</span><b>' + x[1] + '</b></a>'; }).join('') +
@@ -87,10 +102,10 @@
         '<div class="ih-card"><span>Total assets</span><b>' + money(total(a, u)) + '</b><small>' + wc(total(a, u) / RATE) + ' WC equivalent</small></div>' +
         '<div class="ih-card"><span>Total assets balance</span><b>' + money(a.usd) + '</b><small>Available for top-ups</small></div>' +
         '<div class="ih-card"><span>Payout balance</span><b>' + money(a.payout) + '</b><small>Profits received</small></div>' +
-        '<div class="ih-card"><span>WC balance</span><b>' + wc(u.balance) + ' WC</b><small>Main WhaleChat wallet</small></div>' +
+        '<div class="ih-card"><span>WhaleCoin balance</span><b>' + wc(a.wcBalance || 0) + ' WC</b><small>Investment account WC</small></div>' +
       '</div>' +
       '<div class="card ih-actions"><div class="card-title" style="margin:0 0 8px">Investment account actions</div><div class="ih-btn-grid">' +
-        [['Transfer', '#/investment/transfer'], ['Convert', '#/investment/transfer'], ['Stock Trading', '#/invest'], ['WC-Investing', '#/invest/shares'], ['B2B-Investing', '#/investment/b2b'], ['Tools', '#/investment/tools'], ['History', '#/investment/history'], ['More', '#/investment/more']]
+        [['Transfer', '#/investment/transfer'], ['Convert', '#/investment/convert'], ['Stock Trading', '#/invest'], ['WC-Investing', '#/invest/shares'], ['B2B-Investing', '#/investment/b2b'], ['Tools', '#/investment/tools'], ['History', '#/investment/history'], ['More', '#/investment/more']]
           .map(function (x) { return '<a href="' + x[1] + '" class="btn btn-ghost btn-sm">' + x[0] + '</a>'; }).join('') +
       '</div></div>' +
       '<div class="card ih-actions"><div class="card-title" style="margin:0 0 8px">Portfolio top-ups</div><div class="ih-btn-grid">' +
@@ -113,6 +128,15 @@
       '<div class="field"><label class="label">Amount</label><input class="input" id="ihTrAmount" type="number" step="0.01" min="0" placeholder="0.00"/><div class="tiny muted" id="ihTrPreview">Rate: 1 WC = $0.50</div></div>' +
       '<button class="btn btn-primary" data-act="ih-transfer" style="width:100%">Continue</button></div>' +
       '<div class="card"><div class="card-title">Balances</div><div class="ih-list"><div class="ih-row"><span>WC wallet</span><b>' + wc(u.balance) + ' WC</b></div><div class="ih-row"><span>Investment total assets</span><b>' + money(a.usd) + '</b></div><div class="ih-row"><span>Payout balance</span><b>' + money(a.payout) + '</b></div></div></div>';
+  }
+
+  function convertPage(u) {
+    var a = account(u);
+    return head('Convert investment assets', 'Convert payout or total assets to WhaleCoin inside your investment account.', '#/investment') +
+      '<div class="card"><div class="field"><label class="label">Convert from</label><select class="input" id="ihCvFrom"><option value="payout">Payout balance — ' + money(a.payout) + '</option><option value="total">Total assets balance — ' + money(a.usd) + '</option></select></div>' +
+      '<div class="field"><label class="label">Amount (USD)</label><input class="input" id="ihCvAmount" type="number" step="0.01" min="0" placeholder="0.00"/><div class="tiny muted" id="ihCvPreview">Rate: 1 WC = $0.50</div></div>' +
+      '<button class="btn btn-primary" data-act="ih-convert" style="width:100%">Convert now</button></div>' +
+      '<div class="card"><div class="ih-list"><div class="ih-row"><span>Investment WC balance</span><b>' + wc(a.wcBalance || 0) + ' WC</b></div><div class="ih-row"><span>Payout balance</span><b>' + money(a.payout) + '</b></div><div class="ih-row"><span>Total assets</span><b>' + money(a.usd) + '</b></div></div></div>';
   }
 
   function topupPage(u, params) {
@@ -189,7 +213,8 @@
     var a = account(u); var assets = b2bAssets();
     var holdings = Object.keys(a.b2b).map(function (t) { var h = a.b2b[t]; if (!h || !(h.units > 0)) return ''; var q = null; try { q = INV.quote(t); } catch (e) {} var p = q ? q.price : h.avgPrice; return '<div class="ih-row"><div class="grow"><b>' + escH(t) + '</b><div class="tiny muted">' + Number(h.units).toLocaleString(undefined, { maximumFractionDigits: 6 }) + ' units · entry ' + money(h.avgPrice) + '</div></div><div style="text-align:right"><b>' + money(h.units * p) + '</b><div class="tiny muted">' + wc(h.units * p / RATE) + ' WC</div></div><button class="btn btn-xs btn-danger" data-act="ih-b2b-sell" data-t="' + escH(t) + '">Sell</button></div>'; }).join('');
     return head('B2B-Investing', 'Buy and sell 24/7 digital assets from your B2B portfolio balance.', '#/investment') +
-      '<div class="ih-cards"><div class="ih-card"><span>B2B capital</span><b>' + money(a.portfolios.b2b) + '</b></div><div class="ih-card"><span>Holdings value</span><b>' + money(Object.keys(a.b2b).reduce(function (sum, t) { var h = a.b2b[t]; var q = null; try { q = INV.quote(t); } catch (e) {} return sum + (h.units || 0) * ((q && q.price) || h.avgPrice || 0); }, 0)) + '</b></div></div>' +
+      '<div class="ih-cards"><div class="ih-card"><span>Capital balance</span><b>' + money(a.portfolios.b2b) + '</b></div><div class="ih-card"><span>Total assets balance</span><b>' + money(Object.keys(a.b2b).reduce(function (sum, t) { var h = a.b2b[t]; var q = null; try { q = INV.quote(t); } catch (e) {} return sum + (h.units || 0) * ((q && q.price) || h.avgPrice || 0); }, 0)) + '</b></div><div class="ih-card"><span>Profit balance</span><b class="' + ((Number(a.b2bProfit) || 0) >= 0 ? 'up' : 'down') + '">' + money(a.b2bProfit || 0) + '</b></div></div>' +
+      '<div class="card ih-actions"><div class="ih-btn-grid"><a href="#/investment/b2b" class="btn btn-ghost btn-sm">Asset lists</a><a href="#/investment/b2b" class="btn btn-ghost btn-sm">Buy / Sell</a><a href="#/investment/transfer" class="btn btn-ghost btn-sm">Transfer</a><a href="#/investment/history" class="btn btn-ghost btn-sm">History</a></div></div>' +
       '<div class="card"><div class="card-title">Buy asset</div><div class="field"><label class="label">Asset</label><select class="input" id="ihB2bAsset">' + assets.map(function (s) { return '<option value="' + escH(s.ticker) + '">' + escH(s.displayTicker || s.ticker) + ' — $' + (Number((INV.quote(s.ticker) || {}).price) || 0).toFixed(4) + '</option>'; }).join('') + '</select></div><div class="field"><label class="label">Amount (USD from B2B balance)</label><input class="input" id="ihB2bAmount" type="number" step="0.01" min="0" placeholder="0.00"/></div><button class="btn btn-primary" data-act="ih-b2b-buy" style="width:100%">Buy now</button></div>' +
       '<div class="card"><div class="card-title">Your assets</div>' + (holdings ? '<div class="ih-list">' + holdings + '</div>' : '<div class="empty" style="padding:18px"><p>No B2B holdings yet.</p></div>') + '</div>';
   }
@@ -288,6 +313,49 @@
       }).join('') : '<div class="tiny muted">No disputes.</div>') + '</div></div>';
   }
 
+  function stockStrip(u) {
+    var a = account(u);
+    var profit = 0;
+    try { (DB.trades || []).filter(function (t) { return t.userId === u.id && t.status === 'Completed' && t.type !== 'live'; }).forEach(function (t) { profit += Number(t.plUsd) || ((Number(t.pnlCoins) || 0) * RATE); }); } catch (e) {}
+    var cap = Number(a.portfolios.stock) || (Number(u.balance) || 0) * RATE;
+    return '<div class="ih-cards">' +
+      '<div class="ih-card"><span>Trade capital balance</span><b>' + money(cap) + '</b><small>' + wc(cap / RATE) + ' WC</small></div>' +
+      '<div class="ih-card"><span>Profit balance</span><b class="' + (profit >= 0 ? 'up' : 'down') + '">' + money(profit) + '</b><small>Closed trade P/L</small></div>' +
+      '<div class="ih-card"><span>Leftover capital</span><b>' + money(0) + '</b><small>Returned after losses</small></div>' +
+    '</div><div class="card ih-actions"><div class="ih-btn-grid">' +
+      [['Stocks','#/invest/market'],['Trade now','#/invest/market'],['Transfer','#/investment/transfer'],['Bot traders','#/invest/bots'],['History','#/invest/orders'],['Watchlist','#/invest/watchlist']]
+        .map(function(x){return '<a href="'+x[1]+'" class="btn btn-ghost btn-sm">'+x[0]+'</a>';}).join('') + '</div></div>';
+  }
+
+  function botStrip(u) {
+    var a = account(u); var st = (window.WC_BOTS && window.WC_BOTS.state) || {};
+    var capital = Number(st.balance) ? Number(st.balance) * RATE : Number(a.portfolios.bot) || 0;
+    var profit = Number(st.session && st.session.profitCoins ? st.session.profitCoins : 0) * RATE;
+    var leftover = Number(st.session && st.session.leftoverCoins ? st.session.leftoverCoins : 0) * RATE;
+    return '<div class="ih-cards">' +
+      '<div class="ih-card"><span>Trade capital balance</span><b>' + money(capital) + '</b></div>' +
+      '<div class="ih-card"><span>Profit balance</span><b class="' + (profit >= 0 ? 'up' : 'down') + '">' + money(profit) + '</b></div>' +
+      '<div class="ih-card"><span>Leftover capital</span><b>' + money(leftover) + '</b></div></div>' +
+      '<div class="card ih-actions"><div class="ih-btn-grid">' +
+      [['Start trading','#/invest/bots'],['Stop trading','#/invest/bots'],['Transfer','#/investment/transfer'],['Turn on/off bot','#/invest/bots'],['Settings','#/invest/bots'],['History','#/investment/history']]
+        .map(function(x){return '<a href="'+x[1]+'" class="btn btn-ghost btn-sm">'+x[0]+'</a>';}).join('') + '</div></div>';
+  }
+
+  function sharesStrip(u) {
+    var a = account(u); var st = (window.WC_SHARES && window.WC_SHARES.state) || {};
+    var sum = st.summary || {};
+    var capital = Number(sum.investedUsd) || Number(a.portfolios.wc) || 0;
+    var profit = Number(sum.totalEarnedUsd) || 0;
+    var leftover = Math.max(0, capital - Math.abs(profit));
+    return '<div class="ih-cards">' +
+      '<div class="ih-card"><span>Capital balance</span><b>' + money(capital) + '</b></div>' +
+      '<div class="ih-card"><span>Profits</span><b class="' + (profit >= 0 ? 'up' : 'down') + '">' + money(profit) + '</b></div>' +
+      '<div class="ih-card"><span>Leftover capital</span><b>' + money(leftover) + '</b></div></div>' +
+      '<div class="card ih-actions"><div class="ih-btn-grid">' +
+      [['Invest now','#/invest/shares'],['Active plans','#/invest/shares'],['Transfer','#/investment/transfer'],['ROI progress','#/invest/shares'],['History','#/investment/history']]
+        .map(function(x){return '<a href="'+x[1]+'" class="btn btn-ghost btn-sm">'+x[0]+'</a>';}).join('') + '</div></div>';
+  }
+
   function ensureView() {
     if (typeof VIEWS === 'undefined') return false;
     if (VIEWS.__wcInvestHub) return true;
@@ -295,6 +363,7 @@
       var u = me(); if (!u) return '';
       var sub = (parts && parts[1]) || '';
       if (sub === 'transfer') return transferPage(u);
+      if (sub === 'convert') return convertPage(u);
       if (sub === 'topup') return topupPage(u, params);
       if (sub === 'tools') return toolsPage(u);
       if (sub === 'b2b') return b2bPage(u);
@@ -321,12 +390,33 @@
         if (html.indexOf('<a href="#/deposit" class="btn">Deposit</a><a href="#/withdraw" class="btn">Withdraw</a>') >= 0) {
           html = html.replace('<a href="#/deposit" class="btn">Deposit</a><a href="#/withdraw" class="btn">Withdraw</a>', '<a href="#/deposit" class="btn">Deposit</a><a href="#/investment" class="btn">Investment account</a><a href="#/withdraw" class="btn">Withdraw</a>');
         }
+        var strip = '<div class="ih-cards ih-account-strip">' +
+          '<div class="ih-card"><span>Deposit balance</span><b>' + depositSummary(u) + '</b><small>Deposited coin assets</small></div>' +
+          '<div class="ih-card"><span>$ balance</span><b>' + money(u.walletUsd || 0) + '</b><small>USD wallet balance</small></div>' +
+          '<div class="ih-card"><span>WhaleCoin balance</span><b>' + wc(u.balance) + ' WC</b><small>Spendable WC</small></div>' +
+        '</div>';
+        html = html.replace('<div class="card mb16 profile-banner">', strip + '<div class="card mb16 profile-banner">');
         if (html.indexOf('Quick navigation') >= 0) {
           html = html.replace('<div class="section-title mt22"><h3>Quick navigation</h3></div>', quickActionsHTML() + '<div class="section-title mt22"><h3>Quick navigation</h3></div>');
         }
       }
       return html;
     };
+    if (typeof INV !== 'undefined' && INV.viewDash && !INV.__wcStockStrip) {
+      var baseDash = INV.viewDash;
+      INV.viewDash = function () { return stockStrip(me()) + baseDash.apply(this, arguments); };
+      INV.__wcStockStrip = true;
+    }
+    var baseInvestView = VIEWS.invest;
+    if (baseInvestView) {
+      VIEWS.invest = function (parts, params) {
+        var html = baseInvestView.apply(this, arguments);
+        var sub = (parts && parts[1]) || '';
+        if (sub === 'bots') html = botStrip(me()) + html;
+        else if (sub === 'shares') html = sharesStrip(me()) + html;
+        return html;
+      };
+    }
     VIEWS.__wcInvestHub = true;
     return true;
   }
@@ -359,6 +449,17 @@
         notifyH(other, 'Investment transfer received', money(amount) + ' was added to your investment account.', '#/investment');
       }
       save(); toastH('Transfer complete', 'ok'); render();
+    };
+    App.ihConvert = function () {
+      var u = me(); var a = account(u);
+      var from = (document.getElementById('ihCvFrom') || {}).value || 'payout';
+      var amt = Number((document.getElementById('ihCvAmount') || {}).value || 0);
+      if (!(amt > 0)) return toastH('Enter an amount', 'err');
+      var src = from === 'total' ? 'usd' : 'payout';
+      if ((Number(a[src]) || 0) < amt) return toastH('Not enough in that balance', 'err');
+      a[src] = Math.round((a[src] - amt) * 100) / 100;
+      a.wcBalance = Math.round((Number(a.wcBalance) + amt / RATE) * 100) / 100;
+      ledger(u, 'Convert ' + money(amt) + ' to investment WC', -amt, amt / RATE, { from: src }); save(); toastH('Converted to WC', 'ok'); render();
     };
     App.ihTopup = function () {
       var u = me(); var a = account(u);
@@ -406,6 +507,8 @@
       var q = null; try { q = INV.quote(ds.t); } catch (e) {}
       if (!q || !(q.price > 0)) return toastH('No live quote', 'err');
       var usd = h.units * q.price;
+      var basis = h.units * h.avgPrice;
+      a.b2bProfit = Math.round(((Number(a.b2bProfit) || 0) + (usd - basis)) * 100) / 100;
       a.portfolios.b2b = Math.round((a.portfolios.b2b + usd) * 100) / 100;
       delete a.b2b[ds.t];
       ledger(u, 'B2B sell ' + ds.t, usd, 0); save(); toastH('Sold ' + ds.t, 'ok'); render();
