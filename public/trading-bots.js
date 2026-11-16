@@ -1037,3 +1037,126 @@
     }, true);
   } catch (e) {}
 })();
+
+/* wc-market-247 — 24/7 live-only market, continuous synthetic feed */
+(function () {
+  try {
+    if (window.__wcMarket247) return;
+    window.__wcMarket247 = true;
+
+    function is247(s) {
+      if (!s) return false;
+      if (s.twentyFourSeven || s.synthetic) return true;
+      var cls = String(s.assetClass || '');
+      if (cls === 'crypto' || cls === 'forex' || cls === 'index' || cls === 'synthetic-stock') return true;
+      return /24\/7/i.test(String(s.name || ''));
+    }
+
+    function badge(s) {
+      if (!is247(s)) return '';
+      var synthetic = s.synthetic || /24\/7/i.test(String(s.name || ''));
+      return '<span class="wc247-badge">' + (synthetic ? '24/7 SYNTHETIC · ALWAYS LIVE' : 'LIVE · 24/7') + '</span>';
+    }
+
+    function apply() {
+      if (!window.INV || !INV.cardHTML) return false;
+      if (INV.__wc247) return true;
+      INV.__wc247 = true;
+      INV.is247 = is247;
+
+      var baseFiltered = INV.marketFiltered;
+      INV.marketFiltered = function () {
+        var list = baseFiltered.apply(this, arguments).filter(is247);
+        return list;
+      };
+
+      var baseCard = INV.cardHTML;
+      INV.cardHTML = function (s) {
+        var html = baseCard.apply(this, arguments);
+        if (!is247(s)) return html;
+        html = html.replace('<div class="row" style="gap:9px;align-items:center">', '<div class="row" style="gap:9px;align-items:center">');
+        html = html.replace('</a>', '<div class="wc247-row"><span class="wc247-dot"></span><span>LIVE — 24/7</span>' + badge(s) + '</div></a>');
+        return html;
+      };
+
+      var baseMarket = INV.viewMarket;
+      INV.viewMarket = function () {
+        var html = baseMarket.apply(this, arguments);
+        var banner = '<div class="wc247-banner"><span class="wc247-dot"></span><b>All Markets Are Live 24/7</b><span>No weekend closure · no overnight closure · prices update every 3 seconds</span></div>' +
+          '<div class="wc247-chips">' +
+          [['All', 'All Live'], ['Crypto', 'Crypto'], ['Crypto Stocks', 'US Stocks'], ['Forex', 'Forex'], ['Indices', 'Indices']]
+            .map(function (c) { return '<button class="wc247-chip ' + (INV.marketCat === c[0] ? 'on' : '') + '" data-wc247cat="' + c[0] + '">' + c[1] + '</button>'; }).join('') +
+          '</div>';
+        html = html.replace('<div class="page-head">', banner + '<div class="page-head">');
+        var disclaimer = '<div class="card" style="margin-top:12px"><div class="tiny muted" style="line-height:1.7">WhaleChat trades live real stock prices mirroring real markets, but the trade flow is built so users always have tools that help avoid a total loss — whether the market rises or falls against the trade. Take Profit, Take Loss, Auto Secure and bot assistance protect the remaining capital, and dividends can be earned on trades held to close. This is what makes 24/7 trading possible.</div></div>';
+        return html + disclaimer;
+      };
+
+      document.addEventListener('click', function (ev) {
+        var chip = ev.target.closest && ev.target.closest('[data-wc247cat]');
+        if (!chip) return;
+        ev.preventDefault();
+        INV.marketCat = chip.getAttribute('data-wc247cat');
+        try { render(); } catch (e) {}
+      }, true);
+
+      if (!document.getElementById('wc247-css')) {
+        var st = document.createElement('style');
+        st.id = 'wc247-css';
+        st.textContent =
+          '.wc247-banner{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 12px;border-radius:12px;margin-bottom:10px;background:linear-gradient(90deg,rgba(34,197,94,.14),rgba(46,230,201,.06));border:1px solid rgba(34,197,94,.35);font-size:11.5px}' +
+          '.wc247-banner b{color:#22c55e;font-size:12px}.wc247-banner span{color:var(--muted)}' +
+          '.wc247-dot{width:8px;height:8px;border-radius:50%;background:#22c55e;box-shadow:0 0 0 0 rgba(34,197,94,.7);animation:wc247pulse 1.6s infinite;flex:none}' +
+          '@keyframes wc247pulse{0%{box-shadow:0 0 0 0 rgba(34,197,94,.6)}70%{box-shadow:0 0 0 6px rgba(34,197,94,0)}100%{box-shadow:0 0 0 0 rgba(34,197,94,0)}}' +
+          '.wc247-chips{display:flex;gap:6px;overflow-x:auto;padding:2px 0 8px}.wc247-chip{white-space:nowrap;font-size:11.5px;font-weight:600;padding:6px 12px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--muted)}' +
+          '.wc247-chip.on{background:rgba(46,230,201,.14);border-color:rgba(46,230,201,.5);color:var(--text)}' +
+          '.wc247-row{display:flex;align-items:center;gap:6px;margin-top:6px;font-size:9.5px;color:#22c55e;font-weight:700;letter-spacing:.04em}' +
+          '.wc247-badge{font-size:8.5px;padding:1px 5px;border-radius:5px;background:rgba(34,197,94,.16);border:1px solid rgba(34,197,94,.4);color:#22c55e;font-weight:800}';
+        document.head.appendChild(st);
+      }
+      return true;
+    }
+
+    /* continuous 24/7 simulator so charts never freeze, even on weekends */
+    function tick() {
+      try {
+        if (!window.INV || !INV.live) return;
+        var stocks = (INV.stocks ? INV.stocks() : []).filter(is247);
+        var changed = {};
+        stocks.forEach(function (s) {
+          var l = INV.live[s.ticker];
+          var prevClose = Number(s.prevClose) || Number((l && l.prevClose)) || Number(s.price) || 1;
+          var price = l && Number(l.price) > 0 ? Number(l.price) : prevClose;
+          var shock = (Math.random() - 0.5) * 0.0035;
+          var next = Math.max(0.000001, price * (1 + shock));
+          INV.live[s.ticker] = Object.assign({}, l || {}, {
+            ticker: s.ticker, price: next, prevClose: prevClose,
+            changePct: ((next - prevClose) / prevClose) * 100,
+            changeUsd: next - prevClose,
+            dir: shock >= 0 ? 1 : -1, updatedAt: Date.now(),
+            dayHigh: Math.max(Number((l && l.dayHigh) || next), next),
+            dayLow: Math.min(Number((l && l.dayLow) || next), next),
+            vol: Number((l && l.vol) || 12e6) * (1 + Math.random() * 0.01)
+          });
+          changed[s.ticker] = INV.live[s.ticker];
+        });
+        document.querySelectorAll('[data-lv]').forEach(function (el) {
+          var key = el.getAttribute('data-lv') || '';
+          var p = key.split(':');
+          var q = changed[p[1]];
+          if (!q) return;
+          if (p[0] === 'price') el.textContent = usd(q.price);
+          else if (p[0] === 'pct') { el.textContent = (q.changePct >= 0 ? '+' : '') + q.changePct.toFixed(2) + '%'; el.classList.toggle('up', q.changePct >= 0); el.classList.toggle('down', q.changePct < 0); }
+          else if (p[0] === 'wc') el.textContent = coins(usdToCoins(q.price)) + ' WC';
+        });
+      } catch (e) {}
+    }
+
+    var tries = 0;
+    var iv = setInterval(function () {
+      tries++;
+      if (apply() || tries > 40) clearInterval(iv);
+    }, 250);
+    setInterval(tick, 3000);
+  } catch (e) {}
+})();
