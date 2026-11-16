@@ -1020,6 +1020,58 @@ LT.allocSlices = function (userId) {
   return Object.keys(map).map(t => ({ ticker: t, value: coinsToUsd(map[t]) })).sort((a, b) => b.value - a.value);
 };
 
+/* Auto Secure Take Profit on the stock trading page — reads the shared
+   subscription registry so a subscription made on the Tools page or the bots
+   page is already marked as subscribed here (and cannot be bought twice). */
+LT.autoSecureStrip = function () {
+  const S = (typeof window.WC_SUBS !== 'undefined') ? window.WC_SUBS : null;
+  if (!S) return '';
+  const st = S.status('autosecure');
+  const on = st === 'active';
+  const rec = S.record('autosecure') || {};
+  const price = S.price('autosecure');
+  const where = rec.source === 'tools' ? 'the Tools page' : rec.source === 'bots' ? 'Bot trading' : 'this page';
+  const secured = LT.summary(me().id);
+  return `<div class="card lt-autosecure" data-autosecure-strip="1">
+    <div class="between" style="align-items:flex-start;gap:10px">
+      <div style="min-width:0">
+        <div class="card-title" style="margin:0">${ic('shield', 15)} Auto Secure Take Profit</div>
+        <div class="tiny muted" style="margin-top:3px">Locks available profit on every open trade before it can reverse.</div>
+        ${on && rec.expiresAt ? `<div class="tiny muted">Active until ${new Date(Number(rec.expiresAt)).toLocaleDateString()}${rec.source && rec.source !== 'stock' ? ' · subscribed from ' + esc(where) : ''}</div>` : ''}
+      </div>
+      <span class="badge ${on ? 'badge-success' : st === 'expired' || st === 'paused' ? 'badge-warn' : ''}">${on ? 'Subscribed' : st === 'paused' ? 'Paused' : st === 'expired' ? 'Expired' : 'Not subscribed'}</span>
+    </div>
+    ${on ? `<div class="tiny up" style="margin-top:6px">Subscribed — secured profit awaiting claim: <b>+${coins(secured.securedCoins)} WC</b> · ${secured.securedCount} entr${secured.securedCount === 1 ? 'y' : 'ies'}</div>` : ''}
+    <div class="row" style="gap:8px;margin-top:9px;flex-wrap:wrap">
+      ${on
+        ? `<button class="btn btn-sm btn-ghost" data-act="lt-autosecure-off">Turn off</button>`
+        : `<button class="btn btn-sm btn-primary" data-act="lt-autosecure-on">Subscribe · ${usd(price)} / month</button>`}
+      <a class="btn btn-sm btn-ghost" href="#/invest/bots">Open bot trading</a>
+    </div>
+  </div>`;
+};
+
+  /* Auto Secure subscribe / cancel from the stock trading page */
+  LT.bindAutoSecure = function () {
+    if (typeof App === 'undefined') return;
+    App.ltAutosecureOn = async function () {
+      const S = window.WC_SUBS; if (!S) return toast('Subscriptions unavailable', 'err');
+      const r = await S.subscribe('autosecure', { source: 'stock', method: 'engine' });
+      if (r.already) return toast('Auto Secure is already subscribed — no second payment taken', 'ok');
+      if (!r.ok) return toast(r.error === 'cancelled' ? 'Subscription cancelled' : (r.error || 'Could not subscribe'), 'err');
+      toast('Auto Secure is ON across every page', 'ok');
+      render();
+    };
+    App.ltAutosecureOff = async function () {
+      const S = window.WC_SUBS; if (!S) return;
+      const r = await S.cancel('autosecure');
+      if (r.ok) toast('Auto Secure turned off', 'ok');
+      else if (r.error !== 'cancelled') toast(r.error || 'Could not turn off', 'err');
+      render();
+    };
+  };
+  LT.bindAutoSecure();
+
 LT.dash = function (params) {
   const u = me();
   const s = LT.summary(u.id);
@@ -1068,6 +1120,7 @@ LT.dash = function (params) {
   </div>
 
   <div class="inv-actions">${quick.map(q => `<a href="${q.nav}" class="inv-act"><span class="inv-act-ic">${ic(q.ic, 18)}</span><span>${q.label}</span></a>`).join('')}</div>
+  ${LT.autoSecureStrip()}
 
   <div class="card inv-chartcard">
     <div class="between" style="align-items:center">

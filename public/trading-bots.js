@@ -279,12 +279,17 @@
 
   function autoSecureHTML() {
     const a = (B.state && B.state.autoSecure) || { active: false, enabled: false, priceCoins: 40, billedAs: 'monthly', securedCount: 0, securedCoins: 0 };
-    const on = a.active && a.enabled;
+    /* the shared registry is the single source of truth for "subscribed" */
+    const shared = (typeof window.WC_SUBS !== 'undefined' && window.WC_SUBS) ? window.WC_SUBS : null;
+    const sharedRec = shared ? shared.record('autosecure') : null;
+    const sharedOn = shared ? shared.is('autosecure') : false;
+    const subscribedAnywhere = (a.active || sharedOn);
+    const on = (a.active && a.enabled) || (sharedOn && !(sharedRec && sharedRec.paused));
     return `<div class="card" id="botAutoCard">
       <div class="between" style="align-items:flex-start;gap:10px">
         <div><div class="card-title" style="margin:0">Auto Secure Take Profit</div>
           <div class="tiny muted" style="margin-top:3px">Bot tool · watches every active trade and locks available profit even while you are offline.</div></div>
-        <span class="badge ${on ? 'badge-success' : a.active ? 'badge-warn' : ''}">${on ? 'ON' : a.active ? 'OFF' : 'Not subscribed'}</span>
+        <span class="badge ${on ? 'badge-success' : subscribedAnywhere ? 'badge-warn' : ''}">${on ? 'Subscribed' : subscribedAnywhere ? 'Paused' : 'Not subscribed'}</span>
       </div>
       <div class="bot-autosecure-grid">
         <div><span class="tiny muted">Secured profits</span><b><span data-bot-secured>${num(a.securedCoins)}</span> WC</b></div>
@@ -297,9 +302,11 @@
         open <b>Orders</b> and press <b>Take profit</b> on each secured entry to add it to your balance.
       </div>
       <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
-        ${a.active
+        ${subscribedAnywhere
           ? `<button class="btn btn-sm ${on ? 'btn-ghost' : 'btn-primary'}" data-act="bot-auto-toggle">${on ? 'Turn off auto secure' : 'Turn on auto secure'}</button>
-             <button class="btn btn-sm btn-ghost" data-act="bot-auto-subscribe">Renew tool</button>`
+             ${sharedRec && sharedRec.source && sharedRec.source !== 'bots'
+               ? `<span class="tiny up" style="align-self:center">Subscribed from ${escB(sharedRec.source === 'tools' ? 'the Tools page' : 'the stock page')} — no extra charge</span>`
+               : `<button class="btn btn-sm btn-ghost" data-act="bot-auto-subscribe">Renew tool</button>`}`
           : `<button class="btn btn-sm btn-primary" data-act="bot-auto-subscribe">Subscribe · ${num(a.priceCoins)} WC / ${escB(a.billedAs || 'monthly')}</button>`}
         ${a.securedCount ? `<a class="btn btn-sm btn-soft" href="#/invest/orders">Claim secured profit</a>` : ''}
       </div>
@@ -652,8 +659,32 @@
     };
 
     App.botAutoSubscribe = async function () {
-      if (typeof Remote === 'undefined' || !Remote.enabled) return tmsg('Connect the sync server to subscribe', 'err');
+      /* shared subscription guard — never charge a user twice for the same tool */
+      const shared = (typeof window.WC_SUBS !== 'undefined' && window.WC_SUBS) ? window.WC_SUBS : null;
+      const sharedRec = shared ? shared.record('autosecure') : null;
+      const alreadyHere = shared ? shared.is('autosecure') : false;
+      if (alreadyHere && sharedRec && sharedRec.source && sharedRec.source !== 'bots') {
+        return tmsg('Auto Secure is already subscribed from the Tools page — nothing more to pay', 'ok');
+      }
+      if (typeof Remote === 'undefined' || !Remote.enabled) {
+        /* offline mode: record the subscription locally so every page agrees */
+        if (!shared) return tmsg('Connect the sync server to subscribe', 'err');
+        const local = await shared.subscribe('autosecure', { source: 'bots', method: 'credit' });
+        if (local.already) return tmsg('Auto Secure is already subscribed', 'ok');
+        if (!local.ok) return tmsg(local.error === 'cancelled' ? 'Subscription cancelled' : (local.error || 'Subscription failed'), 'err');
+        tmsg('Auto Secure is ON — available profit will be secured for you', 'ok');
+        return render();
+      }
       const a = (B.state && B.state.autoSecure) || {};
+      if (alreadyHere) {
+        /* billed elsewhere already — just make sure the engine knows about it */
+        try {
+          await api('/api/bots/auto-secure/subscribe', { method: 'POST', body: JSON.stringify({ userId: uidNow(), activateOnly: true }) }, 25000);
+          await load(true);
+        } catch (e) {}
+        tmsg('Auto Secure is already subscribed — synced across every page', 'ok');
+        return render();
+      }
       if (typeof confirmDialog === 'function') {
         const ok = await confirmDialog({
           title: 'Subscribe to Auto Secure Take Profit?',
@@ -667,7 +698,20 @@
         if (!r.res || !r.res.ok || !r.data || !r.data.ok) return tmsg((r.data && r.data.error) || 'Subscription failed', 'err');
         await Remote.refresh(true);
         await load(true);
-        tmsg('Auto Secure is ON — available profit will be secured for you', 'ok');
+        /* mirror the server record into the shared registry so the Tools page
+           and the stock page show it as subscribed (no second payment) */
+        if (shared) {
+          const auto = (B.state && B.state.autoSecure) || {};
+          shared.set('autosecure', {
+            active: true, paused: auto.enabled === false,
+            expiresAt: Number(auto.expiresAt) || (Date.now() + 30 * 864e5),
+            price: Number(auto.priceUsd) || shared.price('autosecure'),
+            priceCoins: Number(auto.priceCoins) || 0,
+            paidUsd: 0, source: 'bots', mirroredAt: Date.now()
+          }, { silent: true });
+          shared.reconcile({ silent: true });
+        }
+        tmsg('Auto Secure is ON across the bots page, tools page and stock page', 'ok');
         render();
       } catch (e) { tmsg('Subscription failed: ' + e.message, 'err'); }
     };

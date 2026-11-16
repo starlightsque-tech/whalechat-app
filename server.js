@@ -22,6 +22,8 @@ const { MarketService, DEFAULT_ASSETS, assetKey, displayTickerFor } = require('.
 const { SpotService } = require('./spot');
 const { BotService } = require('./bots');
 const { ShareService } = require('./shares');
+let createB2BAlertWatcher = null;
+try { createB2BAlertWatcher = require('./b2b-alerts').createB2BAlertWatcher; } catch (e) { console.error('[b2b-alerts] module unavailable:', e.message); }
 const market = new MarketService({
   dataDir: DATA_DIR,
   getDb: () => store.db,
@@ -46,6 +48,18 @@ const shares = new ShareService({
   persist: () => persist(),
   broadcast: (event, data) => { try { broadcast(event, data); } catch (e) {} }
 });
+/* B2B price alerts: evaluate on the server so email + in-app notification are
+   delivered even when the user's app is closed. */
+const b2bAlerts = createB2BAlertWatcher ? createB2BAlertWatcher({
+  getDb: () => store.db,
+  persist: () => persist(),
+  broadcast: (event, data) => { try { broadcast(event, data); } catch (e) {} },
+  quotes: () => market.quotes || {},
+  email,
+  appUrl: () => PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || ('http://localhost:' + PORT),
+  everyMs: Number(process.env.B2B_ALERT_MS || 15000)
+}) : null;
+
 let pool = null;
 const BUILD = process.env.APP_BUILD || new Date().toISOString();
 
@@ -378,6 +392,26 @@ async function dispatchPushes(pushes, db) {
 }
 
 async function api(req, res, pathname, query) {
+  /* --- B2B price alerts: status, manual evaluation, link verification ---- */
+  if (pathname === '/api/b2b/alerts/status' && req.method === 'GET') {
+    const appUrl = PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || ('http://localhost:' + PORT);
+    return json(res, 200, {
+      ok: true,
+      watcher: b2bAlerts ? b2bAlerts.status() : { disabled: true },
+      email: email ? { configured: email.configured(), provider: email.status().provider } : { configured: false },
+      links: {
+        buy: b2bAlerts ? b2bAlerts.buyLink(appUrl, 'BTCUSD') : null,
+        sell: b2bAlerts ? b2bAlerts.sellLink(appUrl, 'BTCUSD') : null,
+        page: appUrl + '/whalechat.html'
+      }
+    });
+  }
+  if (pathname === '/api/b2b/alerts/run' && req.method === 'POST') {
+    if (!b2bAlerts) return json(res, 503, { ok: false, error: 'watcher_disabled' });
+    try { return json(res, 200, { ok: true, status: b2bAlerts.run() }); }
+    catch (e) { return json(res, 500, { ok: false, error: e.message }); }
+  }
+
   if (pathname === '/api/health' && req.method === 'GET') {
     return json(res, 200, { ok: true, app: 'whalechat', version: readJSON(path.join(PUBLIC_DIR, 'version.json'), {}).version || null, build: (readJSON(path.join(PUBLIC_DIR, 'version.json'), {}).build) || BUILD, uptimeSec: Math.floor((Date.now() - STARTED) / 1000), rev: store.rev, users: (store.db && store.db.users) ? store.db.users.length : 0, clients: clients.size, push: !!webpush, publicUrl: PUBLIC_URL || null, storage: pool ? 'postgres' : 'file', email: !!(email && email.configured()), market: market.status() });
   }
@@ -865,6 +899,7 @@ server.headersTimeout = 70000;
     console.log('[market] restored durable config · mode', durableMarket.mode || 'simulated', '· key', durableMarket.apiKey ? 'set' : 'not set');
   }
   market.start();
+  if (b2bAlerts) { b2bAlerts.start(); console.log('[b2b-alerts] watcher started (email + in-app)'); }
   ensureServices(store.db);
   spot.startTimers();
   bots.startTimers();
@@ -880,6 +915,7 @@ let stopping = false;
 function shutdown(signal) {
   if (stopping) return; stopping = true;
   try { market.stop(); } catch (e) {}
+  try { if (b2bAlerts) b2bAlerts.stop(); } catch (e) {}
   try { spot.stopTimers(); } catch (e) {}
   try { bots.stopTimers(); } catch (e) {}
   try { shares.stopTimers(); } catch (e) {}

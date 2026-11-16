@@ -13,7 +13,9 @@
     "build:mobile": "node scripts/build-mobile.mjs",
     "build": "node scripts/prepare-assets.js",
     "demo:catalog": "node scripts/generate-demo-catalog.mjs",
-    "verify:finnhub": "node scripts/verify-finnhub.js"
+    "verify:finnhub": "node scripts/verify-finnhub.js",
+    "test:b2b": "node scripts/test-b2b-desk.js",
+    "verify:b2b": "node scripts/verify-b2b-links.mjs"
   },
   "dependencies": {
     "web-push": "^3.6.7",

@@ -169,6 +169,36 @@ const templates = {
     const text = String(data.text || html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 1000));
     return { subject: String(data.subject || 'WhaleChat'), html: layout(null, html, null), text };
   },
+  b2bAlert(data, ctx) {
+    const d = data || {};
+    const user = d.user || {};
+    const first = String(user.fullName || user.username || 'there').split(' ')[0];
+    const ticker = String(d.ticker || '').toUpperCase();
+    const isBuy = String(d.side || 'buy') === 'buy';
+    const price = Number(d.price) || 0;
+    const target = Number(d.target) || 0;
+    const money = (v) => '$' + (Math.round(v * 100) / 100).toFixed(2);
+    const buyUrl = d.buyUrl || (ctx.appUrl + '/whalechat.html#/investment/b2b/buy');
+    const sellUrl = d.sellUrl || (ctx.appUrl + '/whalechat.html#/investment/b2b/sell');
+    const title = isBuy ? 'Buy target reached · ' + ticker : 'Sell target reached · ' + ticker;
+    const line = isBuy
+      ? ticker + ' is trading at <b style="color:#e9f4f9">' + money(price) + '</b>, at or below your buy target of ' + money(target) + '.'
+      : ticker + ' is trading at <b style="color:#e9f4f9">' + money(price) + '</b>, at or above your sell target of ' + money(target) + '.';
+    const primary = isBuy ? buyUrl : sellUrl;
+    return {
+      subject: title + ' · WhaleChat',
+      html: layout(title,
+        `Hi ${escapeHtml(first)},<br/><br/>${line}<br/><br/>
+         Your B2B investing desk is ready — open it to act on the alert.
+         <div style="margin-top:18px">
+           <a href="${escapeHtml(buyUrl)}" style="display:inline-block;background:#22c55e;color:#04220f;text-decoration:none;font-weight:700;padding:11px 18px;border-radius:10px;margin:0 8px 0 0">Buy now</a>
+           <a href="${escapeHtml(sellUrl)}" style="display:inline-block;background:#ef4444;color:#2a0505;text-decoration:none;font-weight:700;padding:11px 18px;border-radius:10px">Sell now</a>
+         </div>
+         <div style="margin-top:16px;font-size:12px;color:#63798a">This alert stays active until you remove it on the desk. Price alerts are informational and do not place orders for you.</div>`,
+        { label: isBuy ? 'Buy ' + ticker + ' now' : 'Sell ' + ticker + ' now', url: primary }),
+      text: title + '. ' + ticker + ' is ' + money(price) + ' (target ' + money(target) + '). Buy: ' + buyUrl + ' · Sell: ' + sellUrl
+    };
+  },
   test(ctx) {
     return {
       subject: 'WhaleChat email service is working',
