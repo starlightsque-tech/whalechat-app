@@ -1520,11 +1520,11 @@ const LT = {
 
   cfg() {
     if (!DB) return { leverage: 5 };
-    if (!DB.invest) DB.invest = { feePct: 0.5, paused: {}, seededAt: Date.now() };
+    if (!DB.invest) DB.invest = { feePct: 0.12, paused: {}, seededAt: Date.now() };
     if (!DB.invest.leverage) DB.invest.leverage = 5;
     return DB.invest;
   },
-  leverage() { return Math.min(20, Math.max(1, Number(this.cfg().leverage) || 1)); },
+  leverage() { return Math.min(100, Math.max(1, Number(this.cfg().leverage) || 1)); },
   feePct() { return Math.max(0, Number(this.cfg().feePct) || 0); },
   all(userId) {
     if (!Array.isArray(DB.trades)) DB.trades = [];

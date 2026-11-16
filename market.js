@@ -33,6 +33,16 @@ const FALLBACK_EXTRA_PRICES = {
   PEP: 158.4, PLTR: 68.2, ARM: 138.5, SHOP: 118.4, HOOD: 48.6
 };
 
+/* Canonical opening anchors for the 24/7 universe. Older builds generated
+   fallback prices from a hash, which could leave BTC/USD at $200 instead of
+   $64,250. A quote more than 2x away from its anchor is re-based on boot. */
+const CANON_247 = {
+  BTCUSD: 64250, ETHUSD: 3120, SOLUSD: 148, BNBUSD: 585, DOGEUSD: 0.14, XRPUSD: 0.52,
+  EURUSD24: 1.086, GBPUSD24: 1.271, USDJPY24: 156.4,
+  MARA24: 22.4, SHOP24: 78.2, TSLA24: 248.5, AAPL24: 228.1, NVDA24: 132.9, AMZN24: 201.4,
+  US3024: 43820, US10024: 20450, GOLD24: 2685, OIL24: 72.8
+};
+
 const FALLBACK_DIVIDEND_YIELDS = {
   AAPL: 0.45, TSLA: 0, NVDA: 0.03, COIN: 0, MSTR: 0, MARA: 0, KO: 3.00, JPM: 2.20,
   NKE: 1.80, UNH: 1.50, AVGO: 1.20, WMT: 1.00, DIS: 0.80, V: 0.75, UBER: 0, AMZN: 0,
@@ -127,6 +137,16 @@ function usMarketOpen(d) {
   if (NY_HOLIDAYS.has(nyDateKey(t))) return false;
   const mins = c.hour * 60 + c.minute;
   return mins >= 9 * 60 + 30 && mins < 16 * 60;
+}
+
+/* Assets that trade continuously, Monday to Sunday. They are driven by the
+   24/7 engine below and are never gated by the New York cash-session clock. */
+function is247Asset(a) {
+  if (!a) return false;
+  if (a.twentyFourSeven || a.synthetic) return true;
+  const cls = String(a.assetClass || '').toLowerCase();
+  if (cls === 'crypto' || cls === 'forex' || cls === 'index' || cls === 'indices' || cls === 'synthetic-stock') return true;
+  return /24\/7|synthetic/i.test(String(a.name || ''));
 }
 
 function id(prefix) { return prefix + Date.now().toString(36) + crypto.randomBytes(3).toString('hex'); }
@@ -254,7 +274,10 @@ class MarketService {
       name: s.name || s.ticker,
       exchange: s.exchange || (s.assetClass === 'forex' ? 'OANDA' : s.assetClass === 'crypto' ? 'Binance' : 'US'),
       currency: s.currency || 'USD',
-      price: Number(s.price) || 0
+      price: Number(s.price) || 0,
+      twentyFourSeven: !!s.twentyFourSeven,
+      synthetic: !!s.synthetic,
+      hidden: !!s.hidden
     }));
     this.byFinnhub = new Map(this.assets.map((a) => [String(a.finnhubSymbol).toUpperCase(), a.ticker]));
     return this.assets;
@@ -347,11 +370,26 @@ class MarketService {
     this.refreshAssets();
     let moved = 0;
     this.assetList().forEach((a) => {
+      if (a.hidden) return;
       const lastReal = this.lastRealTime[a.ticker] || 0;
-      if (now - lastReal < 12000) return;                    /* real ticks are flowing */
+      /* 24/7 assets always tick, even while a real quote is warm: their own
+         synthetic feed is the only source and must never freeze on weekends. */
+      if (!is247Asset(a) && now - lastReal < 12000) return;  /* real ticks are flowing */
       let q = this.quotes[a.ticker];
+      /* repair a quote left at a wildly wrong level by an older build */
+      const canon = CANON_247[a.ticker];
+      if (canon && q && Number(q.price) > 0) {
+        const ratio = Number(q.price) / canon;
+        if (ratio > 2 || ratio < 0.5) {
+          this.writeQuote(a.ticker, canon, { prevClose: canon, open: canon, source: 'simulated', real: false });
+          this.seedHistory(a.ticker, canon, now);
+          this.seedBase[a.ticker] = canon;
+          q = this.quotes[a.ticker];
+        }
+      }
       if (!q || !(Number(q.price) > 0)) {
-        const base = this.fallbackBase(a.ticker);
+        /* the catalogue price is the anchor — never invent a different base */
+        const base = canon || (Number(a.price) > 0 ? Number(a.price) : this.fallbackBase(a.ticker));
         this.writeQuote(a.ticker, base, { prevClose: base, open: base, source: 'simulated', real: false });
         this.seedHistory(a.ticker, base, now);
         this.seedBase[a.ticker] = base;
@@ -360,7 +398,7 @@ class MarketService {
       }
       const base = this.seedBase[a.ticker] || this.fallbackBase(a.ticker) || q.price;
       const cls = a.assetClass || 'us';
-      const vol = cls === 'crypto' ? 0.0032 : cls === 'forex' ? 0.00055 : cls === 'global' ? 0.0018 : 0.0015;
+      const vol = cls === 'crypto' ? 0.0032 : cls === 'forex' ? 0.00055 : cls === 'global' || cls === 'index' ? 0.0018 : 0.0015;
       const shock = (Math.random() - 0.5) * 2 * vol;
       const drift = (base - q.price) / base * 0.0018;
       const next = Math.max(base * 0.55, Math.min(base * 1.8, q.price * (1 + shock + drift)));
@@ -550,7 +588,8 @@ class MarketService {
     if (this.seeding || !this.config.apiKey) return;
     this.seeding = true;
     try {
-      const assets = this.assetList();
+      /* synthetic 24/7 symbols have no Finnhub listing — never spend calls on them */
+      const assets = this.assetList().filter((a) => !a.hidden && !(a.synthetic || /24\/7/i.test(String(a.name || ''))));
       for (const a of assets) {
         if (this.stopped) break;
         if (Date.now() < this.rateLimitedUntil) break;
@@ -573,6 +612,7 @@ class MarketService {
     this.polling = true;
     try {
       for (const a of this.assetList()) {
+        if (a.hidden || a.synthetic || /24\/7/i.test(String(a.name || ''))) continue;
         const wsFresh = this.wsConnected && this.lastWsTickAt && Date.now() - this.lastWsTickAt < 45000;
         if (this.stopped || wsFresh) break;
         const t = a.ticker;
@@ -706,9 +746,10 @@ class MarketService {
       this.lastWsTickAt = Date.now();
       this.lastError = '';
       this.assetList().forEach((a) => {
+        if (a.hidden || a.synthetic || /24\/7/i.test(String(a.name || ''))) return;
         try { ws.send(JSON.stringify({ type: 'subscribe', symbol: a.finnhubSymbol })); } catch (e) {}
       });
-      console.log('[market] Finnhub WebSocket connected ·', this.assetList().length, 'subscriptions');
+      console.log('[market] Finnhub WebSocket connected ·', this.assetList().filter((a) => !a.hidden && !a.synthetic).length, 'subscriptions');
     };
     ws.onmessage = (ev) => {
       let msg;
@@ -754,16 +795,8 @@ class MarketService {
   }
 
   notice() {
-    if (this.liveConfigured) {
-      if (this.lastRealAt && Date.now() - this.lastRealAt < 90000) return 'Live market data via Finnhub';
-      if (!usMarketOpen()) return 'Market closed — showing the last real Finnhub prices';
-      return 'Waiting for the first live Finnhub quote…';
-    }
-    const sim = this.lastSimAt && Date.now() - this.lastSimAt < 8000;
-    if (this.config.mode === 'hybrid' && this.config.apiKey) {
-      return sim ? 'Live Finnhub with 24/7 simulated fallback where ticks are stale' : 'Live market data via Finnhub';
-    }
-    return '24/7 simulated market mode — prices move for every stock';
+    /* every listed asset is a 24/7 market: there is no closed state to report */
+    return 'All markets live 24/7 — no weekend or overnight closure';
   }
 
   source() {
@@ -775,7 +808,8 @@ class MarketService {
       mode: this.config.mode,
       refreshSec: this.config.refreshSec,
       hasKey: !!this.config.apiKey,
-      marketOpen: usMarketOpen(),
+      marketOpen: true,
+      alwaysOpen: true,
       source: this.source(),
       notice: this.notice(),
       fallbackReason: this.fallbackReason(),
@@ -802,7 +836,8 @@ class MarketService {
       ok: true,
       at: Date.now(),
       source: this.source(),
-      marketOpen: usMarketOpen(),
+      marketOpen: true,
+      alwaysOpen: true,
       notice: this.notice(),
       status: this.status(),
       quotes: this.quotes
@@ -1365,11 +1400,10 @@ class MarketService {
     this.timers.push(setInterval(() => { try { this.settleTrades(); } catch (e) { this.lastError = e.message; } }, 1000));
     /* last real prices on disk → instant first paint after a cold start */
     this.timers.push(setInterval(() => { try { this.saveQuotesFile(); } catch (e) {} }, 30000));
-    /* simulated movement is a demo-only feature: with a Finnhub key the app
-       shows real prices only, and the chart holds when the market is closed */
-    if (!this.liveConfigured) {
-      this.timers.push(setInterval(() => { try { this.simulateTick(); } catch (e) { this.lastError = e.message; } }, 2000));
-    }
+    /* The 24/7 engine always runs. Real Finnhub ticks win while they are fresh;
+       every other symbol (and every synthetic) keeps moving every 2 seconds so
+       no chart is ever frozen — weekends, nights and holidays included. */
+    this.timers.push(setInterval(() => { try { this.simulateTick(); } catch (e) { this.lastError = e.message; } }, 2000));
     this.timers.push(setInterval(() => {
       try {
         if (this.config.mode === 'hybrid' && this.config.apiKey) this.pollCycle();
@@ -1409,4 +1443,4 @@ class MarketService {
   }
 }
 
-module.exports = { MarketService, TICKERS, DEFAULT_ASSETS, assetKey, displayTickerFor, usMarketOpen };
+module.exports = { MarketService, TICKERS, DEFAULT_ASSETS, assetKey, displayTickerFor, usMarketOpen, is247Asset };

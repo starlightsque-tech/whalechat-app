@@ -1,8 +1,8 @@
 {
-  "version": "3.32.0",
-  "build": "2026-11-16T02:35:31Z",
+  "version": "3.38.0",
+  "build": "2026-11-16T02:53:22Z",
   "file": "whalechat.html",
-  "notes": "24/7 live-only market: crypto, forex and synthetic stocks/indices that never close, with continuous 3s price movement.",
-  "releasedAt": "2026-11-16T02:35:31.119Z",
+  "notes": "24/7 live-only market (crypto, synthetic forex, synthetic stocks, synthetic indices) with a continuous 2s feed, always-live charts, LIVE badges and filters; auto-updating Trade Guide + admin recommendation message; WC Shares payout workflow.",
+  "releasedAt": "2026-11-16T02:53:22Z",
   "minimum": "3.0.0"
 }

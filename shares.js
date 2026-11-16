@@ -115,18 +115,35 @@ class ShareService {
   }
 
   /* --------------------------------- views --------------------------------- */
-  /* Market-linked payout: the admin plan % is the participation rate applied to
-     the WhaleChat share price move since the user bought in.
-       marketReturn = (priceNow - entryPrice) / entryPrice
-       roi          = planPct/100 × marketReturn
-       profit       = capital × roi            (negative when the price falls) */
+  /* WhaleChat Shares payout (admin-approved flow):
+       daily profit = share price (USD) × plan rate %
+       total profit = daily profit × plan days × capital (USD)
+     Example: $12.45 price, 3% plan, $100 capital, 7 days
+       12.45 × 3% = $0.3735/day
+       0.3735 × 7 × 100 = $261.45 total profit
+     Profit is converted to WC at the app rate before it is credited, and the
+     original capital is returned with it. A falling share price reduces the
+     daily turn-up; a total loss closes the plan without reinvestment. */
   planPnl(inv, price) {
-    const amount = Number(inv.amountCoins) || 0;
+    const amountUsd = Number(inv.amountUsd) || (Number(inv.amountCoins) || 0) * 0.5;
     const entry = Number(inv.entryPriceUsd) || 0;
     const rate = (Number(inv.returnPct) || 0) / 100;
     const px = Number(price) || entry;
+    const start = Number(inv.startAt) || Date.now();
+    const end = Number(inv.endAt) || start;
+    const days = Math.max(1, Math.round((end - start) / 86400000) || 1);
+    const dailyUsd = px * rate;
+    const totalUsd = dailyUsd * days * amountUsd;
     const marketReturn = entry > 0 ? (px - entry) / entry : 0;
-    return { marketReturn, roi: rate * marketReturn, profit: round(amount * rate * marketReturn, 6) };
+    return {
+      marketReturn,
+      days,
+      dailyUsd: round(dailyUsd, 6),
+      totalUsd: round(totalUsd, 6),
+      dailyProfitCoins: round(dailyUsd / 0.5, 6),
+      roi: amountUsd > 0 ? totalUsd / amountUsd : 0,
+      profit: round(totalUsd / 0.5, 6)
+    };
   }
 
   investmentView(inv) {
@@ -139,7 +156,8 @@ class ShareService {
     const matured = inv.status === 'completed' || now >= end;
     const priceNow = this.sharePrice();
     const pnl = this.planPnl(inv, priceNow);
-    const profitCoins = round(inv.status === 'completed' ? (Number(inv.profitCoins) || 0) : pnl.profit, 6);
+    const progressForAccrual = inv.status === 'completed' ? 1 : Math.max(0, Math.min(1, (now - start) / duration));
+    const profitCoins = round(inv.status === 'completed' ? (Number(inv.profitCoins) || 0) : pnl.profit * progressForAccrual, 6);
     const accrued = profitCoins;
     const progress = inv.status === 'completed' ? 100 : Math.min(100, (elapsed / duration) * 100);
     const shares = Number(inv.shares) || (Number(inv.amountUsd) || 0) / (Number(inv.entryPriceUsd) || priceNow);
@@ -156,8 +174,11 @@ class ShareService {
       planRoiPct: round(pnl.roi * 100, 6),
       shares: round(shares, 6),
       accruedCoins: round(accrued, 6), accruedUsd: round(accrued * 0.5, 4),
-      targetProfitCoins: round(amount * (planPct / 100) * Math.max(0, pnl.marketReturn), 6),
-      targetProfitUsd: round(amount * (planPct / 100) * Math.max(0, pnl.marketReturn) * 0.5, 2),
+      durationDays: pnl.days,
+      dailyProfitCoins: pnl.dailyProfitCoins,
+      dailyProfitUsd: pnl.dailyUsd,
+      targetProfitCoins: round(pnl.profit, 6),
+      targetProfitUsd: round(pnl.totalUsd, 2),
       currentValueCoins: round(Math.max(0, amount + accrued), 2),
       currentValueUsd: round(Math.max(0, amount + accrued) * 0.5, 2),
       progressPct: round(progress, 2),
@@ -169,10 +190,12 @@ class ShareService {
         const from = new Date(start).toISOString().slice(0, 10);
         return (this.market().daily || []).filter((d) => d && d.d >= from).slice(-90).map((d) => {
           const turn = Number(d.open) > 0 ? (Number(d.close) - Number(d.open)) / Number(d.open) : 0;
+          const dayPrice = Number(d.close) > 0 ? Number(d.close) : priceNow;
+          const dayProfitUsd = dayPrice * rate;
           return {
             d: d.d, open: round(Number(d.open), 4), close: round(Number(d.close), 4),
-            turnPct: round(turn * 100, 4), roiPct: round(rate * turn * 100, 6),
-            profitCoins: round(amount * rate * turn, 6)
+            turnPct: round(turn * 100, 4), roiPct: round(dayProfitUsd, 6),
+            profitCoins: round(dayProfitUsd / 0.5, 6)
           };
         });
       })(),

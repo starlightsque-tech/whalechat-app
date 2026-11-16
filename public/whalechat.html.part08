@@ -1616,9 +1616,9 @@ INV.SEED = [
 
 /* ------------------------------ persistence helpers ------------------------------ */
 INV.db = function () {
-  if (!DB.invest) DB.invest = { feePct: 0.5, paused: {}, seededAt: null };
+  if (!DB.invest) DB.invest = { feePct: 0.12, paused: {}, seededAt: null };
   if (!DB.invest.paused) DB.invest.paused = {};
-  if (typeof DB.invest.feePct !== 'number') DB.invest.feePct = 0.5;
+  if (typeof DB.invest.feePct !== 'number') DB.invest.feePct = 0.12;
   ['stocks', 'holdings', 'trades', 'watchlist', 'alerts'].forEach(k => { if (!Array.isArray(DB[k])) DB[k] = []; });
   if (!DB.invest.seededAt) {
     // seed the catalogue once per database, never overwriting admin edits

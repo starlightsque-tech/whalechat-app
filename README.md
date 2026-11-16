@@ -752,3 +752,58 @@ is always distinguishable from real vendor inventory. Demo shopper orders remain
 
 Product photos and portraits are studio-style renders shipped with the app — no emoji and no
 placeholder graphics. Owner avatars live at `./demo/sellers/<seller-slug>.jpg`.
+
+## 24/7 live market + Auto-updating Trade Guide — 3.38.0
+
+### Only continuously-open instruments are listed
+The tradable catalogue is now restricted to markets that never close. Legacy NYSE/NASDAQ
+listings stay in the database (so old positions and history are preserved) but are marked
+`hidden` and never appear on the Trading screen.
+
+| Category | Instruments |
+|---|---|
+| Crypto 24/7 | BTC/USD, ETH/USD, SOL/USD, BNB/USD, DOGE/USD, XRP/USD |
+| Forex 24/7 synthetic | EUR/USD Synthetic, GBP/USD Synthetic, USD/JPY Synthetic |
+| Synthetic stocks | MARA 24/7, SHOP 24/7, TSLA 24/7, AAPL 24/7, NVDA 24/7, AMZN 24/7 |
+| Indices 24/7 | US30 24/7, US100 24/7, GOLD 24/7, OIL 24/7 |
+
+`server.js → ensure247Assets()` owns the universe. `market.js → simulateTick()` now runs in
+**every** data mode (previously it only ran without a Finnhub key, which is why synthetic
+symbols froze and real symbols held over the weekend). The engine:
+
+* ticks every **2 seconds**, 7 days a week, including nights and holidays;
+* skips only symbols with a fresh real tick (12 s), so real Finnhub prices still win when live;
+* never sends synthetic tickers to Finnhub (no wasted calls, no rate-limit starvation);
+* reports `marketOpen: true` / `alwaysOpen: true` and a notice that never says "Market closed".
+
+`public/market-247.js` filters the UI to that universe, adds the
+"All Markets Are Live 24/7 — No Weekend Closure — No Overnight Closure" banner, the
+[All Live] [Crypto] [US Stocks] [Forex] [Indices] filter, the pulsing **LIVE — 24/7** dot,
+the **24/7 SYNTHETIC · ALWAYS LIVE** badge on every synthetic card/chart, and a watchdog
+that forces a feed refresh when a quote is older than 5 seconds. Trade flow, TP/SL, wallet,
+marketplace, vendor and admin logic are untouched.
+
+### Auto-updating Trade Guide
+`public/trade-guide.js` adds:
+
+* **#/how-it-works** — public 4-section guide (also linked from My Account and the sidebar);
+* **#/admin/trade-guide** — the admin guide with the same content plus section 5, an editable
+  recommendation message with **Copy** and **Share to WhatsApp**, and auto-update settings.
+
+Every number is read from the database at render time: WC price (`settings.tradeGuide.wcUsd`),
+stock-trade fee (`invest.feePct`, default **0.12%**), default leverage (`invest.leverage`,
+default **5x**, selectable 1x–100x per trade), minimum deposit/withdrawal, the live asset list
+and the WhaleChat Shares plans/share price. The guide also contains live payout calculators
+for stock trades and for WhaleChat Shares.
+
+### WhaleChat Shares payout
+`shares.js → planPnl()` now uses the approved flow:
+
+```
+daily profit = share price (USD) × plan rate %
+total profit = daily profit × plan days × capital (USD)
+payout       = capital + total profit
+```
+
+Example: $12.45 price, 3% plan, $100 capital, 7 days → $0.3735/day → **$261.45 profit**.
+Profit is converted to WC at the app rate and credited with capital at maturity.

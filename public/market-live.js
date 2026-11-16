@@ -174,6 +174,8 @@
     return Date.now() - MK.lastPollAt < Math.max(10000, refresh * 2500);
   }
   MK.feedFresh = feedFresh;
+  /* used by the 24/7 watchdog when a quote goes stale for more than 5s */
+  MK.forcePoll = function () { return poll(); };
 
   /* No browser-side price generator: the backend Finnhub feed is the only source. */
   function patchTick() {

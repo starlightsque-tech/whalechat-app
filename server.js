@@ -353,49 +353,79 @@ function isAdmin(db, adminId) {
 }
 function ensure247Assets(db) {
   if (!db || !Array.isArray(db.stocks)) return;
+  /* The single tradable universe: instruments that never close. */
   const spec = [
-    ['BTCUSD', 'BTC/USD', 'Crypto', 64250, 'crypto'],
-    ['ETHUSD', 'ETH/USD', 'Crypto', 3120, 'crypto'],
-    ['SOLUSD', 'SOL/USD', 'Crypto', 148, 'crypto'],
-    ['BNBUSD', 'BNB/USD', 'Crypto', 585, 'crypto'],
-    ['DOGEUSD', 'DOGE/USD', 'Crypto', 0.14, 'crypto'],
-    ['XRPUSD', 'XRP/USD', 'Crypto', 0.52, 'crypto'],
-    ['EURUSD24', 'EUR/USD Synthetic', 'Forex', 1.086, 'forex'],
-    ['GBPUSD24', 'GBP/USD Synthetic', 'Forex', 1.271, 'forex'],
-    ['USDJPY24', 'USD/JPY Synthetic', 'Forex', 156.4, 'forex'],
-    ['MARA24', 'MARA 24/7', 'Crypto Stocks', 22.4, 'synthetic-stock'],
-    ['SHOP24', 'SHOP 24/7', 'Crypto Stocks', 78.2, 'synthetic-stock'],
-    ['TSLA24', 'TSLA 24/7', 'Crypto Stocks', 248.5, 'synthetic-stock'],
-    ['AAPL24', 'AAPL 24/7', 'Crypto Stocks', 228.1, 'synthetic-stock'],
-    ['NVDA24', 'NVDA 24/7', 'Crypto Stocks', 132.9, 'synthetic-stock'],
-    ['AMZN24', 'AMZN 24/7', 'Crypto Stocks', 201.4, 'synthetic-stock'],
-    ['US3024', 'US30 24/7', 'Indices', 43820, 'index'],
-    ['US10024', 'US100 24/7', 'Indices', 20450, 'index'],
-    ['GOLD24', 'GOLD 24/7', 'Commodities', 2685, 'index'],
-    ['OIL24', 'OIL 24/7', 'Commodities', 72.8, 'index']
+    ['BTCUSD', 'BTC/USD', 'Crypto', 64250, 'crypto', false],
+    ['ETHUSD', 'ETH/USD', 'Crypto', 3120, 'crypto', false],
+    ['SOLUSD', 'SOL/USD', 'Crypto', 148, 'crypto', false],
+    ['BNBUSD', 'BNB/USD', 'Crypto', 585, 'crypto', false],
+    ['DOGEUSD', 'DOGE/USD', 'Crypto', 0.14, 'crypto', false],
+    ['XRPUSD', 'XRP/USD', 'Crypto', 0.52, 'crypto', false],
+    ['EURUSD24', 'EUR/USD Synthetic', 'Forex', 1.086, 'forex', false],
+    ['GBPUSD24', 'GBP/USD Synthetic', 'Forex', 1.271, 'forex', false],
+    ['USDJPY24', 'USD/JPY Synthetic', 'Forex', 156.4, 'forex', false],
+    ['MARA24', 'MARA 24/7', 'Synthetic Stocks', 22.4, 'us', true],
+    ['SHOP24', 'SHOP 24/7', 'Synthetic Stocks', 78.2, 'us', true],
+    ['TSLA24', 'TSLA 24/7', 'Synthetic Stocks', 248.5, 'us', true],
+    ['AAPL24', 'AAPL 24/7', 'Synthetic Stocks', 228.1, 'us', true],
+    ['NVDA24', 'NVDA 24/7', 'Synthetic Stocks', 132.9, 'us', true],
+    ['AMZN24', 'AMZN 24/7', 'Synthetic Stocks', 201.4, 'us', true],
+    ['US3024', 'US30 24/7', 'Indices', 43820, 'index', true],
+    ['US10024', 'US100 24/7', 'Indices', 20450, 'index', true],
+    ['GOLD24', 'GOLD 24/7', 'Indices', 2685, 'index', true],
+    ['OIL24', 'OIL 24/7', 'Indices', 72.8, 'index', true]
   ];
-  for (const [ticker, name, sector, price, cls] of spec) {
+  const keep = new Set(spec.map((x) => x[0]));
+  const colors = { crypto: '#f7931a', forex: '#3aa0ff', us: '#8b7bff', index: '#2ee6c9' };
+  for (const [ticker, name, sector, price, cls, synthetic] of spec) {
     let s = db.stocks.find((x) => x && x.ticker === ticker);
     if (!s) {
-      db.stocks.push({
+      s = {
         id: 'st_' + ticker.toLowerCase(), ticker, name, sector, assetClass: cls,
-        price, prevClose: price, twentyFourSeven: true, synthetic: cls !== 'crypto' && cls !== 'forex',
-        pe: 0, mcap: 0, div: 0, ceo: '', website: '', about: name + ' — continuous 24/7 synthetic market, open every day of the week.',
-        active: true, createdAt: Date.now()
-      });
+        price, prevClose: price, twentyFourSeven: true, synthetic: !!synthetic,
+        hidden: false, active: true, paused: false, custom: false,
+        color: colors[cls] || '#3aa0ff', exchange: cls === 'crypto' ? 'WhaleChat 24/7' : cls === 'forex' ? 'WhaleChat Synthetic' : 'WhaleChat 24/7',
+        currency: 'USD', div: 0, pe: 0, mcap: 0, ceo: '', website: '',
+        about: name + ' — continuous synthetic market, live Monday to Sunday with no overnight or weekend closure.'
+      };
+      db.stocks.push(s);
     } else {
-      s.twentyFourSeven = true;
-      if (cls !== 'crypto' && cls !== 'forex') s.synthetic = true;
-      if (!s.assetClass) s.assetClass = cls;
+      Object.assign(s, {
+        name, sector, assetClass: cls, twentyFourSeven: true, synthetic: !!synthetic,
+        hidden: false, active: s.active !== false, paused: false,
+        color: s.color || colors[cls] || '#3aa0ff',
+        displayTicker: s.displayTicker || (cls === 'crypto' ? name : ticker),
+        price: Number(s.price) > 0 ? s.price : price,
+        prevClose: Number(s.prevClose) > 0 ? s.prevClose : price
+      });
+      if (cls === 'crypto') s.crypto = true;
     }
   }
+  /* Traditional exchange listings stay in the DB (so old holdings keep their
+     history) but are hidden from the 24/7 market and trading screens. */
   for (const s of db.stocks) {
-    if (s && (s.assetClass === 'crypto' || s.assetClass === 'forex')) s.twentyFourSeven = true;
+    if (!s || !s.ticker) continue;
+    if (keep.has(String(s.ticker).toUpperCase())) continue;
+    s.hidden = true;
+    s.legacy = true;
+    s.twentyFourSeven = false;
   }
 }
 
 function ensureServices(db) {
   if (!db) return;
+  if (!db.invest || typeof db.invest !== 'object') db.invest = {};
+  /* the 0.5% value was the old built-in default; move untouched databases to
+     the current 0.12% stock-trade fee exactly once. Admin can change it any
+     time afterwards from Admin → Stocks and the new value is respected. */
+  if (!db.invest.feeMigrated012 && Number(db.invest.feePct) === 0.5) {
+    db.invest.feePct = 0.12;
+    db.invest.tradeFeePct = 0.12;
+    db.invest.feeMigrated012 = true;
+  }
+  if (db.invest.feePct == null) db.invest.feePct = 0.12;          /* 0.12% per stock trade */
+  if (db.invest.tradeFeePct == null) db.invest.tradeFeePct = db.invest.feePct;
+  if (db.invest.leverage == null) db.invest.leverage = 5;         /* default leverage */
   try { spot.ensureDefaults(db); } catch (e) {}
   try { ensure247Assets(db); } catch (e) {}
   try { bots.ensureDefaults(db); } catch (e) {}
