@@ -1,8 +1,8 @@
 {
-  "version": "3.33.0",
-  "build": "2026-11-16T06:11:51Z",
+  "version": "3.33.1",
+  "build": "2026-11-16T06:27:07Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.33.0 - WhaleChat Shares daily-return plans (principal x daily % x days) with updated examples and bot account workflows.",
-  "releasedAt": "2026-11-16T06:11:51Z",
+  "notes": "WhaleChat 3.33.1 - bot account top-up/start/toggle fixes and bot dashboard shortcut.",
+  "releasedAt": "2026-11-16T06:27:07Z",
   "minimum": "3.0.0"
 }
