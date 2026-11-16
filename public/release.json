@@ -1,8 +1,8 @@
 {
-  "version": "3.35.0",
-  "build": "2026-11-16T12:58:29Z",
+  "version": "3.36.0",
+  "build": "2026-11-16T13:29:55Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.35.0 - WC-Investing pages (invest / active plans / ROI progress / transfer / history) with one route per button, shares ROI formula, auto-reinvestment, working buy-sell-asset buttons on the B2B desk, live B2B price charts, 5x default leverage payout formula and money-based take loss.",
-  "releasedAt": "2026-11-16T12:58:29Z",
+  "notes": "WhaleChat 3.36.0 - B2B marketplace with named stocks, WhaleChat and crypto/meme coins at real live prices, asset data pages with live charts, multi-asset buy/sell price alerts with email buttons, and a Binance price feed alongside Finnhub.",
+  "releasedAt": "2026-11-16T13:29:55Z",
   "minimum": "3.0.0"
 }

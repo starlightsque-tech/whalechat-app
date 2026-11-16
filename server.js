@@ -22,6 +22,8 @@ const { MarketService, DEFAULT_ASSETS, assetKey, displayTickerFor } = require('.
 const { SpotService } = require('./spot');
 const { BotService } = require('./bots');
 const { ShareService } = require('./shares');
+let createBinanceFeed = null;
+try { createBinanceFeed = require('./binance').createBinanceFeed; } catch (e) { console.error('[binance] module unavailable:', e.message); }
 let createB2BAlertWatcher = null;
 try { createB2BAlertWatcher = require('./b2b-alerts').createB2BAlertWatcher; } catch (e) { console.error('[b2b-alerts] module unavailable:', e.message); }
 const market = new MarketService({
@@ -48,6 +50,9 @@ const shares = new ShareService({
   persist: () => persist(),
   broadcast: (event, data) => { try { broadcast(event, data); } catch (e) {} }
 });
+/* Binance live crypto prices alongside Finnhub (charts stay on Finnhub). */
+const binance = createBinanceFeed ? createBinanceFeed({ getDb: () => store.db, everyMs: Number(process.env.BINANCE_MS || 15000) }) : null;
+
 /* B2B price alerts: evaluate on the server so email + in-app notification are
    delivered even when the user's app is closed. */
 const b2bAlerts = createB2BAlertWatcher ? createB2BAlertWatcher({
@@ -392,6 +397,30 @@ async function dispatchPushes(pushes, db) {
 }
 
 async function api(req, res, pathname, query) {
+  /* --- Binance live crypto prices ---------------------------------------- */
+  if (pathname === '/api/market/binance' && req.method === 'GET') {
+    if (!binance) return json(res, 503, { ok: false, error: 'binance_disabled' });
+    return json(res, 200, Object.assign({ ok: true }, binance.status()));
+  }
+  if (pathname === '/api/market/binance/config' && req.method === 'POST') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    const body = await readBody(req);
+    const admin = (store.db.users || []).find(u => u.id === body.adminId && u.role === 'admin');
+    if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
+    if (!store.db.settings) store.db.settings = {};
+    const cur = store.db.settings.binance || {};
+    const next = {
+      enabled: body.enabled === undefined ? (cur.enabled !== false) : !!body.enabled,
+      apiKey: typeof body.apiKey === 'string' && body.apiKey ? body.apiKey : cur.apiKey || '',
+      symbols: (body.symbols && typeof body.symbols === 'object') ? body.symbols : (cur.symbols || {}),
+      updatedAt: Date.now()
+    };
+    store.db.settings.binance = next;
+    persistNow();
+    if (binance) { binance.poll().catch(() => {}); }
+    return json(res, 200, { ok: true, enabled: next.enabled, hasKey: !!next.apiKey, symbols: Object.keys(next.symbols || {}).length });
+  }
+
   /* --- B2B price alerts: status, manual evaluation, link verification ---- */
   if (pathname === '/api/b2b/alerts/status' && req.method === 'GET') {
     const appUrl = PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || ('http://localhost:' + PORT);
@@ -899,6 +928,7 @@ server.headersTimeout = 70000;
     console.log('[market] restored durable config · mode', durableMarket.mode || 'simulated', '· key', durableMarket.apiKey ? 'set' : 'not set');
   }
   market.start();
+  if (binance) { binance.start(); console.log('[binance] live crypto price feed started'); }
   if (b2bAlerts) { b2bAlerts.start(); console.log('[b2b-alerts] watcher started (email + in-app)'); }
   ensureServices(store.db);
   spot.startTimers();
@@ -915,6 +945,7 @@ let stopping = false;
 function shutdown(signal) {
   if (stopping) return; stopping = true;
   try { market.stop(); } catch (e) {}
+  try { if (binance) binance.stop(); } catch (e) {}
   try { if (b2bAlerts) b2bAlerts.stop(); } catch (e) {}
   try { spot.stopTimers(); } catch (e) {}
   try { bots.stopTimers(); } catch (e) {}

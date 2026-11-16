@@ -65,7 +65,17 @@ const DEFAULT_ASSETS = [
   { ticker: 'ETHUSDT', displayTicker: 'ETH/USDT', finnhubSymbol: 'BINANCE:ETHUSDT', assetClass: 'crypto', name: 'Ethereum', exchange: 'Binance', currency: 'USDT', color: '#627eea', sector: 'Crypto' },
   { ticker: 'SOLUSDT', displayTicker: 'SOL/USDT', finnhubSymbol: 'BINANCE:SOLUSDT', assetClass: 'crypto', name: 'Solana', exchange: 'Binance', currency: 'USDT', color: '#14f195', sector: 'Crypto' },
   { ticker: 'BNBUSDT', displayTicker: 'BNB/USDT', finnhubSymbol: 'BINANCE:BNBUSDT', assetClass: 'crypto', name: 'BNB', exchange: 'Binance', currency: 'USDT', color: '#f3ba2f', sector: 'Crypto' },
-  { ticker: 'XRPUSDT', displayTicker: 'XRP/USDT', finnhubSymbol: 'BINANCE:XRPUSDT', assetClass: 'crypto', name: 'XRP', exchange: 'Binance', currency: 'USDT', color: '#23292f', sector: 'Crypto' }
+  { ticker: 'XRPUSDT', displayTicker: 'XRP/USDT', finnhubSymbol: 'BINANCE:XRPUSDT', assetClass: 'crypto', name: 'XRP', exchange: 'Binance', currency: 'USDT', color: '#23292f', sector: 'Crypto' },
+  { ticker: 'DOGEUSDT', displayTicker: 'DOGE/USDT', finnhubSymbol: 'BINANCE:DOGEUSDT', assetClass: 'crypto', name: 'Dogecoin', exchange: 'Binance', currency: 'USDT', color: '#c2a633', sector: 'Meme' },
+  { ticker: 'TRUMPUSDT', displayTicker: 'TRUMP/USDT', finnhubSymbol: 'BINANCE:TRUMPUSDT', assetClass: 'crypto', name: 'Official Trump', exchange: 'Binance', currency: 'USDT', color: '#b8860b', sector: 'Meme' },
+  { ticker: 'ADAUSDT', displayTicker: 'ADA/USDT', finnhubSymbol: 'BINANCE:ADAUSDT', assetClass: 'crypto', name: 'Cardano', exchange: 'Binance', currency: 'USDT', color: '#0033ad', sector: 'Crypto' },
+  { ticker: 'TSLA', displayTicker: 'TSLA', finnhubSymbol: 'TSLA', assetClass: 'us', name: 'Tesla, Inc.', exchange: 'NASDAQ', currency: 'USD', color: '#e82127', sector: 'Automotive' },
+  { ticker: 'MSFT', displayTicker: 'MSFT', finnhubSymbol: 'MSFT', assetClass: 'us', name: 'Microsoft Corporation', exchange: 'NASDAQ', currency: 'USD', color: '#00a4ef', sector: 'Technology' },
+  { ticker: 'GOOGL', displayTicker: 'GOOGL', finnhubSymbol: 'GOOGL', assetClass: 'us', name: 'Alphabet Inc.', exchange: 'NASDAQ', currency: 'USD', color: '#4285f4', sector: 'Technology' },
+  { ticker: 'AMZN', displayTicker: 'AMZN', finnhubSymbol: 'AMZN', assetClass: 'us', name: 'Amazon.com, Inc.', exchange: 'NASDAQ', currency: 'USD', color: '#ff9900', sector: 'Consumer' },
+  { ticker: 'AAPL', displayTicker: 'AAPL', finnhubSymbol: 'AAPL', assetClass: 'us', name: 'Apple Inc.', exchange: 'NASDAQ', currency: 'USD', color: '#a2aaad', sector: 'Technology' },
+  { ticker: 'SSNLF', displayTicker: 'SSNLF', finnhubSymbol: 'SSNLF', assetClass: 'global', name: 'Samsung Electronics', exchange: 'OTC', currency: 'USD', color: '#1428a0', sector: 'Technology' },
+  { ticker: 'SHOP', displayTicker: 'SHOP', finnhubSymbol: 'SHOP', assetClass: 'us', name: 'Shopify Inc.', exchange: 'NYSE', currency: 'USD', color: '#96bf48', sector: 'Technology' }
 ];
 
 function assetKey(finnhubSymbol, assetClass) {

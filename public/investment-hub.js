@@ -364,6 +364,8 @@
         '<div class="ih-card"><span>Account value</span><b>' + money(b2bCapital(a) + assetsVal + b2bProfit(a)) + '</b><small>Capital + assets + profit</small></div>' +
       '</div>' +
 
+      (window.WC_B2B_MARKET ? '<div class="card"><div class="between"><div class="card-title" style="margin:0">Live market</div>' +
+        '<a href="#/investment/b2b/market" class="tiny">Open marketplace →</a></div>' + window.WC_B2B_MARKET.strip() + '</div>' : '') +
       /* buy and sell are deliberately separate buttons */
       '<div class="b2b-pair">' +
         '<a href="#/investment/b2b/buy" class="b2b-bigbtn buy" data-b2b-cta="buy">' +
@@ -373,7 +375,9 @@
       '</div>' +
 
       '<div class="card ih-actions"><div class="ih-btn-grid">' +
+        '<a href="#/investment/b2b/market" class="btn btn-primary btn-sm" data-b2b-nav="market">Marketplace</a>' +
         '<a href="#/investment/b2b/assets" class="btn btn-ghost btn-sm" data-b2b-nav="assets">Asset lists</a>' +
+        '<a href="#/investment/b2b/alerts" class="btn btn-ghost btn-sm" data-b2b-nav="alerts">Price alerts</a>' +
         '<a href="#/investment/b2b/topup" class="btn btn-ghost btn-sm" data-b2b-nav="topup">Top up</a>' +
         '<a href="#/investment/b2b/transfer" class="btn btn-ghost btn-sm" data-b2b-nav="transfer">Transfer</a>' +
         '<a href="#/investment/history" class="btn btn-ghost btn-sm">History</a>' +
@@ -644,7 +648,9 @@
       '<div class="card"><div class="ih-list">' + assets.map(function (s) {
         var v = Number(inv[s.ticker]); if (!(v >= 0)) v = 100000;
         return '<div class="ih-row"><b class="grow">' + escH(s.displayTicker || s.ticker) + '</b><input class="input" style="max-width:140px" id="inv_' + escH(s.ticker) + '" type="number" step="0.00000001" min="0" value="' + v + '"/></div>';
-      }).join('') + '</div><button class="btn btn-primary" data-act="ih-admin-b2b-save" style="margin-top:10px">Save inventory</button></div>';
+      }).join('') + '</div><button class="btn btn-primary" data-act="ih-admin-b2b-save" style="margin-top:10px">Save inventory</button>' +
+      '<div class="tiny muted mt6">Units available for each asset in the company contract. A user buy draws these down; a user sell returns them.</div></div>' +
+      (window.WC_B2B_MARKET && window.WC_B2B_MARKET.adminCard ? window.WC_B2B_MARKET.adminCard() : '');
   }
 
   function adminDisputes() {

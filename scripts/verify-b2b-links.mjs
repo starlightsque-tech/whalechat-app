@@ -63,7 +63,12 @@ function check(name, ok, detail) { checks.push({ name, ok, detail }); console.lo
     ['shares invest route', '#/invest/shares/invest'],
     ['shares active route', '#/invest/shares/active'],
     ['shares ROI route', '#/invest/shares/roi'],
-    ['shares transfer route', '#/invest/shares/transfer']
+    ['shares transfer route', '#/invest/shares/transfer'],
+    ['B2B marketplace module', '/* wc-b2b-market */'],
+    ['marketplace route', '#/investment/b2b/market'],
+    ['asset data route', '#/investment/b2b/asset'],
+    ['multi-asset alerts route', '#/investment/b2b/alerts'],
+    ['Binance feed', '/api/market/binance']
   ];
   for (const [name, needle] of routes) check(name + ' present in the bundle', page.includes(needle));
 
