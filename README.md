@@ -233,6 +233,19 @@ preview that updates before **Save bot settings** is pressed.
   avatars. Aggregation is computed server-side in `BotService.performance` from every session's
   trade log (`poolAfter`, `pnlCoins`) and exposed as `performance` on the bot state.
 
+### Account, Tools & WC investing top-up (3.33.0)
+
+The account area now has a single **Tools** hub at `#/tools` and a **Top up WC investing account** page at
+`#/invest/topup`:
+
+- **Tools** — cards for the WhaleChat account, investment account, B2B account, trading bots, bot profiles,
+  bot performance, WhaleChat shares, orders, watchlist/alerts, security/settings, wallet and top-up.
+- **Top up WC investing** — choose $10–$500 or enter a custom USD amount, see the exact WC added
+  (`USD ÷ 0.50`), the investing capital after top-up, and continue to the configured crypto/bank deposit flow.
+  The deposit page pre-fills the chosen amount. Selling a B2B holding also credits investing capital instantly.
+- **My account** quick navigation now links directly to the investment account, Tools and investing top-up.
+- The **Tools** link is also in the main user navigation.
+
 ### B2B Investing Account (3.32.0)
 
 `public/b2b-invest.js` adds a business investing dashboard at **Invest → B2B Investing Account**
