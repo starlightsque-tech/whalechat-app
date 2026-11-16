@@ -264,16 +264,21 @@ App.depApprove = async function (id) {
   const d = DB.deposits.find(x => x.id === id); if (!d || d.status !== 'pending') return;
   const u = findUser(d.userId); if (!u) return toast('User not found', 'err');
   d.status = 'approved'; d.reviewedAt = Date.now();
-  u.balance = Math.round((u.balance + d.coins) * 100) / 100;
+  const coin = String(d.coin || (typeof depositCoinOf === 'function' ? depositCoinOf(d) : 'USD')).toUpperCase();
+  d.coin = coin;
+  u.depositBalances = (u.depositBalances && typeof u.depositBalances === 'object' && !Array.isArray(u.depositBalances)) ? u.depositBalances : {};
+  u.depositBalances[coin] = Math.round(((Number(u.depositBalances[coin]) || 0) + Number(d.usd || 0)) * 100) / 100;
+  d.creditedToDeposit = true;
+  u.acctLedger = Array.isArray(u.acctLedger) ? u.acctLedger : [];
+  u.acctLedger.unshift({ id: 'al_' + d.id, label: 'Deposit approved · $' + Number(d.usd || 0).toFixed(2) + ' || ' + coin, usd: Number(d.usd) || 0, wc: 0, meta: { depositId: d.id, coin }, at: Date.now() });
   u.totalDeposits = Math.round(((u.totalDeposits || 0) + d.usd) * 100) / 100;
-  tx(u.id, 'deposit', 'Deposit approved · ' + (d.methodName || d.method), d.coins);
-  notify(u.id, 'Deposit approved ✅', `${coins(d.coins)} WC has been credited to your wallet.`, '#/wallet', 'wallet');
+  notify(u.id, 'Deposit approved ✅', `$${Number(d.usd || 0).toFixed(2)} || ${coin} has been credited to your deposit balance. Convert it to $ or WC anytime.`, '#/account', 'wallet');
   // referral payout on first approved deposit (idempotent)
   try { resolvePendingReferrals(); } catch (e) {}
   let bonus = false;
   try { bonus = referralBonus(u.id); } catch (e) {}
   sync();
-  toast(bonus ? 'Deposit approved · 10 WC referral bonus paid' : 'Deposit approved and credited', 'ok');
+  toast(bonus ? 'Deposit approved · 10 WC referral bonus paid' : 'Deposit approved and credited to deposit balance', 'ok');
   render();
 };
 App.depReject = async function (id) {

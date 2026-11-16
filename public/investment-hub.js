@@ -100,24 +100,31 @@
       '<div><h1 style="margin:0">' + escH(title) + '</h1><p class="muted" style="margin:2px 0 0">' + escH(sub) + '</p></div></div></div>';
   }
 
+  function investIcon(name, size) { try { return (typeof ic === 'function') ? ic(name, size || 16) : ''; } catch (e) { return ''; } }
   function investmentHome(u) {
     var a = account(u);
-    return head('Investment account', 'Your investment portfolio, transfers and specialist balances.', '#/profile') +
-      '<div class="ih-cards">' +
-        '<div class="ih-card"><span>Total assets</span><b>' + money(total(a, u)) + '</b><small>' + wc(total(a, u) / RATE) + ' WC equivalent</small></div>' +
-        '<div class="ih-card"><span>Total assets balance</span><b>' + money(a.usd) + '</b><small>Available for top-ups</small></div>' +
-        '<div class="ih-card"><span>Payout balance</span><b>' + money(a.payout) + '</b><small>Profits received</small></div>' +
-        '<div class="ih-card"><span>WhaleCoin balance</span><b>' + wc(a.wcBalance || 0) + ' WC</b><small>Investment account WC</small></div>' +
+    var quick = [
+      ['send', 'Transfer', '#/investment/transfer'], ['refresh', 'Convert', '#/investment/convert'],
+      ['trend', 'Stock trading', '#/invest'], ['briefcase', 'WC-Investing', '#/invest/shares'],
+      ['users', 'B2B-Investing', '#/investment/b2b'], ['settings', 'Tools', '#/investment/tools'],
+      ['clock', 'History', '#/investment/history'], ['more', 'More', '#/investment/more']
+    ];
+    var tops = [
+      ['Top up bot trade capital', 'bot'], ['Top up stock trading', 'stock'], ['Top up WC-Investing', 'wc'], ['Top up B2B-Investing', 'b2b']
+    ];
+    return head('Investment account', 'Your portfolio balances, transfers, top-ups and specialist desks.', '#/profile') +
+      '<div class="ih-cards ih-inv-cards">' +
+        '<div class="ih-card ih-card-main"><span>Total assets balance</span><b>' + money(a.usd) + '</b><small>USD available to top up portfolios and tools</small></div>' +
+        '<div class="ih-card"><span>Whalecoin balance</span><b>' + wc(a.wcBalance || 0) + ' <em>WC</em></b><small>≈ ' + money((Number(a.wcBalance) || 0) * RATE) + ' · transferable to your Whalechat WC balance</small></div>' +
+        '<div class="ih-card"><span>Payout balance</span><b>' + money(a.payout) + '</b><small>Profits received from your portfolios</small></div>' +
       '</div>' +
-      '<div class="card ih-actions"><div class="card-title" style="margin:0 0 8px">Investment account actions</div><div class="ih-btn-grid">' +
-        [['Transfer', '#/investment/transfer'], ['Convert', '#/investment/convert'], ['Stock Trading', '#/invest'], ['WC-Investing', '#/invest/shares'], ['B2B-Investing', '#/investment/b2b'], ['Tools', '#/investment/tools'], ['History', '#/investment/history'], ['More', '#/investment/more']]
-          .map(function (x) { return '<a href="' + x[1] + '" class="btn btn-ghost btn-sm">' + x[0] + '</a>'; }).join('') +
+      '<div class="card ih-actions"><div class="card-title" style="margin:0 0 9px">Investment account</div><div class="ih-quickgrid ih-inv-actions">' +
+        quick.map(function (x) { return '<a href="' + x[2] + '" class="ih-quickbtn"><span>' + investIcon(x[0], 17) + '</span><b>' + x[1] + '</b></a>'; }).join('') +
       '</div></div>' +
-      '<div class="card ih-actions"><div class="card-title" style="margin:0 0 8px">Portfolio top-ups</div><div class="ih-btn-grid">' +
-        [['Top up Bot trade capital', 'bot'], ['Top up Stock trading', 'stock'], ['Top up WC-Investing', 'wc'], ['Top up B2B-Investing', 'b2b']]
-          .map(function (x) { return '<a href="#/investment/topup?to=' + x[1] + '" class="btn btn-soft btn-sm">' + x[0] + '</a>'; }).join('') +
-      '</div></div>' +
-      '<div class="card"><div class="card-title">Live portfolio balances</div><div class="ih-list">' +
+      '<div class="card ih-actions"><div class="card-title" style="margin:0 0 9px">Top up portfolio capital</div><div class="ih-btn-grid">' +
+        tops.map(function (x) { return '<a href="#/investment/topup?to=' + x[1] + '" class="btn btn-soft btn-sm">' + x[0] + '</a>'; }).join('') +
+      '</div><div class="tiny muted" style="margin-top:8px">Top-ups are paid from your total assets balance.</div></div>' +
+      '<div class="card"><div class="card-title">Portfolio balances</div><div class="ih-list">' +
         [['Stock trading', a.portfolios.stock], ['WC-Investing', a.portfolios.wc], ['B2B-Investing', a.portfolios.b2b], ['Bot trading', a.portfolios.bot]]
           .map(function (x) { return '<div class="ih-row"><span>' + x[0] + '</span><b>' + money(x[1]) + '</b><span class="tiny muted">' + wc(x[1] / RATE) + ' WC</span></div>'; }).join('') +
       '</div></div>';
@@ -125,14 +132,20 @@
 
   function transferPage(u) {
     var a = account(u);
-    return head('Transfer & convert', 'Move funds between your wallet and investment account.', '#/investment') +
-      '<div class="card"><div class="field"><label class="label">Action</label><select class="input" id="ihTrMode">' +
-        '<option value="wc2usd">WC wallet → investment USD</option><option value="usd2wc">Investment USD → WC wallet</option><option value="send">Send investment USD to another user</option>' +
+    return head('Transfer', 'Move USD into your investment account, or move investment WhaleCoin back to your Whalechat account.', '#/investment') +
+      '<div class="card"><div class="field"><label class="label">Transfer direction</label><select class="input" id="ihTrMode">' +
+        '<option value="usd2inv">Whalechat $ balance → investment total assets</option>' +
+        '<option value="wc2wallet">Investment WhaleCoin → Whalechat WC balance</option>' +
       '</select></div>' +
-      '<div class="field" id="ihUserWrap" style="display:none"><label class="label">Recipient username, email or account ID</label><input class="input" id="ihTrUser" placeholder="@username / email / ID"/></div>' +
-      '<div class="field"><label class="label">Amount</label><input class="input" id="ihTrAmount" type="number" step="0.01" min="0" placeholder="0.00"/><div class="tiny muted" id="ihTrPreview">Rate: 1 WC = $0.50</div></div>' +
-      '<button class="btn btn-primary" data-act="ih-transfer" style="width:100%">Continue</button></div>' +
-      '<div class="card"><div class="card-title">Balances</div><div class="ih-list"><div class="ih-row"><span>WC wallet</span><b>' + wc(u.balance) + ' WC</b></div><div class="ih-row"><span>Investment total assets</span><b>' + money(a.usd) + '</b></div><div class="ih-row"><span>Payout balance</span><b>' + money(a.payout) + '</b></div></div></div>';
+      '<div class="field"><label class="label">Amount</label><input class="input" id="ihTrAmount" type="number" step="0.01" min="0" placeholder="0.00"/><div class="tiny muted" id="ihTrPreview">Enter an amount to see the transfer.</div></div>' +
+      '<button class="btn btn-primary" data-act="ih-transfer" style="width:100%">Transfer now</button></div>' +
+      '<div class="card"><div class="card-title">Balances</div><div class="ih-list">' +
+        '<div class="ih-row"><span>Whalechat $ balance</span><b>' + money(u.walletUsd || 0) + '</b></div>' +
+        '<div class="ih-row"><span>Whalechat WC balance</span><b>' + wc(u.balance) + ' WC</b></div>' +
+        '<div class="ih-row"><span>Investment total assets</span><b>' + money(a.usd) + '</b></div>' +
+        '<div class="ih-row"><span>Investment WhaleCoin</span><b>' + wc(a.wcBalance || 0) + ' WC</b></div>' +
+        '<div class="ih-row"><span>Payout balance</span><b>' + money(a.payout) + '</b></div></div>' +
+      '<div class="tiny muted" style="margin-top:8px">Only investment WhaleCoin can leave the investment account, and it lands in your Whalechat WC balance.</div></div>';
   }
 
   function convertPage(u) {
@@ -744,6 +757,36 @@
       if (sub === 'disputes') return disputesPage(u);
       return investmentHome(u);
     };
+    if (typeof AFTER !== 'undefined') {
+      var prevAfter = AFTER.investment;
+      AFTER.investment = function (parts) {
+        if (typeof prevAfter === 'function') { try { prevAfter.apply(this, arguments); } catch (e) {} }
+        var sub = (parts && parts[1]) || '';
+        if (sub === 'convert') {
+          var from = document.getElementById('ihCvFrom');
+          var camt = document.getElementById('ihCvAmount');
+          var cout = document.getElementById('ihCvPreview');
+          if (!from || !camt || !cout) return;
+          var cupd = function () {
+            var v = Number(camt.value) || 0;
+            cout.textContent = v > 0 ? 'You receive ' + wc(v / RATE) + ' WC at 1 WC = $' + RATE.toFixed(2) + '.' : 'Rate: 1 WC = $' + RATE.toFixed(2);
+          };
+          camt.oninput = cupd; from.onchange = cupd; cupd();
+          return;
+        }
+        if (sub !== 'transfer') return;
+        var mode = document.getElementById('ihTrMode');
+        var amt = document.getElementById('ihTrAmount');
+        var out = document.getElementById('ihTrPreview');
+        if (!mode || !amt || !out) return;
+        var upd = function () {
+          var v = Number(amt.value) || 0;
+          if (mode.value === 'usd2inv') out.textContent = v > 0 ? money(v) + ' moves to your investment total assets balance.' : 'Enter an amount to see the transfer.';
+          else out.textContent = v > 0 ? wc(v) + ' WC moves to your Whalechat account WC balance.' : 'Enter an amount to see the transfer.';
+        };
+        mode.onchange = upd; amt.oninput = upd; upd();
+      };
+    }
     var baseAdmin = VIEWS.admin;
     if (baseAdmin) {
       VIEWS.admin = function (parts) {
@@ -796,29 +839,22 @@
   if (typeof App !== 'undefined') {
     App.ihTransfer = async function () {
       var u = me(); var a = account(u);
-      var mode = (document.getElementById('ihTrMode') || {}).value || 'wc2usd';
+      var mode = (document.getElementById('ihTrMode') || {}).value || 'usd2inv';
       var amount = Number((document.getElementById('ihTrAmount') || {}).value || 0);
       if (!(amount > 0)) return toastH('Enter an amount', 'err');
       if (!await requirePin(u, 'Confirm transfer', 'Enter your PIN to move funds')) return;
-      if (mode === 'wc2usd') {
-        if (u.balance < amount) return toastH('Not enough WC', 'err');
-        u.balance = Math.round((u.balance - amount) * 100) / 100;
-        a.usd = Math.round((a.usd + amount * RATE) * 100) / 100;
-        ledger(u, 'WC → investment', amount * RATE, -amount); userTx(u, 'invest-transfer', 'Investment top-up', -amount, { usd: amount * RATE });
-      } else if (mode === 'usd2wc') {
-        if (a.usd < amount) return toastH('Not enough investment USD', 'err');
-        a.usd = Math.round((a.usd - amount) * 100) / 100;
-        u.balance = Math.round((u.balance + amount / RATE) * 100) / 100;
-        ledger(u, 'Investment → WC', -amount, amount / RATE); userTx(u, 'invest-transfer', 'Investment withdrawal to WC', amount / RATE, { usd: -amount });
+      if (mode === 'usd2inv') {
+        if ((Number(u.walletUsd) || 0) < amount) return toastH('Not enough in your Whalechat $ balance', 'err');
+        u.walletUsd = Math.round(((Number(u.walletUsd) || 0) - amount) * 100) / 100;
+        a.usd = Math.round((Number(a.usd) + amount) * 100) / 100;
+        ledger(u, 'Whalechat $ → investment total assets', -amount, 0, { to: 'investment' });
+        userTx(u, 'invest-transfer', 'Transfer to investment account', 0, { usd: amount });
       } else {
-        var id = String((document.getElementById('ihTrUser') || {}).value || '').trim().replace(/^@/, '');
-        var other = (DB.users || []).find(function (x) { return x.id === id || x.username === id || x.email === id; });
-        if (!other || other.id === u.id) return toastH('Recipient not found', 'err');
-        if (a.usd < amount) return toastH('Not enough investment USD', 'err');
-        a.usd = Math.round((a.usd - amount) * 100) / 100;
-        account(other).usd = Math.round((account(other).usd + amount) * 100) / 100;
-        ledger(u, 'Sent to @' + other.username, -amount, 0); ledger(other, 'Received from @' + u.username, amount, 0);
-        notifyH(other, 'Investment transfer received', money(amount) + ' was added to your investment account.', '#/investment');
+        if (Number(a.wcBalance) < amount) return toastH('Not enough investment WhaleCoin', 'err');
+        a.wcBalance = Math.round((Number(a.wcBalance) - amount) * 100) / 100;
+        u.balance = Math.round((Number(u.balance) + amount) * 100) / 100;
+        ledger(u, 'Investment WC → Whalechat WC', 0, -amount, { to: 'wallet' });
+        userTx(u, 'invest-transfer', 'Investment WC to Whalechat wallet', amount, { from: 'investment' });
       }
       save(); toastH('Transfer complete', 'ok'); render();
     };
@@ -1168,6 +1204,14 @@
       border-radius:11px;background:var(--surface-2);color:var(--text);text-decoration:none}
     .ih-quickbtn span{color:var(--accent)} .ih-quickbtn b{font-size:11.5px}
     .ih-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:9px;margin-bottom:12px}
+    .ih-inv-cards{grid-template-columns:repeat(3,1fr);gap:12px}
+    .ih-inv-cards .ih-card{padding:16px;min-height:104px;justify-content:center}
+    .ih-inv-cards .ih-card span{font-size:9.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:800}
+    .ih-inv-cards .ih-card b{font-size:24px;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+    .ih-inv-cards .ih-card b em{font-size:11px;font-style:normal;color:var(--muted);font-weight:700}
+    .ih-inv-cards .ih-card small{font-size:10px;line-height:1.45;color:var(--muted)}
+    .ih-inv-cards .ih-card-main{border-color:rgba(46,230,201,.35);background:linear-gradient(155deg,rgba(46,230,201,.12),var(--surface-2))}
+    @media(max-width:640px){.ih-inv-cards{grid-template-columns:1fr}.ih-inv-cards .ih-card{min-height:auto}}
     .ih-card{display:flex;flex-direction:column;gap:3px;padding:12px;border-radius:12px;border:1px solid var(--border);background:var(--surface-2)}
     .ih-card{min-width:0}
     .ih-card span{font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted-2);font-weight:700;

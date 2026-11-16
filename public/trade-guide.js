@@ -423,7 +423,7 @@
     }
     if (act === 'reset-message') {
       ev.preventDefault();
-      g.message = DEFAULT_MESSAGE; save(); toastMsg('Message reset to the WhaleChat default'); rerender();
+      g.message = defaultMessage(); save(); toastMsg('Message reset to the WhaleChat default'); rerender();
       return;
     }
     if (act === 'save-settings') {
@@ -528,5 +528,5 @@
   } catch (e) { console.error('[trade-guide] nav', e); }
 
   css();
-  window.WC_TRADE_GUIDE = { render: renderGuide, message: function () { return guide().message; }, DEFAULT_MESSAGE: DEFAULT_MESSAGE };
+  window.WC_TRADE_GUIDE = { render: renderGuide, message: function () { return guide().message; }, DEFAULT_MESSAGE: defaultMessage() };
 })();

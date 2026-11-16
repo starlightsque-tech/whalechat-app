@@ -1029,13 +1029,13 @@ VIEWS.deposit = function () {
   const s = DB.settings;
   const crypto = s.crypto || [], banks = s.banks || [];
   return `<div class="page-head"><div><button class="btn btn-ghost btn-sm mb10" data-nav="#/wallet">${ic('back', 14)} Wallet</button>
-      <h1>Deposit Whale Coin</h1><p>Fund your wallet by crypto or bank transfer. Our team reviews each deposit.</p></div></div>
+      <h1>Deposit funds</h1><p>Fund your Whalechat account by crypto or bank transfer. Our team reviews each deposit.</p></div></div>
     <div style="display:grid;grid-template-columns:1fr 360px;gap:20px" class="cart-grid">
       <div class="card">
         <div class="field"><label class="label">Amount in USD</label>
           <div class="input-wrap"><span class="ic">$</span><input class="input" id="depUsd" type="number" min="1" step="1" placeholder="5.00" inputmode="decimal"/></div>
-          <div class="help">Minimum $1. You will receive <b id="depCoins" style="color:var(--accent)">0 WC</b> at 1 WC = $0.50.</div></div>
-        <div class="chip-row mb16">${[5, 10, 25, 50, 100].map(v => `<button class="chip" data-act="dep-quick" data-id="${v}">$${v} → ${v / COIN_USD} WC</button>`).join('')}</div>
+          <div class="help">Minimum $1. After approval this lands in your <b>deposit balance</b> as <b id="depCoins" style="color:var(--accent)">$0.00 || COIN</b>. Convert it to $ or WC anytime.</div></div>
+        <div class="chip-row mb16">${[5, 10, 25, 50, 100].map(v => `<button class="chip" data-act="dep-quick" data-id="${v}">$${v}</button>`).join('')}</div>
         <div class="label mb10">Payment method</div>
         <div class="tabs mb16"><button class="tab on" data-depmode="crypto">${ic('wallet', 13)} Crypto</button><button class="tab" data-depmode="bank">${ic('store', 13)} Bank transfer</button></div>
         <div id="depCrypto">
@@ -1067,13 +1067,13 @@ VIEWS.deposit = function () {
       </div>
       <div>
         <div class="card">
-          <h3 style="font-size:15px">Conversion</h3>
+          <h3 style="font-size:15px">Deposit summary</h3>
           <div class="mt16"><div class="kv"><span class="k">USD amount</span><span class="v" id="sumUsd">$0.00</span></div>
-            <div class="kv"><span class="k">Rate</span><span class="v">1 WC = $0.50</span></div>
-            <div class="kv"><span class="k">Whale Coin received</span><span class="v" id="sumCoins" style="color:var(--accent)">0 WC</span></div>
+            <div class="kv"><span class="k">Credited to</span><span class="v">Deposit balance</span></div>
+            <div class="kv"><span class="k">Deposit shows as</span><span class="v" id="sumCoins" style="color:var(--accent)">$0.00 || COIN</span></div>
             <div class="kv"><span class="k">Method</span><span class="v" id="sumMethod">Crypto</span></div></div>
           <div class="divider"></div>
-          <div class="tiny muted" style="line-height:1.65">Deposits usually confirm within 30 minutes after payment. You'll receive a notification the moment your balance is credited.</div>
+          <div class="tiny muted" style="line-height:1.65">Deposits usually confirm within 30 minutes after payment. Once approved, the amount appears in your Whalechat account deposit balance and can be converted to $ or Whalecoin.</div>
         </div>
         <div class="card mt14">
           <div class="row gap8">${ic('help', 16)}<span class="small" style="font-weight:600">Need help?</span></div>
@@ -1088,10 +1088,12 @@ AFTER.deposit = function () {
   const amt = document.getElementById('depUsd');
   const upd = () => {
     const v = Number(amt.value) || 0;
-    document.getElementById('depCoins').textContent = coins(usdToCoins(v)) + ' WC';
+    const coin = depositCoinOf({ method: 'crypto', methodName: (DB.settings.crypto || [])[0] ? (DB.settings.crypto[0].name || '') : '' });
+    const txt = '$' + v.toFixed(2) + ' || ' + coin;
+    const dc = document.getElementById('depCoins'); if (dc) dc.textContent = txt;
     const a = document.getElementById('sumUsd'), b = document.getElementById('sumCoins');
     if (a) a.textContent = usd(v);
-    if (b) b.textContent = coins(usdToCoins(v)) + ' WC';
+    if (b) b.textContent = txt;
   };
   amt.addEventListener('input', upd);
   let mode = 'crypto';
@@ -1101,13 +1103,20 @@ AFTER.deposit = function () {
     document.getElementById('depCrypto').classList.toggle('hidden', mode !== 'crypto');
     document.getElementById('depBank').classList.toggle('hidden', mode !== 'bank');
     document.getElementById('sumMethod').textContent = mode === 'crypto' ? 'Crypto' : 'Bank transfer';
+    upd();
   });
+  upd();
   document.getElementById('depSubmit').onclick = () => App.submitDeposit(mode);
 };
 App.depQuick = function (v) {
   const i = document.getElementById('depUsd');
   i.value = v; i.dispatchEvent(new Event('input'));
 };
+function depositCoinOf(d) {
+  const s = String((d && (d.methodName || d.method)) || '').toUpperCase();
+  const hit = s.match(/\b(USDT|USDC|BTC|ETH|BNB|SOL|XRP|DOGE|TRX|LTC|ADA|MATIC)\b/);
+  return hit ? hit[1] : 'USD';
+}
 App.submitDeposit = function (mode) {
   const u = me(); clearErrors();
   const usdAmt = Math.round(Number(document.getElementById('depUsd').value) * 100) / 100;
@@ -1124,20 +1133,21 @@ App.submitDeposit = function (mode) {
     detail = (document.getElementById('depRef') || {}).value || '';
     if (!(DB.settings.banks || []).length) return toast('No bank details configured', 'err');
   }
+  const coin = depositCoinOf({ method: mode, methodName });
   DB.deposits.unshift({
-    id: uid('dep'), userId: u.id, usd: usdAmt, coins: usdToCoins(usdAmt),
+    id: uid('dep'), userId: u.id, usd: usdAmt, coins: usdToCoins(usdAmt), coin,
     method: mode, methodName, detail, status: 'pending', createdAt: Date.now(), note: ''
   });
   notify('usr_admin', 'New deposit request', `${u.fullName} (@${u.username}) submitted ${usd(usdAmt)} via ${methodName}.`, '#/admin/deposits', 'wallet');
-  notify(u.id, 'Deposit submitted', `Your ${usd(usdAmt)} deposit is pending review. You'll be credited ${coins(usdToCoins(usdAmt))} WC once approved.`, '#/wallet', 'wallet');
+  notify(u.id, 'Deposit submitted', `Your ${usd(usdAmt)} || ${coin} deposit is pending review. It will be credited to your deposit balance once approved.`, '#/account', 'wallet');
   sync();
   openModal(modalShell('Deposit submitted', `
     <div class="center">
       <div style="width:58px;height:58px;border-radius:50%;background:rgba(255,176,32,.14);color:var(--warn);display:flex;align-items:center;justify-content:center;margin:0 auto">${ic('clock', 26)}</div>
       <h3 class="mt16" style="font-size:17px">Awaiting confirmation</h3>
-      <p class="small muted mt10" style="line-height:1.7">We've received your ${usd(usdAmt)} request via ${esc(methodName)}. Our team will verify and credit <b style="color:var(--accent)">${coins(usdToCoins(usdAmt))} WC</b> to your wallet.</p>
+      <p class="small muted mt10" style="line-height:1.7">We've received your ${usd(usdAmt)} request via ${esc(methodName)}. Our team will verify and credit <b style="color:var(--accent)">$${usdAmt.toFixed(2)} || ${esc(coin)}</b> to your deposit balance.</p>
     </div>`,
-    `<a href="#/wallet" class="btn btn-primary" data-close style="width:100%">Back to wallet</a>`));
+    `<a href="#/account" class="btn btn-primary" data-close style="width:100%">Back to account</a>`));
   setTimeout(() => render(), 60);
 };
 

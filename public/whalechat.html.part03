@@ -192,7 +192,7 @@ const USER_NAV = [
   { key: 'status', label: 'Status', icon: 'status', href: '#/status' },
   { key: 'market', label: 'Marketplace', icon: 'bag', href: '#/market' },
   { key: 'cart', label: 'Cart', icon: 'cart', href: '#/cart' },
-  { key: 'wallet', label: 'Wallet', icon: 'wallet', href: '#/wallet' },
+  { key: 'wallet', label: 'Account', icon: 'wallet', href: '#/wallet' },
   { key: 'profile', label: 'Profile', icon: 'user', href: '#/profile' }
 ];
 const VENDOR_NAV = [
@@ -202,7 +202,7 @@ const VENDOR_NAV = [
   { key: 'vproducts', label: 'My Products', icon: 'tag', href: '#/vendor/products' },
   { key: 'vorders', label: 'Orders', icon: 'truck', href: '#/vendor/orders' },
   { key: 'market', label: 'Marketplace', icon: 'bag', href: '#/market' },
-  { key: 'wallet', label: 'Wallet', icon: 'wallet', href: '#/wallet' },
+  { key: 'wallet', label: 'Account', icon: 'wallet', href: '#/wallet' },
   { key: 'profile', label: 'Profile', icon: 'user', href: '#/profile' }
 ];
 const ADMIN_NAV = [
@@ -227,7 +227,7 @@ const BOTTOM_NAV = [
   { key: 'status', label: 'Status', icon: 'status', href: '#/status' },
   { key: 'market', label: 'Market', icon: 'bag', href: '#/market' },
   { key: 'cart', label: 'Cart', icon: 'cart', href: '#/cart' },
-  { key: 'wallet', label: 'Wallet', icon: 'wallet', href: '#/wallet' },
+  { key: 'wallet', label: 'Account', icon: 'wallet', href: '#/wallet' },
   { key: 'profile', label: 'Profile', icon: 'user', href: '#/profile' }
 ];
 
