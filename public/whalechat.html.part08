@@ -940,7 +940,7 @@ const Remote = {
   }
 };
 
-const SYNC_COLLECTIONS = ['users', 'vendors', 'companyProducts', 'products', 'orders', 'deposits', 'withdrawals', 'messages', 'statuses', 'notifications', 'contacts', 'blocks', 'txs', 'referrals', 'purchases', 'refunds', 'vendorApplications', 'audit', 'portfolioAudit', 'stocks', 'holdings', 'trades', 'watchlist', 'alerts', 'traffic'];
+const SYNC_COLLECTIONS = ['users', 'vendors', 'companyProducts', 'products', 'orders', 'deposits', 'withdrawals', 'messages', 'statuses', 'notifications', 'contacts', 'blocks', 'txs', 'referrals', 'purchases', 'refunds', 'vendorApplications', 'audit', 'portfolioAudit', 'botAccounts', 'botEvents', 'stocks', 'holdings', 'trades', 'watchlist', 'alerts', 'traffic'];
 
 function cloneDB(db) { try { return JSON.parse(JSON.stringify(db)); } catch (e) { return db; } }
 function migrateDB(db) {
@@ -1616,9 +1616,9 @@ INV.SEED = [
 
 /* ------------------------------ persistence helpers ------------------------------ */
 INV.db = function () {
-  if (!DB.invest) DB.invest = { feePct: 0.12, paused: {}, seededAt: null };
+  if (!DB.invest) DB.invest = { feePct: 0.5, paused: {}, seededAt: null };
   if (!DB.invest.paused) DB.invest.paused = {};
-  if (typeof DB.invest.feePct !== 'number') DB.invest.feePct = 0.12;
+  if (typeof DB.invest.feePct !== 'number') DB.invest.feePct = 0.5;
   ['stocks', 'holdings', 'trades', 'watchlist', 'alerts'].forEach(k => { if (!Array.isArray(DB[k])) DB[k] = []; });
   if (!DB.invest.seededAt) {
     // seed the catalogue once per database, never overwriting admin edits
