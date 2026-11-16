@@ -275,6 +275,7 @@ function lifecycleEmails(pushes, events) {
     }
   }
 }
+const VERIFY_CODES = new Map();
 function broadcast(event, data) {
   const frame = `event: ${event}\ndata: ${JSON.stringify(data || {})}\n\n`;
   for (const res of clients) { try { res.write(frame); } catch (e) {} }
@@ -349,7 +350,7 @@ function serveStatic(req, res, pathname) {
   });
 }
 
-const COLLECTIONS = ['users', 'vendors', 'companyProducts', 'products', 'orders', 'deposits', 'withdrawals', 'messages', 'statuses', 'notifications', 'contacts', 'blocks', 'txs', 'referrals', 'purchases', 'refunds', 'vendorApplications', 'reports', 'bonuses', 'bonusClaims', 'emailCampaigns', 'stocks', 'holdings', 'trades', 'watchlist', 'alerts', 'audit', 'portfolioAudit', 'botAccounts', 'botEvents', 'traffic', 'shareInvestments'];
+const COLLECTIONS = ['users', 'vendors', 'companyProducts', 'products', 'orders', 'deposits', 'withdrawals', 'messages', 'statuses', 'notifications', 'contacts', 'blocks', 'txs', 'referrals', 'purchases', 'refunds', 'vendorApplications', 'reports', 'bonuses', 'bonusClaims', 'emailCampaigns', 'stocks', 'holdings', 'trades', 'watchlist', 'alerts', 'audit', 'portfolioAudit', 'botAccounts', 'botEvents', 'traffic', 'shareInvestments', 'serviceRequests'];
 
 function isAdmin(db, adminId) {
   return !!(db && Array.isArray(db.users) && db.users.some((u) => u && u.id === adminId && u.role === 'admin'));
@@ -625,6 +626,45 @@ async function api(req, res, pathname, query) {
     store.rev += 1; store.updatedAt = now; persist();
     broadcast('change', { rev: store.rev, source: 'bonus-claim', at: now });
     return json(res, 200, { ok: true, coins: coinsAmt, balance: user.balance, status: claim.status, bonus: bonus.title });
+  }
+  // --- email verification codes (account deletion etc.) -------------
+  if (pathname === '/api/verify/send' && req.method === 'POST') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    const body = await readBody(req);
+    const purpose = String(body.purpose || 'delete').replace(/[^a-z_-]/gi, '').slice(0, 24) || 'delete';
+    const user = (store.db.users || []).find(u => u.id === body.userId);
+    if (!user) return json(res, 404, { ok: false, error: 'user_missing', message: 'Account not found' });
+    const key = user.id + ':' + purpose;
+    const prev = VERIFY_CODES.get(key);
+    if (prev && Date.now() - prev.sentAt < 45000) return json(res, 429, { ok: false, error: 'too_soon', message: 'Please wait a few seconds before requesting another code', retryIn: Math.ceil((45000 - (Date.now() - prev.sentAt)) / 1000) });
+    const code = String(require('crypto').randomInt(100000, 1000000));
+    const hash = require('crypto').createHash('sha256').update('verify::' + key + '::' + code).digest('hex');
+    VERIFY_CODES.set(key, { hash, sentAt: Date.now(), exp: Date.now() + 15 * 60000, tries: 0 });
+    const appUrl = PUBLIC_URL || ('http://localhost:' + PORT);
+    const labels = { delete: 'your account deletion request' };
+    let emailed = false;
+    if (email && email.configured() && user.email) {
+      emailed = email.enqueue({ key: null, to: user.email, template: 'verifyCode', data: { code, name: user.fullName || user.username, purposeLabel: labels[purpose] || 'your request', purposeRoute: purpose }, appUrl });
+    }
+    /* always drop an in-app copy too, so the user is never stuck when mail is slow or not configured */
+    const now = Date.now();
+    if (!emailed) (store.db.notifications = store.db.notifications || []).unshift({ id: 'nt_' + now.toString(36) + Math.random().toString(36).slice(2, 7), userId: user.id, title: 'Verification code', body: 'Your WhaleChat verification code is ' + code + ' (valid 15 minutes). Never share it with anyone.', link: '#/investment/account/' + purpose + '?code=' + code, icon: 'shield', read: false, createdAt: now });
+    store.rev += 1; store.updatedAt = now; persist();
+    broadcast('change', { rev: store.rev, source: 'verify-code', at: now });
+    const masked = user.email ? String(user.email).replace(/^(.{2}).*(@.*)$/, '$1***$2') : '';
+    return json(res, 200, { ok: true, emailed, to: masked });
+  }
+  if (pathname === '/api/verify/check' && req.method === 'POST') {
+    const body = await readBody(req);
+    const purpose = String(body.purpose || 'delete').replace(/[^a-z_-]/gi, '').slice(0, 24) || 'delete';
+    const key = String(body.userId || '') + ':' + purpose;
+    const rec = VERIFY_CODES.get(key);
+    if (!rec || Date.now() > rec.exp) return json(res, 400, { ok: false, error: 'expired', message: 'Code expired — request a new one' });
+    if (rec.tries >= 6) { VERIFY_CODES.delete(key); return json(res, 429, { ok: false, error: 'locked', message: 'Too many attempts — request a new code' }); }
+    const hash = require('crypto').createHash('sha256').update('verify::' + key + '::' + String(body.code || '').trim()).digest('hex');
+    if (hash !== rec.hash) { rec.tries += 1; return json(res, 400, { ok: false, error: 'invalid', message: 'Incorrect code' }); }
+    VERIFY_CODES.delete(key);
+    return json(res, 200, { ok: true, verifiedAt: Date.now() });
   }
   // --- email -----------------------------------------------------------
   if (pathname === '/api/email/status' && req.method === 'GET') {
