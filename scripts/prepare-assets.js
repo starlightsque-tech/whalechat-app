@@ -70,6 +70,7 @@ const MODULES = [
   { file: 'investment-hub.js', marker: 'wc-investment-hub' },
   { file: 'account-center.js', marker: 'wc-account-centre' },
   { file: 'money-hub.js', marker: 'wc-money-hub' },
+  { file: 'service-center.js', marker: 'wc-service-center' },
   { file: 'demo-sellers.js', marker: 'wc-demo-sellers' },
   { file: 'support.js', marker: 'wc-support' },
   { file: 'view-mode.js', marker: 'wc-view-mode' },
