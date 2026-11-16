@@ -74,6 +74,8 @@ const MODULES = [
   { file: 'portfolio-share.js', marker: 'wc-portfolio-share' },
   { file: 'pro-chart.js', marker: 'wc-pro-chart' },
   { file: 'readability.js', marker: 'wc-readability' },
+  { file: 'wc-invest-plans.js', marker: 'wc-invest-plans' },
+  { file: 'wc-invest-ui.js', marker: 'wc-invest-ui' },
   { file: 'typography.js', marker: 'wc-typography' },
   { file: 'session-guard.js', marker: 'wc-session-guard' }
 ];

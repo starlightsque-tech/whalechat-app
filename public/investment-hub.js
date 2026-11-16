@@ -245,14 +245,50 @@
     if (sec.indexOf('index') >= 0 || sec.indexOf('indices') >= 0) return 'Indices';
     return 'Stocks';
   }
-  function b2bPath(ticker) {
-    var vals = [];
-    try { vals = INV.series(ticker, '1D') || []; } catch (e) {}
-    if (!vals || vals.length < 2) return '';
-    var min = Math.min.apply(null, vals), max = Math.max.apply(null, vals);
-    var spread = (max - min) || 1;
-    return vals.map(function (v, i) { return ((i / (vals.length - 1)) * 300).toFixed(1) + ',' + (58 - ((v - min) / spread) * 52).toFixed(1); }).join(' ');
+  /* ---- live price history, sampled from the tick engine ------------------ */
+  var B2B_HIST = {};          /* ticker → [{ t, p }] */
+  var B2B_MAXPTS = 48;
+  function b2bSeed(ticker) {
+    if (B2B_HIST[ticker] && B2B_HIST[ticker].length > 2) return B2B_HIST[ticker];
+    var seed = [];
+    try {
+      var series = INV.series(ticker, '1D') || [];
+      if (series.length > 2) seed = series.slice(-B2B_MAXPTS).map(function (v, i) { return { t: i, p: v }; });
+    } catch (e) {}
+    if (!seed.length) {
+      var q = b2bQuote(ticker) || {};
+      if (q.price > 0) seed = [{ t: 0, p: q.price }, { t: 1, p: q.price }];
+    }
+    B2B_HIST[ticker] = seed;
+    return seed;
   }
+  function b2bSample(tickers) {
+    tickers.forEach(function (t) {
+      var hist = b2bSeed(t);
+      var q = null; try { q = INV.quote(t); } catch (e) {}
+      if (!q || !(q.price > 0)) return;
+      var last = hist[hist.length - 1];
+      if (last && Math.abs(last.p - q.price) < 1e-9 && hist.length > 2) return;
+      hist.push({ t: Date.now(), p: q.price });
+      if (hist.length > B2B_MAXPTS) hist.shift();
+    });
+  }
+  function b2bPoints(ticker, w, h) {
+    var hist = b2bSeed(ticker);
+    var vals = hist.map(function (x) { return x.p; }).filter(function (v) { return v > 0; });
+    if (vals.length < 2) return { points: '', up: true, flat: true };
+    var min = Math.min.apply(null, vals), max = Math.max.apply(null, vals);
+    var spread = (max - min) || (max * 0.0005) || 1;
+    var W = w || 300, H = h || 60;
+    var pad = 3;
+    var pts = vals.map(function (v, i) {
+      var x = pad + (i / (vals.length - 1)) * (W - pad * 2);
+      var y = (H - pad) - ((v - min) / spread) * (H - pad * 2);
+      return x.toFixed(1) + ',' + y.toFixed(1);
+    }).join(' ');
+    return { points: pts, up: vals[vals.length - 1] >= vals[0], flat: max === min };
+  }
+  function b2bPath(ticker) { return b2bPoints(ticker, 300, 60).points; }
   function b2bUnits(n) { return Number(Number(n) || 0).toLocaleString(undefined, { maximumFractionDigits: 6 }); }
   function b2bPriceOf(t, fallback) {
     var q = b2bQuote(t) || {};
@@ -299,7 +335,7 @@
       '<div class="tiny muted">' + escH(b2bCategory(s)) + '</div>' +
       '<div class="b2b-price" data-b2b-price="' + escH(s.ticker) + '">' + (q.price > 0 ? money(q.price) : '—') + '</div>' +
       '<div class="tiny ' + ((q.changePct || 0) >= 0 ? 'up' : 'down') + '">' + ((q.changePct || 0) >= 0 ? '+' : '') + (Number(q.changePct) || 0).toFixed(2) + '%</div>' +
-      '<svg viewBox="0 0 300 60" class="b2b-spark"><polyline points="' + b2bPath(s.ticker) + '" fill="none" stroke="' + ((q.changePct || 0) >= 0 ? '#22c55e' : '#ef4444') + '" stroke-width="1.6"/></svg>' +
+      '<svg viewBox="0 0 300 60" class="b2b-spark" preserveAspectRatio="none"><polyline data-b2b-spark="' + escH(s.ticker) + '" points="' + b2bPath(s.ticker) + '" fill="none" stroke="' + ((q.changePct || 0) >= 0 ? '#22c55e' : '#ef4444') + '" stroke-width="1.6" stroke-linejoin="round"/></svg>' +
     '</div>';
   }
 
@@ -370,6 +406,10 @@
         '<div class="field"><label class="label">Asset</label><select class="input" id="ihB2bBuyAsset" data-act="ih-b2b-buy-asset">' +
           assets.map(function (s) { return '<option value="' + escH(s.ticker) + '"' + (s.ticker === sel.ticker ? ' selected' : '') + '>' + escH(b2bLabel(s)) + ' · ' + escH(b2bCategory(s)) + '</option>'; }).join('') +
         '</select></div>' +
+        '<div class="card b2b-livechart"><div class="between"><span class="tiny muted">Live price movement</span>' +
+          '<span class="tiny ' + ((q.changePct || 0) >= 0 ? 'up' : 'down') + '" data-b2b-chg="' + escH(sel.ticker) + '">' + ((q.changePct || 0) >= 0 ? '+' : '') + (Number(q.changePct) || 0).toFixed(2) + '%</span></div>' +
+          '<svg viewBox="0 0 300 90" class="b2b-bigspark" preserveAspectRatio="none"><polyline data-b2b-bigspark="' + escH(sel.ticker) + '" points="' + b2bPoints(sel.ticker, 300, 90).points + '" fill="none" stroke="' + ((q.changePct || 0) >= 0 ? '#22c55e' : '#ef4444') + '" stroke-width="1.8" stroke-linejoin="round"/></svg>' +
+          '<div class="tiny muted center">Updates every 2 seconds from the live feed</div></div>' +
         '<div class="b2b-quote"><div><span class="tiny muted">Live price</span><b data-b2b-price="' + escH(sel.ticker) + '" data-b2b-unitprice>' + (price > 0 ? money(price) : '—') + '</b></div>' +
           '<div><span class="tiny muted">Today</span><b class="' + ((q.changePct || 0) >= 0 ? 'up' : 'down') + '">' + ((q.changePct || 0) >= 0 ? '+' : '') + (Number(q.changePct) || 0).toFixed(2) + '%</b></div>' +
           '<div><span class="tiny muted">Capital available</span><b>' + money(b2bCapital(a)) + '</b></div></div>' +
@@ -645,18 +685,32 @@
   }
 
   function sharesStrip(u) {
-    var a = account(u); var st = (window.WC_SHARES && window.WC_SHARES.state) || {};
-    var sum = st.summary || {};
-    var capital = Number(sum.investedUsd) || Number(a.portfolios.wc) || 0;
-    var profit = Number(sum.totalEarnedUsd) || 0;
-    var leftover = Math.max(0, capital - Math.abs(profit));
+    var a = account(u);
+    var S = window.WC_INVEST;
+    var s = S ? S.summary(u) : null;
+    if (!s) {
+      return '<div class="ih-cards">' +
+        '<div class="ih-card"><span>Capital balance</span><b>' + money(Number(a.portfolios.wc) || 0) + '</b></div>' +
+        '<div class="ih-card"><span>Profits</span><b>' + money(0) + '</b></div>' +
+        '<div class="ih-card"><span>Leftover capital</span><b>' + money(0) + '</b></div></div>' +
+        '<div class="card ih-actions"><div class="ih-btn-grid">' +
+        [['Invest now', '#/invest/shares/invest'], ['Active plans', '#/invest/shares/active'], ['Transfer', '#/invest/shares/transfer'], ['ROI progress', '#/invest/shares/roi'], ['History', '#/invest/shares/history']]
+          .map(function (x) { return '<a href="' + x[1] + '" class="btn btn-ghost btn-sm">' + x[0] + '</a>'; }).join('') + '</div></div>';
+    }
     return '<div class="ih-cards">' +
-      '<div class="ih-card"><span>Capital balance</span><b>' + money(capital) + '</b></div>' +
-      '<div class="ih-card"><span>Profits</span><b class="' + (profit >= 0 ? 'up' : 'down') + '">' + money(profit) + '</b></div>' +
-      '<div class="ih-card"><span>Leftover capital</span><b>' + money(leftover) + '</b></div></div>' +
-      '<div class="card ih-actions"><div class="ih-btn-grid">' +
-      [['Invest now','#/invest/shares'],['Active plans','#/invest/shares'],['Transfer','#/investment/transfer'],['ROI progress','#/invest/shares'],['History','#/investment/history']]
-        .map(function(x){return '<a href="'+x[1]+'" class="btn btn-ghost btn-sm">'+x[0]+'</a>';}).join('') + '</div></div>';
+      '<div class="ih-card"><span>Capital balance</span><b>' + money(s.capital) + '</b><small>' + wc(s.capital / RATE) + ' WC · plan funding</small></div>' +
+      '<div class="ih-card"><span>Profits</span><b class="' + (s.profit >= 0 ? 'up' : 'down') + '">' + money(s.profit) + '</b><small>' + wc(s.profit / RATE) + ' WC credited</small></div>' +
+      '<div class="ih-card"><span>Leftover capital</span><b>' + money(s.leftover) + '</b><small>Returned after a loss</small></div>' +
+      '<div class="ih-card"><span>Active plans</span><b>' + s.activeCount + '</b><small>+' + money(s.accruedUsd) + ' ROI accrued</small></div>' +
+    '</div>' +
+    /* one route per button so every click lands on its own page */
+    '<div class="card ih-actions"><div class="ih-btn-grid">' +
+      '<a href="#/invest/shares/invest" class="btn btn-primary btn-sm" data-share-nav="invest">Invest now</a>' +
+      '<a href="#/invest/shares/active" class="btn btn-ghost btn-sm" data-share-nav="active">Active plans</a>' +
+      '<a href="#/invest/shares/transfer" class="btn btn-ghost btn-sm" data-share-nav="transfer">Transfer</a>' +
+      '<a href="#/invest/shares/roi" class="btn btn-ghost btn-sm" data-share-nav="roi">ROI progress</a>' +
+      '<a href="#/invest/shares/history" class="btn btn-ghost btn-sm" data-share-nav="history">History</a>' +
+    '</div></div>';
   }
 
   function ensureView() {
@@ -1035,6 +1089,33 @@
         var txt = money(units * q.price);
         if (el.textContent !== txt) el.textContent = txt;
       });
+      var live = [];
+      document.querySelectorAll('[data-b2b-spark],[data-b2b-bigspark]').forEach(function (el) {
+        live.push(el.getAttribute('data-b2b-spark') || el.getAttribute('data-b2b-bigspark'));
+      });
+      if (live.length) b2bSample(live.filter(Boolean));
+      document.querySelectorAll('[data-b2b-spark]').forEach(function (el) {
+        var t = el.getAttribute('data-b2b-spark');
+        var geo = b2bPoints(t, 300, 60);
+        if (geo.points) el.setAttribute('points', geo.points);
+        el.setAttribute('stroke', geo.up ? '#22c55e' : '#ef4444');
+      });
+      document.querySelectorAll('[data-b2b-bigspark]').forEach(function (el) {
+        var t = el.getAttribute('data-b2b-bigspark');
+        var geo = b2bPoints(t, 300, 90);
+        if (geo.points) el.setAttribute('points', geo.points);
+        el.setAttribute('stroke', geo.up ? '#22c55e' : '#ef4444');
+        var chg = document.querySelector('[data-b2b-chg="' + t + '"]');
+        if (chg) {
+          var hist = B2B_HIST[t] || [];
+          if (hist.length > 1) {
+            var first = hist[0].p, lastP = hist[hist.length - 1].p;
+            var pct = first ? ((lastP - first) / first) * 100 : 0;
+            chg.textContent = (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%';
+            chg.className = 'tiny ' + (pct >= 0 ? 'up' : 'down');
+          }
+        }
+      });
       var amt = document.querySelector('[data-b2b-amount]');
       if (amt) {
         var here = String((location.hash || '').split('?asset=')[1] || '').split('&')[0];
@@ -1060,7 +1141,15 @@
       var t = ev.target;
       if (t && t.matches && (t.matches('[data-b2b-amount]') || t.id === 'ihB2bMultiAmount')) paintB2BPrices();
     }, false);
-    setInterval(paintB2BPrices, 3000);
+    setInterval(paintB2BPrices, 2000);
+    /* keep the chart history warm even when a tick does not change the price */
+    setInterval(function () {
+      var live = [];
+      document.querySelectorAll('[data-b2b-spark],[data-b2b-bigspark]').forEach(function (el) {
+        live.push(el.getAttribute('data-b2b-spark') || el.getAttribute('data-b2b-bigspark'));
+      });
+      if (live.length) b2bSample(live.filter(Boolean));
+    }, 2000);
   }
 
   (function styles() {
@@ -1074,7 +1163,10 @@
     .ih-quickbtn span{color:var(--accent)} .ih-quickbtn b{font-size:11.5px}
     .ih-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:9px;margin-bottom:12px}
     .ih-card{display:flex;flex-direction:column;gap:3px;padding:12px;border-radius:12px;border:1px solid var(--border);background:var(--surface-2)}
-    .ih-card span{font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted-2);font-weight:700}
+    .ih-card{min-width:0}
+    .ih-card span{font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted-2);font-weight:700;
+      white-space:normal;line-height:1.3;overflow-wrap:anywhere}
+    .ih-card small{white-space:normal;line-height:1.3}
     .ih-card b{font-size:17px} .ih-card small{font-size:10px;color:var(--muted)}
     .ih-list{display:flex;flex-direction:column}
     .ih-row{display:flex;gap:8px;align-items:center;padding:9px 0;border-top:1px solid var(--border);font-size:12px}
