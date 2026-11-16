@@ -1,8 +1,8 @@
 {
-  "version": "3.38.3",
-  "build": "2026-11-16T04:30:00Z",
+  "version": "3.38.4",
+  "build": "2026-11-16T05:10:00Z",
   "file": "whalechat.html",
-  "notes": "3.38.3: live 24/7 volume histogram under every stock chart tick.",
-  "releasedAt": "2026-11-16T04:30:00Z",
+  "notes": "3.38.4: investment account hub, account quick actions, transfers/top-ups, tools, B2B, statements and disputes.",
+  "releasedAt": "2026-11-16T05:10:00Z",
   "minimum": "3.0.0"
 }
