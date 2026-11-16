@@ -1026,6 +1026,75 @@ const server = http.createServer(async (req, res) => {
   try { if (handleBrandedRedirect(req, res, pathname)) return; } catch (e) { console.error('[redirect]', e.message); }
   serveStatic(req, res, pathname);
 });
+/* ---------------- server-side tool subscription worker ---------------- */
+const DEFAULT_TOOL_CATALOG = [
+  { id: 'autosecure', name: 'Auto Secure Take Profit', price: 9.99 },
+  { id: 'botassist', name: 'Bot Assisted Trading', price: 19.99 },
+  { id: 'riskguard', name: 'Risk Shield / Take Loss Guard', price: 7.99 },
+  { id: 'signals', name: 'Pro Chart Signals', price: 4.99 }
+];
+function toolRound(n) { return Math.round((Number(n) || 0) * 100) / 100; }
+function toolId(prefix) { return prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+function toolCatalog(db) {
+  if (db && db.settings && Array.isArray(db.settings.toolCatalog) && db.settings.toolCatalog.length) return db.settings.toolCatalog;
+  return DEFAULT_TOOL_CATALOG;
+}
+function processToolSubscriptions() {
+  if (!store.db || !Array.isArray(store.db.users)) return 0;
+  const db = store.db;
+  const catalog = toolCatalog(db);
+  const byId = {};
+  catalog.forEach((t) => { byId[t.id] = t; });
+  let changed = 0;
+  const now = Date.now();
+  for (const u of db.users) {
+    const a = u.investAcct;
+    if (!a || !a.tools) continue;
+    if (!Array.isArray(a.ledger)) a.ledger = [];
+    for (const id of Object.keys(a.tools)) {
+      const s = a.tools[id];
+      const t = byId[id] || catalog.find((x) => x.id === id);
+      if (!s || !t) continue;
+      if (s.active && !s.paused && Number(s.expiresAt) <= now) {
+        if ((Number(a.usd) || 0) >= Number(t.price)) {
+          a.usd = toolRound(Number(a.usd) - Number(t.price));
+          s.expiresAt = now + 30 * 864e5;
+          s.price = Number(t.price);
+          s.reminded = false;
+          s.lastRenewAt = now;
+          a.ledger.unshift({ id: toolId('il_'), label: 'Tool auto-renewal · ' + t.name, usd: -Number(t.price), coins: 0, at: now });
+          db.txs = db.txs || [];
+          db.txs.unshift({ id: toolId('tx_'), userId: u.id, type: 'tool-renewal', label: 'Tool auto-renewal · ' + t.name, coins: 0, meta: { toolId: id, usd: Number(t.price) }, createdAt: now });
+          db.notifications = db.notifications || [];
+          db.notifications.unshift({ id: toolId('nt_'), userId: u.id, title: 'Tool renewed', body: t.name + ' renewed for another 30 days.', link: '#/investment/tools', icon: 'shield', read: false, createdAt: now });
+        } else {
+          s.active = false;
+          s.expiredAt = now;
+          db.notifications = db.notifications || [];
+          db.notifications.unshift({ id: toolId('nt_'), userId: u.id, title: 'Tool expired', body: t.name + ' expired — insufficient investment balance to renew.', link: '#/investment/tools', icon: 'warn', read: false, createdAt: now });
+        }
+        changed++;
+      }
+      if (s.active && !s.paused && Number(s.expiresAt) > now && Number(s.expiresAt) - now < 3 * 864e5 && !s.reminded) {
+        s.reminded = true;
+        db.notifications = db.notifications || [];
+        db.notifications.unshift({ id: toolId('nt_'), userId: u.id, title: 'Tool renewal reminder', body: t.name + ' renews in under 3 days. Keep enough investment balance.', link: '#/investment/tools', icon: 'clock', read: false, createdAt: now });
+        changed++;
+      }
+    }
+  }
+  if (changed) {
+    store.rev += 1; store.updatedAt = now; persist();
+    try { broadcast('change', { rev: store.rev, source: 'tool-worker', at: now }); } catch (e) {}
+    console.log('[tools] processed', changed, 'subscription event(s)');
+  }
+  return changed;
+}
+function startToolWorker() {
+  setInterval(() => { try { processToolSubscriptions(); } catch (e) { console.error('[tools] worker:', e.message); } }, 5 * 60 * 1000).unref();
+  setTimeout(() => { try { processToolSubscriptions(); } catch (e) {} }, 8000).unref();
+}
+
 server.keepAliveTimeout = 65000;
 server.headersTimeout = 70000;
 (async () => {
@@ -1040,6 +1109,7 @@ server.headersTimeout = 70000;
   ensureServices(store.db);
   spot.startTimers();
   bots.startTimers();
+  startToolWorker();
   shares.startTimers();
   server.listen(PORT, HOST, () => {
     console.log(`[whalechat] listening on http://localhost:${PORT}`);
