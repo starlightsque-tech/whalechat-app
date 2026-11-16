@@ -155,6 +155,8 @@
       }
     } catch (e) {}
   }
+  /* register routes immediately, then keep retrying until the app shell exists */
+  try { patchViews(); addNav(); } catch (e) {}
   let tries = 0;
   const iv = setInterval(() => {
     tries++;
