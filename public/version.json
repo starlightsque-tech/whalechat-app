@@ -1,8 +1,8 @@
 {
-  "version": "3.39.0",
-  "build": "2026-11-16T13:59:51Z",
+  "version": "3.40.0",
+  "build": "2026-11-16T20:42:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.39.0 - unified transfers between all balances, crypto-only withdrawals, account ID as referral code, PIN only for withdrawals and sending to another user, plus USD portfolio plumbing.",
-  "releasedAt": "2026-11-16T13:59:51Z",
+  "notes": "WhaleChat 3.40.0 - Service Center: More hub (loans, business cards, FAQ, disputes), transaction/withdrawal/deposit/asset-reversal disputes with status tracking, account requests (delete with email code, upgrade, vendor profile, statement), and an admin Help desk to process every user request.",
+  "releasedAt": "2026-11-16T20:42:00Z",
   "minimum": "3.0.0"
 }
