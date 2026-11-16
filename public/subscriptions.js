@@ -156,16 +156,7 @@
   }
   S.ledger = ledgerLine;
 
-  async function pinOk(title, sub) {
-    var u = user();
-    if (!u || !u.pin) return true;
-    if (typeof askPin !== 'function' || typeof hash !== 'function') return true;
-    var pin = await askPin({ title: title, sub: sub || 'Enter your transaction PIN' });
-    if (!pin) return false;
-    var h = await hash('pin::' + pin);
-    if (h !== u.pin) { tmsg('Incorrect PIN', 'err'); return false; }
-    return true;
-  }
+  async function pinOk() { return true; }
 
   /* Mirror the server-side bot record into the shared record so the Tools page
      shows the same state as the Trading Bots page (and vice versa). */

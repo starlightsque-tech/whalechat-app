@@ -305,7 +305,7 @@ function adminWithdrawals() {
     ${list.length ? list.map(w => {
       const u = findUser(w.userId);
       return `<tr><td><div style="font-weight:600">${esc(u ? u.fullName : 'Deleted user')}</div><div class="tiny muted">${esc(u ? '@' + u.username : '')} · ${timeAgo(w.createdAt)} ago</div></td>
-        <td><div style="font-weight:600">${coins(w.coins)} WC</div><div class="tiny muted">${usd(w.usd)}</div></td>
+        <td><div style="font-weight:600">${w.crypto ? usd(w.usd) + ' || ' + esc(w.coin || 'USDT') : coins(w.coins) + ' WC'}</div><div class="tiny muted">${w.crypto ? 'crypto balance' : usd(w.usd)}</div></td>
         <td><span class="badge">${esc(w.network)}</span><div class="tiny muted" style="max-width:190px;overflow:hidden;text-overflow:ellipsis;margin-top:3px">${esc(w.address)}</div></td>
         <td>${statusBadge(w.status)}</td>
         <td><div class="row gap6" style="justify-content:flex-end">
@@ -326,8 +326,8 @@ App.wdApprove = async function (id) {
   const act = DB.txs.find(t => t.id === w.txId || (t.meta && t.meta.withdrawalId === w.id));
   if (act) { act.label = 'Withdrawal approved · ' + w.network; act.meta = Object.assign({}, act.meta, { withdrawalId: w.id, status: 'approved' }); }
   if (u) {
-    u.totalWithdrawals = Math.round(((u.totalWithdrawals || 0) + w.coins) * 100) / 100;
-    notify(u.id, 'Withdrawal approved 💸', `${coins(w.coins)} WC (${usd(w.usd)}) was sent via ${w.network}.${txRef ? ' Tx: ' + txRef : ''}`, '#/wallet', 'download');
+    u.totalWithdrawals = Math.round(((u.totalWithdrawals || 0) + (Number(w.usd) || 0)) * 100) / 100;
+    notify(u.id, 'Withdrawal approved 💸', `${usd(w.usd)}${w.crypto ? ' || ' + (w.coin || 'USDT') : ''} was sent via ${w.network}.${txRef ? ' Tx: ' + txRef : ''}`, '#/account', 'download');
   }
   sync(); toast('Withdrawal approved', 'ok'); render();
 };
@@ -340,9 +340,16 @@ App.wdReject = async function (id) {
   const actR = DB.txs.find(t => t.id === w.txId || (t.meta && t.meta.withdrawalId === w.id));
   if (actR) { actR.label = 'Withdrawal rejected · ' + w.network; actR.meta = Object.assign({}, actR.meta, { withdrawalId: w.id, status: 'rejected' }); }
   if (u) {
-    u.balance = Math.round((u.balance + w.coins) * 100) / 100;
-    tx(u.id, 'refund', 'Withdrawal rejected · refund', w.coins);
-    notify(u.id, 'Withdrawal rejected', `${coins(w.coins)} WC has been returned to your balance. ${reason || ''}`, '#/wallet', 'ban');
+    if (w.crypto) {
+      const c = String(w.coin || 'USDT').toUpperCase();
+      u.depositBalances = (u.depositBalances && typeof u.depositBalances === 'object') ? u.depositBalances : {};
+      u.depositBalances[c] = Math.round(((Number(u.depositBalances[c]) || 0) + (Number(w.usd) || 0)) * 100) / 100;
+      notify(u.id, 'Withdrawal rejected', `${usd(w.usd)} || ${c} has been returned to your crypto deposit balance. ${reason || ''}`, '#/account', 'ban');
+    } else {
+      u.balance = Math.round((u.balance + w.coins) * 100) / 100;
+      tx(u.id, 'refund', 'Withdrawal rejected · refund', w.coins);
+      notify(u.id, 'Withdrawal rejected', `${coins(w.coins)} WC has been returned to your balance. ${reason || ''}`, '#/wallet', 'ban');
+    }
   }
   sync(); toast('Withdrawal rejected and refunded', 'ok'); render();
 };

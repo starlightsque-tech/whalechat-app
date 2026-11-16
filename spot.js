@@ -25,6 +25,16 @@
 const crypto = require('crypto');
 
 const COINS_PER_USD = 2;                 // 1 WC = $0.50
+
+function invAcct(u) {
+  if (!u) return null;
+  if (!u.investAcct) u.investAcct = { usd: 0, payout: 0, wcBalance: 0, portfolios: { stock: 0, wc: 0, b2b: 0, bot: 0 } };
+  const a = u.investAcct;
+  if (!a.portfolios) a.portfolios = { stock: 0, wc: 0, b2b: 0, bot: 0 };
+  return a;
+}
+function pf(u, key) { const a = invAcct(u); return round(Number(a && a.portfolios && a.portfolios[key]) || 0, 2); }
+function setPf(u, key, v) { const a = invAcct(u); a.portfolios[key] = round(Number(v) || 0, 2); return a.portfolios[key]; }
 const MAX_PCT = 500;                     // admin profit-rate cap (%)
 const round = (v, n) => Math.round((Number(v) || 0) * Math.pow(10, n)) / Math.pow(10, n);
 function nid(prefix) { return prefix + Date.now().toString(36) + crypto.randomBytes(3).toString('hex'); }
@@ -219,8 +229,9 @@ class SpotService {
     const investedUsd = round(shares * exec, 6);
     const investedCoins = round(investedUsd * COINS_PER_USD, 2);
     if (!(investedCoins > 0)) throw new Error('Investment is too small');
-    if ((Number(u.balance) || 0) + 1e-9 < investedCoins) {
-      throw new Error(`Not enough WC — this purchase needs ${investedCoins.toFixed(2)} WC (you have ${round(u.balance, 2)} WC)`);
+    const availUsd = pf(u, 'stock');
+    if (availUsd + 1e-9 < investedUsd) {
+      throw new Error(`Not enough stock trading balance — this purchase needs $${investedUsd.toFixed(2)} (you have $${availUsd.toFixed(2)})`);
     }
 
     const tp = Number(opts.tpPrice) || 0;
@@ -229,7 +240,7 @@ class SpotService {
     if (sl > 0 && sl >= exec) throw new Error('Stop Loss must be below the current market price');
 
     /* --- critical section: fully synchronous, no awaits ------------------- */
-    u.balance = round((Number(u.balance) || 0) - investedCoins, 2);
+    setPf(u, 'stock', availUsd - investedUsd);
 
     const now = Date.now();
     let h = this.holding(db, userId, ticker);
@@ -282,7 +293,7 @@ class SpotService {
     /* ---------------------------------------------------------------------- */
 
     this.changed('spot-buy');
-    return { ok: true, order, position: this.positionView(h, live), balance: u.balance };
+    return { ok: true, order, position: this.positionView(h, live), balance: pf(u, 'stock'), stockUsd: pf(u, 'stock') };
   }
 
   /* --------------------------------- sell --------------------------------- */
@@ -324,7 +335,7 @@ class SpotService {
     const idx = db.holdings.findIndex((x) => x && x.id === h.id);
     if (idx < 0) throw new Error('That position is already closed');
     const prevHolding = Object.assign({}, h);
-    const prevBalance = Number(u.balance) || 0;
+    const prevBalance = pf(u, 'stock');
     try {
       if (shares >= totalShares - 1e-9) {
         db.holdings.splice(idx, 1);
@@ -334,7 +345,7 @@ class SpotService {
         h.investedUsd = round((Number(h.investedCoins) || 0) * 0.5, 2);
         h.updatedAt = Date.now();
       }
-      u.balance = round(prevBalance + payout, 2);
+      setPf(u, 'stock', prevBalance + round(payout * 0.5, 2));
 
       const now = Date.now();
       const order = {
@@ -359,10 +370,10 @@ class SpotService {
         'check');
       this.settledTotal += 1;
       this.changed('spot-sell');
-      return { ok: true, order, payout, plCoins, profitPct: ratePct, balance: u.balance, reason };
+      return { ok: true, order, payout, plCoins, profitPct: ratePct, balance: pf(u, 'stock'), stockUsd: pf(u, 'stock'), reason };
     } catch (e) {
       /* roll back so a failed bookkeeping step can never lose the position */
-      u.balance = prevBalance;
+      setPf(u, 'stock', prevBalance);
       if (idx >= 0 && !db.holdings.some((x) => x && x.id === prevHolding.id)) db.holdings.splice(idx, 0, prevHolding);
       throw e;
     }

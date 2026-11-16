@@ -13,6 +13,16 @@
 const crypto = require('crypto');
 
 const COINS_PER_USD = 2;                    // 1 WC = $0.50
+
+function invAcct(u) {
+  if (!u) return null;
+  if (!u.investAcct) u.investAcct = { usd: 0, payout: 0, wcBalance: 0, portfolios: { stock: 0, wc: 0, b2b: 0, bot: 0 }, stockProfit: 0 };
+  const a = u.investAcct;
+  if (!a.portfolios) a.portfolios = { stock: 0, wc: 0, b2b: 0, bot: 0 };
+  return a;
+}
+function pf(u, key) { const a = invAcct(u); return round(Number(a && a.portfolios && a.portfolios[key]) || 0, 2); }
+function setPf(u, key, v) { const a = invAcct(u); a.portfolios[key] = round(Number(v) || 0, 2); return a.portfolios[key]; }
 const CYCLE_MS = { daily: 86400000, weekly: 604800000, monthly: 2592000000, one_time: null };
 const CYCLE_LABEL = { daily: 'day', weekly: 'week', monthly: 'month', one_time: 'one-time' };
 
@@ -211,12 +221,13 @@ class BotService {
     if (!u) throw nextError('User not found');
     const priceUsd = Number(this.settings().autoSecurePriceUsd) || 20;
     const feeCoins = round(priceUsd * COINS_PER_USD, 2);
-    if (!(feeCoins > 0)) throw nextError('This tool is not priced yet');
-    if ((Number(u.balance) || 0) < feeCoins) throw nextError(`Not enough WC — the Auto Secure tool costs ${feeCoins.toFixed(2)} WC ($${priceUsd.toFixed(2)})`);
+    if (!(priceUsd > 0)) throw nextError('This tool is not priced yet');
+    const ia = invAcct(u);
+    if ((Number(ia.usd) || 0) < priceUsd) throw nextError(`Not enough investment USD — the Auto Secure tool costs $${priceUsd.toFixed(2)}`);
     const now = Date.now();
     const cycle = Object.prototype.hasOwnProperty.call(CYCLE_MS, this.settings().autoSecureCycle) ? this.settings().autoSecureCycle : 'monthly';
     const ms = CYCLE_MS[cycle];
-    u.balance = round(Number(u.balance) - feeCoins, 2);
+    ia.usd = round((Number(ia.usd) || 0) - priceUsd, 2);
     const old = (db.autoSecureSubs || []).find((s) => s && s.userId === userId);
     const sub = old || { id: nid('as_'), userId };
     Object.assign(sub, {
@@ -233,7 +244,7 @@ class BotService {
       `The bot will secure available profit on your active trades, even while you are offline. Claim each secured profit from Orders.`, 'lock');
     this.changed('auto-secure-subscribe');
     try { this.autoSecureSweep(); } catch (e) {}
-    return { ok: true, autoSecure: this.autoSecureView(db, userId), balance: u.balance, subscription: sub };
+    return { ok: true, autoSecure: this.autoSecureView(db, userId), balance: pf(u, 'stock'), usd: ia.usd, subscription: sub };
   }
 
   toggleAutoSecure(opts) {
@@ -278,13 +289,19 @@ class BotService {
     const auto = this.autoSecureView(db, userId);
     const account = this.accountFor(db, userId);
     const events = (db.botEvents || []).filter((e) => e && e.userId === userId).slice(0, 60);
+    const stockUsd = pf(u, 'stock');
     return {
       ok: true,
-      balance: round(u.balance, 2),
+      balance: stockUsd,
+      balanceUsd: stockUsd,
+      stockUsd: stockUsd,
       account: {
         capitalCoins: round(account.capitalCoins, 2),
         profitCoins: round(account.profitCoins, 2),
-        totalPayoutCoins: round(account.totalPayoutCoins || 0, 2)
+        totalPayoutCoins: round(account.totalPayoutCoins || 0, 2),
+        capitalUsd: round(account.capitalCoins * 0.5, 2),
+        profitUsd: round(account.profitCoins * 0.5, 2),
+        botUsd: pf(u, 'bot')
       },
       events,
       coinsPerUsd: COINS_PER_USD,
@@ -352,12 +369,14 @@ class BotService {
     if (existing) throw nextError('You already own this bot — it is active until ' + (existing.expiresAt ? new Date(existing.expiresAt).toLocaleString() : 'forever'));
 
     const feeCoins = this.priceCoins(tier);
+    const priceUsd = Number(tier.priceUsd) || 0;
     if (!(feeCoins > 0)) throw nextError('This bot has no price yet — contact support');
-    if ((Number(u.balance) || 0) < feeCoins) throw nextError(`Not enough WC — you need ${feeCoins.toFixed(2)} WC ($${(Number(tier.priceUsd) || 0).toFixed(2)})`);
+    const ia = invAcct(u);
+    if ((Number(ia.usd) || 0) < priceUsd) throw nextError(`Not enough investment USD — you need $${priceUsd.toFixed(2)}`);
 
     const now = Date.now();
     const ms = this.cycleMs(tier.billingCycle);
-    u.balance = round(Number(u.balance) - feeCoins, 2);
+    ia.usd = round((Number(ia.usd) || 0) - priceUsd, 2);
 
     /* refresh an expired record for the same tier instead of duplicating it */
     const old = (db.botSubscriptions || []).find((s) => s && s.userId === userId && s.tierId === tier.id);
@@ -374,7 +393,7 @@ class BotService {
     });
     this.notify(db, userId, 'Bot unlocked', `${tier.name} is now active on your account (${tier.accuracy}% simulated accuracy). Allocate capital to start it.`, 'star');
     this.changed('bot-subscribe');
-    return { ok: true, subscription: sub, balance: u.balance, tier };
+    return { ok: true, subscription: sub, balance: pf(u, 'stock'), usd: ia.usd, tier };
   }
 
   /* ------------------------------- bot session ------------------------------ */
@@ -400,14 +419,15 @@ class BotService {
     if (current && current.status === 'paused') throw nextError('This bot is paused — press Resume trading');
 
     const account = this.accountFor(db, userId);
-    let topup = Number(opts.topupCoins);
-    if (!(topup > 0) && Number(opts.topupUsd) > 0) topup = Number(opts.topupUsd) * COINS_PER_USD;
-    topup = round(topup, 2);
-    if (topup > 0) {
-      if (topup > (Number(u.balance) || 0)) throw nextError(`Top-up is higher than your available balance (${round(u.balance, 2)} WC)`);
-      u.balance = round((Number(u.balance) - topup), 2);
-      account.capitalCoins = round((Number(account.capitalCoins) || 0) + topup, 2);
-      this.event(db, userId, 'topup', `Bot capital top-up · ${topup} WC from stock trading balance`, topup, { source: 'balance' });
+    let topupUsd = Number(opts.topupUsd);
+    if (!(topupUsd > 0) && Number(opts.topupCoins) > 0) topupUsd = Number(opts.topupCoins) * 0.5;
+    topupUsd = round(topupUsd, 2);
+    if (topupUsd > 0) {
+      const availUsd = pf(u, 'bot');
+      if (topupUsd > availUsd) throw nextError(`Top-up is higher than your available bot capital allocation ($${availUsd.toFixed(2)})`);
+      setPf(u, 'bot', availUsd - topupUsd);
+      account.capitalCoins = round((Number(account.capitalCoins) || 0) + topupUsd * COINS_PER_USD, 2);
+      this.event(db, userId, 'topup', `Bot capital top-up · $${topupUsd.toFixed(2)} USD from bot capital allocation`, topupUsd, { source: 'portfolio' });
     }
 
     const minCapital = Math.max(1, Number(this.settings().minCapitalCoins) || 5);
@@ -441,7 +461,7 @@ class BotService {
     this.event(db, userId, 'start', `Bot started · ${tier.name} · capital ${account.capitalCoins} WC · trades ${minTrade}-${maxTrade} WC${stopAt ? ' · stops at ' + new Date(stopAt).toLocaleString() : ''}`, account.capitalCoins, { sessionId: session.id, tierId: tier.id });
     this.notify(db, userId, 'Bot trading started', `${tier.name} is trading real stocks from the available market. Capital balance ${account.capitalCoins.toFixed(2)} WC.`, 'trend');
     this.changed('bot-start');
-    return { ok: true, session: this.sessionView(session), account: this.accountFor(db, userId), balance: u.balance };
+    return { ok: true, session: this.sessionView(session), account: this.accountFor(db, userId), balance: pf(u, 'stock'), stockUsd: pf(u, 'stock') };
   }
 
   /* ---------------------------- bot account money --------------------------- */
@@ -452,18 +472,19 @@ class BotService {
     const userId = String(opts.userId || '');
     const u = (db.users || []).find((x) => x.id === userId);
     if (!u) throw nextError('User not found');
-    let amount = Number(opts.amountCoins);
-    if (!(amount > 0) && Number(opts.amountUsd) > 0) amount = Number(opts.amountUsd) * COINS_PER_USD;
-    amount = round(amount, 2);
-    if (!(amount > 0)) throw nextError('Enter a top-up amount');
-    if (amount > (Number(u.balance) || 0)) throw nextError(`Top-up is higher than your stock trading balance (${round(u.balance, 2)} WC)`);
-    u.balance = round((Number(u.balance) - amount), 2);
+    let amountUsd = Number(opts.amountUsd);
+    if (!(amountUsd > 0) && Number(opts.amountCoins) > 0) amountUsd = Number(opts.amountCoins) * 0.5;
+    amountUsd = round(amountUsd, 2);
+    if (!(amountUsd > 0)) throw nextError('Enter a top-up amount');
+    const availUsd = pf(u, 'bot');
+    if (amountUsd > availUsd) throw nextError(`Top-up is higher than your bot capital allocation ($${availUsd.toFixed(2)})`);
+    setPf(u, 'bot', availUsd - amountUsd);
     const account = this.accountFor(db, userId);
-    account.capitalCoins = round((Number(account.capitalCoins) || 0) + amount, 2);
-    this.event(db, userId, 'topup', `Top-up from stock trading balance · ${amount} WC`, amount, { source: 'balance' });
-    this.notify(db, userId, 'Bot capital topped up', `${amount} WC added to the bot trading capital balance.`, 'wallet');
+    account.capitalCoins = round((Number(account.capitalCoins) || 0) + amountUsd * COINS_PER_USD, 2);
+    this.event(db, userId, 'topup', `Top-up from bot capital allocation · $${amountUsd.toFixed(2)} USD`, amountUsd, { source: 'portfolio' });
+    this.notify(db, userId, 'Bot capital topped up', `$${amountUsd.toFixed(2)} USD added to the bot trading capital balance.`, 'wallet');
     this.changed('bot-topup');
-    return { ok: true, account, balance: u.balance };
+    return { ok: true, account, balance: pf(u, 'stock'), stockUsd: pf(u, 'stock') };
   }
 
   transfer(opts) {
@@ -474,20 +495,21 @@ class BotService {
     const u = (db.users || []).find((x) => x.id === userId);
     if (!u) throw nextError('User not found');
     const source = opts.source === 'profit' ? 'profit' : 'capital';
-    let amount = Number(opts.amountCoins);
-    if (!(amount > 0) && Number(opts.amountUsd) > 0) amount = Number(opts.amountUsd) * COINS_PER_USD;
-    amount = round(amount, 2);
-    if (!(amount > 0)) throw nextError('Enter an amount to transfer');
+    let amountUsd = Number(opts.amountUsd);
+    if (!(amountUsd > 0) && Number(opts.amountCoins) > 0) amountUsd = Number(opts.amountCoins) * 0.5;
+    amountUsd = round(amountUsd, 2);
+    if (!(amountUsd > 0)) throw nextError('Enter an amount to transfer');
     const account = this.accountFor(db, userId);
-    const available = source === 'profit' ? Number(account.profitCoins) || 0 : Number(account.capitalCoins) || 0;
-    if (amount > available) throw nextError(`Not enough ${source} balance (${round(available, 2)} WC)`);
-    if (source === 'profit') account.profitCoins = round(available - amount, 2);
-    else account.capitalCoins = round(available - amount, 2);
-    u.balance = round((Number(u.balance) || 0) + amount, 2);
-    this.event(db, userId, 'transfer', `Transfer ${source} → stock trading balance · ${amount} WC`, -amount, { source, target: 'balance' });
-    this.notify(db, userId, 'Bot funds transferred', `${amount} WC moved from your bot ${source} balance to your stock trading balance.`, 'wallet');
+    const availableCoins = source === 'profit' ? Number(account.profitCoins) || 0 : Number(account.capitalCoins) || 0;
+    const amountCoins = round(amountUsd * COINS_PER_USD, 2);
+    if (amountCoins > availableCoins) throw nextError(`Not enough ${source} balance ($${(availableCoins * 0.5).toFixed(2)})`);
+    if (source === 'profit') account.profitCoins = round(availableCoins - amountCoins, 2);
+    else account.capitalCoins = round(availableCoins - amountCoins, 2);
+    setPf(u, 'stock', pf(u, 'stock') + amountUsd);
+    this.event(db, userId, 'transfer', `Transfer ${source} → stock trading balance · $${amountUsd.toFixed(2)} USD`, -amountUsd, { source, target: 'stock' });
+    this.notify(db, userId, 'Bot funds transferred', `$${amountUsd.toFixed(2)} USD moved from your bot ${source} balance to your stock trading balance.`, 'wallet');
     this.changed('bot-transfer');
-    return { ok: true, account, balance: u.balance };
+    return { ok: true, account, balance: pf(u, 'stock'), stockUsd: pf(u, 'stock') };
   }
 
   resume(opts) {
@@ -532,7 +554,8 @@ class BotService {
       `Trading stopped. Capital ${round(account.capitalCoins, 2)} WC and profit ${round(account.profitCoins, 2)} WC remain in your bot balances — transfer or top up to continue.`,
       reason === 'Capital exhausted' ? 'ban' : 'check');
     this.changed(source || 'bot-stop');
-    return { ok: true, session: this.sessionView(session), account, balance: ((db.users || []).find((x) => x.id === session.userId) || {}).balance };
+    const uu = (db.users || []).find((x) => x.id === session.userId) || {};
+    return { ok: true, session: this.sessionView(session), account, balance: pf(uu, 'stock'), stockUsd: pf(uu, 'stock') };
   }
 
   history(userId) {

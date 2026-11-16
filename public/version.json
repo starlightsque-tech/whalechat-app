@@ -1,8 +1,8 @@
 {
-  "version": "3.38.0",
+  "version": "3.39.0",
   "build": "2026-11-16T13:59:51Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.38.0 - Whalechat account dashboard with per-coin deposit balance, $ balance and Whalecoin balance, plus investment account dashboard with total assets, Whalecoin, payout and portfolio top-ups.",
+  "notes": "WhaleChat 3.39.0 - unified transfers between all balances, crypto-only withdrawals, account ID as referral code, PIN only for withdrawals and sending to another user, plus USD portfolio plumbing.",
   "releasedAt": "2026-11-16T13:59:51Z",
   "minimum": "3.0.0"
 }

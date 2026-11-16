@@ -8,6 +8,19 @@ dashoffset="${(-off).toFixed(2)}"
     <text x="60" y="79" text-anchor="middle" fill="var(--muted)" font-size="6.5" font-family="Inter,sans-serif">POSITIONS</text></svg>`;
 };
 
+/* ------------------------------ investment USD helpers ------------------------------ */
+INV.investAcct = function (u) {
+  u = u || me();
+  if (!u.investAcct) u.investAcct = { usd: 0, payout: 0, wcBalance: 0, portfolios: { stock: 0, wc: 0, b2b: 0, bot: 0 }, stockProfit: 0, tools: {}, b2b: {}, b2bFav: [], b2bAlerts: [], b2bProfit: 0, disputes: [], requests: [], ledger: [], autoReinvest: false };
+  var a = u.investAcct;
+  if (!a.portfolios) a.portfolios = { stock: 0, wc: 0, b2b: 0, bot: 0 };
+  ['stock', 'wc', 'b2b', 'bot'].forEach(function (k) { if (!(Number(a.portfolios[k]) >= 0)) a.portfolios[k] = 0; });
+  if (!(Number(a.stockProfit) >= 0)) a.stockProfit = Number(a.stockProfit) || 0;
+  return a;
+};
+INV.stockCash = function (u) { return Number(INV.investAcct(u).portfolios.stock) || 0; };
+INV.stockProfit = function (u) { return Number(INV.investAcct(u).stockProfit) || 0; };
+
 /* ------------------------------ portfolio maths ------------------------------ */
 INV.portfolio = function (userId) {
   const hs = INV.holdings(userId);
@@ -25,7 +38,8 @@ INV.portfolio = function (userId) {
     dayPct: (valueUsd - dayUsd) ? (dayUsd / (valueUsd - dayUsd)) * 100 : 0,
     earnPct: costUsd ? ((valueUsd - costUsd) / costUsd) * 100 : 0,
     valueCoins: usdToCoins(valueUsd),
-    cashCoins: (u && u.balance) || 0
+    cashUsd: INV.stockCash(u),
+    cashCoins: usdToCoins(INV.stockCash(u))
   };
 };
 INV.portfolioSeries = function (tf, userId) {
@@ -132,7 +146,7 @@ INV.viewDash = function (params) {
     <div class="inv-hero-grid">
       <div><span class="tiny muted">Invested</span><b data-lv="pv-cost">${coins(usdToCoins(p.costUsd))} WC</b></div>
       <div><span class="tiny muted">Earnings</span><b class="${INV.chgClass(p.earningsUsd)}" data-lv="pv-earn">${p.earningsUsd >= 0 ? '+' : '−'}${coins(usdToCoins(Math.abs(p.earningsUsd)))} WC</b></div>
-      <div><span class="tiny muted">Available cash</span><b data-lv="cash">${coins(u.balance)} WC</b></div>
+      <div><span class="tiny muted">Stock trading cash</span><b data-lv="cash">${usd(INV.stockCash(u))}</b></div>
     </div>
   </div>
 
@@ -407,22 +421,19 @@ INV.viewStock = function (rawTicker, params) {
       <div class="field"><label class="label">Amount in USD</label>
         <div class="input-wrap"><span class="inv-prefix">$</span>
           <input class="input" id="ivUsd" type="number" step="0.01" min="0" placeholder="0.00"/></div></div>
-      <div class="field"><label class="label">Amount in Whale Coin</label>
-        <div class="input-wrap"><span class="inv-prefix">WC</span>
-          <input class="input" id="ivCoins" type="number" step="0.01" min="0" placeholder="0.00"/></div></div>
       <div class="field"><label class="label">Shares</label>
         <input class="input" id="ivQty" type="number" step="0.0001" min="0" placeholder="0.0000"/></div>
       <div class="inv-sum" id="ivSum">
-        <div class="between"><span class="tiny muted">Estimated cost</span><b class="tiny" id="ivCost">${coins(0)} WC</b></div>
-        <div class="between"><span class="tiny muted">Fee (${fee}%)</span><b class="tiny" id="ivFee">${coins(0)} WC</b></div>
-        <div class="between"><span class="tiny muted">Balance after trade</span><b class="tiny" id="ivAfter">${coins(u.balance)} WC</b></div>
+        <div class="between"><span class="tiny muted">Estimated cost</span><b class="tiny" id="ivCost">$0.00</b></div>
+        <div class="between"><span class="tiny muted">Fee (${fee}%)</span><b class="tiny" id="ivFee">$0.00</b></div>
+        <div class="between"><span class="tiny muted">Stock cash after trade</span><b class="tiny" id="ivAfter">${usd(INV.stockCash(u))}</b></div>
         <div class="between"><span class="tiny muted">You own</span><b class="tiny" id="ivOwned">${hold ? hold.shares.toFixed(4) : '0.0000'} sh</b></div>
       </div>
       <div class="row" style="gap:8px;margin-top:10px">
         <button class="btn btn-primary grow" data-act="inv-trade" data-side="buy" data-t="${s.ticker}" ${paused ? 'disabled' : ''}>${ic('trend', 16)} Buy stock</button>
         <button class="btn btn-ghost grow" data-act="inv-trade" data-side="sell" data-t="${s.ticker}" ${paused || !hold ? 'disabled' : ''}>Sell${hold ? ' ' + hold.shares.toFixed(2) : ''}</button>
       </div>
-      <div class="tiny muted center mt6">${ic('lock', 11)} Requires your transaction PIN · settles instantly from Whale Coin balance</div>
+      <div class="tiny muted center mt6">${ic('lock', 11)} Settled in USD from your stock trading balance · no PIN needed for trades</div>
     </div>
 
     <div class="card">
@@ -462,54 +473,30 @@ INV.viewStock = function (rawTicker, params) {
 
 INV.bindTrade = function () {
   const usdEl = document.getElementById('ivUsd');
-  const coinEl = document.getElementById('ivCoins');
   const qtyEl = document.getElementById('ivQty');
-  if (!usdEl || !coinEl || !qtyEl) return;
+  if (!usdEl || !qtyEl) return;
   const u = me();
   const t = (location.hash.split('/')[3] || '').split('?')[0];
   const s = INV.stock(t); if (!s) return;
   const q = INV.quote(s.ticker);
   const price = q.price;
   const fee = INV.fee() / 100;
-
+  const cash = INV.stockCash(u);
   const paint = () => {
     const qty = Number(qtyEl.value) || 0;
     const grossUsd = qty * price;
     const feeUsd = grossUsd * fee;
     const totalUsd = grossUsd + feeUsd;
-    const costCoins = usdToCoins(totalUsd);
     const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
-    set('ivCost', coins(costCoins) + ' WC');
-    set('ivFee', coins(usdToCoins(feeUsd)) + ' WC');
-    set('ivAfter', coins(u.balance - costCoins) + ' WC');
+    set('ivCost', usd(totalUsd)); set('ivFee', usd(feeUsd)); set('ivAfter', usd(Math.max(0, cash - totalUsd)));
     const hold = INV.holding(s.ticker, u.id);
     set('ivOwned', ((hold ? hold.shares : 0) + qty).toFixed(4) + ' sh');
   };
-  const fromUsd = () => {
-    const v = Math.max(0, Number(usdEl.value) || 0);
-    coinEl.value = v ? String(Math.round(usdToCoins(v) * 100) / 100) : '';
-    qtyEl.value = v ? String(Math.round((v / price) * 10000) / 10000) : '';
-    paint();
-  };
-  const fromCoins = () => {
-    const c = Math.max(0, Number(coinEl.value) || 0);
-    const v = coinsToUsd(c);
-    usdEl.value = c ? v.toFixed(2) : '';
-    qtyEl.value = c ? String(Math.round((v / price) * 10000) / 10000) : '';
-    paint();
-  };
-  const fromQty = () => {
-    const qty = Math.max(0, Number(qtyEl.value) || 0);
-    const v = qty * price;
-    usdEl.value = qty ? v.toFixed(2) : '';
-    coinEl.value = qty ? String(Math.round(usdToCoins(v) * 100) / 100) : '';
-    paint();
-  };
-  usdEl.addEventListener('input', fromUsd);
-  coinEl.addEventListener('input', fromCoins);
-  qtyEl.addEventListener('input', fromQty);
+  const fromUsd = () => { const v = Math.max(0, Number(usdEl.value) || 0); qtyEl.value = v ? String(Math.round((v / price) * 10000) / 10000) : ''; paint(); };
+  const fromQty = () => { const qty = Math.max(0, Number(qtyEl.value) || 0); usdEl.value = qty ? (qty * price).toFixed(2) : ''; paint(); };
+  usdEl.addEventListener('input', fromUsd); qtyEl.addEventListener('input', fromQty);
   const maxBtn = document.getElementById('ivMax');
-  if (maxBtn) maxBtn.onclick = () => { usdEl.value = (coinsToUsd(u.balance) / (1 + fee)).toFixed(2); fromUsd(); };
+  if (maxBtn) maxBtn.onclick = () => { usdEl.value = (cash / (1 + fee)).toFixed(2); fromUsd(); };
   paint();
 };
 
@@ -529,9 +516,10 @@ INV.execute = async function (side, ticker, shares, opts) {
   const feeUsd = grossUsd * feePct;
   const netUsd = side === 'buy' ? grossUsd + feeUsd : grossUsd - feeUsd;
   const coinsDelta = usdToCoins(netUsd);
-
-  if (side === 'buy' && u.balance < coinsDelta) {
-    toast(`Need ${coins(coinsDelta)} WC — top up your wallet`, 'err');
+  const ia = INV.investAcct(u);
+  const cashUsd = Number(ia.portfolios.stock) || 0;
+  if (side === 'buy' && cashUsd + 1e-9 < netUsd) {
+    toast(`Need ${usd(netUsd)} in your stock trading balance — top up from your $ balance`, 'err');
     return false;
   }
   const hold = INV.holding(ticker, u.id);
@@ -540,16 +528,10 @@ INV.execute = async function (side, ticker, shares, opts) {
     return false;
   }
 
-  if (!o.limit && !o.noPin) {
-    if (!u.pin) { toast('Create your transaction PIN first', 'err'); go('set-pin'); return false; }
-    const pin = await askPin({ title: side === 'buy' ? 'Confirm purchase' : 'Confirm sale', sub: `Enter your PIN to ${side} ${shares.toFixed(4)} ${ticker}` });
-    if (!pin) return false;
-    if (await hash('pin::' + pin) !== u.pin) { toast('Incorrect PIN', 'err'); return false; }
-  }
 
   // apply balances
   if (side === 'buy') {
-    u.balance = Math.round((u.balance - coinsDelta) * 100) / 100;
+    ia.portfolios.stock = Math.round((cashUsd - netUsd) * 100) / 100;
     if (hold) {
       const newShares = hold.shares + shares;
       hold.avgPrice = Math.round(((hold.shares * hold.avgPrice) + grossUsd) / newShares * 10000) / 10000;
@@ -559,7 +541,10 @@ INV.execute = async function (side, ticker, shares, opts) {
       DB.holdings.push({ id: uid('hd'), userId: u.id, ticker, shares, avgPrice: Math.round(price * 100) / 100, createdAt: Date.now(), updatedAt: Date.now() });
     }
   } else {
-    u.balance = Math.round((u.balance + coinsDelta) * 100) / 100;
+    const costBasis = (hold.avgPrice || 0) * shares;
+    const pnl = netUsd - costBasis;
+    ia.portfolios.stock = Math.round((cashUsd + Math.min(netUsd, costBasis)) * 100) / 100;
+    ia.stockProfit = Math.round(((Number(ia.stockProfit) || 0) + pnl) * 100) / 100;
     hold.shares = Math.round((hold.shares - shares) * 1e8) / 1e8;
     if (hold.shares <= 1e-7) DB.holdings = DB.holdings.filter(h => h.id !== hold.id);
     hold.updatedAt = Date.now();
@@ -597,11 +582,6 @@ App.invTrade = async function (id, ds) {
   if (INV.tradeMode === 'limit' && limitEl) {
     const limitUsd = Number(limitEl.value) || INV.quote(ticker).price;
     if (!shares) return toast('Enter a quantity of shares', 'err');
-    const u = me();
-    if (!u.pin) { toast('Create your transaction PIN first', 'err'); return go('set-pin'); }
-    const pin = await askPin({ title: 'Confirm limit order', sub: `Enter your PIN to place this ${side} order` });
-    if (!pin) return;
-    if (await hash('pin::' + pin) !== u.pin) return toast('Incorrect PIN', 'err');
     DB.trades.unshift({
       id: uid('tr'), userId: u.id, ticker, name: (INV.stock(ticker) || {}).name, side, shares,
       priceUsd: limitUsd, limitUsd, coins: usdToCoins(shares * limitUsd),
@@ -1058,7 +1038,7 @@ INV.paint = function () {
     if (kind === 'pv-usd' && port) return INV.setText(el, '≈ ' + usd(port.valueUsd) + ' USD');
     if (kind === 'pv-cost' && port) return INV.setText(el, coins(usdToCoins(port.costUsd)) + ' WC');
     if (kind === 'pv-earn' && port) return INV.setText(el, (port.earningsUsd >= 0 ? '+' : '−') + coins(usdToCoins(Math.abs(port.earningsUsd))) + ' WC');
-    if (kind === 'cash') return INV.setText(el, coins(u.balance) + ' WC');
+    if (kind === 'cash') return INV.setText(el, usd(INV.stockCash(u)));
     if (!t) return;
     const q = INV.quote(t); if (!q) return;
     if (kind === 'price') INV.setText(el, (INV.priceText ? INV.priceText(t, q.price) : usd(q.price)));
@@ -1565,7 +1545,8 @@ const LT = {
     const o = opts || {};
     const capital = Math.round((Number(capitalCoins) || 0) * 100) / 100;
     if (capital < this.MIN_CAPITAL) { toast('Minimum trade is ' + this.MIN_CAPITAL + ' WC', 'err'); return false; }
-    if (capital > u.balance) { toast('Not enough Whale Coin — top up your wallet', 'err'); return false; }
+    const ia = INV.investAcct(u);
+    if (capital > Number(ia.portfolios.stock || 0)) { toast('Not enough stock trading balance — top up in USD first', 'err'); return false; }
     if (INV.paused && INV.paused(ticker)) { toast(ticker + ' trading is paused', 'err'); return false; }
     const q = INV.quote(ticker);
     if (!q) return false;
@@ -1580,7 +1561,7 @@ const LT = {
       expiresAt: Date.now() + minutes * 60000,
       status: 'Open', createdAt: Date.now(), feeCoins: fee
     };
-    u.balance = Math.round((u.balance - capital - fee) * 100) / 100;
+    ia.portfolios.stock = Math.round((Number(ia.portfolios.stock) - capital - fee) * 100) / 100;
     DB.trades.unshift(trade);
     tx(u.id, 'trade-open', `${side === 'short' ? 'Short' : 'Long'} ${ticker} · ${coins(capital)} WC`, -capital - fee,
       { tradeId: trade.id, leverage: trade.leverage, entry: q.price });
@@ -1598,7 +1579,8 @@ const LT = {
     if (!u) return false;
     const p = this.calc(t);
     const payout = p.totalLoss ? 0 : p.payoutCoins;
-    u.balance = Math.round((u.balance + payout) * 100) / 100;
+    const ia = INV.investAcct(u);
+    ia.portfolios.stock = Math.round((Number(ia.portfolios.stock) + payout) * 100) / 100;
     t.status = 'Completed';
     t.closedAt = Date.now();
     t.closeReason = reason;
@@ -1665,7 +1647,7 @@ const LT = {
         <div class="grow" style="min-width:0">
           <div class="small" style="font-weight:700">${esc(t.ticker)}
             <span class="lt-side ${t.side}">${dirLabel} ${t.leverage}×</span></div>
-          <div class="tiny muted">${coins(t.capitalCoins)} WC · entry ${usd(t.entryPrice)}</div>
+          <div class="tiny muted">${usd(t.capitalCoins)} · entry ${usd(t.entryPrice)}</div>
         </div>
         <span class="lt-mini">${INV.spark(t.ticker)}</span>
         <div style="text-align:right">
@@ -1699,7 +1681,7 @@ const LT = {
       <div class="grow" style="min-width:0">
         <div class="small" style="font-weight:650">${esc(t.ticker)} ${t.side === 'short' ? 'Short' : 'Long'}
           <span class="tiny muted">· ${t.leverage}× · ${esc(t.closeReason || 'closed')}</span></div>
-        <div class="tiny muted">${coins(t.capitalCoins)} WC @ ${usd(t.entryPrice)} → ${usd(t.exitPrice || 0)} · ${dateLabel(t.closedAt)} ${clockTime(t.closedAt)}</div>
+        <div class="tiny muted">${usd(t.capitalCoins)} @ ${usd(t.entryPrice)} → ${usd(t.exitPrice || 0)} · ${dateLabel(t.closedAt)} ${clockTime(t.closedAt)}</div>
         <div class="tiny ${win ? 'up' : lost ? 'down' : 'muted'}">
           ${lost ? 'Total loss — nothing returned' : (win ? '+' : '') + coins(pnl) + ' WC P/L'} ·
           returned ${coins(t.payoutCoins || 0)} WC</div>
@@ -1802,10 +1784,10 @@ const LT = {
         <button class="lt-side-btn on" data-act="lt-side" data-side="long">▲ Long (price rises)</button>
         <button class="lt-side-btn" data-act="lt-side" data-side="short">▼ Short (price falls)</button>
       </div>
-      <div class="field"><label class="label">Capital (Whale Coin)</label>
-        <div class="input-wrap"><span class="inv-prefix">WC</span>
+      <div class="field"><label class="label">Capital (USD)</label>
+        <div class="input-wrap"><span class="inv-prefix">$</span>
           <input class="input" id="ltCapital" type="number" step="1" min="${this.MIN_CAPITAL}" placeholder="0"/></div>
-        <div class="tiny muted" id="ltCapitalUsd">≈ $0.00 · balance ${coins(me().balance)} WC</div></div>
+        <div class="tiny muted" id="ltCapitalUsd">Stock trading balance ${usd(INV.stockCash(me()))}</div></div>
       <div class="row" style="gap:8px">
         <div class="field grow"><label class="label">Take profit %</label>
           <input class="input" id="ltTp" type="number" step="1" min="0" placeholder="limit"/></div>
@@ -1995,7 +1977,7 @@ LT.summary = function (userId) {
     capitalUsd: coinsToUsd(capital),
     pnlUsd: coinsToUsd(pnl),
     pnlPct: capital ? (pnl / capital) * 100 : 0,
-    cash: (u && u.balance) || 0,
+    cash: (u && INV.stockCash(u)) || 0,
     live: pos.filter(p => p.kind === 'trade').length
   };
 };

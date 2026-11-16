@@ -11,6 +11,16 @@
 const crypto = require('crypto');
 
 const COINS_PER_USD = 2;                 // 1 WC = $0.50
+
+function invAcct(u) {
+  if (!u) return null;
+  if (!u.investAcct) u.investAcct = { usd: 0, payout: 0, wcBalance: 0, portfolios: { stock: 0, wc: 0, b2b: 0, bot: 0 } };
+  const a = u.investAcct;
+  if (!a.portfolios) a.portfolios = { stock: 0, wc: 0, b2b: 0, bot: 0 };
+  return a;
+}
+function pf(u, key) { const a = invAcct(u); return round(Number(a && a.portfolios && a.portfolios[key]) || 0, 2); }
+function setPf(u, key, v) { const a = invAcct(u); a.portfolios[key] = round(Number(v) || 0, 2); return a.portfolios[key]; }
 const BASE_SHARE_PRICE = 12.5;           // USD per WhaleChat share
 const DAY = 86400000;
 
@@ -178,7 +188,10 @@ class ShareService {
     const market = this.market();
     return {
       ok: true,
-      balance: round(u.balance, 2),
+      balance: pf(u, 'wc'),
+      balanceUsd: pf(u, 'wc'),
+      wcUsd: pf(u, 'wc'),
+      payoutUsd: round(Number(invAcct(u).payout) || 0, 2),
       coinsPerUsd: COINS_PER_USD,
       plans: this.plans().filter((p) => p.enabled !== false).map((p) => {
         const days = durationDays(p.durationValue, p.durationUnit);
@@ -232,12 +245,13 @@ class ShareService {
     if (amountUsd > Number(plan.maxUsd)) throw new Error('Maximum investment for this plan is $' + Number(plan.maxUsd).toFixed(2) + ' (' + round(Number(plan.maxUsd) * 2, 2) + ' WC)');
 
     const costCoins = round(amountUsd * COINS_PER_USD, 2);
-    if ((Number(u.balance) || 0) < costCoins) throw new Error(`Not enough WC — you need ${costCoins.toFixed(2)} WC ($${amountUsd.toFixed(2)})`);
+    const availableUsd = pf(u, 'wc');
+    if (availableUsd + 1e-9 < amountUsd) throw new Error(`Not enough WC-Investing capital — you need $${amountUsd.toFixed(2)} (available $${availableUsd.toFixed(2)})`);
 
     const now = Date.now();
     const ms = durationMs(plan.durationValue, plan.durationUnit);
     const price = this.sharePrice();
-    u.balance = round(Number(u.balance) - costCoins, 2);
+    setPf(u, 'wc', availableUsd - amountUsd);
 
     const inv = {
       id: nid('shi_'), userId, planId: plan.id, planName: plan.name,
@@ -260,7 +274,7 @@ class ShareService {
     });
     this.notify(db, userId, 'WhaleChat shares purchased', `${inv.shares} shares at $${inv.entryPriceUsd.toFixed(2)} · ${plan.name} pays ${inv.dailyReturnPct}% daily for ${inv.durationDays} days (${inv.totalReturnPct}% total) and matures ${new Date(inv.endAt).toLocaleDateString()}.`, 'trend');
     this.changed('share-invest');
-    return { ok: true, investment: this.investmentView(inv), balance: u.balance, shares: inv.shares, entryPriceUsd: inv.entryPriceUsd };
+    return { ok: true, investment: this.investmentView(inv), balance: pf(u, 'wc'), wcUsd: pf(u, 'wc'), shares: inv.shares, entryPriceUsd: inv.entryPriceUsd };
   }
 
   /* ---------------------------------- admin -------------------------------- */
@@ -395,11 +409,13 @@ class ShareService {
     inv.equityHistory = inv.equityHistory || [];
     inv.equityHistory.push({ t: now, coins: payout });
     if (inv.equityHistory.length > 240) inv.equityHistory.splice(0, inv.equityHistory.length - 240);
-    u.balance = round((Number(u.balance) || 0) + payout, 2);
+    const ia = invAcct(u);
+    const payoutUsd = round(payout * 0.5, 2);
+    ia.payout = round((Number(ia.payout) || 0) + payoutUsd, 2);
     this.tx(db, inv.userId, `WhaleChat shares matured · ${inv.planName}`, payout, 'share-maturity', {
-      investmentId: inv.id, principalCoins: inv.amountCoins, profitCoins: profit, payoutCoins: payout, returnPct: inv.returnPct
+      investmentId: inv.id, principalCoins: inv.amountCoins, profitCoins: profit, payoutCoins: payout, payoutUsd, returnPct: inv.returnPct
     });
-    this.notify(db, inv.userId, 'Investment matured', `Your ${inv.planName} plan paid out ${payout.toFixed(2)} WC ($${(payout * 0.5).toFixed(2)}) — ${profit.toFixed(2)} WC profit credited.`, 'check');
+    this.notify(db, inv.userId, 'Investment matured', `Your ${inv.planName} plan paid out $${payoutUsd.toFixed(2)} into your investment payout balance — $${(profit * 0.5).toFixed(2)} profit.`, 'check');
   }
 
   startTimers() {

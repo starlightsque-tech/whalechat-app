@@ -29,11 +29,13 @@
 
   btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Creating account…';
   await sleep(250);
+  const accountCode = uniqueReferralCode();
   const u = {
     id: uid('usr'), role: 'user', fullName, username, email, phone,
     pass: await hash(pass), pin: null, avatar: null, balance: 0,
     totalDeposits: 0, totalWithdrawals: 0, totalEarnings: 0,
-    referralCode: uniqueReferralCode(),
+    referralCode: accountCode,
+    accountId: accountCode,
     referredBy: referrer ? referrer.id : null,
     pendingReferralCode: pendingReferralCode || null,
     referralPaid: false,

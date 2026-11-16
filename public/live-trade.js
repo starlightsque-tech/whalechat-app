@@ -52,7 +52,7 @@ const LT = {
     const bonus = this.dividendBonusFor(ticker, stakeWC, minutes);
     if (!(bonus > 0)) return '';
     const text = label || '1d';
-    return `<span class="div-est" title="Estimated ${text} dividend bonus on ${Number(stakeWC) || 0} WC">${text} +${coins(bonus)} WC</span>`;
+    return `<span class="div-est" title="Estimated ${text} dividend bonus on ${Number(stakeWC) || 0} USD">${text} +${usd(bonus)} USD</span>`;
   },
 
   cfg() {
@@ -124,7 +124,7 @@ const LT = {
     if (mode === 'wc') {
       const stake = Number(capital) || 0, lev = Math.max(1, Number(leverage) || 1);
       if (!(stake > 0)) return 0;
-      pct = v / (stake * lev);                 /* WC profit / loss -> required price move */
+      pct = v / (stake * lev);                 /* USD profit / loss -> required price move */
     } else {
       pct = v / 100;
     }
@@ -177,8 +177,9 @@ const LT = {
     if (!u || !s) return false;
     const o = opts || {};
     const capital = Math.round((Number(capitalCoins) || 0) * 100) / 100;
-    if (capital < this.MIN_CAPITAL) { toast('Minimum trade is ' + this.MIN_CAPITAL + ' WC', 'err'); return false; }
-    if (capital > u.balance) { toast('Not enough Whale Coin — top up your wallet', 'err'); return false; }
+    if (capital < this.MIN_CAPITAL) { toast('Minimum trade is ' + this.MIN_CAPITAL + ' USD', 'err'); return false; }
+    const ia = INV.investAcct(u);
+    if (capital > Number(ia.portfolios.stock || 0)) { toast('Not enough stock trading balance — top up in USD first', 'err'); return false; }
     if (INV.paused && INV.paused(ticker)) { toast(ticker + ' trading is paused', 'err'); return false; }
     const q = INV.quote(ticker);
     if (!q || !(Number(q.price) > 0)) { toast('No live Finnhub quote for this asset yet', 'err'); return false; }
@@ -219,12 +220,12 @@ const LT = {
       expiresAt: Date.now() + minutes * 60000,
       status: 'Open', createdAt: Date.now(), feeCoins: fee
     };
-    u.balance = Math.round((u.balance - capital - fee) * 100) / 100;
+    ia.portfolios.stock = Math.round((Number(ia.portfolios.stock) - capital - fee) * 100) / 100;
     DB.trades.unshift(trade);
-    tx(u.id, 'trade-open', `${direction === 'FALL' ? 'Fall' : 'Rise'} ${this.label(ticker)} · ${coins(capital)} WC`, -capital - fee,
+    tx(u.id, 'trade-open', `${direction === 'FALL' ? 'Fall' : 'Rise'} ${this.label(ticker)} · ${usd(capital)} USD`, -capital - fee,
       { tradeId: trade.id, leverage: trade.leverage, entry: q.price, direction });
     notify(u.id, 'Trade opened',
-      `${direction === 'FALL' ? 'Fall' : 'Rise'} ${this.label(ticker)} with ${coins(capital)} WC at ${this.px(ticker, q.price)}${tpPrice ? ' · TP ' + usd(tpPrice) : ''}${trailPct ? ' · trailing ' + trailPct + '%' : (slPrice ? ' · SL ' + usd(slPrice) : '')} — closes in ${minutes} min.${divBonus > 0 ? ' Dividend on timer: +' + coins(divBonus) + ' WC.' : ''}`,
+      `${direction === 'FALL' ? 'Fall' : 'Rise'} ${this.label(ticker)} with ${usd(capital)} USD at ${this.px(ticker, q.price)}${tpPrice ? ' · TP ' + usd(tpPrice) : ''}${trailPct ? ' · trailing ' + trailPct + '%' : (slPrice ? ' · SL ' + usd(slPrice) : '')} — closes in ${minutes} min.${divBonus > 0 ? ' Dividend on timer: +' + usd(divBonus) + ' USD.' : ''}`,
       '#/invest/orders', 'trend');
     persist(); toast('Trade started — tracking live', 'ok'); render();
     try { window.dispatchEvent(new CustomEvent('wc:trade-opened', { detail: { ticker, id: trade.id } })); } catch (e) {}
@@ -238,7 +239,8 @@ const LT = {
     if (!u) return false;
     const p = this.calc(t);
     const payout = p.totalLoss ? 0 : p.payoutCoins;
-    u.balance = Math.round((u.balance + payout) * 100) / 100;
+    const ia = INV.investAcct(u);
+    ia.portfolios.stock = Math.round((Number(ia.portfolios.stock) + payout) * 100) / 100;
 
     let dividendCoins = 0;
     if (reason === 'Time limit reached' && !t.dividendPaid) {
@@ -249,7 +251,7 @@ const LT = {
       if (mode === 'wins' && p.pnlCoins <= 0) bonus = 0;
       if (bonus > 0) {
         dividendCoins = Math.round(bonus * 100) / 100;
-        u.balance = Math.round((u.balance + dividendCoins) * 100) / 100;
+        ia.portfolios.stock = Math.round((Number(ia.portfolios.stock) + dividendCoins) * 100) / 100;
         t.dividendPaid = true;
         t.dividendCoins = dividendCoins;
         t.dividendPaidAt = Date.now();
@@ -257,7 +259,7 @@ const LT = {
         tx(u.id, 'dividend', `Dividend Bonus - ${t.ticker} (${dlabel})`, dividendCoins,
           { tradeId: t.id, annualYield: t.dividendYield, multiplier: this.cfg().dividendMultiplier });
         notify(u.id, 'Dividend bonus credited',
-          `+${coins(dividendCoins)} WC dividend for ${t.ticker} (${dlabel}).`, '#/invest/orders', 'gift');
+          `+${usd(dividendCoins)} USD dividend for ${t.ticker} (${dlabel}).`, '#/invest/orders', 'gift');
       }
     }
     t.totalPayoutCoins = Math.round((payout + dividendCoins) * 100) / 100;
@@ -271,7 +273,7 @@ const LT = {
     t.payoutCoins = payout;
     t.result = p.totalLoss ? 'loss' : p.pnlCoins > 0 ? 'profit' : 'flat';
 
-    tx(u.id, 'trade-close', `${t.ticker} trade ${reason} · ${payout ? '+' + coins(payout) + ' WC returned' : 'total loss'}`,
+    tx(u.id, 'trade-close', `${t.ticker} trade ${reason} · ${payout ? '+' + usd(payout) + ' USD returned' : 'total loss'}`,
       payout, { tradeId: t.id, pnlCoins: p.pnlCoins, reason });
 
     if (p.totalLoss) {
@@ -281,14 +283,14 @@ const LT = {
       toast(`${t.ticker} closed at a total loss`, 'err');
     } else if (p.pnlCoins >= 0) {
       notify(u.id, 'Take profit — trade closed',
-        `${t.ticker} closed with +${coins(p.pnlCoins)} WC profit. ${coins(payout)} WC (capital + profit) was credited.`,
+        `${t.ticker} closed with +${usd(p.pnlCoins)} USD profit. ${usd(payout)} USD (capital + profit) was credited.`,
         '#/invest/orders', 'trend');
-      toast(`Profit taken — ${coins(payout)} WC credited`, 'ok');
+      toast(`Profit taken — ${usd(payout)} USD credited`, 'ok');
     } else {
       notify(u.id, 'Trade closed at a loss',
-        `${t.ticker} closed with −${coins(Math.abs(p.pnlCoins))} WC. ${coins(payout)} WC of capital was returned.`,
+        `${t.ticker} closed with −${usd(Math.abs(p.pnlCoins))} USD. ${usd(payout)} USD of capital was returned.`,
         '#/invest/orders', 'down');
-      toast(`Trade stopped — ${coins(payout)} WC returned`, 'ok');
+      toast(`Trade stopped — ${usd(payout)} USD returned`, 'ok');
     }
     try { sync(); } catch (e) {}
     persist();
@@ -306,7 +308,8 @@ const LT = {
     const profit = Math.round((Number(p.pnlCoins) || 0) * 100) / 100;
     if (!(profit > 0)) { toast('No profit to take yet — wait for the chart to move in your favour', 'err'); return false; }
     if (!t.initialEntryPrice) t.initialEntryPrice = t.entryPrice;
-    u.balance = Math.round(((Number(u.balance) || 0) + profit) * 100) / 100;
+    const ia = INV.investAcct(u);
+    ia.portfolios.stock = Math.round((Number(ia.portfolios.stock) + profit) * 100) / 100;
     /* re-base the position so the remaining trade starts from the current price */
     t.entryPrice = Math.round((Number(p.price) || 0) * 10000) / 10000;
     t.profitTakenCoins = Math.round(((Number(t.profitTakenCoins) || 0) + profit) * 100) / 100;
@@ -325,15 +328,15 @@ const LT = {
       t.stopLossPrice = t.trailingStopPrice;
     }
     const label = reason || 'Take Profit';
-    tx(u.id, 'trade-profit', `${label} · ${t.ticker} · +${coins(profit)} WC taken, trade continues`, profit,
+    tx(u.id, 'trade-profit', `${label} · ${t.ticker} · +${usd(profit)} USD taken, trade continues`, profit,
       { tradeId: t.id, pnlCoins: profit, price: p.price, continues: true });
     notify(u.id, 'Profit taken — trade continues',
-      `${t.ticker}: +${coins(profit)} WC profit credited to your balance. The trade is still running — it closes at your stop loss, when the timer ends, or when you press Stop trade.`,
+      `${t.ticker}: +${usd(profit)} USD profit credited to your balance. The trade is still running — it closes at your stop loss, when the timer ends, or when you press Stop trade.`,
       '#/invest/orders', 'trend');
     try { sync(); } catch (e) {}
     persist();
     render();
-    toast(`Profit taken — ${coins(profit)} WC credited. Trade continues`, 'ok');
+    toast(`Profit taken — ${usd(profit)} USD credited. Trade continues`, 'ok');
     try { window.dispatchEvent(new CustomEvent('wc:trade-profit', { detail: { ticker: t.ticker, id: t.id, profit } })); } catch (e) {}
     return true;
   },
@@ -345,7 +348,7 @@ const LT = {
       this.updateTrailing(t);
       /* Finnhub-covered symbols are settled by the backend so a closed browser
          cannot miss a payout — avoid paying the same trade twice. */
-      if (typeof WC_MARKET !== 'undefined' && typeof WC_MARKET.feedFresh === 'function' && WC_MARKET.feedFresh() && WC_MARKET.feed.quotes && WC_MARKET.feed.quotes[t.ticker]) return;
+      if (typeof USD_MARKET !== 'undefined' && typeof USD_MARKET.feedFresh === 'function' && USD_MARKET.feedFresh() && USD_MARKET.feed.quotes && USD_MARKET.feed.quotes[t.ticker]) return;
       const p = this.calc(t);
       const dir = this.dirOf(t);
       const lv = this.tpslOf(t);
@@ -390,12 +393,12 @@ const LT = {
           <div class="small" style="font-weight:700">${esc(this.label(t.ticker))}
             <span class="lt-side ${t.side}">${dirLabel} ${t.leverage}×</span>
             <span class="tiny ${up ? 'up' : down ? 'down' : 'muted'}" data-lt-dirhint="${t.id}">${t.side === 'short' ? 'profit while price falls' : 'profit while price rises'}</span></div>
-          <div class="tiny muted">${coins(t.capitalCoins)} WC · entry ${this.px(t.ticker, t.entryPrice)}</div>
+          <div class="tiny muted">${usd(t.capitalCoins)} USD · entry ${this.px(t.ticker, t.entryPrice)}</div>
         </div>
         <span class="lt-mini">${INV.spark(t.ticker)}</span>
         <div style="text-align:right">
           <div class="lt-pnl ${up ? 'up' : down ? 'down' : ''}" data-lt-pnl="${t.id}">
-            ${p.pnlCoins >= 0 ? '+' : '−'}${coins(Math.abs(p.pnlCoins))} WC</div>
+            ${p.pnlCoins >= 0 ? '+' : '−'}${usd(Math.abs(p.pnlCoins))} USD</div>
           <div class="tiny ${up ? 'up' : down ? 'down' : 'muted'}" data-lt-pct="${t.id}">
             ${p.pnlPct >= 0 ? '+' : '−'}${Math.abs(p.pnlPct).toFixed(2)}%</div>
         </div>
@@ -406,8 +409,8 @@ const LT = {
         <span class="tiny muted" data-lt-left="${t.id}">⏱ ${this.clock(p.left)}</span>
       </div>
       <div class="lt-levels">
-        <span class="lt-lvl tp"><i></i>TP <b>${Number(t.takeProfitPrice) > 0 ? usd(t.takeProfitPrice) : '—'}</b>${Number(t.takeProfitWc) > 0 ? `<small>${Number(t.takeProfitWc)} WC</small>` : ''}</span>
-        <span class="lt-lvl sl" data-lt-sl="${t.id}"><i></i>${t.trailingActive ? 'TSL' : 'SL'} <b>${Number(t.stopLossPrice) > 0 ? usd(t.stopLossPrice) : '—'}</b>${Number(t.stopLossWc) > 0 ? `<small>${Number(t.stopLossWc)} WC</small>` : ''}</span>
+        <span class="lt-lvl tp"><i></i>TP <b>${Number(t.takeProfitPrice) > 0 ? usd(t.takeProfitPrice) : '—'}</b>${Number(t.takeProfitWc) > 0 ? `<small>${Number(t.takeProfitWc)} USD</small>` : ''}</span>
+        <span class="lt-lvl sl" data-lt-sl="${t.id}"><i></i>${t.trailingActive ? 'TSL' : 'SL'} <b>${Number(t.stopLossPrice) > 0 ? usd(t.stopLossPrice) : '—'}</b>${Number(t.stopLossWc) > 0 ? `<small>${Number(t.stopLossWc)} USD</small>` : ''}</span>
         ${t.trailingActive ? `<span class="lt-lvl trail">trail ${Number(t.trailingStopPct).toFixed(1)}%</span>` : ''}
         <button class="lt-edit" data-act="lt-edit-tpsl" data-id="${t.id}">${ic('edit', 12)} Edit TP/SL</button>
       </div>
@@ -415,25 +418,25 @@ const LT = {
         class="${up ? 'up' : down ? 'down' : ''}"></i></div>
       <div class="tiny ${up ? 'up' : down ? 'down' : 'muted'}" style="margin-top:7px;line-height:1.5">
         ${t.side === 'short'
-          ? `▼ Fall prediction — the chart falling is your profit zone (green); the chart rising is your loss zone (red). Now ${p.pnlCoins >= 0 ? '+' : '−'}${coins(Math.abs(p.pnlCoins))} WC.`
-          : `▲ Rise prediction — the chart rising is your profit zone (green); the chart falling is your loss zone (red). Now ${p.pnlCoins >= 0 ? '+' : '−'}${coins(Math.abs(p.pnlCoins))} WC.`}
+          ? `▼ Fall prediction — the chart falling is your profit zone (green); the chart rising is your loss zone (red). Now ${p.pnlCoins >= 0 ? '+' : '−'}${usd(Math.abs(p.pnlCoins))} USD.`
+          : `▲ Rise prediction — the chart rising is your profit zone (green); the chart falling is your loss zone (red). Now ${p.pnlCoins >= 0 ? '+' : '−'}${usd(Math.abs(p.pnlCoins))} USD.`}
       </div>
       <div class="row lt-action-row" style="gap:6px;margin-top:9px">
         <button class="btn btn-sm btn-primary grow" data-act="lt-tp" data-id="${t.id}" data-lt-tp-btn="${t.id}" ${p.pnlCoins > 0 ? '' : 'disabled'} title="${p.pnlCoins > 0 ? 'Take the open profit and keep the trade running' : 'No profit to take yet'}">
-          ${ic('trend', 13)} Take profit <span data-lt-tp-amt="${t.id}">${p.pnlCoins > 0 ? '(+' + coins(p.pnlCoins) + ')' : ''}</span></button>
+          ${ic('trend', 13)} Take profit <span data-lt-tp-amt="${t.id}">${p.pnlCoins > 0 ? '(+' + usd(p.pnlCoins) + ')' : ''}</span></button>
         <button class="btn btn-sm btn-soft grow" data-act="lt-stop" data-id="${t.id}" title="Close the trade now and return capital + open P/L">
           ${ic('ban', 13)} Stop trade</button>
         <button class="btn btn-sm btn-ghost grow" data-act="lt-sl" data-id="${t.id}" data-lt-sl-btn="${t.id}" ${p.pnlCoins < 0 ? '' : 'disabled'} title="${p.pnlCoins < 0 ? 'Close the trade at a loss now' : 'Only available while the trade is losing'}">
-          ${ic('down', 13)} Take loss <span data-lt-sl-amt="${t.id}">${p.pnlCoins < 0 ? '(−' + coins(Math.abs(p.pnlCoins)) + ')' : ''}</span></button>
+          ${ic('down', 13)} Take loss <span data-lt-sl-amt="${t.id}">${p.pnlCoins < 0 ? '(−' + usd(Math.abs(p.pnlCoins)) + ')' : ''}</span></button>
       </div>
       ${(() => {
         const pending = (t.securedProfits || []).filter((x) => x && !x.claimed);
         if (!pending.length) return '';
         const sum = pending.reduce((a, x) => a + (Number(x.coins) || 0), 0);
-        return `<div class="tiny up" style="margin-top:6px">${pending.length} secured profit${pending.length === 1 ? '' : 's'} · <b>${coins(sum)} WC</b> pending claim — see Secured profits below</div>`;
+        return `<div class="tiny up" style="margin-top:6px">${pending.length} secured profit${pending.length === 1 ? '' : 's'} · <b>${usd(sum)} USD</b> pending claim — see Secured profits below</div>`;
       })()}
-      <div class="tiny muted center" style="margin-top:6px">${Number(t.profitTakenCoins) > 0 ? `Profit already taken: <b class="up">+${coins(t.profitTakenCoins)} WC</b> · ` : ''}Returns ${coins(p.payoutCoins)} WC if stopped now</div>
-      ${Number(t.dividendBonus) > 0 ? `<div class="tiny center lt-div-line">+${coins(t.dividendBonus)} WC dividend at timer</div>` : ''}
+      <div class="tiny muted center" style="margin-top:6px">${Number(t.profitTakenCoins) > 0 ? `Profit already taken: <b class="up">+${usd(t.profitTakenCoins)} USD</b> · ` : ''}Returns ${usd(p.payoutCoins)} USD if stopped now</div>
+      ${Number(t.dividendBonus) > 0 ? `<div class="tiny center lt-div-line">+${usd(t.dividendBonus)} USD dividend at timer</div>` : ''}
     </div>`;
   },
 
@@ -444,19 +447,19 @@ const LT = {
       <div class="grow" style="min-width:0">
         <div class="small" style="font-weight:650">${esc(this.label(t.ticker))} ${t.side === 'short' ? 'Fall' : 'Rise'}
           <span class="tiny muted">· ${t.leverage}× · ${esc(t.closeReason || 'closed')}</span></div>
-        <div class="tiny muted">${coins(t.capitalCoins)} WC @ ${this.px(t.ticker, t.entryPrice)} → ${this.px(t.ticker, t.exitPrice || 0)} · ${dateLabel(t.closedAt)} ${clockTime(t.closedAt)}</div>
+        <div class="tiny muted">${usd(t.capitalCoins)} USD @ ${this.px(t.ticker, t.entryPrice)} → ${this.px(t.ticker, t.exitPrice || 0)} · ${dateLabel(t.closedAt)} ${clockTime(t.closedAt)}</div>
         <div class="lt-hist-levels">${Number(t.takeProfitPrice) > 0 ? `<span class="tp">TP ${usd(t.takeProfitPrice)}</span>` : '<span>TP —</span>'}
           ${Number(t.stopLossPrice) > 0 ? `<span class="sl">${t.trailingActive ? 'TSL' : 'SL'} ${usd(t.stopLossPrice)}</span>` : '<span>SL —</span>'}
           ${t.trailingActive ? `<span class="trail">trail ${Number(t.trailingStopPct).toFixed(1)}%</span>` : ''}</div>
         <div class="tiny ${win ? 'up' : lost ? 'down' : 'muted'}">
-          ${lost ? 'Total loss — nothing returned' : (win ? '+' : '') + coins(pnl) + ' WC P/L'} ·
-          returned ${coins(t.payoutCoins || 0)} WC</div>
-        ${Number(t.dividendCoins) > 0 ? `<div class="tiny up">+${coins(t.dividendCoins)} WC dividend credited</div>` : ''}
+          ${lost ? 'Total loss — nothing returned' : (win ? '+' : '') + usd(pnl) + ' USD P/L'} ·
+          returned ${usd(t.payoutCoins || 0)} USD</div>
+        ${Number(t.dividendCoins) > 0 ? `<div class="tiny up">+${usd(t.dividendCoins)} USD dividend credited</div>` : ''}
         ${(() => {
           const p = (t.securedProfits || []).filter((x) => x && !x.claimed);
           if (!p.length) return '';
           const sum = p.reduce((a, x) => a + (Number(x.coins) || 0), 0);
-          return `<div class="tiny up">${p.length} secured profit${p.length === 1 ? '' : 's'} · ${coins(sum)} WC awaiting claim</div>`;
+          return `<div class="tiny up">${p.length} secured profit${p.length === 1 ? '' : 's'} · ${usd(sum)} USD awaiting claim</div>`;
         })()}
       </div>
       <span class="badge ${win ? 'badge-success' : lost ? 'badge-danger' : 'badge-warn'}">
@@ -468,7 +471,7 @@ const LT = {
     this.open().forEach(t => {
       const p = this.calc(t);
       const set = (sel, txt) => { const el = document.querySelector(sel); if (el) el.textContent = txt; };
-      set('[data-lt-pnl="' + t.id + '"]', (p.pnlCoins >= 0 ? '+' : '−') + coins(Math.abs(p.pnlCoins)) + ' WC');
+      set('[data-lt-pnl="' + t.id + '"]', (p.pnlCoins >= 0 ? '+' : '−') + usd(Math.abs(p.pnlCoins)) + ' USD');
       set('[data-lt-pct="' + t.id + '"]', (p.pnlPct >= 0 ? '+' : '−') + Math.abs(p.pnlPct).toFixed(2) + '%');
       set('[data-lt-price="' + t.id + '"]', this.px(t.ticker, p.price));
       set('[data-lt-move="' + t.id + '"]', (p.movePct >= 0 ? '▲ ' : '▼ ') + Math.abs(p.movePct).toFixed(2) + '%');
@@ -493,7 +496,7 @@ const LT = {
         el.textContent = t.side === 'short' ? 'profit while price falls' : 'profit while price rises';
       });
       const ret = document.querySelector('[data-lt="' + t.id + '"] .tiny.muted.center');
-      if (ret) ret.textContent = (Number(t.profitTakenCoins) > 0 ? 'Profit already taken: +' + coins(t.profitTakenCoins) + ' WC · ' : '') + 'Returns ' + coins(p.payoutCoins) + ' WC if stopped now';
+      if (ret) ret.textContent = (Number(t.profitTakenCoins) > 0 ? 'Profit already taken: +' + usd(t.profitTakenCoins) + ' USD · ' : '') + 'Returns ' + usd(p.payoutCoins) + ' USD if stopped now';
       document.querySelectorAll('[data-lt-tp-btn="' + t.id + '"]').forEach((b) => {
         b.disabled = p.pnlCoins <= 0;
         b.title = p.pnlCoins > 0 ? 'Take the open profit and keep the trade running' : 'No profit to take yet';
@@ -503,10 +506,10 @@ const LT = {
         b.title = p.pnlCoins < 0 ? 'Close the trade at a loss now' : 'Only available while the trade is losing';
       });
       document.querySelectorAll('[data-lt-tp-amt="' + t.id + '"]').forEach((el) => {
-        el.textContent = p.pnlCoins > 0 ? '(+' + coins(p.pnlCoins) + ')' : '';
+        el.textContent = p.pnlCoins > 0 ? '(+' + usd(p.pnlCoins) + ')' : '';
       });
       document.querySelectorAll('[data-lt-sl-amt="' + t.id + '"]').forEach((el) => {
-        el.textContent = p.pnlCoins < 0 ? '(−' + coins(Math.abs(p.pnlCoins)) + ')' : '';
+        el.textContent = p.pnlCoins < 0 ? '(−' + usd(Math.abs(p.pnlCoins)) + ')' : '';
       });
     });
     this.paintEarnings();
@@ -529,8 +532,8 @@ const LT = {
     const up = p.pnlCoins >= 0;
     el.className = 'tiny center ' + (up ? 'up' : 'down');
     el.innerHTML = pos.side === 'short'
-      ? `<b>▼ Fall trade</b> · falling chart = <b>green profit zone</b>, rising chart = <b>red loss zone</b> · now ${up ? '+' : '−'}${coins(Math.abs(p.pnlCoins))} WC`
-      : `<b>▲ Rise trade</b> · rising chart = <b>green profit zone</b>, falling chart = <b>red loss zone</b> · now ${up ? '+' : '−'}${coins(Math.abs(p.pnlCoins))} WC`;
+      ? `<b>▼ Fall trade</b> · falling chart = <b>green profit zone</b>, rising chart = <b>red loss zone</b> · now ${up ? '+' : '−'}${usd(Math.abs(p.pnlCoins))} USD`
+      : `<b>▲ Rise trade</b> · rising chart = <b>green profit zone</b>, falling chart = <b>red loss zone</b> · now ${up ? '+' : '−'}${usd(Math.abs(p.pnlCoins))} USD`;
   },
 
   paintEarnings() {
@@ -538,7 +541,7 @@ const LT = {
     if (!el) return;
     const pos = this.open();
     const pnl = pos.reduce((sum, t) => sum + this.calc(t).pnlCoins, 0);
-    el.textContent = (pnl >= 0 ? '+' : '\u2212') + coins(Math.abs(pnl)) + ' WC';
+    el.textContent = (pnl >= 0 ? '+' : '\u2212') + usd(Math.abs(pnl)) + ' USD';
     el.classList.remove('up', 'down');
     if (pnl > 0) el.classList.add('up');
     else if (pnl < 0) el.classList.add('down');
@@ -570,7 +573,7 @@ const LT = {
         <div class="tiny muted">Secured at ${this.px(trade.ticker, profit.price)}${trade.status === 'Open' ? ' · trade still running' : ' · trade closed'}</div>
       </div>
       <div style="text-align:right">
-        <div class="small up" style="font-weight:700">+${coins(profit.coins)} WC</div>
+        <div class="small up" style="font-weight:700">+${usd(profit.coins)} USD</div>
         <button class="btn btn-xs btn-primary" data-act="lt-claim-profit" data-trade="${trade.id}" data-profit="${profit.id}">Take profit</button>
       </div>
     </div>`).join('');
@@ -578,8 +581,8 @@ const LT = {
       <div class="between" style="align-items:flex-start;gap:10px"><div class="card-title" style="margin:0">Secured profits
         <span class="badge badge-success" style="margin-left:6px">${list.length}</span></div>
         <div class="row" style="gap:8px;align-items:center">
-          <span class="tiny up">${coins(total)} WC pending</span>
-          <button class="btn btn-sm btn-primary" data-act="lt-claim-all-profits">Claim all · ${coins(total)} WC</button>
+          <span class="tiny up">${usd(total)} USD pending</span>
+          <button class="btn btn-sm btn-primary" data-act="lt-claim-all-profits">Claim all · ${usd(total)} USD</button>
         </div></div>
       <div class="tiny muted" style="margin:4px 0 8px;line-height:1.6">
         The Auto Secure bot locked these profits while you were away. Press <b>Take profit</b> on each entry to credit it to your balance.
@@ -622,11 +625,11 @@ const LT = {
         ${this.cardHTML(pos)}
         <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
           <button class="btn btn-primary grow" data-act="lt-tp" data-id="${pos.id}" data-lt-tp-btn="${pos.id}" ${this.calc(pos).pnlCoins > 0 ? '' : 'disabled'}>
-            ${ic('trend', 15)} Take profit <span data-lt-tp-amt="${pos.id}">${this.calc(pos).pnlCoins > 0 ? '(+' + coins(this.calc(pos).pnlCoins) + ')' : ''}</span></button>
+            ${ic('trend', 15)} Take profit <span data-lt-tp-amt="${pos.id}">${this.calc(pos).pnlCoins > 0 ? '(+' + usd(this.calc(pos).pnlCoins) + ')' : ''}</span></button>
           <button class="btn btn-soft grow" data-act="lt-stop" data-id="${pos.id}">
             ${ic('ban', 15)} Stop trade</button>
           <button class="btn btn-ghost grow" data-act="lt-sl" data-id="${pos.id}" data-lt-sl-btn="${pos.id}" ${this.calc(pos).pnlCoins < 0 ? '' : 'disabled'}>
-            ${ic('down', 15)} Take loss <span data-lt-sl-amt="${pos.id}">${this.calc(pos).pnlCoins < 0 ? '(−' + coins(Math.abs(this.calc(pos).pnlCoins)) + ')' : ''}</span></button>
+            ${ic('down', 15)} Take loss <span data-lt-sl-amt="${pos.id}">${this.calc(pos).pnlCoins < 0 ? '(−' + usd(Math.abs(this.calc(pos).pnlCoins)) + ')' : ''}</span></button>
         </div>
         <button class="btn btn-soft btn-sm" data-act="lt-edit-tpsl" data-id="${pos.id}" style="width:100%;margin-top:8px">
           ${ic('edit', 14)} Edit Take Profit / Stop Loss</button>
@@ -645,14 +648,14 @@ const LT = {
       <div class="tiny muted" id="ltSideHint" style="margin:-4px 0 10px;line-height:1.5">
         ▲ <b>Rise:</b> you profit when the chart moves up and lose when it moves down.
       </div>
-      <div class="field"><label class="label">Capital (Whale Coin)</label>
-        <div class="input-wrap"><span class="inv-prefix">WC</span>
+      <div class="field"><label class="label">Capital (USD)</label>
+        <div class="input-wrap"><span class="inv-prefix">$</span>
           <input class="input" id="ltCapital" type="number" step="1" min="${this.MIN_CAPITAL}" placeholder="0"/></div>
-        <div class="tiny muted" id="ltCapitalUsd">≈ $0.00 · balance ${coins(me().balance)} WC</div></div>
+        <div class="tiny muted" id="ltCapitalUsd">≈ $0.00 · stock cash ${usd(INV.stockCash(me()))}</div></div>
       <div class="field"><label class="label">or enter the trade amount in USD</label>
         <div class="input-wrap"><span class="inv-prefix">$</span>
           <input class="input" id="ltCapitalUsdIn" type="number" step="0.01" min="0" placeholder="0.00" data-act="lt-usd-in"/></div>
-        <div class="tiny muted">Converts automatically at 1 WC = $0.50</div></div>
+        <div class="tiny muted">Converts automatically at 1 USD = $0.50</div></div>
       <div class="lt-tpsl-grid">
         <div class="lt-level-box" data-k="tp" data-mode="${LT.levels.tp}">
           <div class="between"><label class="label">Take Profit <span class="tiny muted">skims profit, trade continues</span></label>
@@ -670,9 +673,9 @@ const LT = {
             <button type="button" data-act="lt-quick" data-k="tp" data-pct="100">+100%</button>
           </div>
           <div class="lt-quick" data-quick="wc">
-            <button type="button" data-act="lt-quick" data-k="tp" data-unit="wc" data-val="10">+10 WC</button>
-            <button type="button" data-act="lt-quick" data-k="tp" data-unit="wc" data-val="25">+25 WC</button>
-            <button type="button" data-act="lt-quick" data-k="tp" data-unit="wc" data-val="50">+50 WC</button>
+            <button type="button" data-act="lt-quick" data-k="tp" data-unit="wc" data-val="10">+10 USD</button>
+            <button type="button" data-act="lt-quick" data-k="tp" data-unit="wc" data-val="25">+25 USD</button>
+            <button type="button" data-act="lt-quick" data-k="tp" data-unit="wc" data-val="50">+50 USD</button>
           </div>
           <div class="lt-preview" id="ltTpPreview">Target —</div>
         </div>
@@ -692,9 +695,9 @@ const LT = {
             <button type="button" data-act="lt-quick" data-k="sl" data-pct="100">-100%</button>
           </div>
           <div class="lt-quick" data-quick="wc">
-            <button type="button" data-act="lt-quick" data-k="sl" data-unit="wc" data-val="10">-10 WC</button>
-            <button type="button" data-act="lt-quick" data-k="sl" data-unit="wc" data-val="25">-25 WC</button>
-            <button type="button" data-act="lt-quick" data-k="sl" data-unit="wc" data-val="50">-50 WC</button>
+            <button type="button" data-act="lt-quick" data-k="sl" data-unit="wc" data-val="10">-10 USD</button>
+            <button type="button" data-act="lt-quick" data-k="sl" data-unit="wc" data-val="25">-25 USD</button>
+            <button type="button" data-act="lt-quick" data-k="sl" data-unit="wc" data-val="50">-50 USD</button>
           </div>
           <div class="lt-preview" id="ltSlPreview">Target —</div>
         </div>
@@ -704,7 +707,7 @@ const LT = {
         <span class="small">Trailing stop</span>
         <span class="lt-trail-dist"><input class="input" id="ltTrailPct" type="number" step="0.1" min="0.5" max="50" value="2"/>% behind price</span>
       </label>
-      <div class="tiny muted" id="ltTpslHint" style="margin:-2px 0 10px;line-height:1.55">Rise: TP above entry, SL below. Fall: TP below entry, SL above. <b>Take Profit skims the profit into your balance and keeps the trade running</b>; <b>Stop Loss ends the trade</b>. WC mode targets a Whale Coin amount.</div>
+      <div class="tiny muted" id="ltTpslHint" style="margin:-2px 0 10px;line-height:1.55">Rise: TP above entry, SL below. Fall: TP below entry, SL above. <b>Take Profit skims the profit into your balance and keeps the trade running</b>; <b>Stop Loss ends the trade</b>. USD mode targets a Whale Coin amount.</div>
       <div class="field"><label class="label">Trade duration</label>
         <select class="input" id="ltDuration">${this.DURATIONS.map(d => `<option value="${d.m}" ${d.m === 60 ? 'selected' : ''}>${d.label}</option>`).join('')}</select></div>
       <div class="lt-div-est" id="ltDivEst">Dividend bonus · calculating…</div>
@@ -876,7 +879,7 @@ LT.paintMarket = function () {
         setTimeout(() => el.classList.remove('lt-up', 'lt-down'), 800);
       }
     } else if (kind === 'wc') {
-      const txt = coins(usdToCoins(q.price)) + ' WC';
+      const txt = usd(q.price);
       if (el.textContent !== txt) el.textContent = txt;
     } else if (kind === 'pct') {
       const p = q.changePct;
@@ -983,7 +986,7 @@ LT.summary = function (userId) {
     capitalUsd: coinsToUsd(capital),
     pnlUsd: coinsToUsd(pnl),
     pnlPct: capital ? (pnl / capital) * 100 : 0,
-    cash: (u && u.balance) || 0,
+    cash: (u && INV.stockCash(u)) || 0,
     live: pos.filter(p => p.kind === 'trade').length,
     botActive: !!bot,
     botValue, botCapital, botPnl,
@@ -1076,7 +1079,7 @@ LT.autoSecureStrip = function () {
       if (!(v > 0)) return;
       wcEl.value = String(Math.round((v / 0.5) * 100) / 100);
       const hint = document.getElementById('ltCapitalUsd');
-      if (hint) hint.textContent = '≈ $' + v.toFixed(2) + ' · balance ' + coins(me().balance) + ' WC';
+      if (hint) hint.textContent = '≈ $' + v.toFixed(2) + ' · stock cash ' + usd(INV.stockCash(me()));
     };
   }
 
@@ -1130,7 +1133,7 @@ LT.dash = function (params) {
 
   <div class="inv-hero">
     <div class="tiny muted">Total portfolio value</div>
-    <div class="inv-big"><span data-ltd="value">${coins(s.valueCoins)}</span> <span class="inv-unit">WC</span></div>
+    <div class="inv-big"><span data-ltd="value">${usd(s.valueUsd)}</span> <span class="inv-unit">USD</span></div>
     <div class="tiny muted" data-ltd="value-usd">≈ ${usd(s.valueUsd)} USD</div>
     <div class="lt-day ${dayUp ? 'up' : dayDown ? 'down' : ''}" data-ltd="day">
       ${ic(dayUp ? 'trend' : 'down', 14)}
@@ -1138,12 +1141,12 @@ LT.dash = function (params) {
       <span>(${s.pnl >= 0 ? '+' : '−'}${Math.abs(s.pnlPct).toFixed(2)}%) today</span>
     </div>
     <div class="inv-hero-grid inv-hero-grid-4">
-      <div><span class="tiny muted">Invested</span><b data-ltd="invested">${coins(s.capital)} WC</b></div>
+      <div><span class="tiny muted">Invested</span><b data-ltd="invested">${usd(s.capital)}</b></div>
       <div><span class="tiny muted">Earnings${s.live ? ' · live' : ''}</span>
         <b class="${dayUp ? 'up' : dayDown ? 'down' : ''}" data-ltd="earnings">
-          ${s.pnl >= 0 ? '+' : '−'}${coins(Math.abs(s.pnl))} WC</b></div>
-      <div><span class="tiny muted">Available cash</span><b data-ltd="cash">${coins(s.cash)} WC</b></div>
-      <div><span class="tiny muted">Secured profit</span><b class="up" data-ltd="secured">+${coins(s.securedCoins)} WC</b>
+          ${s.pnl >= 0 ? '+' : '−'}${usd(Math.abs(s.pnl))}</b></div>
+      <div><span class="tiny muted">Stock cash</span><b data-ltd="cash">${usd(s.cash)}</b></div>
+      <div><span class="tiny muted">Secured profit</span><b class="up" data-ltd="secured">+${usd(s.securedCoins)}</b>
         <span class="tiny muted" data-ltd="secured-count">${s.securedCount} entr${s.securedCount === 1 ? 'y' : 'ies'} to claim</span></div>
     </div>
   </div>
@@ -1162,8 +1165,8 @@ LT.dash = function (params) {
       ${hasPerf ? INV.lineChart(series, { h: 150 }) : `<div class="inv-empty">${ic('trend', 26)}<p class="small muted">Start a trade, buy stock or run a bot to see performance.</p><a href="#/invest/market" class="btn btn-sm btn-primary">Explore market</a></div>`}
     </div>
     ${s.botActive ? `<div class="tiny center ${s.botPnl >= 0 ? 'up' : 'down'}" style="margin-top:5px" data-lt-bot-line>
-      ${ic('trend', 11)} ${esc(s.botTier || 'Trading bot')} · ${coins(s.botValue)} WC equity · ${s.botPnl >= 0 ? '+' : '−'}${coins(Math.abs(s.botPnl))} WC · ${s.botTrades} trade${s.botTrades === 1 ? '' : 's'}${s.botStatus === 'running' ? ' · live' : ''}
-      ${s.botLast ? `<span class="muted"> · last ${esc(s.botLast.ticker || '')} ${Number(s.botLast.pnlCoins) >= 0 ? '+' : '−'}${coins(Math.abs(Number(s.botLast.pnlCoins) || 0))} WC</span>` : ''}
+      ${ic('trend', 11)} ${esc(s.botTier || 'Trading bot')} · ${usd(s.botValue)} equity · ${s.botPnl >= 0 ? '+' : '−'}${usd(Math.abs(s.botPnl))} · ${s.botTrades} trade${s.botTrades === 1 ? '' : 's'}${s.botStatus === 'running' ? ' · live' : ''}
+      ${s.botLast ? `<span class="muted"> · last ${esc(s.botLast.ticker || '')} ${Number(s.botLast.pnlCoins) >= 0 ? '+' : '−'}${usd(Math.abs(Number(s.botLast.pnlCoins) || 0))}</span>` : ''}
     </div>` : ''}
     <div class="tiny muted center wc-feed-notice" data-market-notice="1" style="margin-top:6px">Simulated market data · 24/7</div>
   </div>
@@ -1186,7 +1189,7 @@ LT.dash = function (params) {
     </div>
   </div>
 
-  <div class="card inv-note">${ic('shield', 14)} <span class="tiny">Prices stream from Finnhub. Crypto trades 24/7, Forex 24/5, and closed stock exchanges hold their last real print. Values include live trades and holdings at 1 WC = $0.50.</span></div>`;
+  <div class="card inv-note">${ic('shield', 14)} <span class="tiny">Prices stream from Finnhub. Crypto trades 24/7, Forex 24/5, and closed stock exchanges hold their last real print. All stock-trading values are in USD.</span></div>`;
 };
 
 function usd_LT(n) { return '$' + (Math.round((Number(n) || 0) * 100) / 100).toFixed(2); }
@@ -1201,11 +1204,11 @@ LT.positionsHTML = function (userId) {
       <span class="inv-logo" style="width:38px;height:38px;background:linear-gradient(135deg,#2ee6c9,#3aa0ff)"><b style="font-size:12px">BOT</b></span>
       <div class="grow" style="min-width:0">
         <div class="small ellipsis" style="font-weight:650">${esc(bot.tierName || 'Trading Bot')} <span class="lt-side long">Auto</span></div>
-        <div class="tiny muted">${coins(Number(bot.allocatedCoins) || 0)} WC in · ${coins(Number(bot.poolCoins) || 0)} WC equity</div>
+        <div class="tiny muted">${usd(Number(bot.allocatedCoins) || 0)} in · ${usd(Number(bot.poolCoins) || 0)} equity</div>
         <div class="tiny muted">${Number(bot.tradeCount) || 0} bot trade${(Number(bot.tradeCount) || 0) === 1 ? '' : 's'}${bot.status === 'running' ? ' · live' : ''}</div>
       </div>
       <div style="text-align:right">
-        <div class="small ${pnl >= 0 ? 'up' : 'down'}" style="font-weight:650">${pnl >= 0 ? '+' : '−'}${coins(Math.abs(pnl))} WC</div>
+        <div class="small ${pnl >= 0 ? 'up' : 'down'}" style="font-weight:650">${pnl >= 0 ? '+' : '−'}${usd(Math.abs(pnl))}</div>
         <div class="tiny muted">bot P/L</div>
       </div></a>`;
   })() : '';
@@ -1217,7 +1220,7 @@ LT.positionsHTML = function (userId) {
       ${INV.logoHTML(stock)}
       <div class="grow" style="min-width:0">
         <div class="small ellipsis" style="font-weight:650">${esc(stock.name)} ${tag}</div>
-        <div class="tiny muted">${coins(p.capital)} WC in · now ${coins(p.valueCoins)} WC</div>
+        <div class="tiny muted">${usd(p.capital)} in · now ${usd(p.valueCoins)}</div>
         <div class="div-row">${LT.dividendBadge(p.ticker)}${p.kind === 'trade'
           ? LT.dividendEstimateBadge(p.ticker, p.capital, Number(p.trade.durationMinutes) || 0, p.trade.durationLabel || 'timer')
           : LT.dividendEstimateBadge(p.ticker, p.valueCoins || p.capital, 1440, '1d')}</div>
@@ -1225,7 +1228,7 @@ LT.positionsHTML = function (userId) {
       <span class="lt-mini">${INV.spark(p.ticker)}</span>
       <div style="text-align:right">
         <div class="small" style="font-weight:650">${LT.px(p.ticker, p.price)}</div>
-        <div class="tiny ${up ? 'up' : down ? 'down' : 'muted'}">${p.pnlCoins >= 0 ? '+' : '−'}${coins(Math.abs(p.pnlCoins))} WC (${p.pnlPct >= 0 ? '+' : '−'}${Math.abs(p.pnlPct).toFixed(2)}%)</div>
+        <div class="tiny ${up ? 'up' : down ? 'down' : 'muted'}">${p.pnlCoins >= 0 ? '+' : '−'}${usd(Math.abs(p.pnlCoins))} (${p.pnlPct >= 0 ? '+' : '−'}${Math.abs(p.pnlPct).toFixed(2)}%)</div>
       </div></a>`;
   }).join('')}</div>`;
 };
@@ -1239,8 +1242,8 @@ LT.paintDash = function () {
   const set = (sel, txt) => { const el = document.querySelector(sel); if (el) el.textContent = txt; };
   set('[data-ltd="value"]', coins(s.valueCoins));
   set('[data-ltd="value-usd"]', '≈ ' + usd(s.valueUsd) + ' USD');
-  set('[data-ltd="invested"]', coins(s.capital) + ' WC');
-  set('[data-ltd="earnings"]', (s.pnl >= 0 ? '+' : '−') + coins(Math.abs(s.pnl)) + ' WC');
+  set('[data-ltd="invested"]', usd(s.capital));
+  set('[data-ltd="earnings"]', (s.pnl >= 0 ? '+' : '−') + usd(Math.abs(s.pnl)));
   set('[data-ltd="cash"]', coins(s.cash) + ' WC');
   set('[data-ltd="secured"]', '+' + coins(s.securedCoins) + ' WC');
   set('[data-ltd="secured-count"]', s.securedCount + ' entr' + (s.securedCount === 1 ? 'y' : 'ies') + ' to claim');
@@ -1457,7 +1460,7 @@ LT.vendorStats = function (v) {
   const demoOrders = orders.filter(o => o.simulated);
   const demoUsd = demoOrders.reduce((s, o) => s + (Number(o.totalUsd) || 0), 0);
   const u = findUser(v.userId) || {};
-  return { orders: orders.length, grossUsd, units, pending, paidCoins, balance: u.balance || 0,
+  return { orders: orders.length, grossUsd, units, pending, paidCoins, balance: (INV.stockCash && INV.stockCash(u)) || 0,
            demoOrders: demoOrders.length, demoUsd };
 };
 
@@ -2163,7 +2166,8 @@ App.ltClaimAllProfits = async function () {
     coinsTotal += c;
     trade.claimedSecuredCoins = Math.round(((Number(trade.claimedSecuredCoins) || 0) + c) * 100) / 100;
   });
-  u.balance = Math.round(((Number(u.balance) || 0) + coinsTotal) * 100) / 100;
+  const ia = INV.investAcct(u);
+  ia.portfolios.stock = Math.round((Number(ia.portfolios.stock) + coinsTotal) * 100) / 100;
   tx(u.id, 'secured-profit-claim', `Claimed ${list.length} secured profits · +${coins(coinsTotal)} WC`, coinsTotal, { count: list.length, all: true });
   notify(u.id, 'Secured profits credited', `+${coins(coinsTotal)} WC was added to your balance.`, '#/wallet', 'check');
   persist(); render();
@@ -2193,7 +2197,8 @@ App.ltClaimProfit = async function (id, ds) {
   }
   const u = findUser(t.userId);
   if (!u) return toast('User not found', 'err');
-  u.balance = Math.round(((Number(u.balance) || 0) + (Number(rec.coins) || 0)) * 100) / 100;
+  const ia2 = INV.investAcct(u);
+  ia2.portfolios.stock = Math.round((Number(ia2.portfolios.stock) + (Number(rec.coins) || 0)) * 100) / 100;
   rec.claimed = true;
   rec.claimedAt = Date.now();
   tx(u.id, 'secured-profit-claim', `Secured profit claimed · ${t.ticker} · +${coins(rec.coins)} WC`, rec.coins,
@@ -2446,7 +2451,7 @@ function ltMountStock() {
   const cap = document.getElementById('ltCapital');
   if (cap) cap.addEventListener('input', () => {
     const usdEl = document.getElementById('ltCapitalUsd');
-    if (usdEl) usdEl.textContent = '≈ ' + usd(coinsToUsd(Number(cap.value) || 0)) + ' · balance ' + coins(me().balance) + ' WC';
+    if (usdEl) usdEl.textContent = '≈ ' + usd(Number(cap.value) || 0) + ' · stock cash ' + usd(INV.stockCash(me()));
     LT.previewTargets();
   });
   ['ltTp', 'ltSl', 'ltTrailPct'].forEach((id) => {

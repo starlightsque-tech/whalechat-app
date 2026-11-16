@@ -160,12 +160,12 @@
   function topupPage(u, params) {
     var a = account(u); var to = (params && params.to) || 'stock';
     var labels = { stock: 'Stock trading', wc: 'WC-Investing', b2b: 'B2B-Investing', bot: 'Bot trade capital' };
-    return head('Top up ' + (labels[to] || 'portfolio'), 'Move USD from your investment total-assets balance.', '#/investment') +
+    return head('Top up ' + (labels[to] || 'portfolio'), 'Move USD from your Whalechat $ balance into portfolio capital.', '#/investment') +
       '<div class="card"><div class="field"><label class="label">Top up to</label><select class="input" id="ihTopTo">' +
         Object.keys(labels).map(function (k) { return '<option value="' + k + '"' + (k === to ? ' selected' : '') + '>' + labels[k] + '</option>'; }).join('') +
       '</select></div><div class="field"><label class="label">Amount (USD)</label><input class="input" id="ihTopAmount" type="number" step="0.01" min="0" placeholder="0.00"/></div>' +
       '<button class="btn btn-primary" data-act="ih-topup" style="width:100%">Send to portfolio</button>' +
-      '<div class="tiny muted mt6">Available investment balance: ' + money(a.usd) + '</div></div>' +
+      '<div class="tiny muted mt6">Available $ balance: ' + money(u.walletUsd || 0) + ' · portfolio transactions are in USD</div></div>' +
       '<div class="card"><div class="card-title">Current portfolio balances</div><div class="ih-list">' +
         Object.keys(labels).map(function (k) { return '<div class="ih-row"><span>' + labels[k] + '</span><b>' + money(a.portfolios[k]) + '</b></div>'; }).join('') + '</div></div>';
   }
@@ -530,8 +530,7 @@
     return head('Top up B2B capital', 'Fund the B2B investing account. Buys are paid from this capital balance.', '#/investment/b2b') +
       '<div class="card">' +
         '<div class="field"><label class="label">Take the money from</label><select class="input" id="ihB2bTopFrom">' +
-          '<option value="usd">Investment account balance · ' + money(a.usd) + '</option>' +
-          '<option value="wc">WhaleCoin wallet · ' + wc(u.balance) + ' WC</option>' +
+          '<option value="usd">Whalechat $ balance · ' + money(u.walletUsd || 0) + '</option>' +
         '</select></div>' +
         '<div class="field"><label class="label">Amount (USD)</label><input class="input" id="ihB2bTopAmount" type="number" step="0.01" min="0" placeholder="0.00"/></div>' +
         '<button class="btn btn-primary" data-act="ih-b2b-topup" style="width:100%">Top up capital</button>' +
@@ -842,7 +841,6 @@
       var mode = (document.getElementById('ihTrMode') || {}).value || 'usd2inv';
       var amount = Number((document.getElementById('ihTrAmount') || {}).value || 0);
       if (!(amount > 0)) return toastH('Enter an amount', 'err');
-      if (!await requirePin(u, 'Confirm transfer', 'Enter your PIN to move funds')) return;
       if (mode === 'usd2inv') {
         if ((Number(u.walletUsd) || 0) < amount) return toastH('Not enough in your Whalechat $ balance', 'err');
         u.walletUsd = Math.round(((Number(u.walletUsd) || 0) - amount) * 100) / 100;
@@ -874,14 +872,11 @@
       var to = (document.getElementById('ihTopTo') || {}).value || 'stock';
       var amount = Number((document.getElementById('ihTopAmount') || {}).value || 0);
       if (!(amount > 0)) return toastH('Enter an amount', 'err');
-      if (a.usd < amount) return toastH('Not enough investment balance', 'err');
-      a.usd = Math.round((a.usd - amount) * 100) / 100;
+      if ((Number(u.walletUsd) || 0) < amount) return toastH('Not enough in your Whalechat $ balance', 'err');
+      u.walletUsd = Math.round(((Number(u.walletUsd) || 0) - amount) * 100) / 100;
       a.portfolios[to] = Math.round(((a.portfolios[to] || 0) + amount) * 100) / 100;
-      if (to !== 'b2b') {
-        u.balance = Math.round((Number(u.balance) + amount / RATE) * 100) / 100;
-        userTx(u, 'invest-topup', 'Investment top-up · ' + to, amount / RATE, { portfolio: to, usd: amount });
-      }
-      ledger(u, 'Top-up ' + to, -amount, to !== 'b2b' ? amount / RATE : 0, { portfolio: to }); save(); toastH('Portfolio topped up', 'ok'); render();
+      userTx(u, 'invest-topup', 'Portfolio top-up · ' + to, 0, { portfolio: to, usd: amount });
+      ledger(u, 'Top-up ' + to + ' · ' + money(amount) + ' USD', -amount, 0, { portfolio: to }); save(); toastH('Portfolio topped up with ' + money(amount), 'ok'); render();
     };
     /* ---- tools: one shared subscription, never a second charge ---------- */
     App.ihToolSub = async function (id, ds) {
@@ -993,16 +988,9 @@
       var from = (document.getElementById('ihB2bTopFrom') || {}).value || 'usd';
       var amount = Number((document.getElementById('ihB2bTopAmount') || {}).value || 0);
       if (!(amount > 0)) return toastH('Enter an amount', 'err');
-      if (from === 'wc') {
-        var need = Math.round((amount / RATE) * 100) / 100;
-        if ((Number(u.balance) || 0) < need) return toastH('Not enough WhaleCoin', 'err');
-        u.balance = Math.round((Number(u.balance) - need) * 100) / 100;
-        ledger(u, 'WC → B2B capital', amount, -need, { source: 'wc' });
-      } else {
-        if ((Number(a.usd) || 0) < amount) return toastH('Not enough investment balance', 'err');
-        a.usd = Math.round((Number(a.usd) - amount) * 100) / 100;
-        ledger(u, 'Investment → B2B capital', -amount, 0, { source: 'usd' });
-      }
+      if ((Number(u.walletUsd) || 0) < amount) return toastH('Not enough in your Whalechat $ balance', 'err');
+      u.walletUsd = Math.round((Number(u.walletUsd) - amount) * 100) / 100;
+      ledger(u, '$ balance → B2B capital', -amount, 0, { source: 'wallet-usd' });
       a.portfolios.b2b = Math.round((b2bCapital(a) + amount) * 100) / 100;
       save(); toastH('B2B capital topped up · ' + money(amount), 'ok'); render();
     };
