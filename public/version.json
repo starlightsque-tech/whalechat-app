@@ -1,8 +1,8 @@
 {
-  "version": "3.33.0",
-  "build": "2026-11-16T06:11:51Z",
+  "version": "3.34.0",
+  "build": "2026-11-16T11:25:46Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.33.0 - WhaleChat Shares daily-return plans (principal x daily % x days) with updated examples and bot account workflows.",
-  "releasedAt": "2026-11-16T06:11:51Z",
+  "notes": "WhaleChat 3.34.0 - B2B investing desk (separate Buy/Sell pages, asset lists with multi-buy, top-up, profit transfers, corrected capital/assets/profit balances), one shared subscription state for Auto Secure + bot traders, working back button, and server-side B2B price alerts with email buy-now/sell-now links.",
+  "releasedAt": "2026-11-16T11:25:46Z",
   "minimum": "3.0.0"
 }

@@ -377,9 +377,61 @@ function go(path) {
   if (!path.startsWith('#')) path = '#/' + path.replace(/^\/+/, '');
   if (location.hash === path) render(); else location.hash = path;
 }
-function back() { if (history.length > 1) history.back(); else go('home'); }
+
+/* ---------------- back button -------------------------------------------
+   A real navigation stack so the back button always returns to the page the
+   user actually came from — including after a reload or a deep link, where
+   history.back() would leave the app. */
+const NAV_STACK = [];
+let NAV_LAST = location.hash || '';
+const NAV_PARENT = {
+  'invest': 'home',
+  'invest/market': 'invest', 'invest/bots': 'invest', 'invest/shares': 'invest',
+  'invest/orders': 'invest', 'invest/watchlist': 'invest', 'invest/stock': 'invest/market',
+  'investment': 'profile', 'investment/transfer': 'investment', 'investment/convert': 'investment',
+  'investment/topup': 'investment', 'investment/tools': 'investment', 'investment/b2b': 'investment',
+  'investment/b2b/buy': 'investment/b2b', 'investment/b2b/sell': 'investment/b2b',
+  'investment/b2b/assets': 'investment/b2b', 'investment/b2b/topup': 'investment/b2b',
+  'investment/b2b/transfer': 'investment/b2b',
+  'investment/history': 'investment', 'investment/more': 'investment',
+  'investment/statement': 'investment', 'investment/disputes': 'investment',
+  'deposit': 'wallet', 'withdraw': 'wallet', 'wallet': 'home', 'orders': 'profile',
+  'order': 'orders', 'notifications': 'home', 'settings': 'profile', 'profile': 'home',
+  'cart': 'market', 'checkout': 'cart', 'product': 'market', 'store': 'market',
+  'chat': 'home', 'vendor': 'home', 'vendor/products': 'vendor', 'vendor/orders': 'vendor',
+  'admin': 'home'
+};
+function navKey(hash) {
+  return String(hash || '').replace(/^#\/?/, '').split('?')[0].replace(/\/+$/, '');
+}
+function navTrack() {
+  const cur = location.hash || '#/home';
+  if (NAV_LAST && NAV_LAST !== cur && NAV_STACK[NAV_STACK.length - 1] !== NAV_LAST) {
+    NAV_STACK.push(NAV_LAST);
+    if (NAV_STACK.length > 60) NAV_STACK.shift();
+  }
+  NAV_LAST = cur;
+}
+function navParent(hash) {
+  const key = navKey(hash);
+  if (NAV_PARENT[key]) return NAV_PARENT[key];
+  const bits = key.split('/');
+  if (bits.length > 1) return bits.slice(0, -1).join('/');
+  return 'home';
+}
+function back() {
+  /* 1. the page we came from in this session */
+  let prev = NAV_STACK.pop();
+  while (prev && navKey(prev) === navKey(location.hash)) prev = NAV_STACK.pop();
+  if (prev) { NAV_LAST = ''; go(prev.replace(/^#/, '')); return; }
+  /* 2. the browser can still go back inside the app */
+  if (history.length > 1) { NAV_LAST = ''; history.back(); return; }
+  /* 3. known parent route */
+  go(navParent(location.hash));
+}
 
 window.addEventListener('hashchange', () => {
+  navTrack();
   try { gaTrack(); } catch (e) {}
   if (!me()) { const { parts } = parseHash(); if (['login', 'signup', 'forgot', 'welcome', 'splash'].includes(parts[0])) render(); else routeGuard(); return; }
   render();

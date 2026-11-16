@@ -57,6 +57,7 @@ if (!parts.length) {
 
 /* 3. app modules owned by the repo ------------------------------------------- */
 const MODULES = [
+  { file: 'subscriptions.js', marker: 'wc-subs' },
   { file: 'tawk-control.js', marker: 'wc-tawk-control' },
   { file: 'live-trade.js', marker: 'wc-live-trade' },
   { file: 'spot-orders.js', marker: 'wc-spot-orders' },
