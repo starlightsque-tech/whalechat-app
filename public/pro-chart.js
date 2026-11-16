@@ -34,11 +34,6 @@
 
   const PC = (window.WC_PRO_CHART = window.WC_PRO_CHART || {});
   PC.version = LWC_VERSION;
-  /* The stock trading view stays on the Finnhub price chart (market-live.js).
-     Pro-chart is only used for equity/ROI curves (portfolio, plans, bots). */
-  PC.disableStock = true;
-  /* Portfolio performance uses the same Finnhub trade chart as stocks. */
-  PC.disablePortfolio = true;
   PC.mock = true;              /* mock ticks while no real movement arrives */
   PC.instances = PC.instances || [];
 
@@ -988,7 +983,6 @@
   }
 
   PC.mountStock = function (explicitHost, explicitTicker) {
-    if (PC.disableStock) return null;
     const host = explicitHost || findStockHost();
     if (!host) return null;
     const ticker = String(explicitTicker || host.getAttribute('data-lt-live-chart') || (host.getAttribute('data-chart') || '').split('|')[0] || '').toUpperCase();
@@ -1008,7 +1002,6 @@
   };
 
   PC.mountPortfolio = function (explicitHost) {
-    if (PC.disablePortfolio) return null;
     const hosts = explicitHost ? [explicitHost] : findPortfolioHosts();
     let last = null;
     hosts.forEach((host) => {
@@ -1047,7 +1040,9 @@
           /* clean instances whose host was re-rendered away */
           PC.instances.slice().forEach((i) => { if (!document.body.contains(i.host)) i.destroy(); });
           (PC.equities || []).slice().forEach((e) => { if (!document.body.contains(e.host)) e.destroy(); });
-          /* stock + portfolio charts are owned by market-live (Finnhub feed) */
+          if (document.getElementById('ltDashChart') || document.querySelector('.inv-chart[data-chart^="__portfolio__"]')) PC.mountPortfolio();
+          if ((location.hash || '').startsWith('#/invest/stock/')) PC.mountStock();
+          PC.instances.forEach((i) => { if (i.mode === 'stock') i._syncButtons(); });
         } catch (e) { console.error('[pro-chart] mount failed', e); }
       }, 220);
     };

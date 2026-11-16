@@ -193,7 +193,6 @@ const USER_NAV = [
   { key: 'market', label: 'Marketplace', icon: 'bag', href: '#/market' },
   { key: 'cart', label: 'Cart', icon: 'cart', href: '#/cart' },
   { key: 'wallet', label: 'Wallet', icon: 'wallet', href: '#/wallet' },
-  { key: 'tools', label: 'Tools', icon: 'grid', href: '#/tools' },
   { key: 'profile', label: 'Profile', icon: 'user', href: '#/profile' }
 ];
 const VENDOR_NAV = [
@@ -408,6 +407,7 @@ function render() {
   if (!DB_READY) { renderSplash(); return; }
   clearInterval(MAINT_TIMER); MAINT_TIMER = null;
   initTheme();
+  try { initTextSize(); } catch (e) {}
   const app = document.getElementById('app');
   const { parts, params } = parseHash();
   const u = me();

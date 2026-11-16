@@ -1,8 +1,8 @@
 {
-  "version": "3.33.1",
-  "build": "2026-11-16T12:30:00Z",
+  "version": "3.34.0",
+  "build": "2026-11-13T22:00:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.33.1 — patch release: account hub, Tools page, Top up WC investing page, B2B investing, robot bot gallery and all previous account designs published together.",
-  "releasedAt": "2026-11-16T12:30:00Z",
+  "notes": "WhaleChat 3.34.0 — Appearance → Text size control (Compact / Default / Large) with per-user, per-device persistence that overrides the fluid type scale.",
+  "releasedAt": "2026-11-13T22:00:00Z",
   "minimum": "3.0.0"
 }

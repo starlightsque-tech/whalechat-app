@@ -1024,9 +1024,8 @@ VIEWS.wallet = function () {
 
 /* ---------------- deposit ---------------- */
 let DEP_METHOD = null;
-VIEWS.deposit = function (parts, params) {
+VIEWS.deposit = function () {
   const u = me();
-  const prefill = Math.max(0, Number(params && params.amount) || 0);
   const s = DB.settings;
   const crypto = s.crypto || [], banks = s.banks || [];
   return `<div class="page-head"><div><button class="btn btn-ghost btn-sm mb10" data-nav="#/wallet">${ic('back', 14)} Wallet</button>
@@ -1034,7 +1033,7 @@ VIEWS.deposit = function (parts, params) {
     <div style="display:grid;grid-template-columns:1fr 360px;gap:20px" class="cart-grid">
       <div class="card">
         <div class="field"><label class="label">Amount in USD</label>
-          <div class="input-wrap"><span class="ic">$</span><input class="input" id="depUsd" type="number" min="1" step="1" placeholder="5.00" value="${prefill || ''}" inputmode="decimal"/></div>
+          <div class="input-wrap"><span class="ic">$</span><input class="input" id="depUsd" type="number" min="1" step="1" placeholder="5.00" inputmode="decimal"/></div>
           <div class="help">Minimum $1. You will receive <b id="depCoins" style="color:var(--accent)">0 WC</b> at 1 WC = $0.50.</div></div>
         <div class="chip-row mb16">${[5, 10, 25, 50, 100].map(v => `<button class="chip" data-act="dep-quick" data-id="${v}">$${v} → ${v / COIN_USD} WC</button>`).join('')}</div>
         <div class="label mb10">Payment method</div>

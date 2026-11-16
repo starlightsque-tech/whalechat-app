@@ -1,4 +1,4 @@
-# WhaleChat 3.33.1 — web app + mobile apps
+# WhaleChat 3.29.0 — web app + mobile apps
 
 WhaleChat is a social + marketplace + wallet product built as a single-page app with a
 Node sync server and native Android/iOS shells.
@@ -210,11 +210,7 @@ is closed. Admin → Stocks includes the bot configuration panel. Endpoints:
 `/api/bots/admin`, `/api/bots/admin/config`.
 
 **Bot profiles, health engine and performance page (3.30.0).** Every tier is a full trading
-identity with a profile picture (`public/bots/*.jpg`, admin-overridable with an uploaded photo or https URL).
-Admins can also press **Add new bot** in **Admin → Stocks → Trading bots** to create extra tiers — set the name,
-@username, photo, accuracy, price and billing cycle, then save; the bot appears in the marketplace for users to subscribe.
-Each bot row has an **Upload** button for a custom photo, a **Preset gallery** of the built-in bot pictures, and a live
-preview that updates before **Save bot settings** is pressed.
+identity with a profile picture (`public/bots/*.jpg`, admin-overridable with an uploaded photo):
 
 - `#/bots` — all bot identities as cards (avatar, `@username`, accuracy, price, HOT/Owned).
 - `#/bots/<tierId>` — profile page: large picture, accuracy, subscription state, health, energy,
@@ -232,37 +228,6 @@ preview that updates before **Save bot settings** is pressed.
   with a break-even line, the health engine, the cooling banner and a per-session table with
   avatars. Aggregation is computed server-side in `BotService.performance` from every session's
   trade log (`poolAfter`, `pnlCoins`) and exposed as `performance` on the bot state.
-
-### Account, Tools & WC investing top-up (3.33.0)
-
-The account area now has a single **Tools** hub at `#/tools` and a **Top up WC investing account** page at
-`#/invest/topup`:
-
-- **Tools** — cards for the WhaleChat account, investment account, B2B account, trading bots, bot profiles,
-  bot performance, WhaleChat shares, orders, watchlist/alerts, security/settings, wallet and top-up.
-- **Top up WC investing** — choose $10–$500 or enter a custom USD amount, see the exact WC added
-  (`USD ÷ 0.50`), the investing capital after top-up, and continue to the configured crypto/bank deposit flow.
-  The deposit page pre-fills the chosen amount. Selling a B2B holding also credits investing capital instantly.
-- **My account** quick navigation now links directly to the investment account, Tools and investing top-up.
-- The **Tools** link is also in the main user navigation.
-
-### B2B Investing Account (3.32.0)
-
-`public/b2b-invest.js` adds a business investing dashboard at **Invest → B2B Investing Account**
-(`#/invest/b2b`). It treats the stock trading account's USD trade capital as the same cash ledger as the
-WC wallet (`USD = WC × 0.50`) and provides:
-
-- **Dashboard** — trade capital in USD + WC, holdings value, unrealized P/L and total account value.
-- **All digital assets** — `#/invest/b2b/assets`, with every listed asset showing live price in USD/WC and
-  **separate Buy and Sell buttons**; tapping the asset opens its chart.
-- **Buy page** (`#/invest/b2b/buy`) — select one asset or several, enter a USD amount per asset, review the
-  WC cost (`USD ÷ 0.50`) and confirm. Each purchase executes through the spot engine and appears in holdings.
-- **Sell page** (`#/invest/b2b/sell`) — select one or more current holdings and confirm; each position closes
-  at the live effective price and the WC payout is credited to the stock trading account wallet.
-
-Bots now draw their reserved capital from this same **stock trading account USD trade capital**. The bot panel
-accepts a USD amount, converts it to WC, and if the field is empty on start it automatically tops up the minimum
-(5 WC / $2.50) instead of failing with “0 WC”.
 
 ### Auto Secure Take Profit (bot tool)
 
@@ -296,12 +261,42 @@ securing any profit of at least **0.01 WC**, with a 2-second per-trade cooldown 
 meaningful. Secured amounts are re-based out of the position, so later price movement can never
 take them back.
 
-### WhaleChat share investment portfolio (restored)
+### WhaleChat share investment portfolio (market-linked payout)
 
 `shares.js` + `public/whalechat-shares.js` provide admin-defined investment plans
-(min/max, duration, % return), real-time accrual, automatic maturity payout and the
-`#/invest/shares` dashboard, plus a summary card on the Invest dashboard. Endpoints:
-`/api/shares/state`, `/api/shares/invest`, `/api/shares/admin`, `/api/shares/admin/plans`.
+(min/max USD, duration, fixed **plan %**) and the `#/invest/shares` dashboard. Profit is
+**not fixed** — it follows the live WhaleChat share price:
+
+```
+market move      = (share price now − entry price) ÷ entry price
+daily turn-up %  = (price today − price yesterday) ÷ price yesterday × 100
+daily ROI %      = plan % × daily turn-up %
+total ROI %      = Σ daily ROI % = plan % × cumulative market move
+profit           = capital × total ROI %          (negative when the price falls)
+payout at maturity = capital + profit             (floor 0)
+```
+
+The worker ticks every 5 s, accrues per investment (`profitCoins`), snapshots `equityHistory`
+every 30 s, and at `endAt` credits `capital + profit` with a `share-maturity` transaction and a
+notification — even with every app closed. The admin plan % is the fixed participation rate
+(e.g. 3%); active investments keep the percentage, duration and entry price they were bought
+under. Endpoints: `/api/shares/state`, `/api/shares/invest`, `/api/shares/admin`,
+`/api/shares/admin/plans`. The admin Trade guide (Admin → Stocks) documents the same flow with
+worked examples.
+
+### Typography (3.33.0)
+
+`public/typography.js` (module `wc-typography`, loaded after `readability.js`) applies a fluid type
+scale with `clamp()`: base copy is ~15px on a 360px phone and ~16.5px on desktop, helper text never
+drops below 12px, and desktop growth is capped. Every text layer is one weight step bolder
+(body 500, labels/buttons 700, headings 750–800, badges 750), tables and stat blocks keep tabular
+figures, and `-webkit-text-size-adjust:100%` stops iOS from re-scaling. 
+
+**Text size preference.** Settings → **Appearance** (also linked from Profile → Appearance) offers
+**Compact / Default / Large**. The choice sets `html[data-textsize]`, which overrides the fluid scale:
+compact ≈ 14px base, default 15–16.5px, large ≈ 17.5px, with matching `.tiny`, button and KPI sizes.
+It is stored in `localStorage` for instant paint (early `<head>` script) and in `user.settings.textSize`
+so it follows the account across devices.
 
 ### Local verification
 

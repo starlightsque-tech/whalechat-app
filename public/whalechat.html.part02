@@ -151,9 +151,7 @@ function reconcileReferralBonuses() {
 
 function byUsername(s) {
   const q = String(s || '').trim().toLowerCase().replace(/^@/, '');
-  return DB.users.find(u => String(u && u.username || '').toLowerCase() === q
-    || String(u && u.email || '').toLowerCase() === q
-    || String(u && u.phone || '').replace(/\s/g, '') === q.replace(/\s/g, '')) || null;
+  return DB.users.find(u => u.username.toLowerCase() === q || u.email.toLowerCase() === q || (u.phone || '').replace(/\s/g, '') === q.replace(/\s/g, '')) || null;
 }
 function vendorOf(userId) { return DB.vendors.find(v => v.userId === userId) || null; }
 function vendorPlanById(id) { return (DB.settings.vendorPlans || []).find(p => p.id === id) || null; }
