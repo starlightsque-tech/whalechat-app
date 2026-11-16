@@ -1,8 +1,8 @@
 {
-  "version": "3.31.4",
-  "build": "2026-11-15T01:07:27Z",
+  "version": "3.32.0",
+  "build": "2026-11-16T02:35:31Z",
   "file": "whalechat.html",
-  "notes": "Faster interactions: gzip + ETag static serving, instant tap feedback and an action progress bar.",
-  "releasedAt": "2026-11-15T01:07:27.610Z",
+  "notes": "24/7 live-only market: crypto, forex and synthetic stocks/indices that never close, with continuous 3s price movement.",
+  "releasedAt": "2026-11-16T02:35:31.119Z",
   "minimum": "3.0.0"
 }
