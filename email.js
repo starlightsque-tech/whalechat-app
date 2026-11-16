@@ -199,6 +199,27 @@ const templates = {
       text: title + '. ' + ticker + ' is ' + money(price) + ' (target ' + money(target) + '). Buy: ' + buyUrl + ' · Sell: ' + sellUrl
     };
   },
+  verifyCode(data, ctx) {
+    const d = data || {};
+    const code = String(d.code || '');
+    const first = String(d.name || 'there').split(' ')[0];
+    const purpose = escapeHtml(d.purposeLabel || 'your request');
+    const copyUrl = ctx.appUrl + '/whalechat.html#/investment/account/' + encodeURIComponent(d.purposeRoute || 'delete') + '?code=' + encodeURIComponent(code);
+    return {
+      subject: 'Your WhaleChat verification code: ' + code,
+      html: layout('Your verification code',
+        `Hi ${escapeHtml(first)},<br/><br/>Use this code to verify ${purpose}. It expires in 15 minutes.
+         <div style="margin:18px 0;text-align:center">
+           <div style="display:inline-block;font-family:Menlo,Consolas,monospace;font-size:30px;letter-spacing:8px;font-weight:800;color:#e9f4f9;background:#04101a;border:1px dashed #2ee6c9;border-radius:12px;padding:14px 22px;user-select:all;-webkit-user-select:all">${escapeHtml(code)}</div>
+         </div>
+         <div style="text-align:center;margin-bottom:8px">
+           <a href="${escapeHtml(copyUrl)}" style="display:inline-block;background:#2ee6c9;color:#03221d;text-decoration:none;font-weight:700;padding:11px 20px;border-radius:10px">Copy code &amp; open WhaleChat</a>
+         </div>
+         <div style="font-size:12px;color:#63798a;text-align:center">Tip: tap and hold (or double-click) the code to select and copy it.</div>
+         <br/>If you did not request this, ignore this email and contact support. Never share this code with anyone.`, null),
+      text: 'Your WhaleChat verification code is ' + code + ' (valid 15 minutes). Open: ' + copyUrl
+    };
+  },
   test(ctx) {
     return {
       subject: 'WhaleChat email service is working',
