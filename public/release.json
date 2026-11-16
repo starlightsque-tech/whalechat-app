@@ -1,8 +1,8 @@
 {
-  "version": "3.38.2",
-  "build": "2026-11-16T03:33:48Z",
+  "version": "3.38.3",
+  "build": "2026-11-16T04:30:00Z",
   "file": "whalechat.html",
-  "notes": "3.38.2: 24/7 assets top up between real ticks so quotes never age past ~4s; startup seeding ignores synthetic names.",
-  "releasedAt": "2026-11-16T03:33:48Z",
+  "notes": "3.38.3: live 24/7 volume histogram under every stock chart tick.",
+  "releasedAt": "2026-11-16T04:30:00Z",
   "minimum": "3.0.0"
 }
