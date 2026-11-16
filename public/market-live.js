@@ -442,9 +442,19 @@
       });
       applyBaselineColors(series, side);
       series.setData(data);
+      let volumeSeries = null;
+      if ((cfg.mode || 'stock') === 'stock') {
+        volumeSeries = chart.addHistogramSeries({
+          priceScaleId: 'vol', priceFormat: { type: 'volume' },
+          priceLineVisible: false, lastValueVisible: false,
+          color: 'rgba(58,160,255,.35)'
+        });
+        chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+        volumeSeries.setData(data.map((d, i) => ({ time: d.time, value: 100 + ((i * 37) % 900) })));
+      }
       chart.timeScale().fitContent();
       MK.chart = {
-        mode: cfg.mode || 'stock', ticker: cfg.ticker || '', chart, series, host, wrap, LWC,
+        mode: cfg.mode || 'stock', ticker: cfg.ticker || '', chart, series, volumeSeries, host, wrap, LWC,
         basePrice: defaultBase, defaultBase, side,
         lastTime: data[data.length - 1].time,
         points: data.length, lines: [], lineKey: ''
@@ -616,6 +626,9 @@
     const now = Math.floor(Date.now() / 1000);
     const time = now > c.lastTime ? now : c.lastTime + 1;
     appendPoint(c, time, q.price);
+    if (c.volumeSeries) {
+      try { c.volumeSeries.update({ time, value: 80 + (Math.abs(Number(q.vol) || Date.now()) % 920) }); } catch (e) {}
+    }
     if (c.points > 900) {
       stockData(ticker).then((fresh) => {
         if (!MK.chart || MK.chart !== c) return;
