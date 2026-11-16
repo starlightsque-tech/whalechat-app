@@ -1,0 +1,138 @@
+2026-11-16T14:43:52.746062867Z ==> Cloning from https://github.com/starlightsque-tech/whalechat-app
+2026-11-16T14:43:53.970901629Z ==> Checking out commit fbea7eb3b12ea5c6a3f3f0f42abacdaec48ab919 in branch main
+2026-11-16T14:43:55.847413736Z #1 [internal] load build definition from Dockerfile
+2026-11-16T14:43:55.847437618Z #1 transferring dockerfile: 637B done
+2026-11-16T14:43:55.847440677Z #1 DONE 0.0s
+2026-11-16T14:43:55.847442728Z 
+2026-11-16T14:43:55.847445259Z #2 [auth] library/node:pull render-prod/docker-mirror-repository/library/node:pull token for us-west1-docker.pkg.dev
+2026-11-16T14:43:55.995928797Z #2 DONE 0.0s
+2026-11-16T14:43:55.995942024Z 
+2026-11-16T14:43:55.995944348Z #3 [internal] load metadata for docker.io/library/node:20-alpine
+2026-11-16T14:43:55.995945893Z #3 DONE 0.3s
+2026-11-16T14:43:56.122699384Z 
+2026-11-16T14:43:56.122719879Z #4 [internal] load .dockerignore
+2026-11-16T14:43:56.122737496Z #4 transferring context: 2B done
+2026-11-16T14:43:56.122741114Z #4 DONE 0.0s
+2026-11-16T14:43:56.122743102Z 
+2026-11-16T14:43:56.122745162Z #5 [internal] load build context
+2026-11-16T14:43:56.122747229Z #5 DONE 0.0s
+2026-11-16T14:43:56.122749075Z 
+2026-11-16T14:43:56.122751558Z #6 [ 1/15] FROM docker.io/library/node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293
+2026-11-16T14:43:56.122754042Z #6 resolve docker.io/library/node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 done
+2026-11-16T14:43:56.122755435Z #6 DONE 0.0s
+2026-11-16T14:43:56.122756686Z 
+2026-11-16T14:43:56.122758007Z #7 importing cache manifest
+2026-11-16T14:43:56.122759735Z #7 inferred cache manifest type: application/vnd.oci.image.manifest.v1+json done
+2026-11-16T14:43:56.122761218Z #7 DONE 0.1s
+2026-11-16T14:43:56.24188711Z 
+2026-11-16T14:43:56.241905003Z #5 [internal] load build context
+2026-11-16T14:43:56.241908179Z #5 transferring context: 5.75MB 0.0s done
+2026-11-16T14:43:56.24190972Z #5 DONE 0.0s
+2026-11-16T14:43:56.241911034Z 
+2026-11-16T14:43:56.241913121Z #8 [ 3/15] COPY package.json package-lock.json* ./
+2026-11-16T14:43:56.24191455Z #8 CACHED
+2026-11-16T14:43:56.241915677Z 
+2026-11-16T14:43:56.241917457Z #9 [ 2/15] WORKDIR /app
+2026-11-16T14:43:56.241918831Z #9 CACHED
+2026-11-16T14:43:56.241920071Z 
+2026-11-16T14:43:56.241921477Z #10 [ 4/15] RUN npm install --omit=dev --no-audit --no-fund
+2026-11-16T14:43:56.241922766Z #10 CACHED
+2026-11-16T14:43:56.241923948Z 
+2026-11-16T14:43:56.241925259Z #11 [ 5/15] COPY server.js ./
+2026-11-16T14:43:56.241926545Z #11 DONE 0.0s
+2026-11-16T14:43:56.241927681Z 
+2026-11-16T14:43:56.24192888Z #12 [ 6/15] COPY market.js ./
+2026-11-16T14:43:56.241930191Z #12 DONE 0.0s
+2026-11-16T14:43:56.241931336Z 
+2026-11-16T14:43:56.241932812Z #13 [ 7/15] COPY spot.js ./
+2026-11-16T14:43:56.241934074Z #13 DONE 0.0s
+2026-11-16T14:43:56.241935197Z 
+2026-11-16T14:43:56.241936391Z #14 [ 8/15] COPY bots.js ./
+2026-11-16T14:43:56.241937658Z #14 DONE 0.0s
+2026-11-16T14:43:56.241938787Z 
+2026-11-16T14:43:56.241940079Z #15 [ 9/15] COPY shares.js ./
+2026-11-16T14:43:56.241941591Z #15 DONE 0.0s
+2026-11-16T14:43:56.241942744Z 
+2026-11-16T14:43:56.241944Z #16 [10/15] COPY email.js ./
+2026-11-16T14:43:56.241945304Z #16 DONE 0.0s
+2026-11-16T14:43:56.241946431Z 
+2026-11-16T14:43:56.241947822Z #17 [11/15] COPY finnhub.js ./
+2026-11-16T14:43:56.241949089Z #17 DONE 0.0s
+2026-11-16T14:43:56.241950239Z 
+2026-11-16T14:43:56.241951564Z #18 [12/15] COPY scripts ./scripts
+2026-11-16T14:43:56.241952826Z #18 DONE 0.0s
+2026-11-16T14:43:56.241953956Z 
+2026-11-16T14:43:56.241955149Z #19 [13/15] COPY public ./public
+2026-11-16T14:43:56.24196214Z #19 DONE 0.0s
+2026-11-16T14:43:56.392971923Z 
+2026-11-16T14:43:56.392989647Z #20 [14/15] RUN node scripts/prepare-assets.js
+2026-11-16T14:43:56.455791321Z #20 0.213 [assets] decoded 104 file(s)
+2026-11-16T14:43:56.569373043Z #20 0.222 [app] assembled whalechat.html from 10 part(s) (938048 bytes)
+2026-11-16T14:43:56.569385262Z #20 0.230 [app] subscriptions.js injected
+2026-11-16T14:43:56.569386924Z #20 0.232 [app] tawk-control.js refreshed
+2026-11-16T14:43:56.569388312Z #20 0.236 [app] live-trade.js refreshed
+2026-11-16T14:43:56.569390437Z #20 0.239 [app] spot-orders.js injected
+2026-11-16T14:43:56.569392003Z #20 0.241 [app] whalechat-shares.js injected
+2026-11-16T14:43:56.569393468Z #20 0.245 [app] trading-bots.js injected
+2026-11-16T14:43:56.569394926Z #20 0.247 [app] assets-multi.js injected
+2026-11-16T14:43:56.569396559Z #20 0.250 [app] market-live.js injected
+2026-11-16T14:43:56.56939816Z #20 0.254 [app] market-247.js injected
+2026-11-16T14:43:56.569399463Z #20 0.257 [app] trade-guide.js injected
+2026-11-16T14:43:56.569400835Z #20 0.260 [app] investment-hub.js injected
+2026-11-16T14:43:56.569402139Z #20 0.264 [app] demo-sellers.js injected
+2026-11-16T14:43:56.569403872Z #20 0.267 [app] support.js injected
+2026-11-16T14:43:56.56940519Z #20 0.270 [app] view-mode.js injected
+2026-11-16T14:43:56.569406506Z #20 0.273 [app] portfolio-share.js injected
+2026-11-16T14:43:56.569407866Z #20 0.278 [app] pro-chart.js injected
+2026-11-16T14:43:56.569409164Z #20 0.281 [app] readability.js injected
+2026-11-16T14:43:56.569410515Z #20 0.284 [app] b2b-market.js injected
+2026-11-16T14:43:56.569411903Z #20 0.288 [app] connections-admin.js injected
+2026-11-16T14:43:56.569413281Z #20 0.293 [app] wc-invest-plans.js injected
+2026-11-16T14:43:56.569414619Z #20 0.298 [app] wc-invest-ui.js injected
+2026-11-16T14:43:56.569415922Z #20 0.303 [app] typography.js injected
+2026-11-16T14:43:56.569417232Z #20 0.307 [app] session-guard.js injected
+2026-11-16T14:43:56.569418781Z #20 0.313 [app] bundle finalised (938048 -> 1680665 bytes)
+2026-11-16T14:43:56.569420094Z #20 0.327 [app] stamped 3.37.0 @ 2026-11-16T13:59:51Z
+2026-11-16T14:43:56.723334495Z #20 DONE 0.3s
+2026-11-16T14:43:56.723348505Z 
+2026-11-16T14:43:56.723350627Z #21 [15/15] RUN mkdir -p /data/backups
+2026-11-16T14:43:56.723361331Z #21 DONE 0.1s
+2026-11-16T14:43:56.723362667Z 
+2026-11-16T14:43:56.723364499Z #22 exporting to image
+2026-11-16T14:43:56.723366341Z #22 exporting layers 0.1s done
+2026-11-16T14:43:56.957558822Z #22 pushing layers
+2026-11-16T14:43:58.925104637Z #22 pushing layers 2.1s done
+2026-11-16T14:43:59.040641383Z #22 DONE 2.4s
+2026-11-16T14:43:59.040654032Z 
+2026-11-16T14:43:59.04065849Z #23 exporting cache to registry
+2026-11-16T14:43:59.040660476Z #23 sending cache export
+2026-11-16T14:43:59.840272929Z #23 sending cache export 3.1s done
+2026-11-16T14:43:59.840285274Z #23 DONE 3.1s
+2026-11-16T14:44:00.947268396Z ==> Deploying...
+2026-11-16T14:44:01.045891544Z ==> Setting WEB_CONCURRENCY=1 by default, based on available CPUs in the instance
+2026-11-16T14:44:04.563625085Z [connections] module unavailable: Cannot find module './connections'
+2026-11-16T14:44:04.563648836Z Require stack:
+2026-11-16T14:44:04.563652656Z - /app/server.js
+2026-11-16T14:44:04.649616704Z [binance] module unavailable: Cannot find module './binance'
+2026-11-16T14:44:04.649630014Z Require stack:
+2026-11-16T14:44:04.649633835Z - /app/server.js
+2026-11-16T14:44:04.649903739Z [b2b-alerts] module unavailable: Cannot find module './b2b-alerts'
+2026-11-16T14:44:04.649912349Z Require stack:
+2026-11-16T14:44:04.649914949Z - /app/server.js
+2026-11-16T14:44:04.75744705Z [push] generated VAPID keys
+2026-11-16T14:44:04.850277842Z [market] mode: simulated · refresh: 15s · key: not set
+2026-11-16T14:44:04.850635641Z [spot] TP/SL worker started (1s scan)
+2026-11-16T14:44:04.851049203Z [bots] background trading worker started
+2026-11-16T14:44:04.851237493Z [shares] WhaleChat share price + investment worker started
+2026-11-16T14:44:04.853489342Z [whalechat] listening on http://localhost:10000
+2026-11-16T14:44:04.853579477Z [whalechat] data: /data
+2026-11-16T14:44:04.853660131Z [whalechat] db: empty · rev 0
+2026-11-16T14:44:04.853771497Z [whalechat] storage: file · email: not configured
+2026-11-16T14:44:12.445977787Z ==> Your service is live 🎉
+2026-11-16T14:44:12.613078496Z ==> 
+2026-11-16T14:44:12.6155775Z ==> ///////////////////////////////////////////////////////////
+2026-11-16T14:44:12.619305355Z ==> 
+2026-11-16T14:44:12.621283383Z ==> Available at your primary URL https://whalechat-app.onrender.com
+2026-11-16T14:44:12.623665542Z ==> 
+2026-11-16T14:44:12.626017308Z ==> ///////////////////////////////////////////////////////////
+2026-11-16T14:44:30.439454927Z [db] initialised · users: 15
