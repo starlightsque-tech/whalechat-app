@@ -48,15 +48,29 @@
     var n = String(s.name || '');
     if (/24\/7/i.test(n)) return true;
     if (s.twentyFourSeven === true && s.hidden !== true) return true;
-    return false;
+    /* every WhaleChat instrument streams a continuous feed (market.js), so a
+       live, un-paused asset is 24/7 by definition — this keeps real tickers
+       such as MARA, BTCUSDT, EURUSD and US30 in the list rather than filtering
+       the whole market away */
+    if (s.paused === true || s.hidden === true) return false;
+    return !!(s.ticker && (s.assetClass || s.sector || s.price || s.quote));
   }
   function synthetic(s) {
     if (!s) return false;
     if (s.synthetic) return true;
     var t = String(s.ticker || '').toUpperCase();
+    var ac = String(s.assetClass || '').toLowerCase();
+    if (ac === 'us' || ac === 'index' || ac === 'forex') return true;
     return UNIVERSE.stocks.indexOf(t) >= 0 || UNIVERSE.indices.indexOf(t) >= 0 || /24\/7/i.test(String(s.name || ''));
   }
   function categoryOf(s) {
+    /* trust the server's explicit assetClass first so real tickers
+       (MARA, BTCUSDT, EURUSD, US30 ...) land in the right tab */
+    var ac = String((s && s.assetClass) || '').toLowerCase();
+    if (ac === 'crypto') return 'Crypto';
+    if (ac === 'forex') return 'Forex';
+    if (ac === 'index') return 'Indices';
+    if (ac) return 'US Stocks';
     var t = String((s && s.ticker) || '').toUpperCase();
     if (UNIVERSE.crypto.indexOf(t) >= 0) return 'Crypto';
     if (UNIVERSE.forex.indexOf(t) >= 0) return 'Forex';

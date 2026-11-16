@@ -1,8 +1,8 @@
 {
-  "version": "3.32.2",
-  "build": "2026-11-16T08:46:55Z",
+  "version": "3.32.3",
+  "build": "2026-11-16T09:11:46Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.32.2 - every listed asset now trades 24/7. No weekend or overnight closure: quotes, charts and settlements run continuously, US stocks are surfaced as 24/7 synthetic mirrors, and the catalogue gains DOGE/USDT plus US30, US100, GOLD and OIL 24/7 indices.",
-  "releasedAt": "2026-11-16T08:46:55Z",
+  "notes": "WhaleChat 3.32.3 - 24/7 market UI is live: top banner, All Live/Crypto/US Stocks/Forex/Indices filters, pulsing LIVE - 24/7 dot on every card and chart, trading disclaimer. Auto-updating Trade Guide (public How WhaleChat Works + admin Trade Guide - Auto Updated) with live payout calculators, copy/WhatsApp sharing and admin-editable message. Investment hub pages (transfer, convert, top-ups, tools, B2B, history, disputes, statement) are now served.",
+  "releasedAt": "2026-11-16T09:11:46Z",
   "minimum": "3.0.0"
 }
