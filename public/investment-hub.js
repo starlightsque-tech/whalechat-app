@@ -67,7 +67,11 @@
     ];
     return '<div class="card ih-quick"><div class="card-title" style="margin:0 0 8px">Quick actions</div><div class="ih-quickgrid">' +
       items.map(function (x) { return '<a href="' + x[2] + '" class="ih-quickbtn"><span>' + (typeof ic === 'function' ? ic(x[0], 17) : '') + '</span><b>' + x[1] + '</b></a>'; }).join('') +
-      '</div></div>';
+      '</div>' +
+      '<details class="ih-overview"><summary>Account overview — all account buttons</summary><div class="ih-overview-grid">' +
+        [['Deposit','#/deposit'],['Withdraw','#/withdraw'],['Investment account','#/investment'],['Stock trading','#/invest'],['WC-Investing','#/invest/shares'],['Bot trading','#/invest/bots'],['B2B-Investing','#/investment/b2b'],['Tools','#/investment/tools'],['Referrals','#/referrals'],['Settings','#/settings'],['Notifications','#/notifications'],['Marketplace','#/market'],['Orders','#/orders'],['Wallet','#/wallet']]
+          .map(function(x){return '<a href="'+x[1]+'" class="ih-ovbtn">'+x[0]+'</a>';}).join('') +
+      '</div></details></div>';
   }
 
   function head(title, sub, back) {
@@ -234,6 +238,26 @@
       '<div class="card"><div class="card-title">My disputes</div>' + (a.disputes.length ? a.disputes.map(function (d) { return '<div class="ih-row"><div class="grow"><b>' + escH(d.type) + '</b><div class="tiny muted">' + escH(d.text).slice(0, 100) + '</div></div><span class="badge ' + (d.status === 'resolved' ? 'badge-success' : d.status === 'declined' ? 'badge-danger' : 'badge-warn') + '">' + escH(d.status) + '</span></div>'; }).join('') : '<div class="tiny muted">No disputes submitted.</div>') + '</div>';
   }
 
+  function serverDetailsPage() {
+    var d = (typeof DB !== 'undefined' && DB.settings) ? DB.settings : {};
+    var sd = d.serverDetails || {};
+    function row(label, id, val, type) { return '<div class="field"><label class="label">' + label + '</label><input class="input" id="' + id + '" type="' + (type || 'text') + '" value="' + escH(val == null ? '' : val) + '"/></div>'; }
+    return head('Server details', 'Editable app and deployment metadata for administrators.', '#/admin') +
+      '<div class="card">' +
+        row('App name', 'sdAppName', sd.appName || 'WhaleChat') +
+        row('App creation date', 'sdCreatedAt', sd.createdAt || '2026-11-09', 'date') +
+        row('Environment', 'sdEnv', sd.environment || 'production') +
+        row('Region / host', 'sdRegion', sd.region || '') +
+        row('Database', 'sdDatabase', sd.database || 'Postgres (whalechat_state)') +
+        row('Storage', 'sdStorage', sd.storage || 'S3 / Render disk') +
+        row('Public URL', 'sdUrl', sd.publicUrl || (typeof location !== 'undefined' ? location.origin : '')) +
+        row('Support email', 'sdSupport', sd.supportEmail || 'support@whalechat.app', 'email') +
+        '<div class="field"><label class="label">Notes</label><textarea class="input" id="sdNotes" rows="3">' + escH(sd.notes || '') + '</textarea></div>' +
+        '<button class="btn btn-primary" data-act="ih-server-save" style="width:100%">Save server details</button>' +
+        '<div class="tiny muted mt6">Runtime version: ' + escH(typeof APP_VERSION !== 'undefined' ? APP_VERSION : '3.38.x') + ' · build: ' + escH(typeof APP_BUILD !== 'undefined' ? APP_BUILD : '') + '</div>' +
+      '</div>';
+  }
+
   function adminTools() {
     var catalog = toolCatalog();
     var subs = [];
@@ -251,7 +275,7 @@
       '<div class="card"><div class="card-title">Subscribers</div><div class="ih-list">' +
         (subs.length ? subs.map(function (x) {
           var active = x.s.active && Number(x.s.expiresAt) > Date.now();
-          return '<div class="ih-row"><div class="grow"><b>@' + escH(x.u.username) + ' · ' + escH(x.t.name) + '</b><div class="tiny muted">' + (active ? 'active until ' + new Date(x.s.expiresAt).toLocaleDateString() : 'inactive/expired') + ' · ' + money(x.s.price || x.t.price) + '/mo</div></div><span class="badge ' + (active ? 'badge-success' : 'badge-warn') + '">' + (active ? 'ON' : 'OFF') + '</span></div>';
+          return '<div class="ih-row"><div class="grow"><b>@' + escH(x.u.username) + ' · ' + escH(x.t.name) + '</b><div class="tiny muted">' + (active ? 'active until ' + new Date(x.s.expiresAt).toLocaleDateString() : (x.s.paused ? 'paused' : 'inactive/expired')) + ' · ' + money(x.s.price || x.t.price) + '/mo</div></div><span class="badge ' + (active ? 'badge-success' : 'badge-warn') + '">' + (active ? 'ON' : (x.s.paused ? 'PAUSED' : 'OFF')) + '</span><div class="ih-tool-adminbtns">' + [['pause','Pause'],['extend','+30d'],['refund','Refund'],['cancel','Cancel']].map(function(a){return '<button class="btn btn-xs btn-ghost" data-act="ih-admin-tool" data-uid="'+escH(x.u.id)+'" data-tool="'+escH(x.t.id)+'" data-op="'+a[0]+'">'+a[1]+'</button>';}).join('') + '</div></div>';
         }).join('') : '<div class="tiny muted">No tool subscribers yet.</div>') + '</div></div>';
   }
 
@@ -285,6 +309,7 @@
       VIEWS.admin = function (parts) {
         if ((parts && parts[1]) === 'invest-disputes') return adminDisputes();
         if ((parts && parts[1]) === 'tools') return adminTools();
+        if ((parts && parts[1]) === 'server-details') return serverDetailsPage();
         return baseAdmin.apply(this, arguments);
       };
     }
@@ -292,8 +317,13 @@
     VIEWS.profile = function () {
       var html = baseProfile.apply(this, arguments);
       var u = me();
-      if (u && u.role !== 'admin' && html.indexOf('Quick navigation') >= 0) {
-        html = html.replace('<div class="section-title mt22"><h3>Quick navigation</h3></div>', quickActionsHTML() + '<div class="section-title mt22"><h3>Quick navigation</h3></div>');
+      if (u && u.role !== 'admin') {
+        if (html.indexOf('<a href="#/deposit" class="btn">Deposit</a><a href="#/withdraw" class="btn">Withdraw</a>') >= 0) {
+          html = html.replace('<a href="#/deposit" class="btn">Deposit</a><a href="#/withdraw" class="btn">Withdraw</a>', '<a href="#/deposit" class="btn">Deposit</a><a href="#/investment" class="btn">Investment account</a><a href="#/withdraw" class="btn">Withdraw</a>');
+        }
+        if (html.indexOf('Quick navigation') >= 0) {
+          html = html.replace('<div class="section-title mt22"><h3>Quick navigation</h3></div>', quickActionsHTML() + '<div class="section-title mt22"><h3>Quick navigation</h3></div>');
+        }
       }
       return html;
     };
@@ -401,6 +431,27 @@
       a.requests.unshift({ id: nowId('rq_'), kind: ds.kind, status: 'pending', createdAt: Date.now() });
       save(); toastH('Request submitted', 'ok'); render();
     };
+    App.ihAdminToolAction = function (id, ds) {
+      var u = (DB.users || []).find(function (x) { return x.id === ds.uid; }); if (!u) return;
+      var a = account(u); var s = a.tools[ds.tool]; var t = toolById(ds.tool);
+      if (!s) return;
+      if (ds.op === 'pause') { s.paused = !s.paused; s.active = !s.paused; if (s.active && !(Number(s.expiresAt) > Date.now())) s.expiresAt = Date.now() + 30 * 864e5; }
+      else if (ds.op === 'cancel') { delete a.tools[ds.tool]; }
+      else if (ds.op === 'refund') { var amt = Number(s.price || (t && t.price) || 0); if (amt > 0) { a.usd = Math.round((a.usd + amt) * 100) / 100; ledger(u, 'Admin refund · ' + (t ? t.name : ds.tool), amt, 0); } delete a.tools[ds.tool]; }
+      else if (ds.op === 'extend') { s.active = true; s.paused = false; s.expiresAt = Math.max(Date.now(), Number(s.expiresAt) || 0) + 30 * 864e5; s.reminded = false; }
+      notifyH(u, 'Tool subscription updated', (t ? t.name : ds.tool) + ': ' + ds.op, '#/investment/tools', 'shield');
+      save(); toastH('Subscription updated', 'ok'); render();
+    };
+    App.ihServerSave = function () {
+      if (!DB.settings) DB.settings = {};
+      var get = function (id) { return (document.getElementById(id) || {}).value || ''; };
+      DB.settings.serverDetails = {
+        appName: get('sdAppName'), createdAt: get('sdCreatedAt'), environment: get('sdEnv'), region: get('sdRegion'),
+        database: get('sdDatabase'), storage: get('sdStorage'), publicUrl: get('sdUrl'), supportEmail: get('sdSupport'), notes: get('sdNotes'),
+        updatedAt: Date.now()
+      };
+      save(); toastH('Server details saved', 'ok'); render();
+    };
     App.ihAdminToolsSave = function () {
       var catalog = toolCatalog();
       catalog.forEach(function (t) {
@@ -443,6 +494,13 @@
       .ih-card{padding:10px}
     }
     @media(max-width:380px){.ih-quickgrid,.ih-btn-grid{grid-template-columns:1fr}}
+    .shares-dash,.bot-dash{display:none!important}
+    .ih-overview{margin-top:10px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2)}
+    .ih-overview summary{cursor:pointer;padding:10px 11px;font-size:11.5px;font-weight:700;color:var(--text)}
+    .ih-overview-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:0 10px 10px}
+    .ih-ovbtn{display:block;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--surface);text-decoration:none;color:var(--text);font-size:11px}
+    .ih-tool-adminbtns{display:flex;gap:4px;flex-wrap:wrap;width:100%;margin-top:5px}
+    @media(min-width:600px){.ih-overview-grid{grid-template-columns:1fr 1fr 1fr}}
     `;
     document.head.appendChild(st);
   })();
@@ -454,10 +512,15 @@
         if (typeof ADMIN_NAV !== 'undefined' && !ADMIN_NAV.some(function (n) { return n.key === 'admin-invest-disputes'; })) {
           ADMIN_NAV.splice(Math.max(0, ADMIN_NAV.length - 2), 0, { key: 'admin-invest-disputes', label: 'Invest disputes', icon: 'shield', href: '#/admin/invest-disputes' });
           ADMIN_NAV.splice(Math.max(0, ADMIN_NAV.length - 2), 0, { key: 'admin-tools-pricing', label: 'Tool pricing', icon: 'settings', href: '#/admin/tools' });
+          ADMIN_NAV.splice(Math.max(0, ADMIN_NAV.length - 2), 0, { key: 'admin-server-details', label: 'Server details', icon: 'shield', href: '#/admin/server-details' });
         }
       } catch (e) {}
-      try { if (typeof me === 'function' && me()) renewTools(me()); } catch (e) {}
-      setInterval(function () { try { if (typeof me === 'function' && me()) renewTools(me()); } catch (e) {} }, 60000);
+      try { [BOTTOM_NAV, USER_NAV, VENDOR_NAV].forEach(function(arr){ if(!Array.isArray(arr))return; arr.forEach(function(n){ if(n && n.key==='invest') n.href='#/investment'; }); }); } catch(e){}
+      setTimeout(function(){ try { render(); } catch(e){} }, 300);
+      if (typeof Remote === 'undefined' || !Remote.enabled) {
+        try { if (typeof me === 'function' && me()) renewTools(me()); } catch (e) {}
+        setInterval(function () { try { if (typeof me === 'function' && me()) renewTools(me()); } catch (e) {} }, 60000);
+      }
       return;
     }
     if (tries++ < 40) setTimeout(boot, 500);
