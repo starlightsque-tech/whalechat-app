@@ -1,8 +1,8 @@
 {
-  "version": "3.38.7",
-  "build": "2026-11-16T06:40:00Z",
+  "version": "3.38.8",
+  "build": "2026-11-16T07:05:00Z",
   "file": "whalechat.html",
-  "notes": "3.38.7: server-side tool renewals, admin tool controls/server details, account overview and investment navigation.",
-  "releasedAt": "2026-11-16T06:40:00Z",
+  "notes": "3.38.8: exact balance cards/buttons for account, investment, stock, bot, shares and B2B dashboards.",
+  "releasedAt": "2026-11-16T07:05:00Z",
   "minimum": "3.0.0"
 }
