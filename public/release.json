@@ -1,8 +1,8 @@
 {
-  "version": "3.33.0",
-  "build": "2026-11-16T10:30:00Z",
+  "version": "3.33.1",
+  "build": "2026-11-16T12:30:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.33.0 — published account hub with WhaleChat account, investment account, Tools page, Top up WC investing account page, B2B investing, robot bots and all prior account designs preserved.",
-  "releasedAt": "2026-11-16T10:30:00Z",
+  "notes": "WhaleChat 3.33.1 — patch release: account hub, Tools page, Top up WC investing page, B2B investing, robot bot gallery and all previous account designs published together.",
+  "releasedAt": "2026-11-16T12:30:00Z",
   "minimum": "3.0.0"
 }
