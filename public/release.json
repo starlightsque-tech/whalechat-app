@@ -1,8 +1,8 @@
 {
-  "version": "3.34.0",
-  "build": "2026-11-16T06:31:21Z",
+  "version": "3.34.1",
+  "build": "2026-11-16T06:40:51Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.34.0 - stock price-alert email delivery via Brevo with buy/sell trade links.",
-  "releasedAt": "2026-11-16T06:31:21Z",
+  "notes": "WhaleChat 3.34.1 - newly synced stocks receive quotes immediately; production quote-cache fix.",
+  "releasedAt": "2026-11-16T06:40:51Z",
   "minimum": "3.0.0"
 }
