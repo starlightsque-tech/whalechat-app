@@ -5,6 +5,7 @@
 <script async src="https://www.googletagmanager.com/gtm.js?id=GTM-5WNCBL8N"></script><script>window.dataLayer = window.dataLayer || [];function gtag(){dataLayer.push(arguments);}gtag('js', new Date());</script>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<script>try{var _ts=localStorage.getItem('whalechat.textsize');if(_ts==='compact'||_ts==='default'||_ts==='large'){document.documentElement.setAttribute('data-textsize',_ts);}}catch(e){}</script>
 <script>
 /* WhaleChat view mode — default desktop, remembered per device */
 (function () {
@@ -630,7 +631,7 @@ html[data-theme="light"] .profile-banner>img{opacity:.10}
    ========================================================================= */
 'use strict';
 
-const COIN_USD = 0.5;                 // 1 Whale Coin = $0.50
+let COIN_USD = 0.5;                 // 1 Whale Coin = $0.50 (admin-editable in Trade Guide settings)
 const APP_VERSION = '3.9.10';
 // Set to your permanent sync server to auto-connect from any static host, e.g. 'https://sync.yourdomain.com'
 const DEFAULT_SYNC_SERVER = '';

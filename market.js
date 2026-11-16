@@ -294,8 +294,10 @@ class MarketService {
     const now = Date.now();
     this.refreshAssets();
     const db = this.getDb && this.getDb();
+    let recChanged = false;
     this.assetList().forEach((a) => {
-      if (this.quotes[a.ticker]) return;
+      const existing = this.quotes[a.ticker];
+      if (existing && Number(existing.price) > 0) return;
       const base = this.fallbackBase(a.ticker);
       const price = Number(a.price) > 0 ? Number(a.price) : base;
       this.quotes[a.ticker] = {
@@ -310,9 +312,10 @@ class MarketService {
         this.seedBase[a.ticker] = price;
         /* make sure a catalogue row with no price still has data for the app */
         const rec = db && Array.isArray(db.stocks) ? db.stocks.find((x) => x && String(x.ticker).toUpperCase() === a.ticker) : null;
-        if (rec && !(Number(rec.price) > 0)) { rec.price = price; if (!(Number(rec.prevClose) > 0)) rec.prevClose = price; }
+        if (rec && !(Number(rec.price) > 0)) { rec.price = price; if (!(Number(rec.prevClose) > 0)) rec.prevClose = price; recChanged = true; }
       }
     });
+    if (recChanged) { try { this.persist(); } catch (e) {} }
   }
 
   /* 24/7 fallback movement for symbols without a fresh Finnhub tick */
@@ -618,6 +621,9 @@ class MarketService {
 
   async onAssetsChanged() {
     this.refreshAssets();
+    /* newly synced catalogue rows need a quote immediately, otherwise their
+       cards/charts stay at $0 until the next restart */
+    this.seedBaseQuotes();
     if (this.wsConnected) this.connectWS();
   }
 

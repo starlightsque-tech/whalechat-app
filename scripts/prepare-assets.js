@@ -62,14 +62,14 @@ const MODULES = [
   { file: 'spot-orders.js', marker: 'wc-spot-orders' },
   { file: 'whalechat-shares.js', marker: 'wc-shares' },
   { file: 'trading-bots.js', marker: 'wc-bots' },
+  { file: 'b2b-invest.js', marker: 'wc-b2b-invest' },
   { file: 'assets-multi.js', marker: 'wc-assets-multi' },
   { file: 'market-live.js', marker: 'wc-market-live' },
   { file: 'demo-sellers.js', marker: 'wc-demo-sellers' },
   { file: 'support.js', marker: 'wc-support' },
   { file: 'view-mode.js', marker: 'wc-view-mode' },
   { file: 'portfolio-share.js', marker: 'wc-portfolio-share' },
-  { file: 'readability.js', marker: 'wc-readability' },
-  { file: 'account-health.js', marker: 'wc-account-health' }
+  { file: 'readability.js', marker: 'wc-readability' }
 ];
 try {
   let page = fs.readFileSync(APP, 'utf8');

@@ -20,14 +20,16 @@
   function botStats(s) {
     if (!s) return null;
     const alloc = Number(s.allocatedCoins) || 0;
-    const pool = Number(s.poolCoins) || 0;
-    const profit = Math.round((pool - alloc) * 100) / 100;
+    const capital = Number(s.capitalCoins != null ? s.capitalCoins : s.poolCoins) || 0;
+    const profitBal = Number(s.profitCoins) || 0;
+    const equity = Math.round((capital + profitBal) * 100) / 100;
+    const profit = Math.round((equity - alloc) * 100) / 100;
     const profitPct = alloc ? (profit / alloc) * 100 : 0;
     const trades = (s.trades || []).slice().reverse();
-    let peak = alloc;
+    let peak = equity;
     let wins = 0, losses = 0, streak = 0;
     trades.forEach((tr) => {
-      const p = Number(tr.poolAfter);
+      const p = Number(tr.capitalAfter) + Number(tr.profitAfter);
       if (Number.isFinite(p)) peak = Math.max(peak, p);
       if (Number(tr.pnlCoins) > 0) wins++;
       else if (Number(tr.pnlCoins) < 0) losses++;
@@ -36,7 +38,7 @@
       const pnl = Number(s.trades[i].pnlCoins);
       if (pnl < 0) streak++; else if (pnl > 0) break;
     }
-    const drawdown = peak > 0 ? Math.max(0, (peak - pool) / peak * 100) : 0;
+    const drawdown = peak > 0 ? Math.max(0, (peak - equity) / peak * 100) : 0;
     const winRate = wins + losses ? (wins / (wins + losses)) * 100 : 50;
     let score = 70;
     score += clamp(profitPct * 2.2, -34, 28);
@@ -44,7 +46,7 @@
     score += (winRate - 50) * 0.22;
     score -= Math.min(12, streak * 3);
     score = Math.round(clamp(score, 0, 100));
-    return { alloc, pool, profit, profitPct, peak, drawdown, wins, losses, winRate, streak, score, trades, tradeCount: Number(s.tradeCount) || trades.length };
+    return { alloc, capital, profitBal, equity, pool: equity, profit, profitPct, peak, drawdown, wins, losses, winRate, streak, score, trades, tradeCount: Number(s.tradeCount) || trades.length };
   }
 
   function accountStats() {
@@ -76,10 +78,10 @@
     if (bs && bs.trades.length) {
       out.push({ t: 0, v: bs.alloc });
       bs.trades.forEach((tr) => {
-        const v = Number(tr.poolAfter);
+        const v = Number(tr.capitalAfter) + Number(tr.profitAfter);
         if (Number.isFinite(v)) out.push({ t: Number(tr.at) || 0, v });
       });
-      if (!out.length || out[out.length - 1].v !== bs.pool) out.push({ t: Date.now(), v: bs.pool });
+      if (!out.length || out[out.length - 1].v !== bs.equity) out.push({ t: Date.now(), v: bs.equity });
     } else if (bs) {
       out.push({ t: 0, v: bs.alloc }, { t: Date.now(), v: bs.pool });
     } else if (acc && acc.capital > 0) {
@@ -122,14 +124,14 @@
     const score = health(bs, acc);
     const adv = advice(score, bs);
     const tone = score >= 72 ? 'up' : score >= 50 ? 'warn' : 'down';
-    return `<div class="card health-card" id="accountHealthCard" data-health-sig="${[bs ? [bs.pool, bs.peak, bs.drawdown, bs.tradeCount].join('|') : 'no-bot', acc && acc.pnl, acc && acc.pnlPct, score].join('|')}">
+    return `<div class="card health-card" id="accountHealthCard" data-health-sig="${[bs ? [bs.equity, bs.capital, bs.profitBal, bs.peak, bs.drawdown, bs.tradeCount].join('|') : 'no-bot', acc && acc.pnl, acc && acc.pnlPct, score].join('|')}">
       <div class="between" style="align-items:flex-start;gap:10px">
         <div><div class="card-title" style="margin:0">Account health analysis</div>
           <div class="tiny muted">Bot performance, equity growth and rest advice</div></div>
         <span class="health-score ${tone}"><b>${score}</b><span>/100</span></span>
       </div>
       <div class="health-metrics">
-        <div><span>Bot equity</span><b>${bs ? num(bs.pool) + ' WC' : '—'}</b></div>
+        <div><span>Bot equity</span><b>${bs ? num(bs.equity) + ' WC' : '—'}</b></div>
         <div><span>Bot P/L</span><b class="${bs && bs.profit >= 0 ? 'up' : bs ? 'down' : ''}">${bs ? (bs.profit >= 0 ? '+' : '−') + num(Math.abs(bs.profit)) + ' WC' : '—'}</b></div>
         <div><span>Drawdown</span><b class="${bs && bs.drawdown > 9 ? 'down' : ''}">${bs ? num(bs.drawdown, 1) + '%' : '—'}</b></div>
         <div><span>Win rate</span><b>${bs ? num(bs.winRate, 0) + '%' : '—'}</b></div>

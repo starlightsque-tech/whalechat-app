@@ -286,6 +286,7 @@ function shellHTML(inner, opts = {}) {
       ${mi.active && u.role === 'admin' ? `<div class="maint-admin-bar">${ic('settings', 13)} Maintenance mode is ON · ends ${new Date(mi.until).toLocaleString()}
         <button class="btn btn-xs btn-ghost" data-act="maint-end" style="margin-left:auto">End now</button></div>` : ''}
       <header class="topbar">
+        <button class="btn-icon" data-act="back" title="Back to previous page" aria-label="Back">${ic('back', 18)}</button>
         <div class="brand" data-nav="#/home"><img src="${LOGO}" alt=""/>
           <div class="brand-name" style="font-size:17px">Whale<b>Chat</b></div></div>
         <div class="topbar-search" style="flex:1">
