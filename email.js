@@ -169,6 +169,23 @@ const templates = {
     const text = String(data.text || html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 1000));
     return { subject: String(data.subject || 'WhaleChat'), html: layout(null, html, null), text };
   },
+  price_alert(data, ctx) {
+    const ticker = String((data && data.ticker) || '').toUpperCase();
+    const dir = data && data.dir === 'below' ? 'at or below' : 'at or above';
+    const target = Number(data && data.target) || 0;
+    const price = Number(data && data.price) || target;
+    const link = ctx.appUrl + '/whalechat.html#/invest/stock/' + encodeURIComponent(ticker);
+    return {
+      subject: `${ticker} price alert hit · ${dir} $${target.toFixed(2)}`,
+      html: layout('Price alert hit',
+        `Your WhaleChat price alert for <b style="color:#e9f4f9">${escapeHtml(ticker)}</b> was triggered.<br/><br/>
+         <b style="color:#e9f4f9">Condition:</b> ${escapeHtml(dir)} $${target.toFixed(2)}<br/>
+         <b style="color:#e9f4f9">Live price:</b> $${price.toFixed(2)}<br/><br/>
+         Open the trade view to review the chart and place a buy or sell order.`,
+        { label: 'Open ' + ticker, url: link }),
+      text: `${ticker} price alert: ${dir} $${target.toFixed(2)} hit at $${price.toFixed(2)}. Open ${link}`
+    };
+  },
   test(ctx) {
     return {
       subject: 'WhaleChat email service is working',
