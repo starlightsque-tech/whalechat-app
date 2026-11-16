@@ -1,8 +1,8 @@
 {
-  "version": "3.38.9",
-  "build": "2026-11-16T08:20:00Z",
+  "version": "3.32.0",
+  "build": "2026-11-16T06:05:21Z",
   "file": "whalechat.html",
-  "notes": "3.38.9: B2B marketplace asset grid, detail charts, favorites, buy/sell alerts, company inventory and profit balance.",
-  "releasedAt": "2026-11-16T08:20:00Z",
+  "notes": "WhaleChat 3.32.0 - bot capital/profit accounts, start/resume/cooling, topup/transfer/history, asset lists and global back button.",
+  "releasedAt": "2026-11-16T06:05:21Z",
   "minimum": "3.0.0"
 }
