@@ -1,8 +1,8 @@
 {
-  "version": "3.38.5",
-  "build": "2026-11-16T05:35:00Z",
+  "version": "3.38.6",
+  "build": "2026-11-16T06:10:00Z",
   "file": "whalechat.html",
-  "notes": "3.38.5: investment hub, account quick actions, transfers/top-ups, tools, B2B, statements/disputes; dynamic guide recommendation.",
-  "releasedAt": "2026-11-16T05:35:00Z",
+  "notes": "3.38.6: tool auto-renewal/reminders, admin tool pricing/subscribers, portfolio balance bridge, mobile hub refinements.",
+  "releasedAt": "2026-11-16T06:10:00Z",
   "minimum": "3.0.0"
 }
