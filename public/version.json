@@ -1,8 +1,8 @@
 {
-  "version": "3.32.1",
-  "build": "2026-11-16T08:30:00Z",
+  "version": "3.32.2",
+  "build": "2026-11-16T08:46:55Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.32.1 — published build with the 3.32.0 B2B investing account, robot bot avatars, USD bot capital and all account pages/designs preserved from the previous release.",
-  "releasedAt": "2026-11-16T08:30:00Z",
+  "notes": "WhaleChat 3.32.2 - every listed asset now trades 24/7. No weekend or overnight closure: quotes, charts and settlements run continuously, US stocks are surfaced as 24/7 synthetic mirrors, and the catalogue gains DOGE/USDT plus US30, US100, GOLD and OIL 24/7 indices.",
+  "releasedAt": "2026-11-16T08:46:55Z",
   "minimum": "3.0.0"
 }

@@ -30,7 +30,8 @@ const FALLBACK_EXTRA_PRICES = {
   EURUSD: 1.084, GBPUSD: 1.271, USDJPY: 155.2, XAUUSD: 2412,
   BTCUSDT: 96250, ETHUSDT: 3480, SOLUSDT: 198, BNBUSDT: 612, XRPUSDT: 2.18,
   MSFT: 438.2, GOOGL: 192.4, META: 585.1, NFLX: 912.3, AMD: 162.8,
-  PEP: 158.4, PLTR: 68.2, ARM: 138.5, SHOP: 118.4, HOOD: 48.6
+  PEP: 158.4, PLTR: 68.2, ARM: 138.5, SHOP: 118.4, HOOD: 48.6,
+  DOGEUSDT: 0.382, US30: 43850, US100: 20840, GOLD: 2412.6, OIL: 78.35
 };
 
 const FALLBACK_DIVIDEND_YIELDS = {
@@ -55,7 +56,12 @@ const DEFAULT_ASSETS = [
   { ticker: 'ETHUSDT', displayTicker: 'ETH/USDT', finnhubSymbol: 'BINANCE:ETHUSDT', assetClass: 'crypto', name: 'Ethereum', exchange: 'Binance', currency: 'USDT', color: '#627eea', sector: 'Crypto' },
   { ticker: 'SOLUSDT', displayTicker: 'SOL/USDT', finnhubSymbol: 'BINANCE:SOLUSDT', assetClass: 'crypto', name: 'Solana', exchange: 'Binance', currency: 'USDT', color: '#14f195', sector: 'Crypto' },
   { ticker: 'BNBUSDT', displayTicker: 'BNB/USDT', finnhubSymbol: 'BINANCE:BNBUSDT', assetClass: 'crypto', name: 'BNB', exchange: 'Binance', currency: 'USDT', color: '#f3ba2f', sector: 'Crypto' },
-  { ticker: 'XRPUSDT', displayTicker: 'XRP/USDT', finnhubSymbol: 'BINANCE:XRPUSDT', assetClass: 'crypto', name: 'XRP', exchange: 'Binance', currency: 'USDT', color: '#23292f', sector: 'Crypto' }
+  { ticker: 'XRPUSDT', displayTicker: 'XRP/USDT', finnhubSymbol: 'BINANCE:XRPUSDT', assetClass: 'crypto', name: 'XRP', exchange: 'Binance', currency: 'USDT', color: '#23292f', sector: 'Crypto' },
+  { ticker: 'DOGEUSDT', displayTicker: 'DOGE/USDT', finnhubSymbol: 'BINANCE:DOGEUSDT', assetClass: 'crypto', name: 'Dogecoin', exchange: 'Binance', currency: 'USDT', color: '#c2a633', sector: 'Crypto' },
+  { ticker: 'US30', displayTicker: 'US30 24/7', finnhubSymbol: 'US30', assetClass: 'index', name: 'Dow Jones 30 24/7', exchange: 'WhaleChat Synthetic', currency: 'USD', color: '#2f6fd0', sector: 'Indices' },
+  { ticker: 'US100', displayTicker: 'US100 24/7', finnhubSymbol: 'US100', assetClass: 'index', name: 'Nasdaq 100 24/7', exchange: 'WhaleChat Synthetic', currency: 'USD', color: '#7a5cff', sector: 'Indices' },
+  { ticker: 'GOLD', displayTicker: 'GOLD 24/7', finnhubSymbol: 'GOLD', assetClass: 'index', name: 'Gold 24/7', exchange: 'WhaleChat Synthetic', currency: 'USD', color: '#ffc861', sector: 'Indices' },
+  { ticker: 'OIL', displayTicker: 'OIL 24/7', finnhubSymbol: 'OIL', assetClass: 'index', name: 'Crude Oil 24/7', exchange: 'WhaleChat Synthetic', currency: 'USD', color: '#8a6d3b', sector: 'Indices' }
 ];
 
 function assetKey(finnhubSymbol, assetClass) {
@@ -97,7 +103,13 @@ const NY_HOLIDAYS = new Set([
 const FINNHUB_REST_BASE = (process.env.FINNHUB_REST_BASE || 'https://finnhub.io').replace(/\/+$/, '');
 const FINNHUB_WS_URL = process.env.FINNHUB_WS_URL || 'wss://ws.finnhub.io';
 const SEED_DELAY_MS = Math.max(0, Number(process.env.FINNHUB_SEED_DELAY_MS) || 1200);
+/* WhaleChat trades every catalogue asset 24/7. Venue opening hours are kept
+   only as informational metadata; they never gate quotes, charts or trades. */
 const FORCE_MARKET_OPEN = process.env.US_MARKET_FORCE_OPEN === '1';
+const ALWAYS_LIVE = true;
+const LIVE_BADGE_TEXT = 'LIVE - 24/7';
+const SYNTH_BADGE_TEXT = '24/7 SYNTHETIC - ALWAYS LIVE';
+const SESSION_LABEL = 'All Markets Are Live 24/7 - No Weekend Closure - No Overnight Closure';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const round = (v, n) => Math.round(v * Math.pow(10, n)) / Math.pow(10, n);
@@ -127,6 +139,15 @@ function usMarketOpen(d) {
   if (NY_HOLIDAYS.has(nyDateKey(t))) return false;
   const mins = c.hour * 60 + c.minute;
   return mins >= 9 * 60 + 30 && mins < 16 * 60;
+}
+
+/* 24/7 display naming: synthetic mirror of a real symbol reads "MARA 24/7" etc. */
+function displayNameFor(s) {
+  const name = String(s.name || s.ticker || '');
+  const cls = s.assetClass || 'us';
+  if (cls === 'us') return /24\/7$/.test(name) ? name : name + ' 24/7';
+  if (cls === 'forex') return /Synthetic|24\/7$/.test(name) ? name : name + ' Synthetic';
+  return name;
 }
 
 function id(prefix) { return prefix + Date.now().toString(36) + crypto.randomBytes(3).toString('hex'); }
@@ -243,7 +264,15 @@ class MarketService {
       name: s.name || s.ticker,
       exchange: s.exchange || (s.assetClass === 'forex' ? 'OANDA' : s.assetClass === 'crypto' ? 'Binance' : 'US'),
       currency: s.currency || 'USD',
-      price: Number(s.price) || 0
+      price: Number(s.price) || 0,
+      /* every WhaleChat instrument is a 24/7 synthetic feed: no venue hours gate
+         quotes, charts or trades, so nothing ever shows "Market Closed" */
+      synthetic: true,
+      alwaysLive: true,
+      session: '24/7',
+      liveBadge: LIVE_BADGE_TEXT,
+      syntheticBadge: SYNTH_BADGE_TEXT,
+      displayName: displayNameFor(s)
     }));
     this.byFinnhub = new Map(this.assets.map((a) => [String(a.finnhubSymbol).toUpperCase(), a.ticker]));
     return this.assets;
@@ -252,7 +281,7 @@ class MarketService {
   assetList() { return this.assets.length ? this.assets : this.refreshAssets(); }
 
   assetClasses() {
-    const out = { us: 0, global: 0, forex: 0, crypto: 0 };
+    const out = { us: 0, global: 0, forex: 0, crypto: 0, index: 0 };
     this.assetList().forEach((a) => { out[a.assetClass] = (out[a.assetClass] || 0) + 1; });
     return out;
   }
@@ -699,9 +728,11 @@ class MarketService {
   notice() {
     const sim = this.lastSimAt && Date.now() - this.lastSimAt < 8000;
     if (this.config.mode === 'hybrid' && this.config.apiKey) {
-      return sim ? 'Live Finnhub with 24/7 simulated fallback where ticks are stale' : 'Live market data via Finnhub';
+      return sim
+        ? 'Live with 24/7 continuous feed — trading never closes'
+        : 'Live market data via Finnhub — all assets trade 24/7';
     }
-    return '24/7 simulated market mode — prices move for every stock';
+    return 'All markets are live 24/7 — prices move for every asset';
   }
 
   source() {
@@ -713,7 +744,11 @@ class MarketService {
       mode: this.config.mode,
       refreshSec: this.config.refreshSec,
       hasKey: !!this.config.apiKey,
-      marketOpen: usMarketOpen(),
+      marketOpen: true,
+      alwaysLive: ALWAYS_LIVE,
+      session: '24/7',
+      sessionLabel: SESSION_LABEL,
+      venueHours: usMarketOpen() ? 'regular session' : 'outside venue hours (trading unaffected)',
       source: this.source(),
       notice: this.notice(),
       fallbackReason: this.fallbackReason(),
@@ -740,7 +775,10 @@ class MarketService {
       ok: true,
       at: Date.now(),
       source: this.source(),
-      marketOpen: usMarketOpen(),
+      marketOpen: true,
+      alwaysLive: ALWAYS_LIVE,
+      session: '24/7',
+      sessionLabel: SESSION_LABEL,
       notice: this.notice(),
       status: this.status(),
       quotes: this.quotes
