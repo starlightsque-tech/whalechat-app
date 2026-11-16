@@ -17,13 +17,23 @@
   if (window.__wcTradeGuide) return;
   window.__wcTradeGuide = true;
 
-  var DEFAULT_MESSAGE =
-    'I want to show you this company called WhaleChat. Have you heard about them before?\n\n' +
-    'WhaleChat is a Social Finance ecosystem — an all-in-one chat, shopping and sales, trade and investing app. You can chat with friends, buy and sell products in the company marketplace, trade 24/7, and invest in the company shares in real time.\n\n' +
-    'How trading works: 1 WC = $0.50. Pick a live 24/7 asset like MARA 24/7 or BTC/USD, choose LONG if you think it will go up or SHORT if you think it will go down, set your capital, take profit and take loss, then trade. Example: $100 (200 WC) with 5x leverage and a +2% move in your favour = $10 profit, auto-closed. Take Loss protects you if it goes the other way.\n\n' +
-    'You can also buy WhaleChat Shares for long-term ownership, or become a Vendor and sell in the marketplace. All markets are LIVE 24/7 — no weekend closure.\n\n' +
-    'Want me to send you my link and guide you on your first trade?\n' +
-    'Check it here: https://whalechat-qkgd.onrender.com';
+  function defaultMessage() {
+    var d = db();
+    var g = d && d.settings && d.settings.tradeGuide ? d.settings.tradeGuide : {};
+    var rate = Number(g.wcUsd) || (typeof COIN_USD === 'number' ? COIN_USD : 0.5);
+    var lev = Math.max(1, Number(d && d.invest && d.invest.leverage) || 5);
+    var fee = Number(d && d.invest && d.invest.feePct) || 0;
+    var asset = 'MARA 24/7';
+    try { if (typeof INV !== 'undefined' && INV.visibleStocks) { var list = INV.visibleStocks(); if (list.length) asset = list[0].name || list[0].ticker; } } catch (e) {}
+    var capitalUsd = 100, capitalWc = Math.round(capitalUsd / rate);
+    var profit = (capitalUsd * 0.02 * lev).toFixed(2);
+    return 'I want to show you this company called WhaleChat. Have you heard about them before?\n\n' +
+      'WhaleChat is a Social Finance ecosystem — an all-in-one chat, shopping and sales, trade and investing app. You can chat with friends, buy and sell products in the company marketplace, trade 24/7, and invest in the company shares in real time.\n\n' +
+      'How trading works: 1 WC = $' + rate.toFixed(2) + '. Pick a live 24/7 asset like ' + asset + ' or BTC/USD, choose LONG if you think it will go up or SHORT if you think it will go down, set your capital, take profit and take loss, then trade. Example: $' + capitalUsd + ' (' + capitalWc + ' WC) with ' + lev + 'x leverage and a +2% move in your favour = $' + profit + ' profit, auto-closed. Take Loss protects you if it goes the other way.\n\n' +
+      'The current stock-trade fee is ' + fee + '%. You can also buy WhaleChat Shares for long-term ownership, or become a Vendor and sell in the marketplace. All markets are LIVE 24/7 — no weekend closure.\n\n' +
+      'Want me to send you my link and guide you on your first trade?\n' +
+      'Check it here: https://whalechat-qkgd.onrender.com';
+  }
 
   function db() { try { return (typeof DB !== 'undefined') ? DB : null; } catch (e) { return null; } }
   function settings() {
@@ -36,7 +46,7 @@
     var s = settings();
     if (!s.tradeGuide || typeof s.tradeGuide !== 'object') s.tradeGuide = {};
     var g = s.tradeGuide;
-    if (typeof g.message !== 'string' || !g.message.trim()) g.message = DEFAULT_MESSAGE;
+    if (typeof g.message !== 'string' || !g.message.trim()) g.message = defaultMessage();
     if (!(Number(g.wcUsd) > 0)) g.wcUsd = (typeof COIN_USD === 'number') ? COIN_USD : 0.5;
     if (!(Number(g.minDepositUsd) > 0)) g.minDepositUsd = 10;
     if (!(Number(g.minWithdrawUsd) > 0)) g.minWithdrawUsd = 10;
