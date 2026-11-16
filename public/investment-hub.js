@@ -54,9 +54,9 @@
     if (h !== u.pin) { toastH('Incorrect PIN', 'err'); return false; }
     return true;
   }
-  function total(a) {
+  function total(a, u) {
     var p = a.portfolios || {};
-    return (Number(a.usd) || 0) + (Number(a.payout) || 0) + (Number(p.stock) || 0) + (Number(p.wc) || 0) + (Number(p.b2b) || 0) + (Number(p.bot) || 0);
+    return (Number(a.usd) || 0) + (Number(a.payout) || 0) + (Number(p.b2b) || 0) + ((Number(u && u.balance) || 0) * RATE);
   }
 
   function quickActionsHTML() {
@@ -80,7 +80,7 @@
     var a = account(u);
     return head('Investment account', 'Your investment portfolio, transfers and specialist balances.', '#/profile') +
       '<div class="ih-cards">' +
-        '<div class="ih-card"><span>Total assets</span><b>' + money(total(a)) + '</b><small>' + wc(total(a) / RATE) + ' WC equivalent</small></div>' +
+        '<div class="ih-card"><span>Total assets</span><b>' + money(total(a, u)) + '</b><small>' + wc(total(a, u) / RATE) + ' WC equivalent</small></div>' +
         '<div class="ih-card"><span>Total assets balance</span><b>' + money(a.usd) + '</b><small>Available for top-ups</small></div>' +
         '<div class="ih-card"><span>Payout balance</span><b>' + money(a.payout) + '</b><small>Profits received</small></div>' +
         '<div class="ih-card"><span>WC balance</span><b>' + wc(u.balance) + ' WC</b><small>Main WhaleChat wallet</small></div>' +
@@ -124,17 +124,50 @@
         Object.keys(labels).map(function (k) { return '<div class="ih-row"><span>' + labels[k] + '</span><b>' + money(a.portfolios[k]) + '</b></div>'; }).join('') + '</div></div>';
   }
 
-  var TOOLS = [
+  var DEFAULT_TOOLS = [
     { id: 'autosecure', name: 'Auto Secure Take Profit', price: 9.99, desc: 'Automatically secures available profit before it reverses.' },
     { id: 'botassist', name: 'Bot Assisted Trading', price: 19.99, desc: 'Bot monitors active trades and helps manage entries and exits.' },
     { id: 'riskguard', name: 'Risk Shield / Take Loss Guard', price: 7.99, desc: 'Adds an extra automatic loss guard to open positions.' },
     { id: 'signals', name: 'Pro Chart Signals', price: 4.99, desc: 'Live structure and momentum signals on the 24/7 chart.' }
   ];
+  function toolCatalog() {
+    try {
+      if (!DB.settings) DB.settings = {};
+      if (!Array.isArray(DB.settings.toolCatalog) || !DB.settings.toolCatalog.length) {
+        DB.settings.toolCatalog = DEFAULT_TOOLS.map(function (t) { return Object.assign({}, t); });
+      }
+      return DB.settings.toolCatalog;
+    } catch (e) { return DEFAULT_TOOLS; }
+  }
+  function toolById(id) { return toolCatalog().find(function (t) { return t.id === id; }); }
+  function renewTools(u) {
+    var a = account(u); var now = Date.now(); var changed = false;
+    toolCatalog().forEach(function (t) {
+      var s = a.tools[t.id]; if (!s) return;
+      if (s.active && Number(s.expiresAt) <= now) {
+        if ((Number(a.usd) || 0) >= Number(t.price)) {
+          a.usd = Math.round((a.usd - Number(t.price)) * 100) / 100;
+          s.expiresAt = now + 30 * 864e5; s.price = Number(t.price); s.reminded = false;
+          ledger(u, 'Tool auto-renewal · ' + t.name, -Number(t.price), 0);
+          notifyH(u, 'Tool renewed', t.name + ' renewed for another 30 days.', '#/investment/tools', 'shield');
+        } else {
+          s.active = false; s.expiredAt = now;
+          notifyH(u, 'Tool expired', t.name + ' expired — insufficient investment balance to renew.', '#/investment/tools', 'warn');
+        }
+        changed = true;
+      }
+      if (s.active && Number(s.expiresAt) > now && Number(s.expiresAt) - now < 3 * 864e5 && !s.reminded) {
+        s.reminded = true; changed = true;
+        notifyH(u, 'Tool renewal reminder', t.name + ' renews in under 3 days. Keep enough investment balance.', '#/investment/tools', 'clock');
+      }
+    });
+    if (changed) save();
+  }
   function toolsPage(u) {
     var a = account(u);
     return head('Trading tools', 'Subscriptions are paid from your investment balance and renew monthly.', '#/investment') +
       '<div class="card"><div class="tiny muted">Investment balance: <b>' + money(a.usd) + '</b></div></div>' +
-      '<div class="ih-tools">' + TOOLS.map(function (t) {
+      '<div class="ih-tools">' + toolCatalog().map(function (t) {
         var s = a.tools[t.id] || null; var on = s && s.active && Number(s.expiresAt) > Date.now();
         return '<div class="ih-tool"><div class="between"><div><b>' + t.name + '</b><div class="tiny muted">' + t.desc + '</div></div><span class="badge ' + (on ? 'badge-success' : 'badge-warn') + '">' + (on ? 'ON' : 'OFF') + '</span></div>' +
           '<div class="ih-tool-foot"><b>' + money(t.price) + ' / month</b>' +
@@ -201,6 +234,27 @@
       '<div class="card"><div class="card-title">My disputes</div>' + (a.disputes.length ? a.disputes.map(function (d) { return '<div class="ih-row"><div class="grow"><b>' + escH(d.type) + '</b><div class="tiny muted">' + escH(d.text).slice(0, 100) + '</div></div><span class="badge ' + (d.status === 'resolved' ? 'badge-success' : d.status === 'declined' ? 'badge-danger' : 'badge-warn') + '">' + escH(d.status) + '</span></div>'; }).join('') : '<div class="tiny muted">No disputes submitted.</div>') + '</div>';
   }
 
+  function adminTools() {
+    var catalog = toolCatalog();
+    var subs = [];
+    (DB.users || []).forEach(function (u) {
+      var a = account(u);
+      catalog.forEach(function (t) {
+        var s = a.tools[t.id];
+        if (s) subs.push({ u: u, t: t, s: s });
+      });
+    });
+    return head('Tool pricing & subscribers', 'Manage subscription prices and see every active tool subscriber.', '#/admin') +
+      '<div class="card"><div class="card-title">Prices (USD / 30 days)</div>' +
+        catalog.map(function (t) { return '<div class="ih-row"><div class="grow"><b>' + escH(t.name) + '</b><div class="tiny muted">' + escH(t.id) + '</div></div><input class="input" style="max-width:110px" id="ihPrice_' + escH(t.id) + '" type="number" step="0.01" min="0" value="' + Number(t.price).toFixed(2) + '"/></div>'; }).join('') +
+        '<button class="btn btn-primary" style="margin-top:10px" data-act="ih-admin-tools-save">Save prices</button></div>' +
+      '<div class="card"><div class="card-title">Subscribers</div><div class="ih-list">' +
+        (subs.length ? subs.map(function (x) {
+          var active = x.s.active && Number(x.s.expiresAt) > Date.now();
+          return '<div class="ih-row"><div class="grow"><b>@' + escH(x.u.username) + ' · ' + escH(x.t.name) + '</b><div class="tiny muted">' + (active ? 'active until ' + new Date(x.s.expiresAt).toLocaleDateString() : 'inactive/expired') + ' · ' + money(x.s.price || x.t.price) + '/mo</div></div><span class="badge ' + (active ? 'badge-success' : 'badge-warn') + '">' + (active ? 'ON' : 'OFF') + '</span></div>';
+        }).join('') : '<div class="tiny muted">No tool subscribers yet.</div>') + '</div></div>';
+  }
+
   function adminDisputes() {
     var rows = [];
     (DB.users || []).forEach(function (u) { account(u).disputes.forEach(function (d) { rows.push({ u: u, d: d }); }); });
@@ -230,6 +284,7 @@
     if (baseAdmin) {
       VIEWS.admin = function (parts) {
         if ((parts && parts[1]) === 'invest-disputes') return adminDisputes();
+        if ((parts && parts[1]) === 'tools') return adminTools();
         return baseAdmin.apply(this, arguments);
       };
     }
@@ -283,10 +338,14 @@
       if (a.usd < amount) return toastH('Not enough investment balance', 'err');
       a.usd = Math.round((a.usd - amount) * 100) / 100;
       a.portfolios[to] = Math.round(((a.portfolios[to] || 0) + amount) * 100) / 100;
-      ledger(u, 'Top-up ' + to, -amount, 0, { portfolio: to }); save(); toastH('Portfolio topped up', 'ok'); render();
+      if (to !== 'b2b') {
+        u.balance = Math.round((Number(u.balance) + amount / RATE) * 100) / 100;
+        userTx(u, 'invest-topup', 'Investment top-up · ' + to, amount / RATE, { portfolio: to, usd: amount });
+      }
+      ledger(u, 'Top-up ' + to, -amount, to !== 'b2b' ? amount / RATE : 0, { portfolio: to }); save(); toastH('Portfolio topped up', 'ok'); render();
     };
     App.ihToolSub = function (id, ds) {
-      var u = me(); var a = account(u); var t = TOOLS.find(function (x) { return x.id === ds.tool; }); if (!t) return;
+      var u = me(); var a = account(u); var t = toolById(ds.tool); if (!t) return;
       if (a.usd < t.price) return toastH('Not enough investment balance', 'err');
       a.usd = Math.round((a.usd - t.price) * 100) / 100;
       a.tools[t.id] = { active: true, expiresAt: Date.now() + 30 * 864e5, price: t.price };
@@ -342,6 +401,15 @@
       a.requests.unshift({ id: nowId('rq_'), kind: ds.kind, status: 'pending', createdAt: Date.now() });
       save(); toastH('Request submitted', 'ok'); render();
     };
+    App.ihAdminToolsSave = function () {
+      var catalog = toolCatalog();
+      catalog.forEach(function (t) {
+        var el = document.getElementById('ihPrice_' + t.id);
+        var v = Number(el && el.value);
+        if (v >= 0) t.price = Math.round(v * 100) / 100;
+      });
+      save(); toastH('Tool prices updated', 'ok'); render();
+    };
     App.ihPrint = function () { try { window.print(); } catch (e) {} };
   }
 
@@ -365,7 +433,16 @@
     .ih-tools{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:9px}
     .ih-tool{padding:12px;border:1px solid var(--border);border-radius:12px;background:var(--surface-2)}
     .ih-tool-foot{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:10px}
-    @media(max-width:520px){.ih-card b{font-size:15px}.ih-row{font-size:11.5px}}
+    @media(max-width:560px){
+      .ih-card b{font-size:15px}.ih-row{font-size:11.5px;flex-wrap:wrap}
+      .ih-quickgrid,.ih-btn-grid{grid-template-columns:1fr 1fr}
+      .ih-tool-foot{flex-wrap:wrap}
+      .ih-tool .between{flex-wrap:wrap;gap:6px}
+      .ih-row select{max-width:100%!important;width:100%}
+      .ih-quickbtn{padding:10px}
+      .ih-card{padding:10px}
+    }
+    @media(max-width:380px){.ih-quickgrid,.ih-btn-grid{grid-template-columns:1fr}}
     `;
     document.head.appendChild(st);
   })();
@@ -376,8 +453,11 @@
       try {
         if (typeof ADMIN_NAV !== 'undefined' && !ADMIN_NAV.some(function (n) { return n.key === 'admin-invest-disputes'; })) {
           ADMIN_NAV.splice(Math.max(0, ADMIN_NAV.length - 2), 0, { key: 'admin-invest-disputes', label: 'Invest disputes', icon: 'shield', href: '#/admin/invest-disputes' });
+          ADMIN_NAV.splice(Math.max(0, ADMIN_NAV.length - 2), 0, { key: 'admin-tools-pricing', label: 'Tool pricing', icon: 'settings', href: '#/admin/tools' });
         }
       } catch (e) {}
+      try { if (typeof me === 'function' && me()) renewTools(me()); } catch (e) {}
+      setInterval(function () { try { if (typeof me === 'function' && me()) renewTools(me()); } catch (e) {} }, 60000);
       return;
     }
     if (tries++ < 40) setTimeout(boot, 500);
