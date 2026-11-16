@@ -1,8 +1,8 @@
 {
-  "version": "3.38.1",
-  "build": "2026-11-16T03:30:55Z",
+  "version": "3.38.2",
+  "build": "2026-11-16T03:33:48Z",
   "file": "whalechat.html",
-  "notes": "3.38.1: 24/7 crypto now streams real Binance prices; synthetic forex stays local; hidden legacy symbols can no longer intercept real ticks.",
-  "releasedAt": "2026-11-16T03:30:55Z",
+  "notes": "3.38.2: 24/7 assets top up between real ticks so quotes never age past ~4s; startup seeding ignores synthetic names.",
+  "releasedAt": "2026-11-16T03:33:48Z",
   "minimum": "3.0.0"
 }

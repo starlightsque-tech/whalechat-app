@@ -374,9 +374,11 @@ class MarketService {
     this.assetList().forEach((a) => {
       if (a.hidden) return;
       const lastReal = this.lastRealTime[a.ticker] || 0;
-      /* 24/7 assets always tick, even while a real quote is warm: their own
-         synthetic feed is the only source and must never freeze on weekends. */
-      if (!is247Asset(a) && now - lastReal < 12000) return;  /* real ticks are flowing */
+      /* 24/7 assets must print at least every ~4s. A sparse exchange tick is
+         not allowed to freeze them; the engine tops up between real ticks. */
+      if (is247Asset(a)) {
+        if (now - lastReal < 4000) return;
+      } else if (now - lastReal < 12000) return;             /* real ticks are flowing */
       let q = this.quotes[a.ticker];
       /* repair a quote left at a wildly wrong level by an older build */
       const canon = CANON_247[a.ticker];
@@ -591,7 +593,8 @@ class MarketService {
     this.seeding = true;
     try {
       /* synthetic 24/7 symbols have no Finnhub listing — never spend calls on them */
-      const assets = this.assetList().filter((a) => !a.hidden && !(a.synthetic || /24\/7/i.test(String(a.name || ''))));
+      this.refreshAssets();
+      const assets = this.assetList().filter((a) => !a.hidden && !(a.synthetic || /24\/7|synthetic/i.test(String(a.name || ''))));
       for (const a of assets) {
         if (this.stopped) break;
         if (Date.now() < this.rateLimitedUntil) break;
@@ -613,8 +616,9 @@ class MarketService {
     if (Date.now() < this.rateLimitedUntil) return;
     this.polling = true;
     try {
+      this.refreshAssets();
       for (const a of this.assetList()) {
-        if (a.hidden || a.synthetic || /24\/7/i.test(String(a.name || ''))) continue;
+        if (a.hidden || a.synthetic || /24\/7|synthetic/i.test(String(a.name || ''))) continue;
         const wsFresh = this.wsConnected && this.lastWsTickAt && Date.now() - this.lastWsTickAt < 45000;
         if (this.stopped || wsFresh) break;
         const t = a.ticker;
