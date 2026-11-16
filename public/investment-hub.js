@@ -54,7 +54,10 @@
     if (h !== u.pin) { toastH('Incorrect PIN', 'err'); return false; }
     return true;
   }
-  function total(a) { return (Number(a.usd) || 0) + (Number(a.payout) || 0); }
+  function total(a) {
+    var p = a.portfolios || {};
+    return (Number(a.usd) || 0) + (Number(a.payout) || 0) + (Number(p.stock) || 0) + (Number(p.wc) || 0) + (Number(p.b2b) || 0) + (Number(p.bot) || 0);
+  }
 
   function quickActionsHTML() {
     var items = [
