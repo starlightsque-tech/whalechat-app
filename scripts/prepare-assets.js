@@ -66,6 +66,7 @@ const MODULES = [
   { file: 'market-live.js', marker: 'wc-market-live' },
   { file: 'market-247.js', marker: 'wc-market-247' },
   { file: 'trade-guide.js', marker: 'wc-trade-guide' },
+  { file: 'investment-hub.js', marker: 'wc-investment-hub' },
   { file: 'demo-sellers.js', marker: 'wc-demo-sellers' },
   { file: 'support.js', marker: 'wc-support' },
   { file: 'view-mode.js', marker: 'wc-view-mode' },
