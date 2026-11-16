@@ -3,7 +3,6 @@
 'use strict';
 const http = require('http');
 const fs = require('fs');
-const zlib = require('zlib');
 const path = require('path');
 
 const PORT = Number(process.env.PORT || 8090);
@@ -300,31 +299,7 @@ function serveStatic(req, res, pathname) {
     if (err || !st.isFile()) { if (!path.extname(rel)) return serveStatic(req, res, '/index.html'); return notFound(res); }
     const ext = path.extname(file).toLowerCase();
     const isHtml = ext === '.html';
-    const etag = 'W/"' + st.size.toString(16) + '-' + Math.round(st.mtimeMs).toString(16) + '"';
-    if (req.headers['if-none-match'] === etag) {
-      res.writeHead(304, { etag, 'cache-control': isHtml ? 'no-cache' : 'public, max-age=3600' });
-      return res.end();
-    }
-    const headers = {
-      'content-type': mime(file), etag,
-      'x-content-type-options': 'nosniff',
-      'cache-control': isHtml || ext === '.webmanifest' ? 'no-cache' : (rel === '/sw.js' ? 'no-cache' : 'public, max-age=3600')
-    };
-    const send = (buf) => {
-      const compressed = /^(text\/|application\/(json|javascript|manifest))/i.test(headers['content-type'])
-        && /\bgzip\b/i.test(String(req.headers['accept-encoding'] || '')) && buf.length > 1024;
-      if (compressed) {
-        zlib.gzip(buf, { level: 6 }, (e2, gz) => {
-          if (e2) { headers['content-length'] = buf.length; res.writeHead(200, headers); return res.end(buf); }
-          res.writeHead(200, Object.assign({}, headers, { 'content-encoding': 'gzip', 'content-length': gz.length, vary: 'Accept-Encoding' }));
-          res.end(gz);
-        });
-        return;
-      }
-      headers['content-length'] = buf.length;
-      res.writeHead(200, headers);
-      res.end(buf);
-    };
+    const headers = { 'content-type': mime(file), 'content-length': st.size, 'x-content-type-options': 'nosniff', 'cache-control': isHtml || ext === '.webmanifest' ? 'no-cache' : (rel === '/sw.js' ? 'no-cache' : 'public, max-age=3600') };
     if (isHtml) {
       fs.readFile(file, (e2, buf) => {
         if (e2) return notFound(res);
@@ -332,13 +307,9 @@ function serveStatic(req, res, pathname) {
         if (path.basename(file) === 'whalechat.html') {
           html = html.replace('<head>', '<head>\n<script>window.__WC_SERVER__ = true; window.__WC_PUBLIC_URL__ = ' + JSON.stringify(PUBLIC_URL || '') + ';</script>');
         }
-        send(Buffer.from(html));
+        const out = Buffer.from(html); headers['content-length'] = out.length;
+        res.writeHead(200, headers); res.end(out);
       });
-      return;
-    }
-    /* small static files are fully buffered so they can be compressed; big binaries stream */
-    if (st.size <= 4 * 1024 * 1024) {
-      fs.readFile(file, (e2, buf) => { if (e2) return notFound(res); send(buf); });
       return;
     }
     res.writeHead(200, headers);
@@ -346,92 +317,14 @@ function serveStatic(req, res, pathname) {
   });
 }
 
-const COLLECTIONS = ['users', 'vendors', 'companyProducts', 'products', 'orders', 'deposits', 'withdrawals', 'messages', 'statuses', 'notifications', 'contacts', 'blocks', 'txs', 'referrals', 'purchases', 'refunds', 'vendorApplications', 'reports', 'bonuses', 'bonusClaims', 'emailCampaigns', 'stocks', 'holdings', 'trades', 'watchlist', 'alerts', 'audit', 'portfolioAudit', 'traffic', 'shareInvestments'];
+const COLLECTIONS = ['users', 'vendors', 'companyProducts', 'products', 'orders', 'deposits', 'withdrawals', 'messages', 'statuses', 'notifications', 'contacts', 'blocks', 'txs', 'referrals', 'purchases', 'refunds', 'vendorApplications', 'reports', 'bonuses', 'bonusClaims', 'emailCampaigns', 'stocks', 'holdings', 'trades', 'watchlist', 'alerts', 'audit', 'portfolioAudit', 'botAccounts', 'botEvents', 'traffic', 'shareInvestments'];
 
 function isAdmin(db, adminId) {
   return !!(db && Array.isArray(db.users) && db.users.some((u) => u && u.id === adminId && u.role === 'admin'));
 }
-function ensure247Assets(db) {
-  if (!db || !Array.isArray(db.stocks)) return;
-  /* The single tradable universe: instruments that never close. */
-  const spec = [
-    /* crypto keeps its real Binance feed (24/7) — the display ticker stays BTC/USD */
-    ['BTCUSD', 'BTC/USD', 'Crypto', 64250, 'crypto', false, 'BINANCE:BTCUSDT'],
-    ['ETHUSD', 'ETH/USD', 'Crypto', 3120, 'crypto', false, 'BINANCE:ETHUSDT'],
-    ['SOLUSD', 'SOL/USD', 'Crypto', 148, 'crypto', false, 'BINANCE:SOLUSDT'],
-    ['BNBUSD', 'BNB/USD', 'Crypto', 585, 'crypto', false, 'BINANCE:BNBUSDT'],
-    ['DOGEUSD', 'DOGE/USD', 'Crypto', 0.14, 'crypto', false, 'BINANCE:DOGEUSDT'],
-    ['XRPUSD', 'XRP/USD', 'Crypto', 0.52, 'crypto', false, 'BINANCE:XRPUSDT'],
-    /* the synthetic forex pairs never go to Finnhub */
-    ['EURUSD24', 'EUR/USD Synthetic', 'Forex', 1.086, 'forex', true, ''],
-    ['GBPUSD24', 'GBP/USD Synthetic', 'Forex', 1.271, 'forex', true, ''],
-    ['USDJPY24', 'USD/JPY Synthetic', 'Forex', 156.4, 'forex', true, ''],
-    ['MARA24', 'MARA 24/7', 'Synthetic Stocks', 22.4, 'us', true],
-    ['SHOP24', 'SHOP 24/7', 'Synthetic Stocks', 78.2, 'us', true],
-    ['TSLA24', 'TSLA 24/7', 'Synthetic Stocks', 248.5, 'us', true],
-    ['AAPL24', 'AAPL 24/7', 'Synthetic Stocks', 228.1, 'us', true],
-    ['NVDA24', 'NVDA 24/7', 'Synthetic Stocks', 132.9, 'us', true],
-    ['AMZN24', 'AMZN 24/7', 'Synthetic Stocks', 201.4, 'us', true],
-    ['US3024', 'US30 24/7', 'Indices', 43820, 'index', true],
-    ['US10024', 'US100 24/7', 'Indices', 20450, 'index', true],
-    ['GOLD24', 'GOLD 24/7', 'Indices', 2685, 'index', true],
-    ['OIL24', 'OIL 24/7', 'Indices', 72.8, 'index', true]
-  ];
-  const keep = new Set(spec.map((x) => x[0]));
-  const colors = { crypto: '#f7931a', forex: '#3aa0ff', us: '#8b7bff', index: '#2ee6c9' };
-  for (const [ticker, name, sector, price, cls, synthetic, finnhubSymbol] of spec) {
-    let s = db.stocks.find((x) => x && x.ticker === ticker);
-    if (!s) {
-      s = {
-        id: 'st_' + ticker.toLowerCase(), ticker, name, sector, assetClass: cls,
-        price, prevClose: price, twentyFourSeven: true, synthetic: !!synthetic,
-        finnhubSymbol: finnhubSymbol || ticker,
-        hidden: false, active: true, paused: false, custom: false,
-        color: colors[cls] || '#3aa0ff', exchange: cls === 'crypto' ? 'WhaleChat 24/7' : cls === 'forex' ? 'WhaleChat Synthetic' : 'WhaleChat 24/7',
-        currency: 'USD', div: 0, pe: 0, mcap: 0, ceo: '', website: '',
-        about: name + ' — continuous synthetic market, live Monday to Sunday with no overnight or weekend closure.'
-      };
-      db.stocks.push(s);
-    } else {
-      Object.assign(s, {
-        name, sector, assetClass: cls, twentyFourSeven: true, synthetic: !!synthetic,
-        finnhubSymbol: finnhubSymbol || s.finnhubSymbol || ticker,
-        hidden: false, active: s.active !== false, paused: false,
-        color: s.color || colors[cls] || '#3aa0ff',
-        displayTicker: s.displayTicker || (cls === 'crypto' ? name : ticker),
-        price: Number(s.price) > 0 ? s.price : price,
-        prevClose: Number(s.prevClose) > 0 ? s.prevClose : price
-      });
-      if (cls === 'crypto') s.crypto = true;
-    }
-  }
-  /* Traditional exchange listings stay in the DB (so old holdings keep their
-     history) but are hidden from the 24/7 market and trading screens. */
-  for (const s of db.stocks) {
-    if (!s || !s.ticker) continue;
-    if (keep.has(String(s.ticker).toUpperCase())) continue;
-    s.hidden = true;
-    s.legacy = true;
-    s.twentyFourSeven = false;
-  }
-}
-
 function ensureServices(db) {
   if (!db) return;
-  if (!db.invest || typeof db.invest !== 'object') db.invest = {};
-  /* the 0.5% value was the old built-in default; move untouched databases to
-     the current 0.12% stock-trade fee exactly once. Admin can change it any
-     time afterwards from Admin → Stocks and the new value is respected. */
-  if (!db.invest.feeMigrated012 && Number(db.invest.feePct) === 0.5) {
-    db.invest.feePct = 0.12;
-    db.invest.tradeFeePct = 0.12;
-    db.invest.feeMigrated012 = true;
-  }
-  if (db.invest.feePct == null) db.invest.feePct = 0.12;          /* 0.12% per stock trade */
-  if (db.invest.tradeFeePct == null) db.invest.tradeFeePct = db.invest.feePct;
-  if (db.invest.leverage == null) db.invest.leverage = 5;         /* default leverage */
   try { spot.ensureDefaults(db); } catch (e) {}
-  try { ensure247Assets(db); } catch (e) {}
   try { bots.ensureDefaults(db); } catch (e) {}
   try { shares.ensureDefaults(db); } catch (e) {}
 }
@@ -482,84 +375,6 @@ async function dispatchPushes(pushes, db) {
       await sendPush(p.item.userId, { title: p.item.title || 'WhaleChat', body: p.item.body || '', link: p.item.link || '#/notifications', tag: 'wc-' + p.item.userId });
     }
   }
-}
-
-
-/* --------------------------------------------------------------------------
-   Auto-generated trade & investment guide. Built from the live database on
-   every request, so it always matches the current bot tiers, fees and rules.
-   -------------------------------------------------------------------------- */
-function buildTradeGuide() {
-  const db = store.db || {};
-  const bs = db.botSettings || {};
-  const tiers = (db.botTiers || []).slice().sort((a, b) => (Number(a.accuracy) || 0) - (Number(b.accuracy) || 0));
-  const stocks = db.stocks || [];
-  const tradeFee = Number((db.invest && (db.invest.feePct != null ? db.invest.feePct : db.invest.tradeFeePct)) || 0);
-  const stamina = (acc) => Math.max(8, Math.min(42, 8 + ((Number(acc) || 0) - 40) * 0.55));
-  const cooldown = (acc) => Math.max(15, Math.min(45, Math.round(40 - (Number(acc) || 50) * 0.2)));
-  const tierRows = tiers.map((t) => `<tr>
-      <td><b>${String(t.name || '').replace(/[<>&]/g, '')}</b><div class="tiny muted">@${String(t.username || 'bot').replace(/[<>&]/g, '')}</div></td>
-      <td>${Number(t.accuracy) || 0}%</td>
-      <td>$${(Number(t.priceUsd) || 0).toFixed(2)}</td>
-      <td>${Math.round(stamina(t.accuracy))} trades</td>
-      <td>${cooldown(t.accuracy)} min</td>
-    </tr>`).join('');
-
-  const sections = [
-    { id: 'overview', title: '1. What WhaleChat is', html: `
-      <p>WhaleChat is one app for messaging, a marketplace, a Whale Coin wallet and a simulated investing desk. Everything is priced in <b>Whale Coin (WC)</b>, with a fixed reference rate of <b>1 WC = $0.50 USD</b>. The wallet, marketplace and investing pages all read and write the same balance, so money moves instantly between them.</p>
-      <p>Users can chat with contacts, buy from vendors, top up with crypto or bank transfer, and put WC to work in the stock simulator or with automated trading bots.</p>` },
-    { id: 'wallet', title: '2. Wallet, deposits and withdrawals', html: `
-      <ul>
-        <li><b>Deposits</b> — the user picks a crypto or bank method, pays to the company account (QR codes are shown when the admin uploads one) and submits a reference. An admin reviews and approves it; only then is WC credited.</li>
-        <li><b>Withdrawals</b> — paid in USDT to the chosen network, protected by the user's withdrawal PIN and reviewed by an admin.</li>
-        <li><b>Referrals</b> — a 10 WC bonus is credited after the invited friend's first approved deposit.</li>
-        <li><b>Reserved capital</b> — while a trading bot runs, its allocated WC is locked out of the spendable balance and returned when the bot stops.</li>
-      </ul>` },
-    { id: 'stocks', title: '3. Stock investing flow', html: `
-      <p>The Invest tab is a simulated brokerage on top of the wallet.</p>
-      <ol>
-        <li><b>Explore</b> — the market lists ${stocks.length} instruments with live simulated prices that move every few seconds.</li>
-        <li><b>Buy</b> — enter an amount in USD or WC (or a share quantity). The cost, fee and remaining balance are shown before confirming with the transaction PIN.</li>
-        <li><b>Hold</b> — shares and average price are stored per user; the portfolio page shows value, daily change, allocation and profit/loss.</li>
-        <li><b>Sell</b> — proceeds (minus the same fee) are credited to WC instantly; the trade is recorded with its realised P/L.</li>
-        <li><b>Orders</b> — market orders execute immediately; limit orders wait for the target price. History keeps every buy and sell.</li>
-      </ol>
-      <p>${tradeFee ? 'The current trading fee is <b>' + tradeFee + '%</b> per side, set by the admin.' : 'Trading fees are currently disabled by the admin.'}</p>` },
-    { id: 'bots', title: '4. Trading bots and accuracy', html: `
-      <p>Bots are subscription products that trade a reserved slice of the user's balance automatically, including while the app is closed. Each bot has an <b>accuracy</b> that is its target win rate.</p>
-      <table class="tbl"><thead><tr><th>Bot</th><th>Accuracy</th><th>Price</th><th>Stamina</th><th>Rest</th></tr></thead><tbody>${tierRows}</tbody></table>
-      <p><b>How a trade is decided:</b> every interval the bot stakes ${Number(bs.stakePct) || 20}% of its pool. It wins when a random roll is below its <i>effective</i> accuracy and gains ${Number(bs.winPct) || 4}% of the stake; otherwise it loses ${Number(bs.lossPct) || 6}% of the stake. Wins and losses both happen for every bot — accuracy only shifts the odds.</p>
-      <p><b>Stamina scales with accuracy.</b> A high-accuracy bot can place far more trades before tiring: roughly <b>${Math.round(stamina(85))}</b> trades at 85% versus <b>${Math.round(stamina(45))}</b> at 45%.</p>` },
-    { id: 'health', title: '5. Health, fatigue and cooling down', html: `
-      <p>Every trade consumes energy. As energy falls, the bot suffers a <b>fatigue penalty</b>: effective accuracy = accuracy × (0.6 + 0.4 × energy/100). A tired 85% bot behaves like ~51% at zero energy, which is why losses start to outnumber wins when a bot runs too long.</p>
-      <p><b>Account health</b> combines energy (70%) with the profit/loss trend (30%) and is charted on the bot profile. Guidance:</p>
-      <ul>
-        <li><b>65–100%</b> — healthy, let it run.</li>
-        <li><b>45–65%</b> — cooling down soon is recommended.</li>
-        <li><b>Below 45% or energy below 35%</b> — the <b>Cool down &amp; refresh</b> button appears; stop it before losses grow.</li>
-      </ul>
-      <p>Cooling down returns the capital, stops trading and enforces a rest of about <b>${cooldown(tiers.length ? tiers[tiers.length - 1].accuracy : 50)}</b> minutes for the strongest bot and longer for weaker ones. After the rest the bot starts again with full energy and normal accuracy. A bot that hits zero energy stops itself to protect the user's balance.</p>` },
-    { id: 'admin', title: '6. Admin controls that change this guide', html: `
-      <p>This guide is regenerated from the live database, so it updates automatically whenever the admin changes anything:</p>
-      <ul>
-        <li>Trading bots → accuracy, price, username, picture, HOT flag, interval.</li>
-        <li>Bot settings → stake %, win %, loss %, auto-stop threshold, minimum allocation.</li>
-        <li>Stocks → listings, prices, paused symbols, trading fee.</li>
-        <li>Wallet settings → deposit methods, QR codes, withdrawal networks.</li>
-      </ul>
-      <p>Current bot defaults: stake <b>${Number(bs.stakePct) || 20}%</b>, win <b>${Number(bs.winPct) || 4}%</b>, loss <b>${Number(bs.lossPct) || 6}%</b>, auto-stop at <b>${Number(bs.minPoolPct) || 10}%</b> of capital, minimum allocation <b>${Number(bs.minCapitalCoins) || 5} WC</b>.</p>` },
-    { id: 'risk', title: '7. Risk and compliance notes', html: `
-      <p>All stock and bot trading in this build is <b>simulated</b> for demonstration. Accuracy is a target, not a guarantee, and no result is financial advice. Before handling real money, connect a licensed brokerage, add server-side authentication, and review the wallet flow with a compliance advisor.</p>
-      <p>Keep the admin password and transaction PINs private; every admin action is written to the audit log.</p>` }
-  ];
-  return {
-    ok: true,
-    version: 'guide-' + Date.now(),
-    generatedAt: Date.now(),
-    stats: { tiers: tiers.length, stocks: stocks.length, feePct: tradeFee },
-    sections
-  };
 }
 
 async function api(req, res, pathname, query) {
@@ -913,11 +728,6 @@ async function api(req, res, pathname, query) {
     } catch (e) { return json(res, 400, { ok: false, error: e.message }); }
   }
 
-  // --- auto-updating trading & investment guide -------------------------
-  if (pathname === '/api/guide' && req.method === 'GET') {
-    try { return json(res, 200, buildTradeGuide()); }
-    catch (e) { return json(res, 500, { ok: false, error: e.message }); }
-  }
   // --- trading bots (server-side simulation) ---
   if (pathname === '/api/bots/state' && req.method === 'GET') {
     if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
@@ -961,12 +771,30 @@ async function api(req, res, pathname, query) {
     try { return json(res, 200, bots.stop(body)); }
     catch (e) { return json(res, 400, { ok: false, error: e.message }); }
   }
-  if (pathname === '/api/bots/cool' && req.method === 'POST') {
+  if (pathname === '/api/bots/topup' && req.method === 'POST') {
     if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
     const body = await readBody(req);
-    try { return json(res, 200, bots.cool(body)); }
+    try { return json(res, 200, bots.topup(body)); }
     catch (e) { return json(res, 400, { ok: false, error: e.message }); }
   }
+  if (pathname === '/api/bots/transfer' && req.method === 'POST') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    const body = await readBody(req);
+    try { return json(res, 200, bots.transfer(body)); }
+    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+  if (pathname === '/api/bots/resume' && req.method === 'POST') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    const body = await readBody(req);
+    try { return json(res, 200, bots.resume(body)); }
+    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+  if (pathname === '/api/bots/history' && req.method === 'GET') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    try { return json(res, 200, bots.history(String(query.get('userId') || ''))); }
+    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+
   if (pathname === '/api/bots/admin/config' && req.method === 'POST') {
     if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
     const body = await readBody(req);
@@ -1026,75 +854,6 @@ const server = http.createServer(async (req, res) => {
   try { if (handleBrandedRedirect(req, res, pathname)) return; } catch (e) { console.error('[redirect]', e.message); }
   serveStatic(req, res, pathname);
 });
-/* ---------------- server-side tool subscription worker ---------------- */
-const DEFAULT_TOOL_CATALOG = [
-  { id: 'autosecure', name: 'Auto Secure Take Profit', price: 9.99 },
-  { id: 'botassist', name: 'Bot Assisted Trading', price: 19.99 },
-  { id: 'riskguard', name: 'Risk Shield / Take Loss Guard', price: 7.99 },
-  { id: 'signals', name: 'Pro Chart Signals', price: 4.99 }
-];
-function toolRound(n) { return Math.round((Number(n) || 0) * 100) / 100; }
-function toolId(prefix) { return prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
-function toolCatalog(db) {
-  if (db && db.settings && Array.isArray(db.settings.toolCatalog) && db.settings.toolCatalog.length) return db.settings.toolCatalog;
-  return DEFAULT_TOOL_CATALOG;
-}
-function processToolSubscriptions() {
-  if (!store.db || !Array.isArray(store.db.users)) return 0;
-  const db = store.db;
-  const catalog = toolCatalog(db);
-  const byId = {};
-  catalog.forEach((t) => { byId[t.id] = t; });
-  let changed = 0;
-  const now = Date.now();
-  for (const u of db.users) {
-    const a = u.investAcct;
-    if (!a || !a.tools) continue;
-    if (!Array.isArray(a.ledger)) a.ledger = [];
-    for (const id of Object.keys(a.tools)) {
-      const s = a.tools[id];
-      const t = byId[id] || catalog.find((x) => x.id === id);
-      if (!s || !t) continue;
-      if (s.active && !s.paused && Number(s.expiresAt) <= now) {
-        if ((Number(a.usd) || 0) >= Number(t.price)) {
-          a.usd = toolRound(Number(a.usd) - Number(t.price));
-          s.expiresAt = now + 30 * 864e5;
-          s.price = Number(t.price);
-          s.reminded = false;
-          s.lastRenewAt = now;
-          a.ledger.unshift({ id: toolId('il_'), label: 'Tool auto-renewal · ' + t.name, usd: -Number(t.price), coins: 0, at: now });
-          db.txs = db.txs || [];
-          db.txs.unshift({ id: toolId('tx_'), userId: u.id, type: 'tool-renewal', label: 'Tool auto-renewal · ' + t.name, coins: 0, meta: { toolId: id, usd: Number(t.price) }, createdAt: now });
-          db.notifications = db.notifications || [];
-          db.notifications.unshift({ id: toolId('nt_'), userId: u.id, title: 'Tool renewed', body: t.name + ' renewed for another 30 days.', link: '#/investment/tools', icon: 'shield', read: false, createdAt: now });
-        } else {
-          s.active = false;
-          s.expiredAt = now;
-          db.notifications = db.notifications || [];
-          db.notifications.unshift({ id: toolId('nt_'), userId: u.id, title: 'Tool expired', body: t.name + ' expired — insufficient investment balance to renew.', link: '#/investment/tools', icon: 'warn', read: false, createdAt: now });
-        }
-        changed++;
-      }
-      if (s.active && !s.paused && Number(s.expiresAt) > now && Number(s.expiresAt) - now < 3 * 864e5 && !s.reminded) {
-        s.reminded = true;
-        db.notifications = db.notifications || [];
-        db.notifications.unshift({ id: toolId('nt_'), userId: u.id, title: 'Tool renewal reminder', body: t.name + ' renews in under 3 days. Keep enough investment balance.', link: '#/investment/tools', icon: 'clock', read: false, createdAt: now });
-        changed++;
-      }
-    }
-  }
-  if (changed) {
-    store.rev += 1; store.updatedAt = now; persist();
-    try { broadcast('change', { rev: store.rev, source: 'tool-worker', at: now }); } catch (e) {}
-    console.log('[tools] processed', changed, 'subscription event(s)');
-  }
-  return changed;
-}
-function startToolWorker() {
-  setInterval(() => { try { processToolSubscriptions(); } catch (e) { console.error('[tools] worker:', e.message); } }, 5 * 60 * 1000).unref();
-  setTimeout(() => { try { processToolSubscriptions(); } catch (e) {} }, 8000).unref();
-}
-
 server.keepAliveTimeout = 65000;
 server.headersTimeout = 70000;
 (async () => {
@@ -1109,7 +868,6 @@ server.headersTimeout = 70000;
   ensureServices(store.db);
   spot.startTimers();
   bots.startTimers();
-  startToolWorker();
   shares.startTimers();
   server.listen(PORT, HOST, () => {
     console.log(`[whalechat] listening on http://localhost:${PORT}`);
