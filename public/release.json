@@ -1,8 +1,8 @@
 {
-  "version": "3.34.0",
-  "build": "2026-11-16T11:25:46Z",
+  "version": "3.35.0",
+  "build": "2026-11-16T12:58:29Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.34.0 - B2B investing desk (separate Buy/Sell pages, asset lists with multi-buy, top-up, profit transfers, corrected capital/assets/profit balances), one shared subscription state for Auto Secure + bot traders, working back button, and server-side B2B price alerts with email buy-now/sell-now links.",
-  "releasedAt": "2026-11-16T11:25:46Z",
+  "notes": "WhaleChat 3.35.0 - WC-Investing pages (invest / active plans / ROI progress / transfer / history) with one route per button, shares ROI formula, auto-reinvestment, working buy-sell-asset buttons on the B2B desk, live B2B price charts, 5x default leverage payout formula and money-based take loss.",
+  "releasedAt": "2026-11-16T12:58:29Z",
   "minimum": "3.0.0"
 }

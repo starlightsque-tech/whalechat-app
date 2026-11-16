@@ -65,7 +65,13 @@ const LT = {
     if (!DB.invest.dividendOverrides || typeof DB.invest.dividendOverrides !== 'object') DB.invest.dividendOverrides = {};
     return DB.invest;
   },
-  leverage() { return Math.min(20, Math.max(1, Number(this.cfg().leverage) || 1)); },
+  leverage() {
+    /* payout = capital × price move % × leverage. When a user has not set a
+       leverage level the trade runs at the 5× default. */
+    const raw = Number(this.cfg().leverage);
+    const lev = raw >= 1 ? raw : 5;
+    return Math.min(20, Math.max(1, lev));
+  },
   feePct() { return Math.max(0, Number(this.cfg().feePct) || 0); },
   all(userId) {
     if (!Array.isArray(DB.trades)) DB.trades = [];
@@ -352,7 +358,12 @@ const LT = {
         if (lv.sl > 0 && p.price >= lv.sl) return void this.settle(t, slReason);
       }
       if (t.tpPct > 0 && p.pnlPct >= t.tpPct) return void this.takeProfit(t, 'Take Profit Hit');
+      /* take loss on a % of the trade capital */
       if (t.slPct > 0 && p.pnlPct <= -t.slPct) return void this.settle(t, slReason);
+      /* take loss on a money amount (WC or USD) — never lose more than the
+         amount the user set for the trade */
+      if (Number(t.stopLossWc) > 0 && p.pnlCoins <= -Number(t.stopLossWc)) return void this.settle(t, slReason);
+      if (Number(t.stopLossUsd) > 0 && p.pnlUsd <= -Number(t.stopLossUsd)) return void this.settle(t, slReason);
       if (t.expiresAt && Date.now() >= t.expiresAt) return void this.settle(t, 'Time limit reached');
     });
   },
@@ -638,6 +649,10 @@ const LT = {
         <div class="input-wrap"><span class="inv-prefix">WC</span>
           <input class="input" id="ltCapital" type="number" step="1" min="${this.MIN_CAPITAL}" placeholder="0"/></div>
         <div class="tiny muted" id="ltCapitalUsd">≈ $0.00 · balance ${coins(me().balance)} WC</div></div>
+      <div class="field"><label class="label">or enter the trade amount in USD</label>
+        <div class="input-wrap"><span class="inv-prefix">$</span>
+          <input class="input" id="ltCapitalUsdIn" type="number" step="0.01" min="0" placeholder="0.00" data-act="lt-usd-in"/></div>
+        <div class="tiny muted">Converts automatically at 1 WC = $0.50</div></div>
       <div class="lt-tpsl-grid">
         <div class="lt-level-box" data-k="tp" data-mode="${LT.levels.tp}">
           <div class="between"><label class="label">Take Profit <span class="tiny muted">skims profit, trade continues</span></label>
@@ -1050,6 +1065,20 @@ LT.autoSecureStrip = function () {
     </div>
   </div>`;
 };
+
+  /* typing a USD amount fills the WhaleCoin capital field (auto conversion) */
+  if (typeof App !== 'undefined') {
+    App.ltUsdIn = function () {
+      const usdEl = document.getElementById('ltCapitalUsdIn');
+      const wcEl = document.getElementById('ltCapital');
+      if (!usdEl || !wcEl) return;
+      const v = Number(usdEl.value) || 0;
+      if (!(v > 0)) return;
+      wcEl.value = String(Math.round((v / 0.5) * 100) / 100);
+      const hint = document.getElementById('ltCapitalUsd');
+      if (hint) hint.textContent = '≈ $' + v.toFixed(2) + ' · balance ' + coins(me().balance) + ' WC';
+    };
+  }
 
   /* Auto Secure subscribe / cancel from the stock trading page */
   LT.bindAutoSecure = function () {

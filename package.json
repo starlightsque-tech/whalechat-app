@@ -15,7 +15,8 @@
     "demo:catalog": "node scripts/generate-demo-catalog.mjs",
     "verify:finnhub": "node scripts/verify-finnhub.js",
     "test:b2b": "node scripts/test-b2b-desk.js",
-    "verify:b2b": "node scripts/verify-b2b-links.mjs"
+    "verify:b2b": "node scripts/verify-b2b-links.mjs",
+    "test:wc-invest": "node scripts/test-wc-invest.js"
   },
   "dependencies": {
     "web-push": "^3.6.7",

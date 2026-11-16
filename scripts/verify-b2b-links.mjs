@@ -57,7 +57,13 @@ function check(name, ok, detail) { checks.push({ name, ok, detail }); console.lo
     ['sell page id', 'ihB2bSellUnits_'],
     ['multi-buy handler', 'ihB2bBuyMulti'],
     ['shared subscription module', '/* wc-subs */'],
-    ['back navigation stack', 'NAV_STACK']
+    ['back navigation stack', 'NAV_STACK'],
+    ['WC-Investing plan engine', '/* wc-invest-plans */'],
+    ['WC-Investing pages', '/* wc-invest-ui */'],
+    ['shares invest route', '#/invest/shares/invest'],
+    ['shares active route', '#/invest/shares/active'],
+    ['shares ROI route', '#/invest/shares/roi'],
+    ['shares transfer route', '#/invest/shares/transfer']
   ];
   for (const [name, needle] of routes) check(name + ' present in the bundle', page.includes(needle));
 
