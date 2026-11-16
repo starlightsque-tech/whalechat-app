@@ -494,7 +494,7 @@ class BotService {
        USD trade capital instead of failing with "0 WC". */
     if (!(allocated > 0)) allocated = round(Math.min(Math.max(minCapital, 5), tradeCapital), 2);
     if (!(allocated > 0) || tradeCapital < minCapital) {
-      throw nextError(`Bot trading capital is 0 WC — top up at least ${minCapital} WC ($${round(minCapital * 0.5, 2)}) in your stock trading account first`);
+      throw nextError(`Bot trading capital is ${tradeCapital} WC — top up at least ${minCapital} WC ($${round(minCapital * 0.5, 2)}) in your stock trading account first`);
     }
     if (allocated < minCapital) allocated = round(Math.min(minCapital, tradeCapital), 2);
     if (allocated > tradeCapital) throw nextError(`Allocation is higher than your stock trading capital (${tradeCapital} WC / $${round(tradeCapital * 0.5, 2)})`);
