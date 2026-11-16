@@ -1,4 +1,4 @@
-# WhaleChat 3.33.1 — web app + mobile apps
+# WhaleChat 3.34.0 — web app + mobile apps
 
 WhaleChat is a social + marketplace + wallet product built as a single-page app with a
 Node sync server and native Android/iOS shells.
@@ -324,6 +324,14 @@ The Shares page now includes an interactive **How your investment profit is calc
 choose a plan and a USD amount and it shows the principal, daily return %, duration days,
 total profit and maturity payout in both USD and WC, step by step. Example: **$100 (200 WC) at
 2.5% daily for 7 days** → $2.50/day → +$17.50 (35 WC) profit → $117.50 (235 WC) payout.
+
+## Stock price alerts by email (Brevo)
+
+Stock price alerts now trigger an email in addition to the in-app notification. When an alert
+fires the client calls `POST /api/alerts/notify`; the server verifies the alert belongs to the
+user and queues a `price_alert` email through Brevo (`BREVO_API_KEY` / Admin mail settings) or
+SMTP. The email includes the ticker, condition, live price and a direct link to the stock
+trade view (`#/invest/stock/<ticker>`), where the user can Buy or Sell.
 
 ## Shared portfolio audit trail
 
