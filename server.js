@@ -351,9 +351,53 @@ const COLLECTIONS = ['users', 'vendors', 'companyProducts', 'products', 'orders'
 function isAdmin(db, adminId) {
   return !!(db && Array.isArray(db.users) && db.users.some((u) => u && u.id === adminId && u.role === 'admin'));
 }
+function ensure247Assets(db) {
+  if (!db || !Array.isArray(db.stocks)) return;
+  const spec = [
+    ['BTCUSD', 'BTC/USD', 'Crypto', 64250, 'crypto'],
+    ['ETHUSD', 'ETH/USD', 'Crypto', 3120, 'crypto'],
+    ['SOLUSD', 'SOL/USD', 'Crypto', 148, 'crypto'],
+    ['BNBUSD', 'BNB/USD', 'Crypto', 585, 'crypto'],
+    ['DOGEUSD', 'DOGE/USD', 'Crypto', 0.14, 'crypto'],
+    ['XRPUSD', 'XRP/USD', 'Crypto', 0.52, 'crypto'],
+    ['EURUSD24', 'EUR/USD Synthetic', 'Forex', 1.086, 'forex'],
+    ['GBPUSD24', 'GBP/USD Synthetic', 'Forex', 1.271, 'forex'],
+    ['USDJPY24', 'USD/JPY Synthetic', 'Forex', 156.4, 'forex'],
+    ['MARA24', 'MARA 24/7', 'Crypto Stocks', 22.4, 'synthetic-stock'],
+    ['SHOP24', 'SHOP 24/7', 'Crypto Stocks', 78.2, 'synthetic-stock'],
+    ['TSLA24', 'TSLA 24/7', 'Crypto Stocks', 248.5, 'synthetic-stock'],
+    ['AAPL24', 'AAPL 24/7', 'Crypto Stocks', 228.1, 'synthetic-stock'],
+    ['NVDA24', 'NVDA 24/7', 'Crypto Stocks', 132.9, 'synthetic-stock'],
+    ['AMZN24', 'AMZN 24/7', 'Crypto Stocks', 201.4, 'synthetic-stock'],
+    ['US3024', 'US30 24/7', 'Indices', 43820, 'index'],
+    ['US10024', 'US100 24/7', 'Indices', 20450, 'index'],
+    ['GOLD24', 'GOLD 24/7', 'Commodities', 2685, 'index'],
+    ['OIL24', 'OIL 24/7', 'Commodities', 72.8, 'index']
+  ];
+  for (const [ticker, name, sector, price, cls] of spec) {
+    let s = db.stocks.find((x) => x && x.ticker === ticker);
+    if (!s) {
+      db.stocks.push({
+        id: 'st_' + ticker.toLowerCase(), ticker, name, sector, assetClass: cls,
+        price, prevClose: price, twentyFourSeven: true, synthetic: cls !== 'crypto' && cls !== 'forex',
+        pe: 0, mcap: 0, div: 0, ceo: '', website: '', about: name + ' — continuous 24/7 synthetic market, open every day of the week.',
+        active: true, createdAt: Date.now()
+      });
+    } else {
+      s.twentyFourSeven = true;
+      if (cls !== 'crypto' && cls !== 'forex') s.synthetic = true;
+      if (!s.assetClass) s.assetClass = cls;
+    }
+  }
+  for (const s of db.stocks) {
+    if (s && (s.assetClass === 'crypto' || s.assetClass === 'forex')) s.twentyFourSeven = true;
+  }
+}
+
 function ensureServices(db) {
   if (!db) return;
   try { spot.ensureDefaults(db); } catch (e) {}
+  try { ensure247Assets(db); } catch (e) {}
   try { bots.ensureDefaults(db); } catch (e) {}
   try { shares.ensureDefaults(db); } catch (e) {}
 }
