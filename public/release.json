@@ -1,8 +1,8 @@
 {
-  "version": "3.33.1",
-  "build": "2026-11-16T06:27:07Z",
+  "version": "3.34.0",
+  "build": "2026-11-16T06:31:21Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.33.1 - bot account top-up/start/toggle fixes and bot dashboard shortcut.",
-  "releasedAt": "2026-11-16T06:27:07Z",
+  "notes": "WhaleChat 3.34.0 - stock price-alert email delivery via Brevo with buy/sell trade links.",
+  "releasedAt": "2026-11-16T06:31:21Z",
   "minimum": "3.0.0"
 }
