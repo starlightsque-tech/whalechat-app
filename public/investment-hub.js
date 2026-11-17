@@ -114,7 +114,7 @@
     ];
     return head('Investment account', 'Your portfolio balances, transfers, top-ups and specialist desks.', '#/profile') +
       '<div class="ih-cards ih-inv-cards">' +
-        '<div class="ih-card ih-card-main"><span>Total assets balance</span><b>' + money(a.usd) + '</b><small>USD available to top up portfolios and tools</small></div>' +
+        '<div class="ih-card ih-card-main"><span>Trade capital (USD)</span><b>' + money(a.usd) + '</b><small>WC you send here becomes USD · top up portfolios and tools</small></div>' +
         '<div class="ih-card"><span>Whalecoin balance</span><b>' + wc(a.wcBalance || 0) + ' <em>WC</em></b><small>≈ ' + money((Number(a.wcBalance) || 0) * RATE) + ' · transferable to your Whalechat WC balance</small></div>' +
         '<div class="ih-card"><span>Payout balance</span><b>' + money(a.payout) + '</b><small>Profits received from your portfolios</small></div>' +
       '</div>' +
@@ -123,7 +123,7 @@
       '</div></div>' +
       '<div class="card ih-actions"><div class="card-title" style="margin:0 0 9px">Top up portfolio capital</div><div class="ih-btn-grid">' +
         tops.map(function (x) { return '<a href="#/investment/topup?to=' + x[1] + '" class="btn btn-soft btn-sm">' + x[0] + '</a>'; }).join('') +
-      '</div><div class="tiny muted" style="margin-top:8px">Top-ups are paid from your total assets balance.</div></div>' +
+      '</div><div class="tiny muted" style="margin-top:8px">Top-ups are paid in USD from your trade capital. Fund trade capital by sending WC from your WhaleChat account.</div></div>' +
       '<div class="card"><div class="card-title">Portfolio balances</div><div class="ih-list">' +
         [['Stock trading', a.portfolios.stock], ['WC-Investing', a.portfolios.wc], ['B2B-Investing', a.portfolios.b2b], ['Bot trading', a.portfolios.bot]]
           .map(function (x) { return '<div class="ih-row"><span>' + x[0] + '</span><b>' + money(x[1]) + '</b><span class="tiny muted">' + wc(x[1] / RATE) + ' WC</span></div>'; }).join('') +
@@ -134,7 +134,7 @@
     var a = account(u);
     return head('Transfer', 'Move USD into your investment account, or move investment WhaleCoin back to your Whalechat account.', '#/investment') +
       '<div class="card"><div class="field"><label class="label">Transfer direction</label><select class="input" id="ihTrMode">' +
-        '<option value="usd2inv">Whalechat $ balance → investment total assets</option>' +
+        '<option value="usd2inv">WhaleChat WC balance → investment trade capital (USD)</option>' +
         '<option value="wc2wallet">Investment WhaleCoin → Whalechat WC balance</option>' +
       '</select></div>' +
       '<div class="field"><label class="label">Amount</label><input class="input" id="ihTrAmount" type="number" step="0.01" min="0" placeholder="0.00"/><div class="tiny muted" id="ihTrPreview">Enter an amount to see the transfer.</div></div>' +
@@ -142,7 +142,7 @@
       '<div class="card"><div class="card-title">Balances</div><div class="ih-list">' +
         '<div class="ih-row"><span>Whalechat $ balance</span><b>' + money(u.walletUsd || 0) + '</b></div>' +
         '<div class="ih-row"><span>Whalechat WC balance</span><b>' + wc(u.balance) + ' WC</b></div>' +
-        '<div class="ih-row"><span>Investment total assets</span><b>' + money(a.usd) + '</b></div>' +
+        '<div class="ih-row"><span>Trade capital (USD)</span><b>' + money(a.usd) + '</b></div>' +
         '<div class="ih-row"><span>Investment WhaleCoin</span><b>' + wc(a.wcBalance || 0) + ' WC</b></div>' +
         '<div class="ih-row"><span>Payout balance</span><b>' + money(a.payout) + '</b></div></div>' +
       '<div class="tiny muted" style="margin-top:8px">Only investment WhaleCoin can leave the investment account, and it lands in your Whalechat WC balance.</div></div>';
@@ -160,12 +160,12 @@
   function topupPage(u, params) {
     var a = account(u); var to = (params && params.to) || 'stock';
     var labels = { stock: 'Stock trading', wc: 'WC-Investing', b2b: 'B2B-Investing', bot: 'Bot trade capital' };
-    return head('Top up ' + (labels[to] || 'portfolio'), 'Move USD from your Whalechat $ balance into portfolio capital.', '#/investment') +
+    return head('Top up ' + (labels[to] || 'portfolio'), 'Move USD from your investment trade capital into portfolio capital.', '#/investment') +
       '<div class="card"><div class="field"><label class="label">Top up to</label><select class="input" id="ihTopTo">' +
         Object.keys(labels).map(function (k) { return '<option value="' + k + '"' + (k === to ? ' selected' : '') + '>' + labels[k] + '</option>'; }).join('') +
       '</select></div><div class="field"><label class="label">Amount (USD)</label><input class="input" id="ihTopAmount" type="number" step="0.01" min="0" placeholder="0.00"/></div>' +
       '<button class="btn btn-primary" data-act="ih-topup" style="width:100%">Send to portfolio</button>' +
-      '<div class="tiny muted mt6">Available $ balance: ' + money(u.walletUsd || 0) + ' · portfolio transactions are in USD</div></div>' +
+      '<div class="tiny muted mt6">Available trade capital: ' + money(a.usd || 0) + ' · portfolio top-ups are in USD · <a href="#/account/transfer?to=inv_usd">Send WC to trade capital</a></div></div>' +
       '<div class="card"><div class="card-title">Current portfolio balances</div><div class="ih-list">' +
         Object.keys(labels).map(function (k) { return '<div class="ih-row"><span>' + labels[k] + '</span><b>' + money(a.portfolios[k]) + '</b></div>'; }).join('') + '</div></div>';
   }
@@ -530,11 +530,11 @@
     return head('Top up B2B capital', 'Fund the B2B investing account. Buys are paid from this capital balance.', '#/investment/b2b') +
       '<div class="card">' +
         '<div class="field"><label class="label">Take the money from</label><select class="input" id="ihB2bTopFrom">' +
-          '<option value="usd">Whalechat $ balance · ' + money(u.walletUsd || 0) + '</option>' +
+          '<option value="usd">Trade capital (USD) · ' + money(a.usd || 0) + '</option>' +
         '</select></div>' +
         '<div class="field"><label class="label">Amount (USD)</label><input class="input" id="ihB2bTopAmount" type="number" step="0.01" min="0" placeholder="0.00"/></div>' +
         '<button class="btn btn-primary" data-act="ih-b2b-topup" style="width:100%">Top up capital</button>' +
-        '<div class="tiny muted mt6">WhaleCoin is converted at 1 WC = $0.50.</div>' +
+        '<div class="tiny muted mt6">Top-ups are in USD from your investment trade capital.</div>' +
       '</div>' +
       '<div class="card"><div class="ih-list">' +
         '<div class="ih-row"><span>Capital balance</span><b>' + money(b2bCapital(a)) + '</b></div>' +
@@ -595,7 +595,7 @@
       '<div class="card"><div class="ih-list">' +
         '<div class="ih-row"><span>Account created</span><b>' + new Date(u.createdAt || Date.now()).toLocaleDateString() + '</b></div>' +
         '<div class="ih-row"><span>Main WC balance</span><b>' + wc(u.balance) + ' WC</b></div>' +
-        '<div class="ih-row"><span>Investment total assets</span><b>' + money(a.usd) + '</b></div>' +
+        '<div class="ih-row"><span>Trade capital (USD)</span><b>' + money(a.usd) + '</b></div>' +
         '<div class="ih-row"><span>Payout balance</span><b>' + money(a.payout) + '</b></div>' +
         '<div class="ih-row"><span>Total deposits</span><b>' + wc(u.totalDeposits || 0) + ' WC</b></div>' +
         '<div class="ih-row"><span>Total withdrawals</span><b>' + wc(u.totalWithdrawals || 0) + ' WC</b></div>' +
@@ -780,7 +780,7 @@
         if (!mode || !amt || !out) return;
         var upd = function () {
           var v = Number(amt.value) || 0;
-          if (mode.value === 'usd2inv') out.textContent = v > 0 ? money(v) + ' moves to your investment total assets balance.' : 'Enter an amount to see the transfer.';
+          if (mode.value === 'usd2inv') out.textContent = v > 0 ? wc(v) + ' WC becomes ' + money(v * RATE) + ' in your trade capital.' : 'Enter an amount to see the transfer.';
           else out.textContent = v > 0 ? wc(v) + ' WC moves to your Whalechat account WC balance.' : 'Enter an amount to see the transfer.';
         };
         mode.onchange = upd; amt.oninput = upd; upd();
@@ -805,7 +805,7 @@
           html = html.replace('<a href="#/deposit" class="btn">Deposit</a><a href="#/withdraw" class="btn">Withdraw</a>', '<a href="#/deposit" class="btn">Deposit</a><a href="#/investment" class="btn">Investment account</a><a href="#/withdraw" class="btn">Withdraw</a>');
         }
         var strip = '<div class="ih-cards ih-account-strip">' +
-          '<div class="ih-card"><span>Deposit balance</span><b>' + depositSummary(u) + '</b><small>Deposited coin assets</small></div>' +
+          '<div class="ih-card"><span>Crypto balance</span><b>' + depositSummary(u) + '</b><small>Deposited coin assets</small></div>' +
           '<div class="ih-card"><span>$ balance</span><b>' + money(u.walletUsd || 0) + '</b><small>USD wallet balance</small></div>' +
           '<div class="ih-card"><span>WhaleCoin balance</span><b>' + wc(u.balance) + ' WC</b><small>Spendable WC</small></div>' +
         '</div>';
@@ -842,10 +842,10 @@
       var amount = Number((document.getElementById('ihTrAmount') || {}).value || 0);
       if (!(amount > 0)) return toastH('Enter an amount', 'err');
       if (mode === 'usd2inv') {
-        if ((Number(u.walletUsd) || 0) < amount) return toastH('Not enough in your Whalechat $ balance', 'err');
-        u.walletUsd = Math.round(((Number(u.walletUsd) || 0) - amount) * 100) / 100;
-        a.usd = Math.round((Number(a.usd) + amount) * 100) / 100;
-        ledger(u, 'Whalechat $ → investment total assets', -amount, 0, { to: 'investment' });
+        if ((Number(u.balance) || 0) < amount) return toastH('Not enough WC in your WhaleChat balance', 'err');
+        u.balance = Math.round(((Number(u.balance) || 0) - amount) * 100) / 100;
+        a.usd = Math.round((Number(a.usd) + amount * RATE) * 100) / 100;
+        ledger(u, 'WC balance → investment trade capital', amount * RATE, -amount, { to: 'investment' });
         userTx(u, 'invest-transfer', 'Transfer to investment account', 0, { usd: amount });
       } else {
         if (Number(a.wcBalance) < amount) return toastH('Not enough investment WhaleCoin', 'err');
@@ -872,8 +872,8 @@
       var to = (document.getElementById('ihTopTo') || {}).value || 'stock';
       var amount = Number((document.getElementById('ihTopAmount') || {}).value || 0);
       if (!(amount > 0)) return toastH('Enter an amount', 'err');
-      if ((Number(u.walletUsd) || 0) < amount) return toastH('Not enough in your Whalechat $ balance', 'err');
-      u.walletUsd = Math.round(((Number(u.walletUsd) || 0) - amount) * 100) / 100;
+      if ((Number(a.usd) || 0) < amount - 0.001) return toastH('Not enough in your trade capital (' + money(a.usd) + '). Send WC from your WhaleChat account first.', 'err');
+      a.usd = Math.round(((Number(a.usd) || 0) - amount) * 100) / 100;
       a.portfolios[to] = Math.round(((a.portfolios[to] || 0) + amount) * 100) / 100;
       userTx(u, 'invest-topup', 'Portfolio top-up · ' + to, 0, { portfolio: to, usd: amount });
       ledger(u, 'Top-up ' + to + ' · ' + money(amount) + ' USD', -amount, 0, { portfolio: to }); save(); toastH('Portfolio topped up with ' + money(amount), 'ok'); render();
@@ -988,9 +988,9 @@
       var from = (document.getElementById('ihB2bTopFrom') || {}).value || 'usd';
       var amount = Number((document.getElementById('ihB2bTopAmount') || {}).value || 0);
       if (!(amount > 0)) return toastH('Enter an amount', 'err');
-      if ((Number(u.walletUsd) || 0) < amount) return toastH('Not enough in your Whalechat $ balance', 'err');
-      u.walletUsd = Math.round((Number(u.walletUsd) - amount) * 100) / 100;
-      ledger(u, '$ balance → B2B capital', -amount, 0, { source: 'wallet-usd' });
+      if ((Number(a.usd) || 0) < amount - 0.001) return toastH('Not enough in your trade capital (' + money(a.usd) + ')', 'err');
+      a.usd = Math.round((Number(a.usd) - amount) * 100) / 100;
+      ledger(u, 'Trade capital → B2B capital', -amount, 0, { source: 'trade-capital' });
       a.portfolios.b2b = Math.round((b2bCapital(a) + amount) * 100) / 100;
       save(); toastH('B2B capital topped up · ' + money(amount), 'ok'); render();
     };
