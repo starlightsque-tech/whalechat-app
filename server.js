@@ -53,7 +53,7 @@ const shares = new ShareService({
   broadcast: (event, data) => { try { broadcast(event, data); } catch (e) {} }
 });
 /* Binance live crypto prices alongside Finnhub (charts stay on Finnhub). */
-const binance = createBinanceFeed ? createBinanceFeed({ getDb: () => store.db, everyMs: Number(process.env.BINANCE_MS || 15000) }) : null;
+const binance = createBinanceFeed ? createBinanceFeed({ getDb: () => store.db, everyMs: Number(process.env.BINANCE_MS || 15000), onTick: (sym, price) => { try { market.ingestExternal(sym, price); } catch (e) {} } }) : null;
 
 /* Durable third-party connection settings (Finnhub, Binance, Brevo, SMTP).
    Applied on every boot so a new release never comes up disconnected. */
@@ -89,6 +89,29 @@ const SUBS_FILE = path.join(DATA_DIR, 'push-subscriptions.json');
 const VAPID_FILE = path.join(DATA_DIR, 'vapid.json');
 const store = { rev: 0, db: null, updatedAt: 0, loadedFrom: 'empty' };
 const clients = new Set();
+/* live price stream: every 400 ms push only the quotes that changed */
+const marketClients = new Set();
+let marketStreamSince = Date.now();
+let marketStatusAt = 0;
+setInterval(() => {
+  const now = Date.now();
+  const since = marketStreamSince;
+  marketStreamSince = now;
+  if (!marketClients.size) return;
+  try {
+    const qs = market.quotes || {};
+    const delta = {};
+    let n = 0;
+    for (const k in qs) { const q = qs[k]; if (q && Number(q.updatedAt) >= since) { delta[k] = q; n++; } }
+    let frame = '';
+    if (n) frame += `event: quotes\ndata: ${JSON.stringify({ at: now, quotes: delta })}\n\n`;
+    if (now - marketStatusAt > 5000) {
+      marketStatusAt = now;
+      frame += `event: status\ndata: ${JSON.stringify({ at: now, source: market.source(), notice: market.notice(), status: market.status() })}\n\n`;
+    }
+    if (frame) for (const r of marketClients) { try { r.write(frame); } catch (e) {} }
+  } catch (e) {}
+}, 400).unref();
 
 const readJSON = (f, d) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch (e) { return d; } };
 function writeJSONAtomic(file, value) {
@@ -531,6 +554,15 @@ async function api(req, res, pathname, query) {
     return;
   }
   // --- market data (Finnhub stays server-side) -------------------------
+  if (pathname === '/api/market/stream' && req.method === 'GET') {
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache, no-transform', connection: 'keep-alive', 'x-accel-buffering': 'no', 'access-control-allow-origin': '*' });
+    res.write('retry: 2000\n\n');
+    try { res.write(`event: snapshot\ndata: ${JSON.stringify(market.snapshot())}\n\n`); } catch (e) {}
+    marketClients.add(res);
+    const ping = setInterval(() => { try { res.write(': ping\n\n'); } catch (e) {} }, 20000);
+    req.on('close', () => { clearInterval(ping); marketClients.delete(res); });
+    return;
+  }
   if (pathname === '/api/market/quotes' && req.method === 'GET') {
     return json(res, 200, market.snapshot());
   }
