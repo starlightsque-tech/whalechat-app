@@ -67,6 +67,19 @@ function closeFeeFor(t, db) {
   const pct = Math.max(0, Number(db && db.invest && db.invest.feePct != null ? db.invest.feePct : 0.5) || 0);
   return r2((Number(t.capitalCoins) || 0) * pct / 100);
 }
+/* Trade totals recorded at close: total profit = final move profit + profit still unclaimed
+   from Auto Secure; payout record = capital + total profit - fee. Informational only: the
+   credited payout is unchanged so earlier profit is never paid twice. */
+function recordTradeTotals(t) {
+  const cap = Number(t.capitalCoins) || 0;
+  const fin = Math.max(0, Number(t.pnlCoins) || 0);
+  const unclaimed = (Array.isArray(t.securedProfits) ? t.securedProfits : [])
+    .reduce((a, x) => a + (x && !x.claimed ? (Number(x.coins) || 0) : 0), 0);
+  const total = r2(fin + unclaimed);
+  t.unclaimedProfitCoins = r2(unclaimed);
+  t.totalProfitCoins = total;
+  t.totalProfitPayoutCoins = r2(Math.max(0, cap + total - (Number(t.closeFeeCoins) || 0)));
+}
 function settleText(ticker, split) {
   const fee = split.fee > 0 ? ` after the $${split.fee.toFixed(2)} trade fee` : '';
   if (!split.loss) return `${ticker} closed: payout $${(split.payout || 0).toFixed(2)}${fee} — +$${split.profit.toFixed(2)} profit credited to your Profit balance and $${split.capital.toFixed(2)} capital returned to your Trade capital balance.`;
@@ -1336,6 +1349,7 @@ class MarketService {
     t.pnlCoins = pnlCoins;
     t.pnlUsd = round(pnlCoins * 0.5, 2);
     t.payoutCoins = payout;
+    recordTradeTotals(t);
     t.result = payout <= 0 ? 'loss' : pnlCoins > 0 ? 'profit' : 'flat';
     t.settledBy = 'server-manual';
     db.txs = db.txs || [];
@@ -1508,6 +1522,7 @@ class MarketService {
         t.pnlCoins = pnlCoins;
         t.pnlUsd = round(pnlCoins * 0.5, 2);
         t.payoutCoins = payout;
+        recordTradeTotals(t);
         t.result = payout <= 0 ? 'loss' : pnlCoins > 0 ? 'profit' : 'flat';
         t.settledBy = 'server';
 
