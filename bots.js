@@ -43,6 +43,8 @@ const DEFAULT_SETTINGS = {
   stakePct: 20,            // % of the pool used per simulated trade
   winPct: 4,               // % gain on the stake when the trade wins
   lossPct: 6,              // % loss on the stake when the trade loses
+  leverage: 5,             // profit = stake × price move % × leverage
+  tradeFeePct: 0.5,        // payout = stake + profit − (stake × fee %)
   currency: 'WC',
   autoSecurePriceUsd: 20,
   autoSecureCycle: 'monthly'
@@ -781,6 +783,8 @@ class BotService {
       if (opts.settings.stakePct != null) s.stakePct = clamp(opts.settings.stakePct, 1, 100, s.stakePct);
       if (opts.settings.winPct != null) s.winPct = clamp(opts.settings.winPct, 0.1, 100, s.winPct);
       if (opts.settings.lossPct != null) s.lossPct = clamp(opts.settings.lossPct, 0.1, 100, s.lossPct);
+      if (opts.settings.leverage != null) s.leverage = clamp(opts.settings.leverage, 1, 100, s.leverage);
+      if (opts.settings.tradeFeePct != null) { const f = Number(opts.settings.tradeFeePct); if (Number.isFinite(f) && f >= 0 && f <= 50) s.tradeFeePct = f; }
       if (opts.settings.autoSecurePriceUsd != null) s.autoSecurePriceUsd = clamp(opts.settings.autoSecurePriceUsd, 0, 100000, s.autoSecurePriceUsd);
       if (opts.settings.autoSecureCycle != null && Object.prototype.hasOwnProperty.call(CYCLE_MS, opts.settings.autoSecureCycle)) {
         s.autoSecureCycle = opts.settings.autoSecureCycle;
@@ -899,8 +903,13 @@ class BotService {
     const accuracy = clamp(tier.accuracy, 1, 100, 50);
     const win = Math.random() * 100 < accuracy;
     const move = win ? clamp(s.winPct, 0.1, 100, 4) : -clamp(s.lossPct, 0.1, 100, 6);
-    const pnl = round(stake * (move / 100), 2);
-    const payout = round(Math.max(0, stake + pnl), 2);
+    /* profit = capital × price move % × leverage
+       payout = capital + profit − (capital × trade fee %) */
+    const lev = clamp(s.leverage, 1, 100, 5);
+    const feePct = Number.isFinite(Number(s.tradeFeePct)) && Number(s.tradeFeePct) >= 0 ? Number(s.tradeFeePct) : 0.5;
+    const pnl = round(Math.max(-stake, stake * (move / 100) * lev), 2);
+    const fee = round(Math.min(stake * feePct / 100, Math.max(0, stake + pnl)), 2);
+    const payout = round(Math.max(0, stake + pnl - fee), 2);
 
     account.capitalCoins = round(capital - stake, 2);
     account.profitCoins = round((Number(account.profitCoins) || 0) + payout, 2);
@@ -908,7 +917,7 @@ class BotService {
 
     const entry = {
       id: nid('btr_'), at: now, ticker, side: win ? 'WIN' : 'LOSS',
-      stakeCoins: stake, pnlCoins: pnl, payoutCoins: payout, win,
+      stakeCoins: stake, pnlCoins: pnl, payoutCoins: payout, feeCoins: fee, leverage: lev, movePct: move, win,
       priceUsd: price, capitalAfter: account.capitalCoins, profitAfter: account.profitCoins,
       poolAfter: account.capitalCoins, accuracy
     };
@@ -920,8 +929,8 @@ class BotService {
     else session.totalLossCoins = round((Number(session.totalLossCoins) || 0) + Math.abs(pnl), 2);
     session.tradeCount = (Number(session.tradeCount) || 0) + 1;
 
-    this.event(db, session.userId, 'trade', `${win ? 'Win' : 'Loss'} · ${ticker} · stake ${stake} WC · payout ${payout} WC → profit balance`, payout, {
-      sessionId: session.id, ticker, stakeCoins: stake, pnlCoins: pnl, capitalAfter: account.capitalCoins, profitAfter: account.profitCoins
+    this.event(db, session.userId, 'trade', `${win ? 'Win' : 'Loss'} · ${ticker} · stake ${stake} WC · ${move > 0 ? '+' : ''}${move}% × ${lev}x = ${pnl >= 0 ? '+' : ''}${pnl} WC · fee ${fee} WC · payout ${payout} WC → profit balance`, payout, {
+      sessionId: session.id, ticker, stakeCoins: stake, pnlCoins: pnl, feeCoins: fee, leverage: lev, capitalAfter: account.capitalCoins, profitAfter: account.profitCoins
     });
 
     if (session.stopAt && now >= Number(session.stopAt)) this.coolSession(db, session, 'Time limit reached');
