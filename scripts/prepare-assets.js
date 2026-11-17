@@ -82,7 +82,8 @@ const MODULES = [
   { file: 'wc-invest-plans.js', marker: 'wc-invest-plans' },
   { file: 'wc-invest-ui.js', marker: 'wc-invest-ui' },
   { file: 'typography.js', marker: 'wc-typography' },
-  { file: 'session-guard.js', marker: 'wc-session-guard' }
+  { file: 'session-guard.js', marker: 'wc-session-guard' },
+  { file: 'scroll-stability.js', marker: 'wc-scroll-stability' }
 ];
 try {
   let page = fs.readFileSync(APP, 'utf8');
