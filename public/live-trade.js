@@ -156,8 +156,11 @@ const LT = {
     const move = t.entryPrice ? (q.price - t.entryPrice) / t.entryPrice : 0;
     let pnlCoins = t.capitalCoins * (t.leverage || 1) * move * dir;
     pnlCoins = Math.max(-t.capitalCoins, pnlCoins);          /* never lose more than the stake */
-    const payout = Math.max(0, t.capitalCoins + pnlCoins);
+    /* payout = capital + profit − (capital × trade fee %); the fee is taken at close */
+    const fee = Math.min(LT.closeFee(t), Math.max(0, t.capitalCoins + pnlCoins));
+    const payout = Math.max(0, t.capitalCoins + pnlCoins - fee);
     return {
+      feeCoins: Math.round(fee * 100) / 100,
       price: q.price,
       prev: q.prevClose,
       movePct: move * 100 * dir,
@@ -165,7 +168,7 @@ const LT = {
       pnlUsd: coinsToUsd(pnlCoins),
       pnlPct: t.capitalCoins ? (pnlCoins / t.capitalCoins) * 100 : 0,
       payoutCoins: Math.round(payout * 100) / 100,
-      totalLoss: payout <= 0,
+      totalLoss: t.capitalCoins + pnlCoins <= 0,
       left: Math.max(0, (t.expiresAt || 0) - Date.now())
     };
   },
@@ -218,11 +221,12 @@ const LT = {
       durationMinutes: minutes, durationLabel: durationText,
       dividendYield: divYield, dividendBonus: divBonus, dividendPaid: false,
       expiresAt: Date.now() + minutes * 60000,
-      status: 'Open', createdAt: Date.now(), feeCoins: fee
+      status: 'Open', createdAt: Date.now(), feeCoins: fee, feeAtClose: true, closeFeeCoins: fee
     };
-    ia.portfolios.stock = Math.round((Number(ia.portfolios.stock) - capital - fee) * 100) / 100;
+    /* only the capital is held now — the trade fee comes off the payout when the trade closes */
+    ia.portfolios.stock = Math.round((Number(ia.portfolios.stock) - capital) * 100) / 100;
     DB.trades.unshift(trade);
-    tx(u.id, 'trade-open', `${direction === 'FALL' ? 'Fall' : 'Rise'} ${this.label(ticker)} · ${usd(capital)} USD`, -capital - fee,
+    tx(u.id, 'trade-open', `${direction === 'FALL' ? 'Fall' : 'Rise'} ${this.label(ticker)} · ${usd(capital)} USD`, -capital,
       { tradeId: trade.id, leverage: trade.leverage, entry: q.price, direction });
     notify(u.id, 'Trade opened',
       `${direction === 'FALL' ? 'Fall' : 'Rise'} ${this.label(ticker)} with ${usd(capital)} USD at ${this.px(ticker, q.price)}${tpPrice ? ' · TP ' + usd(tpPrice) : ''}${trailPct ? ' · trailing ' + trailPct + '%' : (slPrice ? ' · SL ' + usd(slPrice) : '')} — closes in ${minutes} min.${divBonus > 0 ? ' Dividend on timer: +' + usd(divBonus) + ' USD.' : ''}`,
@@ -238,10 +242,11 @@ const LT = {
     const u = findUser(t.userId);
     if (!u) return false;
     const p = this.calc(t);
-    const payout = p.totalLoss ? 0 : p.payoutCoins;
     const ia = INV.investAcct(u);
-    const split = LT.bookClose(ia, t.capitalCoins, p.pnlCoins);
+    const split = LT.bookClose(ia, t.capitalCoins, p.pnlCoins, LT.closeFee(t));
+    const payout = split.payout;
     t.settlement = split;
+    t.closeFeeCoins = split.fee;
 
     let dividendCoins = 0;
     if (reason === 'Time limit reached' && !t.dividendPaid) {
@@ -284,12 +289,12 @@ const LT = {
       toast(`${t.ticker} closed at a total loss`, 'err');
     } else if (p.pnlCoins >= 0) {
       notify(u.id, 'Take profit — trade closed',
-        `${t.ticker} closed: +${usd(split.profit)} USD profit credited to your Profit balance and ${usd(split.capital)} USD capital returned to your Trade capital balance.`,
+        `${t.ticker} closed: payout ${usd(split.payout)} USD${split.fee > 0 ? ' after the ' + usd(split.fee) + ' USD trade fee' : ''} — +${usd(split.profit)} USD profit credited to your Profit balance and ${usd(split.capital)} USD capital returned to your Trade capital balance.`,
         '#/invest/orders', 'trend');
       toast(`Closed — +${usd(split.profit)} to Profit balance, ${usd(split.capital)} capital returned`, 'ok');
     } else {
       notify(u.id, 'Trade closed at a loss',
-        `${t.ticker} closed with a −${usd(split.loss)} USD loss. The remaining ${usd(split.leftover)} USD of capital was credited to your Leftover capital.`,
+        `${t.ticker} closed with a −${usd(split.loss)} USD loss${split.fee > 0 ? ' and a ' + usd(split.fee) + ' USD trade fee' : ''}. The remaining ${usd(split.leftover)} USD of capital was credited to your Leftover capital.`,
         '#/invest/orders', 'down');
       toast(`Trade closed — ${usd(split.leftover)} USD to Leftover capital`, 'ok');
     }
@@ -714,7 +719,7 @@ const LT = {
       <div class="lt-div-est" id="ltDivEst">Dividend bonus · calculating…</div>
       <button class="btn btn-primary" data-act="lt-start" data-t="${esc(ticker)}" style="width:100%">
         ${ic('play', 15)} Buy</button>
-      <div class="tiny muted center mt6">${ic('lock', 11)} Capital is held while the trade runs · ${this.feePct()}% fee · take profit skims &amp; continues · stop loss closes automatically · timer ends the trade</div>
+      <div class="tiny muted center mt6">${ic('lock', 11)} Capital is held while the trade runs · ${this.feePct()}% fee taken from the payout at close · payout = capital + profit − fee · take profit skims &amp; continues · stop loss closes automatically · timer ends the trade</div>
     </div>`;
   }
 };
@@ -2535,27 +2540,38 @@ LT.autoSecureOn = function (userId) {
     return !!(st && st.active && st.enabled && (!u || !me() || u.id === me().id));
   } catch (e) { return false; }
 };
-/* profit -> Profit balance + capital -> Trade capital; loss -> remaining capital to Leftover capital */
-LT.bookClose = function (ia, stake, pnl) {
+/* payout = capital + profit − (capital × trade fee %), booked as:
+   gain -> capital to Trade capital, profit − fee to Profit balance;
+   loss -> capital − loss − fee to Leftover capital (mirrors the backend) */
+LT.closeFee = function (t) {
+  if (!t || !t.feeAtClose) return 0;  /* older trades paid the fee when they opened */
+  const v = Number(t.closeFeeCoins);
+  if (Number.isFinite(v) && v >= 0) return Math.round(v * 100) / 100;
+  return Math.round((Number(t.capitalCoins) || 0) * LT.feePct() / 100 * 100) / 100;
+};
+LT.bookClose = function (ia, stake, pnl, fee) {
   const r = (v) => Math.round((Number(v) || 0) * 100) / 100;
   if (!ia.portfolios) ia.portfolios = { stock: 0, wc: 0, b2b: 0, bot: 0 };
   const capital = r(Math.max(0, Number(stake) || 0));
   const p = r(Math.max(-capital, Number(pnl) || 0));
-  const out = { capital: 0, profit: 0, leftover: 0, loss: 0 };
+  const f = r(Math.min(Math.max(0, Number(fee) || 0), Math.max(0, capital + p)));
+  const out = { capital: 0, profit: 0, leftover: 0, loss: 0, fee: f, grossPnl: p, payout: r(Math.max(0, capital + p - f)) };
   if (p >= 0) {
-    out.capital = capital; out.profit = p;
-    ia.portfolios.stock = r((Number(ia.portfolios.stock) || 0) + capital);
-    ia.stockProfit = r((Number(ia.stockProfit) || 0) + p);
+    out.profit = r(Math.max(0, p - f));
+    out.capital = r(capital - Math.max(0, f - p));
+    ia.portfolios.stock = r((Number(ia.portfolios.stock) || 0) + out.capital);
+    ia.stockProfit = r((Number(ia.stockProfit) || 0) + out.profit);
   } else {
-    out.loss = r(-p); out.leftover = r(capital + p);
+    out.loss = r(-p); out.leftover = r(Math.max(0, capital + p - f));
     if (out.leftover > 0) ia.stockLeftover = r((Number(ia.stockLeftover) || 0) + out.leftover);
   }
   return out;
 };
 LT.splitLabel = function (sp) {
   if (!sp) return 'Trade closed';
-  if (!sp.loss) return `+${usd(sp.profit)} USD to Profit balance · ${usd(sp.capital)} USD capital returned`;
-  if (sp.leftover > 0) return `−${usd(sp.loss)} USD loss · ${usd(sp.leftover)} USD to Leftover capital`;
+  const fee = sp.fee > 0 ? ` · ${usd(sp.fee)} USD fee` : '';
+  if (!sp.loss) return `+${usd(sp.profit)} USD to Profit balance · ${usd(sp.capital)} USD capital returned${fee}`;
+  if (sp.leftover > 0) return `−${usd(sp.loss)} USD loss${fee} · ${usd(sp.leftover)} USD to Leftover capital`;
   return 'Total loss — nothing returned';
 };
 /* lock the open profit into a claimable entry and re-base the trade (mirrors the backend) */
