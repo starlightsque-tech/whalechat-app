@@ -386,14 +386,18 @@ class MarketService {
       const lastReal = this.lastRealTime[a.ticker] || 0;
       /* 24/7 assets must print at least every ~4s. A sparse exchange tick is
          not allowed to freeze them; the engine tops up between real ticks. */
-      if (is247Asset(a)) {
-        if (now - lastReal < 4000) return;
-      } else if (now - lastReal < 12000) return;             /* real ticks are flowing */
+      /* Real market data wins: while a symbol has a live price (Finnhub WS/REST
+         or Binance) we hold the last real print instead of inventing moves, so
+         the chart always tallies with the real market. Only symbols with no
+         live source (synthetic 24/7 products, or no API key) are simulated. */
+      const liveFeed = this.config.mode === 'hybrid' || (this.extRealAt && now - this.extRealAt < 60000);
+      if (lastReal && liveFeed && now - lastReal < 15 * 60 * 1000) return;
+      if (is247Asset(a) && now - lastReal < 4000) return;
       let q = this.quotes[a.ticker];
       /* repair a quote left at a wildly wrong level by an older build */
       const canon = CANON_247[a.ticker];
       if (canon && q && Number(q.price) > 0) {
-        const ratio = Number(q.price) / canon;
+        const ratio = Number(q.price) / (this.lastReal[a.ticker] || canon);
         if (ratio > 2 || ratio < 0.5) {
           this.writeQuote(a.ticker, canon, { prevClose: canon, open: canon, source: 'simulated', real: false });
           this.seedHistory(a.ticker, canon, now);
@@ -468,7 +472,79 @@ class MarketService {
     this.lastTickAt = now;
     this.recordHistory(ticker, q.price, now, q.source, q.real);
     if (q.real) { this.lastReal[ticker] = q.price; this.lastRealTime[ticker] = now; this.lastRealAt = now; }
+    if (q.real && !(meta && meta.mirror)) {
+      try {
+        this.mirrorTargets(ticker).forEach((t2) => {
+          const o = this.quotes[t2];
+          if (!o) return;
+          /* glide toward the real price so open trades never see a sudden gap */
+          const cur = Number(o.price) || q.price;
+          const gap = Math.abs(q.price - cur) / q.price;
+          const next = gap < 0.001 ? q.price : cur + (q.price - cur) * 0.2;
+          this.writeQuote(t2, next, { prevClose: q.prevClose, open: q.open, vol: o.vol, source: 'live', real: true, mirror: true });
+        });
+      } catch (e) {}
+    }
     return q;
+  }
+
+  /* 24/7 products (TSLA24, BTCUSD …) follow their real listing (TSLA, BTCUSDT)
+     whenever that listing is printing live prices. */
+  mirrorTargets(ticker) {
+    const now = Date.now();
+    if (!this._mirror || now - (this._mirrorAt || 0) > 30000) {
+      const map = {};
+      const list = this.assetList();
+      const isSyn = (a) => !!(a.synthetic || /24\/7|synthetic/i.test(String(a.name || '')));
+      const real = new Set(list.filter((a) => !a.hidden && !isSyn(a)).map((a) => String(a.ticker).toUpperCase()));
+      list.forEach((a) => {
+        const t = String(a.ticker || '').toUpperCase();
+        if (a.hidden || real.has(t)) return;
+        const base = t.replace(/24$/, '');
+        const cands = [base, t + 'T', base + 'T', base.replace(/^([A-Z]{3})([A-Z]{3})$/, '$1_$2')];
+        const src = cands.find((c) => c && c !== t && real.has(c));
+        if (src) (map[src] = map[src] || []).push(t);
+      });
+      this._mirror = map;
+      this._mirrorAt = now;
+    }
+    return this._mirror[String(ticker).toUpperCase()] || [];
+  }
+
+  /* real prices from another live source (Binance websocket) */
+  ingestExternal(symbol, price) {
+    const sym = String(symbol || '').toUpperCase();
+    const p = Number(price);
+    if (!sym || !(p > 0)) return;
+    const now = Date.now();
+    if (!this._extMap || now - (this._extMapAt || 0) > 30000) {
+      const m = {};
+      this.assetList().forEach((a) => {
+        if (a.hidden || a.synthetic) return;
+        const t = String(a.ticker || '').toUpperCase();
+        const fs = String(a.finnhubSymbol || '').toUpperCase();
+        const keys = [t];
+        if (fs.indexOf('BINANCE:') === 0) keys.push(fs.slice(8));
+        keys.forEach((k) => { (m[k] = m[k] || []).indexOf(t) < 0 && m[k].push(t); });
+      });
+      this._extMap = m;
+      this._extMapAt = now;
+    }
+    const targets = this._extMap[sym] || [];
+    let touched = 0;
+    targets.forEach((t) => {
+      const old = this.quotes[t];
+      if (!old) return;
+      if (Math.abs(Number(old.price) - p) < 1e-12 && old.real) { this.lastRealTime[t] = now; return; }
+      /* first switch from a simulated level: catch up over a few ticks so
+         open trades are not settled by an artificial jump */
+      let next = p;
+      if (!old.real && !this.lastRealTime[t] && Math.abs(p - old.price) / p > 0.005) next = old.price + (p - old.price) * 0.25;
+      this.writeQuote(t, next, { prevClose: old.prevClose, open: old.open, vol: old.vol, source: next === p ? 'live' : 'simulated', real: next === p });
+      touched++;
+    });
+    if (targets.length) this.extRealAt = now;
+    if (touched) { try { this._settleSoon(); } catch (e) {} }
   }
 
   /* ------------------------------- history ------------------------------ */
