@@ -1,8 +1,8 @@
 {
-  "version": "3.40.0",
-  "build": "2026-11-16T20:42:00Z",
+  "version": "3.42.0",
+  "build": "2026-11-17T10:40:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.40.0 - Service Center: More hub (loans, business cards, FAQ, disputes), transaction/withdrawal/deposit/asset-reversal disputes with status tracking, account requests (delete with email code, upgrade, vendor profile, statement), and an admin Help desk to process every user request.",
-  "releasedAt": "2026-11-16T20:42:00Z",
+  "notes": "WhaleChat 3.42.0 - trade calculation examples only in the FAQ & Trade Guide, real-time price stream that follows live market prints, faster taps and batched background refresh.",
+  "releasedAt": "2026-11-17T10:40:00Z",
   "minimum": "3.0.0"
 }
