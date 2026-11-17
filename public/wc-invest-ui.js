@@ -313,6 +313,13 @@
     try {
       var h = String(location.hash || '');
       if (h.indexOf('#/invest/shares') !== 0) return;
+      /* never wipe a form the user is filling in */
+      var ae = document.activeElement;
+      if (ae && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)) return;
+      if (document.querySelector('.modal-backdrop, .modal, [role="dialog"]')) return;
+      var fields = document.querySelectorAll('#wciAmount, #wciDays, #wciTrAmount, #wciTrMode, main input, main select');
+      for (var i = 0; i < fields.length; i++) { var f = fields[i]; if (f.type !== 'checkbox' && f.type !== 'hidden' && String(f.value || '') !== '' && f.tagName !== 'SELECT') return; }
+      if (h.indexOf('#/invest/shares/invest') === 0 || h.indexOf('#/invest/shares/plans') === 0 || h.indexOf('#/invest/shares/transfer') === 0) return;
       if (typeof render === 'function') render();
     } catch (e) {}
   }
