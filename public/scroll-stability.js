@@ -95,7 +95,19 @@
   a,button,.btn,[data-act],[onclick],summary,label,.bnav a,select{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
   .btn,button,[data-act]{transition:transform .08s ease,filter .08s ease}
   .btn:active,button:active,[data-act]:active{transform:scale(.97);filter:brightness(1.12)}
-  .wc-busy{pointer-events:none;opacity:.75}`;
+  .wc-busy{pointer-events:none;opacity:.75}
+  /* 3.44 clearer text and buttons on phone and desktop */
+  body{color:var(--text)}
+  .muted,.tiny.muted,.help,small{opacity:1 !important}
+  .tiny{font-size:max(12.5px,.78rem)}
+  .small{font-size:max(13.5px,.85rem)}
+  .btn,.ac-action b,.ih-quickbtn b,.ih-card span,.ac-card-top span,.mh-row span,.ac-link{font-weight:800}
+  .ih-card b,.ac-big,.wallet-bal,.mh-preview b{font-weight:900}
+  .wallet-actions{grid-template-columns:repeat(3,minmax(0,1fr)) !important;gap:10px !important}
+  .wallet-actions .btn{height:auto !important;min-height:46px;font-size:13.5px !important;font-weight:800 !important;line-height:1.15;white-space:normal;text-align:center;padding:6px 6px !important;color:#04211c !important;background:#fff !important;display:flex;align-items:center;justify-content:center;gap:5px}
+  .ac-link{display:block;margin-top:6px}
+  @media (max-width:360px){ .wallet-actions .btn{font-size:12.5px !important} }
+  @media (min-width:900px){ .tiny{font-size:13px} .btn{font-size:14.5px} .wallet-actions .btn{font-size:14.5px !important} }`;
     document.head.appendChild(st);
   }
 })();
