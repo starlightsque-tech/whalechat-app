@@ -23,8 +23,11 @@ function invAcct(u) {
 }
 function pf(u, key) { const a = invAcct(u); return round(Number(a && a.portfolios && a.portfolios[key]) || 0, 2); }
 function setPf(u, key, v) { const a = invAcct(u); a.portfolios[key] = round(Number(v) || 0, 2); return a.portfolios[key]; }
-const CYCLE_MS = { daily: 86400000, weekly: 604800000, monthly: 2592000000, one_time: null };
-const CYCLE_LABEL = { daily: 'day', weekly: 'week', monthly: 'month', one_time: 'one-time' };
+const CYCLE_MS = { daily: 86400000, weekly: 604800000, monthly: 2592000000, yearly: 31536000000, one_time: null };
+const CYCLE_LABEL = { daily: '24 hrs', weekly: 'week', monthly: 'month', yearly: 'year', one_time: 'one-time' };
+const DURATIONS = ['daily', 'weekly', 'monthly', 'yearly'];
+/* default price multipliers vs the monthly price; admin can override every duration per bot */
+const DURATION_FACTOR = { daily: 0.1, weekly: 0.35, monthly: 1, yearly: 10 };
 
 const DEFAULT_TIERS = [
   { id: 'low', name: 'Low-Level Grade Bot', accuracy: 45, priceUsd: 20, billingCycle: 'monthly', intervalMin: 0, enabled: true, sort: 1, blurb: 'Steady starter automation for small allocations.' },
@@ -110,6 +113,59 @@ class BotService {
   cycleMs(cycle) { return Object.prototype.hasOwnProperty.call(CYCLE_MS, cycle) ? CYCLE_MS[cycle] : CYCLE_MS.monthly; }
 
   priceCoins(tier) { return round((Number(tier.priceUsd) || 0) * COINS_PER_USD, 2); }
+
+  /* price of one bot for each duration (24 hrs / weekly / monthly / yearly) */
+  tierPrices(tier) {
+    const own = (tier && tier.prices && typeof tier.prices === 'object') ? tier.prices : {};
+    const base = Number(tier && tier.priceUsd) || 0;
+    const f = DURATION_FACTOR[tier && tier.billingCycle];
+    const monthly = f ? base / f : base;
+    const out = {};
+    for (const d of DURATIONS) {
+      const v = Number(own[d]);
+      out[d] = (own[d] != null && own[d] !== '' && Number.isFinite(v) && v >= 0) ? round(v, 2) : round(monthly * DURATION_FACTOR[d], 2);
+    }
+    return out;
+  }
+
+  priceFor(tier, cycle) {
+    const p = this.tierPrices(tier);
+    return Object.prototype.hasOwnProperty.call(p, cycle) ? p[cycle] : (Number(tier.priceUsd) || 0);
+  }
+
+  /* Bot Assisted Trading is a one-time unlock that opens the bot marketplace */
+  hasBotAccess(u) {
+    const t = invAcct(u).tools;
+    const r = t && t.botassist;
+    return !!(r && r.active);
+  }
+
+  /* renew an expired bot subscription from the user's investment trade capital */
+  tryAutoRenew(db, s, now) {
+    if (s.autoRenew === false) return false;
+    const tier = this.tier(s.tierId);
+    if (!tier || tier.enabled === false) return false;
+    const ms = this.cycleMs(s.billingCycle);
+    if (!ms) return false;
+    const u = (db.users || []).find((x) => x.id === s.userId);
+    if (!u) return false;
+    const ia = invAcct(u);
+    const hasOverride = s.priceOverride != null && Number.isFinite(Number(s.priceOverride)) && Number(s.priceOverride) >= 0;
+    const price = hasOverride ? round(Number(s.priceOverride), 2) : this.priceFor(tier, s.billingCycle);
+    if (!(price >= 0) || (Number(ia.usd) || 0) < price) return false;
+    ia.usd = round((Number(ia.usd) || 0) - price, 2);
+    const coins = round(price * COINS_PER_USD, 2);
+    s.expiresAt = now + ms;
+    s.renewedAt = now;
+    s.priceUsd = price;
+    s.priceCoins = coins;
+    this.tx(db, s.userId, `Auto-renewed ${tier.name} · $${price.toFixed(2)} / ${CYCLE_LABEL[s.billingCycle] || s.billingCycle}`, -coins, 'bot-subscription', {
+      tierId: tier.id, billingCycle: s.billingCycle, priceUsd: price, expiresAt: s.expiresAt, renewal: true
+    });
+    this.notify(db, s.userId, 'Bot renewed', `${tier.name} was renewed for $${price.toFixed(2)} from your investment trade capital. Next renewal ${new Date(s.expiresAt).toLocaleString()}.`, 'star');
+    this.changed('bot-renew');
+    return true;
+  }
 
   activeSubs(db, userId) {
     const now = Date.now();
@@ -273,10 +329,13 @@ class BotService {
       const sub = subs.find((s) => s.tierId === t.id) || null;
       return Object.assign({}, t, {
         priceCoins: this.priceCoins(t),
+        prices: this.tierPrices(t),
         owned: !!sub,
+        lapsedAt: (!sub && (db.botSubscriptions || []).some((s) => s && s.userId === userId && s.tierId === t.id && s.status === 'expired')) ? 1 : null,
         subscription: sub ? {
           id: sub.id, startedAt: sub.startedAt, expiresAt: sub.expiresAt || null,
-          billingCycle: sub.billingCycle, priceUsd: sub.priceUsd, priceCoins: sub.priceCoins
+          billingCycle: sub.billingCycle, priceUsd: sub.priceUsd, priceCoins: sub.priceCoins,
+          autoRenew: sub.autoRenew !== false
         } : null
       });
     });
@@ -295,6 +354,9 @@ class BotService {
       balance: stockUsd,
       balanceUsd: stockUsd,
       stockUsd: stockUsd,
+      botAccess: this.hasBotAccess(u),
+      investUsd: round(Number(invAcct(u).usd) || 0, 2),
+      durations: DURATIONS.slice(),
       account: {
         capitalCoins: round(account.capitalCoins, 2),
         profitCoins: round(account.profitCoins, 2),
@@ -368,14 +430,16 @@ class BotService {
     const existing = this.subFor(db, userId, tier.id);
     if (existing) throw nextError('You already own this bot — it is active until ' + (existing.expiresAt ? new Date(existing.expiresAt).toLocaleString() : 'forever'));
 
-    const feeCoins = this.priceCoins(tier);
-    const priceUsd = Number(tier.priceUsd) || 0;
+    const cycle = DURATIONS.includes(String(opts.duration || '')) ? String(opts.duration) : (DURATIONS.includes(tier.billingCycle) ? tier.billingCycle : 'monthly');
+    const priceUsd = this.priceFor(tier, cycle);
+    const feeCoins = round(priceUsd * COINS_PER_USD, 2);
     if (!(feeCoins > 0)) throw nextError('This bot has no price yet — contact support');
     const ia = invAcct(u);
+    if (!this.hasBotAccess(u)) throw nextError('Unlock Bot Assisted Trading first (one-time payment), then pick any bot trader. If you just paid, wait a few seconds and try again.');
     if ((Number(ia.usd) || 0) < priceUsd) throw nextError(`Not enough investment USD — you need $${priceUsd.toFixed(2)}`);
 
     const now = Date.now();
-    const ms = this.cycleMs(tier.billingCycle);
+    const ms = this.cycleMs(cycle);
     ia.usd = round((Number(ia.usd) || 0) - priceUsd, 2);
 
     /* refresh an expired record for the same tier instead of duplicating it */
@@ -383,13 +447,13 @@ class BotService {
     const sub = old || { id: nid('bs_'), userId, tierId: tier.id };
     Object.assign(sub, {
       status: 'active', startedAt: now, expiresAt: ms ? now + ms : null,
-      billingCycle: tier.billingCycle, priceUsd: round(tier.priceUsd, 2), priceCoins: feeCoins,
+      billingCycle: cycle, priceUsd, priceCoins: feeCoins, autoRenew: true, priceOverride: null,
       renewedAt: old ? now : null
     });
     if (!old) db.botSubscriptions.push(sub);
 
-    this.tx(db, userId, `Subscribed to ${tier.name} · $${(Number(tier.priceUsd) || 0).toFixed(2)} ${tier.billingCycle.replace('_', '-')}`, -feeCoins, 'bot-subscription', {
-      tierId: tier.id, billingCycle: tier.billingCycle, priceUsd: tier.priceUsd, expiresAt: sub.expiresAt
+    this.tx(db, userId, `Subscribed to ${tier.name} · $${priceUsd.toFixed(2)} / ${CYCLE_LABEL[cycle] || cycle}`, -feeCoins, 'bot-subscription', {
+      tierId: tier.id, billingCycle: cycle, priceUsd, expiresAt: sub.expiresAt
     });
     this.notify(db, userId, 'Bot unlocked', `${tier.name} is now active on your account (${tier.accuracy}% simulated accuracy). Allocate capital to start it.`, 'star');
     this.changed('bot-subscribe');
@@ -589,6 +653,19 @@ class BotService {
       tiers: this.tiers(),
       settings: this.settings(),
       cycleOptions: Object.keys(CYCLE_MS),
+      durations: DURATIONS.slice(),
+      subscriptions: (db.botSubscriptions || []).filter(Boolean)
+        .sort((a, b) => (Number(b.startedAt) || 0) - (Number(a.startedAt) || 0)).slice(0, 200)
+        .map((s) => {
+          const uu = (db.users || []).find((x) => x.id === s.userId);
+          const tt = this.tier(s.tierId);
+          return {
+            id: s.id, userId: s.userId, username: uu ? (uu.username || uu.name || '') : '',
+            tierId: s.tierId, tierName: tt ? tt.name : s.tierId, billingCycle: s.billingCycle,
+            priceUsd: s.priceUsd, priceOverride: s.priceOverride == null ? null : s.priceOverride,
+            expiresAt: s.expiresAt || null, status: s.status, autoRenew: s.autoRenew !== false
+          };
+        }),
       autoSecure: {
         priceUsd: Number(this.settings().autoSecurePriceUsd) || 20,
         billingCycle: this.settings().autoSecureCycle || 'monthly',
@@ -608,6 +685,39 @@ class BotService {
         sessions: sessions.length
       }
     };
+  }
+
+  /* admin: change a user's bot subscription renewal date, amount, duration or auto-renew */
+  adminEditSub(opts) {
+    const db = this.getDb && this.getDb();
+    if (!db) throw nextError('Database not ready');
+    this.ensureDefaults(db);
+    const s = (db.botSubscriptions || []).find((x) => x && x.id === String(opts.subId || ''));
+    if (!s) throw nextError('Subscription not found');
+    if (opts.billingCycle != null) {
+      if (!DURATIONS.includes(String(opts.billingCycle))) throw nextError('Unknown duration');
+      s.billingCycle = String(opts.billingCycle);
+    }
+    if (opts.priceUsd !== undefined) {
+      if (opts.priceUsd === null || opts.priceUsd === '') s.priceOverride = null;
+      else {
+        const v = Number(opts.priceUsd);
+        if (!(v >= 0)) throw nextError('Invalid amount');
+        s.priceOverride = round(v, 2);
+        s.priceUsd = round(v, 2);
+      }
+    }
+    if (opts.autoRenew != null) s.autoRenew = !!opts.autoRenew;
+    if (opts.expiresAt != null) {
+      const e = Number(opts.expiresAt);
+      if (!Number.isFinite(e) || e <= 0) throw nextError('Invalid renewal date');
+      s.expiresAt = e;
+      if (e > Date.now() && s.status === 'expired') { s.status = 'active'; delete s.expiredAt; }
+    }
+    const tier = this.tier(s.tierId);
+    this.notify(db, s.userId, 'Bot subscription updated', `An admin updated ${tier ? tier.name : s.tierId}. Next renewal: ${s.expiresAt ? new Date(s.expiresAt).toLocaleString() : 'none'}.`, 'clock');
+    this.changed('bot-admin-sub');
+    return this.adminState();
   }
 
   saveAdminConfig(opts) {
@@ -645,6 +755,18 @@ class BotService {
         if (incoming.accuracy != null) t.accuracy = clamp(incoming.accuracy, 1, 100, t.accuracy);
         if (incoming.priceUsd != null) t.priceUsd = Math.max(0, round(incoming.priceUsd, 2));
         if (incoming.billingCycle != null && CYCLE_MS.hasOwnProperty(incoming.billingCycle)) t.billingCycle = incoming.billingCycle;
+        if (incoming.prices && typeof incoming.prices === 'object') {
+          const np = Object.assign({}, this.tierPrices(t));
+          for (const d of DURATIONS) {
+            if (incoming.prices[d] != null && incoming.prices[d] !== '') {
+              const v = Number(incoming.prices[d]);
+              if (Number.isFinite(v) && v >= 0) np[d] = round(v, 2);
+            }
+          }
+          t.prices = np;
+          t.priceUsd = np.monthly;
+          t.billingCycle = 'monthly';
+        }
         if (incoming.intervalMin != null) t.intervalMin = clamp(incoming.intervalMin, 0, 10080, t.intervalMin);
         if (incoming.enabled != null) t.enabled = !!incoming.enabled;
         if (incoming.hot != null) t.hot = !!incoming.hot;
@@ -680,9 +802,12 @@ class BotService {
     /* 1 · expire subscriptions */
     for (const s of db.botSubscriptions || []) {
       if (s && s.status === 'active' && s.expiresAt && s.expiresAt <= now) {
+        let renewedOk = false;
+        try { renewedOk = this.tryAutoRenew(db, s, now); } catch (e) { this.lastError = e.message; }
+        if (renewedOk) { changed = true; continue; }
         s.status = 'expired';
         s.expiredAt = now;
-        this.notify(db, s.userId, 'Bot subscription expired', `${this.tier(s.tierId) ? this.tier(s.tierId).name : s.tierId} has ended. Renew it to keep trading.`, 'clock');
+        this.notify(db, s.userId, 'Bot subscription expired', `${this.tier(s.tierId) ? this.tier(s.tierId).name : s.tierId} ${s.autoRenew === false ? 'has ended.' : 'could not be renewed automatically (not enough investment trade capital). The bot is turned off.'} Renew it manually to resume trading.`, 'clock');
         changed = true;
         /* an expired subscription stops its running session and returns capital */
         const session = (db.botSessions || []).find((x) => x && x.userId === s.userId && x.tierId === s.tierId && (x.status === 'running' || x.status === 'paused'));
