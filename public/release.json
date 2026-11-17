@@ -1,8 +1,8 @@
 {
-  "version": "3.43.0",
-  "build": "2026-11-17T10:35:00Z",
+  "version": "3.44.0",
+  "build": "2026-11-17T10:45:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.43.0 - new money flow: crypto balance per coin, crypto converts to WC, WC sent to investment trade capital becomes USD, USD top-ups for all four portfolios, USD transfers back to WC.",
-  "releasedAt": "2026-11-17T10:35:00Z",
+  "notes": "WhaleChat 3.44.0 - Convert and Transfer buttons on the WhaleChat account card; WC goes to investment trade capital or vendor capital as USD; only the investment total profit balance returns to WC; WC converts to USDT or BTC for withdrawal; vendor stock paid from vendor capital; bolder buttons and text.",
+  "releasedAt": "2026-11-17T10:45:00Z",
   "minimum": "3.0.0"
 }
