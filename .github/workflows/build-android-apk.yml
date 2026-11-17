@@ -40,13 +40,16 @@ jobs:
             keytool -genkeypair -keystore "$RUNNER_TEMP/gen.jks" -storepass "$PW" -keypass "$PW" -alias "$ALIAS" -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=WhaleChat, O=WhaleChat, C=US"
             B64=$(base64 -w0 "$RUNNER_TEMP/gen.jks")
           fi
-          echo "::add-mask::$PW"; echo "::add-mask::$KPW"
+          echo "::add-mask::$PW"; echo "::add-mask::$KPW"; echo "::add-mask::$B64"
           {
             echo "ANDROID_KEYSTORE_BASE64=$B64"
             echo "ANDROID_KEYSTORE_PASSWORD=$PW"
             echo "ANDROID_KEY_ALIAS=$ALIAS"
             echo "ANDROID_KEY_PASSWORD=$KPW"
           } >> "$GITHUB_ENV"
+
+      - name: Prepare web assets (assemble whalechat.html)
+        run: node scripts/prepare-assets.js
 
       - name: Install and bundle web app
         working-directory: mobile
