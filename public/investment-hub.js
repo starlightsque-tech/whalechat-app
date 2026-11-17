@@ -385,7 +385,7 @@
         '<div class="ih-card"><span>Capital balance</span><b>' + money(b2bCapital(a)) + '</b><small>Deposits in · buys are paid from here</small></div>' +
         '<div class="ih-card"><span>Total assets balance</span><b>' + money(b2bTotalAssets(a)) + '</b><small>Capital + profit · ' + holdings.length + ' open holding' + (holdings.length === 1 ? '' : 's') + '</small></div>' +
         '<div class="ih-card"><span>Profit balance</span><b class="' + (b2bProfit(a) >= 0 ? 'up' : 'down') + '">' + money(b2bProfit(a)) + '</b><small>Payout credited on every sell</small></div>' +
-        '<div class="ih-card"><span>Portfolio value</span><b>' + money(b2bPortfolioValue(a)) + '</b><small>Total sent in + total profit since the start</small></div>' +
+        '<div class="ih-card"><span>Account value</span><b>' + money(b2bPortfolioValue(a)) + '</b><small>Total transferred in + total profit since the start</small></div>' +
       '</div>' +
 
       (window.WC_B2B_MARKET ? '<div class="card"><div class="between"><div class="card-title" style="margin:0">Live market</div>' +
@@ -550,7 +550,7 @@
       '<div class="card"><div class="ih-list">' +
         '<div class="ih-row"><span>Capital balance</span><b>' + money(b2bCapital(a)) + '</b></div>' +
         '<div class="ih-row"><span>Total assets balance</span><b>' + money(b2bTotalAssets(a)) + '</b></div>' +
-        '<div class="ih-row"><span>Portfolio value</span><b>' + money(b2bPortfolioValue(a)) + '</b></div>' +
+        '<div class="ih-row"><span>Account value</span><b>' + money(b2bPortfolioValue(a)) + '</b></div>' +
         '<div class="ih-row"><span>Profit balance</span><b>' + money(b2bProfit(a)) + '</b></div>' +
       '</div></div>';
   }
@@ -885,6 +885,8 @@
       if (!(amount > 0)) return toastH('Enter an amount', 'err');
       if ((Number(a.usd) || 0) < amount - 0.001) return toastH('Not enough in your trade capital (' + money(a.usd) + '). Send WC from your WhaleChat account first.', 'err');
       a.usd = Math.round(((Number(a.usd) || 0) - amount) * 100) / 100;
+      /* B2B: every dollar sent in counts toward the lifetime "transferred in" total */
+      if (to === 'b2b' && a.b2bDeposited !== undefined && !isNaN(Number(a.b2bDeposited))) a.b2bDeposited = Math.round((Number(a.b2bDeposited) + amount) * 100) / 100;
       a.portfolios[to] = Math.round(((a.portfolios[to] || 0) + amount) * 100) / 100;
       userTx(u, 'invest-topup', 'Portfolio top-up · ' + to, 0, { portfolio: to, usd: amount });
       ledger(u, 'Top-up ' + to + ' · ' + money(amount) + ' USD', -amount, 0, { portfolio: to }); save(); toastH('Portfolio topped up with ' + money(amount), 'ok'); render();
