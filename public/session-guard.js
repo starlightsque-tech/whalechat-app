@@ -113,7 +113,7 @@
     });
     G.restored += restored;
     if (restored) {
-      try { window.scrollTo(0, Number(d.scrollY) || 0); } catch (e) {}
+      /* scroll position is kept by scroll-stability.js — never jump the page here */
       /* the app may re-render over the restored values — repeat once shortly after */
       setTimeout(() => {
         Object.keys(d.fields || {}).forEach((k) => {
