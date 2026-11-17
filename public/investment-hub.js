@@ -82,7 +82,7 @@
   function quickActionsHTML() {
     var items = [
       ['download', 'Deposit', '#/deposit'], ['send', 'Withdraw', '#/withdraw'],
-      ['briefcase', 'Invest', '#/investment'], ['refresh', 'Convert', '#/investment/convert'],
+      ['briefcase', 'Invest', '#/investment'],
       ['trend', 'Transfer', '#/investment/transfer'], ['gift', 'Referrals', '#/referrals'], ['more', 'More', '#/investment/more']
     ];
     return '<div class="card ih-quick"><div class="card-title" style="margin:0 0 8px">Quick actions</div><div class="ih-quickgrid">' +
@@ -104,7 +104,7 @@
   function investmentHome(u) {
     var a = account(u);
     var quick = [
-      ['send', 'Transfer', '#/investment/transfer'], ['refresh', 'Convert', '#/investment/convert'],
+      ['send', 'Transfer', '#/investment/transfer'],
       ['trend', 'Stock trading', '#/invest'], ['briefcase', 'WC-Investing', '#/invest/shares'],
       ['users', 'B2B-Investing', '#/investment/b2b'], ['settings', 'Tools', '#/investment/tools'],
       ['clock', 'History', '#/investment/history'], ['more', 'More', '#/investment/more']
@@ -738,7 +738,7 @@
       var u = me(); if (!u) return '';
       var sub = (parts && parts[1]) || '';
       if (sub === 'transfer') return transferPage(u);
-      if (sub === 'convert') return convertPage(u);
+      if (sub === 'convert') { setTimeout(function () { location.hash = '#/account/convert'; }, 0); return ''; }
       if (sub === 'topup') return topupPage(u, params);
       if (sub === 'tools') return toolsPage(u);
       if (sub === 'b2b') {
