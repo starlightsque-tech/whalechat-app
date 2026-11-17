@@ -102,6 +102,11 @@
     return p >= 0 ? { capital: cap - Math.max(0, f - p), profit: Math.max(0, p - f), leftover: 0, loss: 0, fee: f, grossPnl: p, payout: Math.max(0, cap + p - f) }
                   : { capital: 0, profit: 0, leftover: Math.max(0, cap + p - f), loss: -p, fee: f, grossPnl: p, payout: Math.max(0, cap + p - f) };
   }
+  /* price move % from entry and current price - same function the live trades use */
+  function priceMove(entry, price) {
+    try { if (window.LT_PRICE_MOVE) return window.LT_PRICE_MOVE(entry, price); } catch (e) {}
+    return entry > 0 && price > 0 ? ((price - entry) / entry) * 100 : 0;
+  }
   function money(n) { return '$' + (Math.round((Number(n) || 0) * 100) / 100).toFixed(2); }
   function pct(n) { return (Math.round((Number(n) || 0) * 100) / 100).toFixed(2) + '%'; }
   function esc(s) {
@@ -213,6 +218,10 @@
       id: 'payout', icon: 'wallet', title: '4. How Stock Trading And Payouts Work',
       body:
         '<p><b>Payout = Capital + Profit − WhaleChat trade fee.</b> Profit uses the leverage you selected for that trade; if you did not select one, the app uses the default <b>' + lev + 'x</b>.</p>' +
+        '<div class="tg-example"><b>How the price move % is calculated</b><p>WhaleChat tracks the real market price of every stock (Finnhub feed) and measures how far it has moved from your entry price:<br>' +
+        '<code>price move % = (current price − entry price) ÷ entry price × 100</code><br>' +
+        'Example: you open at <b>$100</b> and the price reaches <b>$125</b> → <code>(125 − 100) ÷ 100 = 0.25 = ' + pct(priceMove(100,125)) + '</code>. ' +
+        'Profit on a $100 trade at 1x: <code>' + money(closeSplit(100, priceMove(100,125), 1, 0).grossPnl) + '</code>. A Fall trade earns when the price drops instead.</p></div>' +
         '<div class="tg-formula">profit = capital × price move % × leverage<br>' +
         'payout = capital + profit − (capital × ' + fee + '%)</div>' +
         '<table class="tg-table"><thead><tr><th>Capital</th><th>Leverage</th><th>Move</th><th>Profit</th></tr></thead><tbody>' +
