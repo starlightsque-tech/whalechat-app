@@ -6,13 +6,22 @@
    auto-reinvestment and the two share-accurate balance buckets.
 
    Payout formula (as specified):
-       daily ROI  = share price at the time of the snapshot × plan rate %
-       total ROI  = daily ROI × plan days × capital
-       payout     = capital + total ROI
+       daily profit = Whalecoin price that day × plan rate %
+       total profit = Σ (each day's daily profit) × capital
+                      (= daily profit × plan days × capital when the price holds)
+       at maturity  : profit → Profit balance, capital → Capital balance
 
-   Example: price $12.45, starter 3%, 7 days, $100 capital
+   Example: price $12.45 held, starter 3%, 7 days, $100 capital
        daily  = 12.45 × 3%          = $0.3735
        total  = 0.3735 × 7 × 100    = $261.45
+   Example: price falls to $8 and holds
+       daily  = 8 × 3%              = $0.24
+       total  = 0.24 × 7 × 100      = $168.00
+
+   Crash rule: if the AVERAGE daily Whalecoin price over the plan ends below
+   the crash level (default 50% of the activation price, admin setting
+   DB.settings.wcCrashPct) the plan is a total loss — no profit and the
+   capital is not returned.
 
    Money in this engine is USD. WC is only ever a derived display value
    (1 WC = $0.50 → WC = USD ÷ 0.5), per the USD-first convention.
@@ -132,6 +141,82 @@
   P.totalRoi = function (priceUsd, ratePct, days, capitalUsd) {
     return round2(P.dailyRoiExact(priceUsd, ratePct) * (Number(days) || 1) * (Number(capitalUsd) || 0));
   };
+  /* total profit from a list of daily prices: Σ(price × rate%) × capital */
+  P.totalRoiFromPrices = function (prices, ratePct, capitalUsd) {
+    var sum = 0;
+    (prices || []).forEach(function (p) { sum += P.dailyRoiExact(p, ratePct); });
+    return round2(sum * (Number(capitalUsd) || 0));
+  };
+
+  /* crash level: % of the activation price the plan's average price must stay at */
+  P.crashPct = function () {
+    try { var v = Number(DB && DB.settings && DB.settings.wcCrashPct); if (v > 0 && v < 100) return v; } catch (e) {}
+    return 50;
+  };
+  P.crashLevel = function (plan) {
+    return round2((Number(plan && plan.entryPriceUsd) || 0) * P.crashPct() / 100);
+  };
+
+  function dayIndex(plan, at) {
+    var start = Number(plan.startedAt) || at;
+    var days = Math.max(1, Number(plan.days) || 1);
+    return Math.max(0, Math.min(days - 1, Math.floor((at - start) / 864e5)));
+  }
+
+  /* record the real-time Whalecoin price against each plan day. The running
+     day keeps being overwritten so it settles on that day's last price;
+     days missed while the app was closed take the price seen on return.
+     Returns true when a new day was added. */
+  P.recordPrice = function (plan, price, at) {
+    at = at || Date.now();
+    price = Number(price) || 0;
+    if (!(price > 0) || !plan) return false;
+    if (!Array.isArray(plan.priceLog)) plan.priceLog = [];
+    var log = plan.priceLog;
+    var entry = Number(plan.entryPriceUsd) || price;
+    var idx = dayIndex(plan, Math.min(at, Number(plan.endsAt) || at));
+    var added = false;
+    if (!log.length) { log.push(round4(entry)); added = true; }
+    while (log.length <= idx) { log.push(round4(price)); added = true; }
+    if (at < (Number(plan.endsAt) || at + 1)) log[idx] = round4(price);
+    return added;
+  };
+  function round4(v) { return Math.round((Number(v) || 0) * 1e4) / 1e4; }
+
+  /* profit numbers for a plan from its daily price record */
+  P.roiFor = function (plan, price, at) {
+    at = at || Date.now();
+    price = Number(price) || Number(plan.entryPriceUsd) || 0;
+    var days = Math.max(1, Number(plan.days) || 1);
+    var cap = Number(plan.capitalUsd) || 0;
+    var rate = Number(plan.ratePct) || 0;
+    var log = (Array.isArray(plan.priceLog) && plan.priceLog.length) ? plan.priceLog.slice(0, days) : [Number(plan.entryPriceUsd) || price];
+    var start = Number(plan.startedAt) || at;
+    var elapsedDays = Math.max(0, (Math.min(at, Number(plan.endsAt) || at) - start) / 864e5);
+    var idx = Math.min(days - 1, Math.floor(elapsedDays));
+    var done = plan.status === 'completed' || elapsedDays >= days;
+    var priceSum = 0, accSum = 0;
+    for (var i = 0; i < days; i++) {
+      var p = log[i] != null ? Number(log[i]) : (i <= idx ? price : price);
+      priceSum += p;
+      if (done || i < idx) accSum += p;
+      else if (i === idx) accSum += p * (elapsedDays - idx);
+    }
+    var seen = done ? days : Math.min(days, idx + 1);
+    var seenSum = 0;
+    for (var j = 0; j < seen; j++) seenSum += log[j] != null ? Number(log[j]) : price;
+    var avg = seen ? seenSum / seen : price;
+    var crashAt = P.crashLevel(plan);
+    return {
+      accruedUsd: round2(accSum * (rate / 100) * cap),
+      projectedUsd: round2(priceSum * (rate / 100) * cap),
+      todayDailyUsd: round2(P.dailyRoiExact(log[idx] != null ? log[idx] : price, rate) * cap),
+      avgPriceUsd: round4(avg),
+      crashLevelUsd: crashAt,
+      atRisk: crashAt > 0 && avg < crashAt,
+      dayNo: Math.min(days, idx + 1)
+    };
+  };
 
   /* live view of a plan: accrued ROI, progress, projected payout */
   P.progress = function (plan, price, at) {
@@ -140,18 +225,29 @@
     var end = Number(plan.endsAt) || start;
     var span = Math.max(1, end - start);
     var frac = Math.max(0, Math.min(1, (at - start) / span));
-    var total = Number(plan.projectedRoiUsd) || 0;
-    var accrued = plan.status === 'completed' ? total : round2(total * frac);
+    var r;
+    if (plan.status === 'completed') {
+      var paid = Number(plan.maturityRoiUsd);
+      r = { accruedUsd: paid >= 0 ? paid : 0, projectedUsd: paid >= 0 ? paid : 0, avgPriceUsd: Number(plan.avgPriceUsd) || 0, crashLevelUsd: P.crashLevel(plan), atRisk: !!plan.totalLoss, todayDailyUsd: 0, dayNo: Number(plan.days) || 1 };
+    } else {
+      r = P.roiFor(plan, price, at);
+      plan.projectedRoiUsd = r.projectedUsd;
+    }
     return {
       frac: frac,
       pct: Math.round(frac * 1000) / 10,
-      accruedUsd: accrued,
-      totalRoiUsd: total,
+      accruedUsd: r.accruedUsd,
+      totalRoiUsd: r.projectedUsd,
       capitalUsd: Number(plan.capitalUsd) || 0,
-      valueUsd: round2((Number(plan.capitalUsd) || 0) + accrued),
+      valueUsd: round2((Number(plan.capitalUsd) || 0) + r.accruedUsd),
       days: Number(plan.days) || 1,
+      dayNo: r.dayNo,
       daysLeft: Math.max(0, Math.ceil((end - at) / 864e5)),
-      priceNow: Number(price) || 0
+      priceNow: Number(price) || 0,
+      avgPriceUsd: r.avgPriceUsd,
+      crashLevelUsd: r.crashLevelUsd,
+      atRisk: r.atRisk,
+      todayDailyUsd: r.todayDailyUsd
     };
   };
 
@@ -184,6 +280,7 @@
       entryPriceUsd: price,
       dailyRoiUsd: round2(P.dailyRoiExact(price, ratePct)),
       projectedRoiUsd: P.totalRoi(price, ratePct, days, capital),
+      priceLog: [round4(price)],
       startedAt: start,
       endsAt: start + days * 864e5,
       status: 'active',
@@ -206,44 +303,51 @@
     var changed = false;
     var auto = [];
 
+    var price = P.sharePrice();
     w.plans.forEach(function (inv) {
       if (!inv || inv.status !== 'active') return;
+      /* older plans without a price record: the days already run were
+         projected at the activation price */
+      if (!Array.isArray(inv.priceLog) || !inv.priceLog.length) {
+        inv.priceLog = [];
+        var ran = Math.min(Number(inv.days) || 1, Math.floor((Math.min(now, Number(inv.endsAt)) - Number(inv.startedAt)) / 864e5));
+        for (var k = 0; k < Math.max(1, ran); k++) inv.priceLog.push(round4(inv.entryPriceUsd || price));
+        changed = true;
+      }
+      if (P.recordPrice(inv, price, now)) changed = true;
       if (now < Number(inv.endsAt)) return;
 
-      var price = P.sharePrice();
-      var projected = Number(inv.projectedRoiUsd) || 0;
+      var days = Math.max(1, Number(inv.days) || 1);
       var capital = Number(inv.capitalUsd) || 0;
+      while (inv.priceLog.length < days) inv.priceLog.push(round4(price));
+      var prices = inv.priceLog.slice(0, days);
+      var avg = prices.reduce(function (s, p) { return s + Number(p); }, 0) / days;
+      var crashAt = P.crashLevel(inv);
+      var profit = P.totalRoiFromPrices(prices, inv.ratePct, capital);
 
-      /* if the share price fell below the entry price, the drop is charged
-         against the payout before the profit is credited */
-      var drop = 0;
-      if (price > 0 && inv.entryPriceUsd > 0 && price < inv.entryPriceUsd) {
-        drop = round2(capital * ((inv.entryPriceUsd - price) / inv.entryPriceUsd));
-      }
-      var net = round2(projected - drop);
       inv.maturedPriceUsd = price;
-      inv.maturityDropUsd = drop;
-      inv.maturityRoiUsd = net;
+      inv.avgPriceUsd = round4(avg);
+      inv.crashLevelUsd = crashAt;
       inv.status = 'completed';
       inv.completedAt = now;
 
-      if (net >= 0) {
-        /* profit is credited to the WC-Investing profit balance */
-        w.profit = round2(w.profit + net);
-        log(w, inv.planName + ' matured · ROI ' + usd(net), net);
-        ledgerLine(u, 'WC-Investing ROI · ' + inv.planName, net);
-        if (w.autoReinvest) auto.push({ inv: inv, capital: capital });
+      if (crashAt > 0 && avg < crashAt) {
+        /* total loss: no profit, capital is not returned */
+        inv.totalLoss = true;
+        inv.maturityRoiUsd = -capital;
+        inv.projectedRoiUsd = 0;
+        log(w, inv.planName + ' matured at a total loss · average price ' + usd(avg) + ' fell below the crash level ' + usd(crashAt), 0);
+        ledgerLine(u, 'WC-Investing total loss · ' + inv.planName, -capital);
       } else {
-        /* a loss is taken out of the returned capital; the rest goes to
-           leftover capital, and a total loss closes the plan */
-        var returned = round2(capital + net);
-        if (returned > 0) {
-          w.leftover = round2(w.leftover + returned);
-          log(w, inv.planName + ' matured at a loss · ' + usd(returned) + ' returned to leftover capital', returned);
-        } else {
-          log(w, inv.planName + ' matured at a total loss · capital not returned', 0);
-        }
-        ledgerLine(u, 'WC-Investing loss · ' + inv.planName, net);
+        inv.maturityRoiUsd = profit;
+        inv.projectedRoiUsd = profit;
+        /* profit → profit balance, capital → capital balance */
+        w.profit = round2(w.profit + profit);
+        w.capital = round2(w.capital + capital);
+        log(w, inv.planName + ' matured · profit ' + usd(profit) + ' → profit balance', profit);
+        log(w, inv.planName + ' · capital ' + usd(capital) + ' returned to capital balance', capital);
+        ledgerLine(u, 'WC-Investing profit · ' + inv.planName, profit);
+        if (w.autoReinvest) auto.push({ inv: inv, capital: capital });
       }
       changed = true;
     });
@@ -253,7 +357,8 @@
       var plan = P.plan(a.inv.planId);
       if (!plan) return;
       if (!(a.capital > 0)) return;
-      var price = P.sharePrice();
+      if (round2(w.capital) < round2(a.capital)) return;
+      w.capital = round2(w.capital - a.capital);
       var start = Date.now();
       var days = Number(a.inv.days) || Number(plan.days) || 1;
       w.plans.unshift({
@@ -262,6 +367,7 @@
         entryPriceUsd: price,
         dailyRoiUsd: round2(P.dailyRoiExact(price, Number(plan.ratePct) || 0)),
         projectedRoiUsd: P.totalRoi(price, Number(plan.ratePct) || 0, days, a.capital),
+        priceLog: [round4(price)],
         startedAt: start, endsAt: start + days * 864e5, status: 'active',
         autoReinvested: true, fromInvestmentId: a.inv.id,
         shares: price > 0 ? Math.round((a.capital / price) * 1e6) / 1e6 : 0
@@ -359,12 +465,11 @@
     var now = Date.now();
     var start = Number(plan.startedAt) || now;
     var end = Number(plan.endsAt) || now;
-    var total = Number(plan.projectedRoiUsd) || 0;
+    var px = P.sharePrice();
     for (var i = 0; i <= steps; i++) {
       var t = start + ((end - start) * i) / steps;
       if (t > now) break;
-      var frac = (t - start) / Math.max(1, end - start);
-      out.push(total * Math.max(0, Math.min(1, frac)));
+      out.push(P.roiFor(plan, px, Math.max(start + 1, t)).accruedUsd);
     }
     if (out.length < 2) out = [0, Math.max(0.0001, (P.progress(plan, P.sharePrice()).accruedUsd))];
     return out;
@@ -390,5 +495,16 @@
     }
     P.sweep();
     setInterval(function () { try { if (P.sweep()) repaint(); } catch (e) {} }, 30000);
+    /* live payout: keep today's price current every 5s on the WC-Investing pages */
+    setInterval(function () {
+      try {
+        var h = String((typeof location !== 'undefined' && location.hash) || '');
+        if (h.indexOf('/invest/shares') < 0 || /shares\/(invest|transfer)/.test(h)) return;
+        var u = user(); if (!u) return;
+        var w = wallet(u), px = P.sharePrice(), any = false;
+        w.plans.forEach(function (inv) { if (inv && inv.status === 'active') { P.recordPrice(inv, px); any = true; } });
+        if (any) repaint();
+      } catch (e) {}
+    }, 5000);
   })();
 })();
