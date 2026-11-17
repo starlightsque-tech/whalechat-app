@@ -173,12 +173,12 @@
       <defs><linearGradient id="botCapFill" x1="0" y1="0" x2="0" y2="1">
         <stop offset="0%" stop-color="#2ee6c9" stop-opacity=".28"/><stop offset="100%" stop-color="#2ee6c9" stop-opacity="0"/>
       </linearGradient></defs>
-      <text x="6" y="8" class="bot-perf-lbl">Allocated capital (WC)</text>
-      <text x="${W - 6}" y="8" text-anchor="end" class="bot-perf-val">${fmt(pts[pts.length - 1].cap)} WC</text>
+      <text x="6" y="8" class="bot-perf-lbl">Allocated capital (USD)</text>
+      <text x="${W - 6}" y="8" text-anchor="end" class="bot-perf-val">$${fmt(pts[pts.length - 1].cap * 0.5)}</text>
       <path d="${areaPath}" fill="url(#botCapFill)"/>
       <path d="${capPath}" fill="none" stroke="#2ee6c9" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>
-      <text x="6" y="${botY - 4}" class="bot-perf-lbl">Cumulative P/L (WC)</text>
-      <text x="${W - 6}" y="${botY - 4}" text-anchor="end" class="bot-perf-val" style="fill:${pnlColor}">${lastPnl >= 0 ? '+' : '−'}${fmt(Math.abs(lastPnl))} WC</text>
+      <text x="6" y="${botY - 4}" class="bot-perf-lbl">Cumulative P/L (USD)</text>
+      <text x="${W - 6}" y="${botY - 4}" text-anchor="end" class="bot-perf-val" style="fill:${pnlColor}">${lastPnl >= 0 ? '+' : '−'}$${fmt(Math.abs(lastPnl) * 0.5)}</text>
       <line x1="6" y1="${zeroY}" x2="${W - 38}" y2="${zeroY}" stroke="rgba(255,255,255,.14)" stroke-dasharray="3 3"/>
       <path d="${pnlPath}" fill="none" stroke="${pnlColor}" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>
       <text x="${W - 38}" y="${topY + 10}" class="bot-perf-axis">${fmt(capMax)}</text>
@@ -201,12 +201,12 @@
       <div class="bot-account-grid">
         <div class="field" style="margin:0"><label class="label">Bot assistant</label>
           <select class="input" id="botTier">${owned.length ? owned.map((t) => `<option value="${escB(t.id)}">${escB(t.name)}${t.username ? ' @' + escB(t.username) : ''}</option>`).join('') : '<option value="">Subscribe to an assistant first</option>'}</select></div>
-        <div class="field" style="margin:0"><label class="label">Top-up from stock balance to start (WC)</label>
+        <div class="field" style="margin:0"><label class="label">Top-up from stock balance to start (USD)</label>
           <input class="input" id="botStartTopup" type="number" min="0" step="0.01" value="${acc.capitalCoins < 5 ? 100 : ''}" placeholder="${acc.capitalCoins < 5 ? 'e.g. 100' : '0'}"/>
-          <div class="tiny muted" style="margin-top:3px">Capital now ${num(acc.capitalCoins)} WC · available ${num(st.balance)} WC</div></div>
-        <div class="field" style="margin:0"><label class="label">Minimum per trade (WC)</label>
+          <div class="tiny muted" style="margin-top:3px">Capital now ${money((acc.capitalCoins)*0.5)} · available ${money((st.balance)*0.5)}</div></div>
+        <div class="field" style="margin:0"><label class="label">Minimum per trade (USD)</label>
           <input class="input" id="botMin" type="number" min="1" step="0.01" value="${num(acc.capitalCoins > 0 ? Math.max(1, acc.capitalCoins * 0.05) : 5)}"/></div>
-        <div class="field" style="margin:0"><label class="label">Maximum per trade (WC)</label>
+        <div class="field" style="margin:0"><label class="label">Maximum per trade (USD)</label>
           <input class="input" id="botMax" type="number" min="1" step="0.01" value="${num(acc.capitalCoins > 0 ? Math.max(1, acc.capitalCoins * 0.25) : 50)}"/></div>
         <div class="field" style="margin:0"><label class="label">Stop after (minutes, optional)</label>
           <input class="input" id="botDuration" type="number" min="0" step="1" placeholder="No limit"/></div>
@@ -221,9 +221,9 @@
         ${session ? statusBadge(session) : '<span class="badge">Ready</span>'}
       </div>
       <div class="bot-balance-grid">
-        <div><span>Bot capital balance</span><b data-bot-capital>${num(acc.capitalCoins)} WC</b><i>${money(acc.capitalCoins * 0.5)}</i></div>
-        <div><span>Bot profit balance</span><b class="up" data-bot-profit>${num(acc.profitCoins)} WC</b><i>${money(acc.profitCoins * 0.5)}</i></div>
-        <div><span>Total payouts</span><b>${num(acc.totalPayoutCoins)} WC</b><i>all bot trades</i></div>
+        <div><span>Bot capital balance</span><b data-bot-capital>${money((acc.capitalCoins)*0.5)}</b><i>${num(acc.capitalCoins)} WC</i></div>
+        <div><span>Bot profit balance</span><b class="up" data-bot-profit>${money((acc.profitCoins)*0.5)}</b><i>${num(acc.profitCoins)} WC</i></div>
+        <div><span>Total payouts</span><b>${money((acc.totalPayoutCoins)*0.5)}</b><i>all bot trades</i></div>
       </div>
       <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
         <button class="btn btn-sm btn-primary" data-act="bot-topup">${typeof ic === 'function' ? ic('plus', 14) : ''} Top up</button>
@@ -231,11 +231,11 @@
         <button class="btn btn-sm btn-ghost" data-act="bot-history">${typeof ic === 'function' ? ic('clock', 14) : ''} History</button>
         <button class="btn btn-sm ${running ? 'btn-danger' : 'btn-primary'}" data-act="bot-toggle">${running ? 'Turn off bot' : 'Turn on bot'}</button>
       </div>
-      ${acc.capitalCoins < 5 ? `<div class="bot-cooling" style="margin-top:10px"><b>Bot trading capital is ${num(acc.capitalCoins)} WC</b>
+      ${acc.capitalCoins < 5 ? `<div class="bot-cooling" style="margin-top:10px"><b>Bot trading capital is ${money((acc.capitalCoins)*0.5)}</b>
         <span>Top up at least 5 WC from your stock trading balance, then press Start trading now.</span>
         <button class="btn btn-sm btn-primary" data-act="bot-topup">Top up bot capital</button></div>` : ''}
       ${cooling ? `<div class="bot-cooling"><b>Cooling down — ${escB(session.coolingReason || 'waiting for capital')}</b>
-        <span>Top up the capital balance, then resume trading. Capital ${num(session.capitalCoins)} WC · profit ${num(session.profitCoins)} WC.</span>
+        <span>Top up the capital balance, then resume trading. Capital ${money((session.capitalCoins)*0.5)} · profit ${money((session.profitCoins)*0.5)}.</span>
         <button class="btn btn-sm btn-primary" data-act="bot-resume">Resume trading</button></div>` : ''}
       ${startForm}
       ${running ? `<div class="tiny muted" style="margin-top:8px;line-height:1.6">Bot is trading. Stop it below to hold the remaining capital and profit in the bot balances.</div>` : ''}
@@ -256,13 +256,13 @@
         ${statusBadge(session)}
       </div>
       <div class="bot-stats">
-        <div><span>Capital balance</span><b data-bot-pool>${num(session.capitalCoins)} WC</b></div>
-        <div><span>Profit balance</span><b class="up" data-bot-pnl>${num(session.profitCoins)} WC</b></div>
-        <div><span>Wins / losses</span><b>${num(session.totalProfitCoins)} / ${num(session.totalLossCoins)} WC</b></div>
+        <div><span>Capital balance</span><b data-bot-pool>${money((session.capitalCoins)*0.5)}</b></div>
+        <div><span>Profit balance</span><b class="up" data-bot-pnl>${money((session.profitCoins)*0.5)}</b></div>
+        <div><span>Wins / losses</span><b>${num(session.totalProfitCoins)} / ${money((session.totalLossCoins)*0.5)}</b></div>
         <div><span>Next trade</span><b data-bot-next>${session.status === 'running' ? 'counting…' : '—'}</b></div>
       </div>
       <div class="bot-poolbar"><i style="width:${pct}%"></i></div>
-      <div class="tiny muted" style="margin-top:4px">Started ${when(session.startedAt)} · initial allocation ${num(session.allocatedCoins)} WC</div>
+      <div class="tiny muted" style="margin-top:4px">Started ${when(session.startedAt)} · initial allocation ${money((session.allocatedCoins)*0.5)}</div>
       <div class="bot-perf">
         <div class="between" style="margin-bottom:4px"><b style="font-size:11.5px">Session performance</b>
           <span class="tiny muted">allocated capital · cumulative P/L</span></div>
@@ -277,8 +277,8 @@
           <span class="tiny muted">${session.trades.length ? 'latest first' : 'waiting for the first trade'}</span></div>
         ${session.trades.length ? session.trades.slice(0, 12).map((t) => `<div class="bot-log-row">
           <div class="grow" style="min-width:0"><b>${escB(t.ticker)}</b>
-            <div class="tiny muted">${escB(t.side)} · stake ${num(t.stakeCoins)} WC · payout ${num(t.payoutCoins || (t.stakeCoins + t.pnlCoins))} WC · ${when(t.at)}</div></div>
-          <span class="${t.win ? 'up' : 'down'}">${t.win ? '+' : '−'}${num(Math.abs(t.pnlCoins))} WC</span>
+            <div class="tiny muted">${escB(t.side)} · stake ${money((t.stakeCoins)*0.5)} · payout ${money((t.payoutCoins || (t.stakeCoins + t.pnlCoins))*0.5)} · ${when(t.at)}</div></div>
+          <span class="${t.win ? 'up' : 'down'}">${t.win ? '+' : '−'}${money((Math.abs(t.pnlCoins))*0.5)}</span>
         </div>`).join('') : '<div class="tiny muted" style="padding:8px 0">The worker trades on its interval even while this app is closed. Come back in a few minutes.</div>'}
       </div>
     </div>`;
@@ -294,8 +294,8 @@
         return `<div class="bot-hist-row">
           <div class="grow" style="min-width:0"><b>${escB(s.tierName)}</b>
             <div class="tiny muted">${when(s.startedAt)} → ${when(s.stoppedAt)} · ${escB(s.stopReason || 'stopped')}</div></div>
-          <div style="text-align:right"><b class="${up ? 'up' : 'down'}">${up ? '+' : '−'}${num(Math.abs(s.profitCoins))} WC</b>
-            <div class="tiny muted">${num(s.poolCoins)} WC returned</div></div>
+          <div style="text-align:right"><b class="${up ? 'up' : 'down'}">${up ? '+' : '−'}${money((Math.abs(s.profitCoins))*0.5)}</b>
+            <div class="tiny muted">${money((s.poolCoins)*0.5)} returned</div></div>
         </div>`;
       }).join('')}
     </div>`;
@@ -316,9 +316,9 @@
         <span class="badge ${on ? 'badge-success' : subscribedAnywhere ? 'badge-warn' : ''}">${on ? 'Subscribed' : subscribedAnywhere ? 'Paused' : 'Not subscribed'}</span>
       </div>
       <div class="bot-autosecure-grid">
-        <div><span class="tiny muted">Secured profits</span><b><span data-bot-secured>${num(a.securedCoins)}</span> WC</b></div>
+        <div><span class="tiny muted">Secured profits</span><b><span data-bot-secured>${money(a.securedCoins * 0.5)}</span></b></div>
         <div><span class="tiny muted">Entries to claim</span><b data-bot-secured-count>${num(a.securedCount, 0)}</b></div>
-        <div><span class="tiny muted">Tool price</span><b>${num(a.priceCoins)} WC / ${escB(a.billedAs || 'monthly')}</b></div>
+        <div><span class="tiny muted">Tool price</span><b>${money((a.priceCoins)*0.5)} / ${escB(a.billedAs || 'monthly')}</b></div>
         <div><span class="tiny muted">Expires</span><b>${a.expiresAt ? when(a.expiresAt) : '—'}</b></div>
       </div>
       <div class="tiny muted" style="margin-top:8px;line-height:1.6">
@@ -331,7 +331,7 @@
              ${sharedRec && sharedRec.source && sharedRec.source !== 'bots'
                ? `<span class="tiny up" style="align-self:center">Subscribed from ${escB(sharedRec.source === 'tools' ? 'the Tools page' : 'the stock page')} — no extra charge</span>`
                : `<button class="btn btn-sm btn-ghost" data-act="bot-auto-subscribe">Renew tool</button>`}`
-          : `<button class="btn btn-sm btn-primary" data-act="bot-auto-subscribe">Subscribe · ${num(a.priceCoins)} WC / ${escB(a.billedAs || 'monthly')}</button>`}
+          : `<button class="btn btn-sm btn-primary" data-act="bot-auto-subscribe">Subscribe · ${money((a.priceCoins)*0.5)} / ${escB(a.billedAs || 'monthly')}</button>`}
         ${a.securedCount ? `<a class="btn btn-sm btn-soft" href="#/invest/orders">Claim secured profit</a>` : ''}
       </div>
     </div>`;
@@ -356,7 +356,7 @@
       <div class="row" style="gap:10px;align-items:center"><a href="#/invest" class="btn-icon">${ic('back', 18)}</a>
         <div><div class="section-title" style="margin:0">Trading Bots</div>
           <div class="tiny muted">Automated simulated trading · runs while you are offline</div></div></div>
-      <div class="row" style="gap:8px"><span class="badge">${num(B.state.balance)} WC</span>
+      <div class="row" style="gap:8px"><span class="badge">${money((B.state.balance)*0.5)}</span>
         <button class="btn btn-sm btn-ghost" data-act="bot-refresh">${ic('refresh', 14)} Refresh</button></div>
     </div></div>
 
@@ -393,17 +393,17 @@
         ${statusBadge(sess)}
       </div>
       <div class="bot-dash-bals">
-        <span>Capital <b>${num(acc.capitalCoins)} WC</b></span>
-        <span>Profit <b class="up">${num(acc.profitCoins)} WC</b></span>
+        <span>Capital <b>${money((acc.capitalCoins)*0.5)}</b></span>
+        <span>Profit <b class="up">${money((acc.profitCoins)*0.5)}</b></span>
       </div>
       ${s && s.autoSecure && s.autoSecure.active ? `<div class="tiny ${s.autoSecure.enabled ? 'up' : 'muted'}" style="margin-top:6px">
-        ${s.autoSecure.enabled ? 'Auto Secure ON' : 'Auto Secure paused'} · <b data-bot-secured>${num(s.autoSecure.securedCoins)}</b> WC secured ·
+        ${s.autoSecure.enabled ? 'Auto Secure ON' : 'Auto Secure paused'} · <b data-bot-secured>${money(s.autoSecure.securedCoins * 0.5)}</b> secured ·
         <span data-bot-secured-count>${s.autoSecure.securedCount}</span> to claim
       </div>` : ''}
       ${running ? `<div class="row" style="gap:8px;margin-top:7px;flex-wrap:wrap">
-        <span class="tiny ${Number(sess.profitCoins) >= 0 ? 'up' : 'down'}"><b>${Number(sess.profitCoins) >= 0 ? '+' : '−'}${num(Math.abs(Number(sess.profitCoins) || 0))} WC</b> bot P/L</span>
+        <span class="tiny ${Number(sess.profitCoins) >= 0 ? 'up' : 'down'}"><b>${Number(sess.profitCoins) >= 0 ? '+' : '−'}${money((Math.abs(Number(sess.profitCoins) || 0))*0.5)}</b> bot P/L</span>
         <span class="tiny muted">${num(sess.tradeCount)} trade${Number(sess.tradeCount) === 1 ? '' : 's'}</span>
-        ${sess.trades && sess.trades.length ? `<span class="tiny muted">last ${escB(sess.trades[0].ticker || '')} <b class="${Number(sess.trades[0].pnlCoins) >= 0 ? 'up' : 'down'}">${Number(sess.trades[0].pnlCoins) >= 0 ? '+' : '−'}${num(Math.abs(Number(sess.trades[0].pnlCoins) || 0))} WC</b></span>` : ''}
+        ${sess.trades && sess.trades.length ? `<span class="tiny muted">last ${escB(sess.trades[0].ticker || '')} <b class="${Number(sess.trades[0].pnlCoins) >= 0 ? 'up' : 'down'}">${Number(sess.trades[0].pnlCoins) >= 0 ? '+' : '−'}${money((Math.abs(Number(sess.trades[0].pnlCoins) || 0))*0.5)}</b></span>` : ''}
       </div>` : ''}
       <a class="btn btn-sm btn-primary" href="#/invest/bots" style="margin-top:9px;width:100%">Open bot trading dashboard</a>
     </div>`;
@@ -477,8 +477,8 @@
     return `<div class="bot-admin-stats">
         <div><span>Active subscriptions</span><b>${a.stats.subscriptions}</b></div>
         <div><span>Running bots</span><b>${a.stats.running}</b></div>
-        <div><span>Reserved capital</span><b>${num(a.stats.reservedCoins)} WC</b></div>
-        <div><span>Subscription revenue</span><b>${num(a.stats.revenueCoins)} WC</b></div>
+        <div><span>Reserved capital</span><b>${money((a.stats.reservedCoins)*0.5)}</b></div>
+        <div><span>Subscription revenue</span><b>${money((a.stats.revenueCoins)*0.5)}</b></div>
       </div>
       <div class="between" style="margin-top:12px;gap:8px;flex-wrap:wrap">
         <div class="tiny muted">Add trading assistants with their own username and profile picture. Mark them HOT to feature them in the marketplace.</div>
@@ -504,7 +504,7 @@
           <input class="input" id="botCfgLoss" type="number" min="0.1" step="0.1" value="${s.lossPct}"/></div>
         <div class="field"><label class="label">Auto Secure price (USD)</label>
           <input class="input" id="botCfgAutoPrice" type="number" min="0" step="0.01" value="${Number((a.autoSecure || {}).priceUsd != null ? a.autoSecure.priceUsd : s.autoSecurePriceUsd) || 20}"/>
-          <div class="tiny muted" style="margin-top:4px">Charged as ${num((Number((a.autoSecure || {}).priceUsd) || Number(s.autoSecurePriceUsd) || 20) * 2)} WC (1 WC = $0.50).</div></div>
+          <div class="tiny muted" style="margin-top:4px">Charged as ${money(((Number((a.autoSecure || {}).priceUsd) || Number(s.autoSecurePriceUsd) || 20) * 2)*0.5)} (1 WC = $0.50).</div></div>
         <div class="field"><label class="label">Auto Secure billing cycle</label>
           <select class="input" id="botCfgAutoCycle">
             ${['daily', 'weekly', 'monthly', 'one_time'].map((c) => `<option value="${c}" ${((a.autoSecure || {}).billingCycle || s.autoSecureCycle) === c ? 'selected' : ''}>${c.replace('_', '-')}</option>`).join('')}
@@ -590,20 +590,20 @@
       const durEl = document.getElementById('botDuration');
       const tierId = tierEl ? tierEl.value : '';
       if (!tierId) return tmsg('Select a bot assistant you own', 'err');
-      const topup = Number(topupEl && topupEl.value) || 0;
+      const topup = (Number(topupEl && topupEl.value) || 0) * 2; // USD -> WC
       const capitalNow = Number((B.state && B.state.account && B.state.account.capitalCoins) || 0);
       if (!(topup > 0) && capitalNow < 5) {
-        tmsg('Bot trading capital is 0 WC — top up at least 5 WC to start', 'err');
+        tmsg('Bot trading capital is $0.00 — top up at least $2.50 to start', 'err');
         return App.botTopup();
       }
-      const minTrade = Number(minEl && minEl.value) || 0;
-      const maxTrade = Number(maxEl && maxEl.value) || 0;
+      const minTrade = (Number(minEl && minEl.value) || 0) * 2; // USD -> WC
+      const maxTrade = (Number(maxEl && maxEl.value) || 0) * 2; // USD -> WC
       const duration = Number(durEl && durEl.value) || 0;
       if (!(minTrade > 0) || maxTrade < minTrade) return tmsg('Set a valid minimum and maximum amount per trade', 'err');
       if (typeof confirmDialog === 'function') {
         const ok = await confirmDialog({
           title: 'Start trading now?',
-          body: `${tierEl.options[tierEl.selectedIndex].text} will trade real stocks between ${num(minTrade)} and ${num(maxTrade)} WC per trade${duration ? ', then stop after ' + duration + ' minutes' : ''}. Payouts go to the bot profit balance.`,
+          body: `${tierEl.options[tierEl.selectedIndex].text} will trade real stocks between ${num(minTrade)} and ${money((maxTrade)*0.5)} per trade${duration ? ', then stop after ' + duration + ' minutes' : ''}. Payouts go to the bot profit balance.`,
           ok: 'Start trading'
         });
         if (!ok) return;
@@ -662,10 +662,10 @@
     App.botTopup = function () {
       const acc = (B.state && B.state.account) || { capitalCoins: 0 };
       openModal(modalShell('Top up bot trading capital', `
-        <div class="tiny muted" style="margin-bottom:10px;line-height:1.6">Move funds from your <b>stock trading balance</b> (${num(B.state && B.state.balance)} WC) into the bot trading capital balance.</div>
+        <div class="tiny muted" style="margin-bottom:10px;line-height:1.6">Move funds from your <b>stock trading balance</b> (${money((B.state && B.state.balance)*0.5)}) into the bot trading capital balance.</div>
         <div class="bot-balance-grid" style="margin-top:0">
-          <div><span>Bot capital now</span><b>${num(acc.capitalCoins)} WC</b></div>
-          <div><span>Stock trading balance</span><b>${num(B.state && B.state.balance)} WC</b></div>
+          <div><span>Bot capital now</span><b>${money((acc.capitalCoins)*0.5)}</b></div>
+          <div><span>Stock trading balance</span><b>${money((B.state && B.state.balance)*0.5)}</b></div>
         </div>
         <div class="field" style="margin-top:12px"><label class="label">Top-up amount (USD)</label>
           <div class="input-wrap"><span class="inv-prefix">$</span><input class="input" id="botTopupUsd" type="number" min="0.5" step="0.01" placeholder="10.00"/></div>
@@ -689,8 +689,8 @@
         <div class="tiny muted" style="margin-bottom:10px;line-height:1.6">Choose which bot balance to transfer from. Funds go to your stock trading balance.</div>
         <div class="field"><label class="label">Transfer from</label>
           <select class="input" id="botTransferSource">
-            <option value="capital">Bot trading capital · ${num(acc.capitalCoins)} WC</option>
-            <option value="profit">Bot profit balance · ${num(acc.profitCoins)} WC</option>
+            <option value="capital">Bot trading capital · ${money((acc.capitalCoins)*0.5)}</option>
+            <option value="profit">Bot profit balance · ${money((acc.profitCoins)*0.5)}</option>
           </select></div>
         <div class="field"><label class="label">Amount (USD)</label>
           <div class="input-wrap"><span class="inv-prefix">$</span><input class="input" id="botTransferUsd" type="number" min="0.01" step="0.01" placeholder="10.00"/></div>
@@ -727,7 +727,7 @@
           <div class="card-title" style="margin:14px 0 6px">Subscription &amp; renewal records</div>
           <div class="bot-log" style="max-height:160px;overflow:auto">
             ${txs.length ? txs.map((t) => `<div class="bot-log-row"><div class="grow"><div class="tiny muted">${escB(t.label || t.type)} · ${when(t.createdAt)}</div></div>
-              <span class="${Number(t.coins) >= 0 ? 'up' : 'down'}">${Number(t.coins) >= 0 ? '+' : '−'}${num(Math.abs(Number(t.coins) || 0))} WC</span></div>`).join('') : '<div class="tiny muted">No subscription records yet.</div>'}
+              <span class="${Number(t.coins) >= 0 ? 'up' : 'down'}">${Number(t.coins) >= 0 ? '+' : '−'}${money((Math.abs(Number(t.coins) || 0))*0.5)}</span></div>`).join('') : '<div class="tiny muted">No subscription records yet.</div>'}
           </div>`,
           `<button class="btn btn-ghost" data-close style="width:100%">Close</button>`), { locked: false });
       } catch (e) { tmsg('Could not load history: ' + e.message, 'err'); }
@@ -763,7 +763,7 @@
       if (typeof confirmDialog === 'function') {
         const ok = await confirmDialog({
           title: 'Subscribe to Auto Secure Take Profit?',
-          body: `${num(a.priceCoins)} WC will be deducted from your balance (${money(a.priceUsd)} / ${escB(a.billedAs || 'monthly')}). The bot will secure profit on your active trades even while you are offline.`,
+          body: `${money((a.priceCoins)*0.5)} will be deducted from your balance (${money(a.priceUsd)} / ${escB(a.billedAs || 'monthly')}). The bot will secure profit on your active trades even while you are offline.`,
           ok: 'Subscribe'
         });
         if (!ok) return;
@@ -1008,13 +1008,13 @@
     const secs = Math.max(0, Math.round((Number(s.nextTradeAt) - Date.now()) / 1000));
     el.textContent = secs > 0 ? Math.floor(secs / 60) + 'm ' + String(secs % 60).padStart(2, '0') + 's' : 'placing trade…';
     const pool = document.querySelector('[data-bot-pool]');
-    if (pool && B.state) pool.textContent = num(s.poolCoins) + ' WC';
+    if (pool && B.state) pool.textContent = money(s.poolCoins * 0.5);
   }
 
   function paintAutoSecure() {
     const a = B.state && B.state.autoSecure;
     if (!a) return;
-    document.querySelectorAll('[data-bot-secured]').forEach((el) => { el.textContent = num(a.securedCoins); });
+    document.querySelectorAll('[data-bot-secured]').forEach((el) => { el.textContent = money(a.securedCoins * 0.5); });
     document.querySelectorAll('[data-bot-secured-count]').forEach((el) => { el.textContent = num(a.securedCount, 0); });
   }
 
