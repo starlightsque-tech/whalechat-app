@@ -96,7 +96,7 @@
         if (c.mode === 'stock' && c.ticker === ticker) {
           try { c.series.update({ time: c.lastTime, value: p }); } catch (e) {}
         } else if (c.mode === 'portfolio') {
-          try { const sum = LT.summary(me().id); c.series.update({ time: c.lastTime, value: sum.valueCoins }); } catch (e) {}
+          try { const sum = LT.summary(me().id); c.series.update({ time: c.lastTime, value: sum.valueUsd }); } catch (e) {}
         }
       }
       if (ts - lastDom > 90) { lastDom = ts; paintSmoothed(ticker); }
@@ -449,7 +449,7 @@
           vertLine: { color: 'rgba(46,230,201,.45)', width: 1, style: LWC.LineStyle.Dashed, labelBackgroundColor: '#0f2333' },
           horzLine: { color: 'rgba(46,230,201,.45)', width: 1, style: LWC.LineStyle.Dashed, labelBackgroundColor: '#0f2333' }
         },
-        localization: { priceFormatter: (p) => (cfg.mode === 'portfolio' ? Number(p).toFixed(2) + ' WC' : '$' + Number(p).toFixed(2)) },
+        localization: { priceFormatter: (p) => '$' + Number(p).toFixed(2) },
         handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
         handleScale: { axisPressedMouseMove: true, mouseWheel: true, pinch: true }
       });
@@ -609,7 +609,7 @@
       if (!s) return;
       const now = Math.floor(Date.now() / 1000);
       const time = Math.max(now, c.lastTime);
-      appendPoint(c, time, s.valueCoins);
+      appendPoint(c, time, s.valueUsd);
       return;
     }
     const ticker = c.ticker;
