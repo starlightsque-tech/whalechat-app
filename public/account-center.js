@@ -149,14 +149,16 @@
           '<div class="ac-big">' + wcA(u.balance) + ' <em>WC</em></div>' +
           '<div class="ac-sub">≈ ' + moneyA(Number(u.balance || 0) * RATE) + ' USD · used for all purchases and vendor payments</div>' +
           '<div class="ac-minirow"><span>Spendable</span><span>WC</span></div>' +
-          '<a href="#/account/transfer?to=inv_usd" class="ac-link">Send WC to investment trade capital →</a></div>' +
+          '<a href="#/account/transfer?to=inv_usd" class="ac-link">Send WC to investment trade capital →</a>' +
+          '<a href="#/account/transfer?to=vendor_cap" class="ac-link">Send WC to vendor capital →</a>' +
+          '<a href="#/account/convert" class="ac-link">Convert WC to USDT / BTC to withdraw →</a></div>' +
       '</div>' +
 
       '<div class="card ac-actions-card"><div class="card-title" style="margin:0 0 10px">Account actions</div>' +
         '<div class="ac-actions">' + actions.map(function (x) {
           return '<a href="' + x[2] + '" class="ac-action ' + (x[3] === 'primary' ? 'on' : '') + '"><span>' + iconA(x[0], 18) + '</span><b>' + x[1] + '</b></a>';
         }).join('') + '</div>' +
-        '<div class="ac-note">' + iconA('shield', 13) + ' All product buying, selling and vendor balance transfers are paid from your Whalecoin balance.</div></div>' +
+        '<div class="ac-note">' + iconA('shield', 13) + ' Crypto converts to WC here. WC goes to your investment trade capital or vendor capital as USD. Only the investment total profit balance comes back as WC.</div></div>' +
 
       (pendingDep.length || pendingWd.length ? '<div class="card"><div class="section-title"><h3>Pending requests</h3><span class="badge badge-warn">' + (pendingDep.length + pendingWd.length) + '</span></div>' +
         pendingDep.map(function (d) {
