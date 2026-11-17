@@ -981,6 +981,13 @@ async function api(req, res, pathname, query) {
     catch (e) { return json(res, 400, { ok: false, error: e.message }); }
   }
 
+  if (pathname === '/api/bots/admin/subscription' && req.method === 'POST') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    const body = await readBody(req);
+    if (!isAdmin(store.db, body.adminId)) return json(res, 403, { ok: false, error: 'admin_only' });
+    try { return json(res, 200, bots.adminEditSub(body)); }
+    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
   if (pathname === '/api/bots/admin/config' && req.method === 'POST') {
     if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
     const body = await readBody(req);
