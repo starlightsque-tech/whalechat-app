@@ -688,13 +688,13 @@
 
   function stockStrip(u) {
     var a = account(u);
-    var profit = 0;
-    try { (DB.trades || []).filter(function (t) { return t.userId === u.id && t.status === 'Completed' && t.type !== 'live'; }).forEach(function (t) { profit += Number(t.plUsd) || ((Number(t.pnlCoins) || 0) * RATE); }); } catch (e) {}
+    var profit = Number(a.stockProfit) || 0;
+    var leftover = Number(a.stockLeftover) || 0;
     var cap = Number(a.portfolios.stock) || 0;
     return '<div class="ih-cards">' +
-      '<div class="ih-card"><span>Trade capital balance</span><b>' + money(cap) + '</b><small>' + wc(cap / RATE) + ' WC</small></div>' +
-      '<div class="ih-card"><span>Profit balance</span><b class="' + (profit >= 0 ? 'up' : 'down') + '">' + money(profit) + '</b><small>Closed trade P/L</small></div>' +
-      '<div class="ih-card"><span>Leftover capital</span><b>' + money(0) + '</b><small>Returned after losses</small></div>' +
+      '<div class="ih-card"><span>Trade capital balance</span><b data-ih-stock="cap">' + money(cap) + '</b><small>' + wc(cap / RATE) + ' WC · capital returned on close</small></div>' +
+      '<div class="ih-card"><span>Profit balance</span><b class="up" data-ih-stock="profit">' + money(profit) + '</b><small>Claimed + closed trade profit</small></div>' +
+      '<div class="ih-card"><span>Leftover capital</span><b data-ih-stock="leftover">' + money(leftover) + '</b><small>Returned after losses</small></div>' +
     '</div><div class="card ih-actions"><div class="ih-btn-grid">' +
       [['Stocks','#/invest/market'],['Trade now','#/invest/market'],['Transfer','#/investment/transfer'],['Bot traders','#/invest/bots'],['History','#/invest/orders'],['Watchlist','#/invest/watchlist']]
         .map(function(x){return '<a href="'+x[1]+'" class="btn btn-ghost btn-sm">'+x[0]+'</a>';}).join('') + '</div></div>';
@@ -1330,4 +1330,18 @@
     }
     if (tries++ < 40) setTimeout(boot, 500);
   })();
+})();
+
+/* keep the stock balance cards live (capital / profit / leftover) */
+(function () {
+  if (typeof window === 'undefined') return;
+  setInterval(function () {
+    try {
+      if (typeof me !== 'function' || !me() || document.hidden) return;
+      var a = me().investAcct; if (!a) return;
+      var f = function (v) { return '$' + (Math.round((Number(v) || 0) * 100) / 100).toFixed(2); };
+      var set = function (k, v) { var el = document.querySelector('[data-ih-stock="' + k + '"]'); if (el && el.textContent !== f(v)) el.textContent = f(v); };
+      set('cap', a.portfolios && a.portfolios.stock); set('profit', a.stockProfit); set('leftover', a.stockLeftover);
+    } catch (e) {}
+  }, 1000);
 })();
