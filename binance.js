@@ -37,6 +37,7 @@ function getJSON(url, headers) {
 function createBinanceFeed(opts) {
   const getDb = opts.getDb || (() => null);
   const everyMs = Math.max(5000, Number(opts.everyMs) || 15000);
+  const onTick = typeof opts.onTick === 'function' ? opts.onTick : null;
   const state = {
     enabled: true, lastAt: 0, lastError: '', ticks: 0, source: 'none',
     prices: {}, symbols: Object.keys(DEFAULT_MAP)
@@ -124,7 +125,9 @@ function createBinanceFeed(opts) {
     let WebSocket = null;
     try { WebSocket = require('ws'); } catch (e) { return; }
     const syms = Object.keys(map()).map(s => s.toLowerCase() + '@miniTicker').join('/');
-    const url = 'wss://stream.binance.com:9443/stream?streams=' + syms;
+    /* alternate hosts: some server regions (e.g. US) are refused by stream.binance.com */
+    const hosts = ['wss://stream.binance.com:9443', 'wss://data-stream.binance.vision'];
+    const url = hosts[(wsRetry || 0) % hosts.length] + '/stream?streams=' + syms;
     state.wsUrl = url;
     try { ws = new WebSocket(url); } catch (e) { return; }
     ws.on('open', () => { wsRetry = 0; state.wsConnected = true; state.lastError = ''; });
@@ -148,6 +151,7 @@ function createBinanceFeed(opts) {
           source: 'binance-ws'
         };
         state.wsTicks = (state.wsTicks || 0) + 1;
+        if (onTick) { try { onTick(symbol, price); } catch (e) {} }
         state.lastAt = Date.now();
         state.source = 'binance-ws';
       } catch (e) {}
