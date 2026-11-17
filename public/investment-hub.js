@@ -674,7 +674,7 @@
     var a = account(u);
     var profit = 0;
     try { (DB.trades || []).filter(function (t) { return t.userId === u.id && t.status === 'Completed' && t.type !== 'live'; }).forEach(function (t) { profit += Number(t.plUsd) || ((Number(t.pnlCoins) || 0) * RATE); }); } catch (e) {}
-    var cap = Number(a.portfolios.stock) || (Number(u.balance) || 0) * RATE;
+    var cap = Number(a.portfolios.stock) || 0;
     return '<div class="ih-cards">' +
       '<div class="ih-card"><span>Trade capital balance</span><b>' + money(cap) + '</b><small>' + wc(cap / RATE) + ' WC</small></div>' +
       '<div class="ih-card"><span>Profit balance</span><b class="' + (profit >= 0 ? 'up' : 'down') + '">' + money(profit) + '</b><small>Closed trade P/L</small></div>' +
@@ -686,7 +686,7 @@
 
   function botStrip(u) {
     var a = account(u); var st = (window.WC_BOTS && window.WC_BOTS.state) || {};
-    var capital = Number(st.balance) ? Number(st.balance) * RATE : Number(a.portfolios.bot) || 0;
+    var capital = (st.account && st.account.capitalUsd != null) ? Number(st.account.capitalUsd) || 0 : Number(a.portfolios.bot) || 0;
     var profit = Number(st.session && st.session.profitCoins ? st.session.profitCoins : 0) * RATE;
     var leftover = Number(st.session && st.session.leftoverCoins ? st.session.leftoverCoins : 0) * RATE;
     return '<div class="ih-cards">' +
