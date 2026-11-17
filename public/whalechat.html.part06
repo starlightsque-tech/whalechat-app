@@ -138,7 +138,7 @@ VIEWS.profile = function () {
       </div>
       <div class="col gap12">
         <div class="grid-kpi" style="grid-template-columns:1fr 1fr">
-          ${[['Deposits', coins(u.totalDeposits || 0) + ' WC'], ['Withdrawals', coins(u.totalWithdrawals || 0) + ' WC'], ['Earnings', coins(u.totalEarnings || 0) + ' WC'], ['Referrals', String(referrals)]]
+          ${[['Deposits', usd(DB.deposits.filter(d => d.userId === u.id && d.status === 'approved').reduce((t, d) => t + (Number(d.usd) || 0), 0))], ['Withdrawals', usd(DB.withdrawals.filter(w => w.userId === u.id && w.status === 'approved').reduce((t, w) => t + (Number(w.usd) || 0), 0))], ['Earnings', coins(u.totalEarnings || 0) + ' WC'], ['Referrals', String(referrals)]]
             .map(([k, val]) => `<div class="kpi"><div class="v" style="font-size:18px">${val}</div><div class="k">${k}</div></div>`).join('')}
         </div>
         <div class="card" style="padding:14px">
