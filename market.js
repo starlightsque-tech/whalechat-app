@@ -673,7 +673,7 @@ class MarketService {
 
   _settleSoon() {
     const now = Date.now();
-    if (now - this._lastSettleAt < 500) return;
+    if (now - this._lastSettleAt < 250) return;
     this._lastSettleAt = now;
     try { this.settleTrades(); } catch (e) { this.lastError = e.message; }
   }
