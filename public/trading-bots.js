@@ -221,8 +221,8 @@
         ${session ? statusBadge(session) : '<span class="badge">Ready</span>'}
       </div>
       <div class="bot-balance-grid">
-        <div><span>Bot capital balance</span><b data-bot-capital>${money((acc.capitalCoins)*0.5)}</b><i>${num(acc.capitalCoins)} WC</i></div>
-        <div><span>Bot profit balance</span><b class="up" data-bot-profit>${money((acc.profitCoins)*0.5)}</b><i>${num(acc.profitCoins)} WC</i></div>
+        <div><span>Bot capital balance</span><b data-bot-capital>${money((acc.capitalCoins)*0.5)}</b><i>USD</i></div>
+        <div><span>Bot profit balance</span><b class="up" data-bot-profit>${money((acc.profitCoins)*0.5)}</b><i>USD</i></div>
         <div><span>Total payouts</span><b>${money((acc.totalPayoutCoins)*0.5)}</b><i>all bot trades</i></div>
       </div>
       <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
@@ -232,7 +232,7 @@
         <button class="btn btn-sm ${running ? 'btn-danger' : 'btn-primary'}" data-act="bot-toggle">${running ? 'Turn off bot' : 'Turn on bot'}</button>
       </div>
       ${acc.capitalCoins < 5 ? `<div class="bot-cooling" style="margin-top:10px"><b>Bot trading capital is ${money((acc.capitalCoins)*0.5)}</b>
-        <span>Top up at least 5 WC from your stock trading balance, then press Start trading now.</span>
+        <span>Top up at least $2.50 from your stock trading balance, then press Start trading now.</span>
         <button class="btn btn-sm btn-primary" data-act="bot-topup">Top up bot capital</button></div>` : ''}
       ${cooling ? `<div class="bot-cooling"><b>Cooling down — ${escB(session.coolingReason || 'waiting for capital')}</b>
         <span>Top up the capital balance, then resume trading. Capital ${money((session.capitalCoins)*0.5)} · profit ${money((session.profitCoins)*0.5)}.</span>
@@ -727,7 +727,7 @@
           <div class="bot-log" style="max-height:260px;overflow:auto">
             ${ev.length ? ev.map((e) => `<div class="bot-log-row"><div class="grow" style="min-width:0"><b>${escB(e.type)}</b>
               <div class="tiny muted">${escB(e.label || '')} · ${when(e.at)}</div></div>
-              <span class="${e.amountCoins >= 0 ? 'up' : 'down'}">${e.amountCoins ? (e.amountCoins > 0 ? '+' : '−') + num(Math.abs(e.amountCoins)) + ' WC' : ''}</span></div>`).join('') : '<div class="tiny muted">No bot events yet.</div>'}
+              <span class="${e.amountCoins >= 0 ? 'up' : 'down'}">${e.amountCoins ? (e.amountCoins > 0 ? '+' : '−') + money(Math.abs(e.amountCoins)*0.5) : ''}</span></div>`).join('') : '<div class="tiny muted">No bot events yet.</div>'}
           </div>
           <div class="card-title" style="margin:14px 0 6px">Subscription &amp; renewal records</div>
           <div class="bot-log" style="max-height:160px;overflow:auto">
