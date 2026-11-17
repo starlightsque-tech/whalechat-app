@@ -999,7 +999,10 @@ function startEventStream() {
       let d = {};
       try { d = JSON.parse(e.data); } catch (err) {}
       if (d.source === Remote.clientId) { if (d.rev) Remote.rev = d.rev; return; }
-      Remote.refresh();
+      /* events without a newer revision would be fetched and thrown away —
+         skip the full download (market ticks, settlements, presence …) */
+      if (!d.rev || d.rev <= Remote.rev) return;
+      scheduleRemoteRefresh();
     });
     es.onerror = () => {
       Remote.status = 'offline';
@@ -1008,6 +1011,34 @@ function startEventStream() {
     };
   } catch (e) {}
 }
+/* Batch incoming changes: at most one state download per ~0.9 s, never while
+   the user is tapping, scrolling or typing, and not while the tab is hidden. */
+let WC_LAST_INPUT_AT = 0;
+['pointerdown', 'touchstart', 'keydown', 'wheel', 'scroll'].forEach((ev) => {
+  try { window.addEventListener(ev, () => { WC_LAST_INPUT_AT = Date.now(); }, { passive: true, capture: true }); } catch (e) {}
+});
+function wcUserBusy() {
+  if (Date.now() - WC_LAST_INPUT_AT < 700) return true;
+  const a = document.activeElement;
+  if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable) && Date.now() - WC_LAST_INPUT_AT < 2500) return true;
+  return false;
+}
+function scheduleRemoteRefresh() {
+  if (Remote._refreshTimer) return;
+  const started = Date.now();
+  const wait = Math.max(120, 900 - (started - (Remote._lastRefreshAt || 0)));
+  const run = () => {
+    if (document.hidden) { Remote._refreshTimer = null; Remote._refreshOnShow = true; return; }
+    if (wcUserBusy() && Date.now() - started < 6000) { Remote._refreshTimer = setTimeout(run, 350); return; }
+    Remote._refreshTimer = null;
+    Remote._lastRefreshAt = Date.now();
+    Remote.refresh();
+  };
+  Remote._refreshTimer = setTimeout(run, wait);
+}
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && Remote._refreshOnShow) { Remote._refreshOnShow = false; scheduleRemoteRefresh(); }
+});
 function stopEventStream() {
   if (Remote.es) { try { Remote.es.close(); } catch (e) {} }
   Remote.es = null;
