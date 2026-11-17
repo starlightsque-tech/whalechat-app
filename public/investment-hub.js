@@ -66,14 +66,10 @@
 
   function depositSummary(u) {
     var map = {};
-    try {
-      (DB.deposits || []).filter(function (d) { return d.userId === u.id && d.status === 'approved'; }).forEach(function (d) {
-        var coin = String(d.coin || d.methodLabel || d.method || 'USD').toUpperCase().replace(/ .*/, '');
-        var usd = Number(d.amountUsd);
-        if (!(usd > 0)) usd = (Number(d.coins) || 0) * RATE;
-        map[coin] = (map[coin] || 0) + usd;
-      });
-    } catch (e) {}
+    var bal = u && u.depositBalances;
+    if (bal && typeof bal === 'object' && !Array.isArray(bal)) {
+      Object.keys(bal).forEach(function (k) { var v = Number(bal[k]) || 0; if (v > 0.004) map[String(k).toUpperCase()] = v; });
+    }
     var keys = Object.keys(map);
     if (!keys.length) return '$0.00';
     return keys.map(function (k) { return money(map[k]) + ' || ' + k; }).join('<br>');
@@ -807,7 +803,6 @@
         var strip = '<div class="ih-cards ih-account-strip">' +
           '<div class="ih-card"><span>Crypto balance</span><b>' + depositSummary(u) + '</b><small>Deposited coin assets</small></div>' +
           (Number(u.walletUsd) > 0.004 ? '<div class="ih-card"><span>Old $ balance</span><b>' + money(u.walletUsd || 0) + '</b><small>Move it to your WC balance</small></div>' : '') +
-          '<div class="ih-card"><span>WhaleCoin balance</span><b>' + wc(u.balance) + ' WC</b><small>Spendable WC</small></div>' +
         '</div>';
         html = html.replace('<div class="card mb16 profile-banner">', strip + '<div class="card mb16 profile-banner">');
         if (html.indexOf('Quick navigation') >= 0) {
