@@ -75,7 +75,7 @@
       return;
     }
     const started = performance.now();
-    const dur = 850;
+    const dur = 380;
     let lastDom = 0;
     const step = (ts) => {
       const t = Math.min(1, (ts - started) / dur);
@@ -152,8 +152,36 @@
     try { checkSettledToasts(); } catch (e) {}
   }
 
+  /* live push stream: the server sends changed quotes every 400 ms */
+  function startStream() {
+    if (typeof EventSource === 'undefined') return;
+    try { if (MK.es) MK.es.close(); } catch (e) {}
+    let es;
+    try { es = new EventSource(apiPath('/api/market/stream')); } catch (e) { return; }
+    MK.es = es;
+    es.addEventListener('snapshot', (e) => {
+      try { const d = JSON.parse(e.data); if (d && d.ok) { MK.lastPollAt = MK.lastStreamAt = Date.now(); applyQuotes(d); } } catch (err) {}
+    });
+    es.addEventListener('quotes', (e) => {
+      try {
+        const d = JSON.parse(e.data);
+        const base = MK.feed || { ok: true };
+        const full = Object.assign({}, base, { ok: true, at: d.at, quotes: Object.assign({}, base.quotes || {}, d.quotes || {}) });
+        MK.lastPollAt = MK.lastStreamAt = Date.now();
+        if (document.hidden) { MK.feed = full; return; }
+        applyQuotes(full);
+      } catch (err) {}
+    });
+    es.addEventListener('status', (e) => {
+      try { const d = JSON.parse(e.data); if (MK.feed) Object.assign(MK.feed, { source: d.source, notice: d.notice, status: d.status }); } catch (err) {}
+    });
+  }
+  MK.startStream = startStream;
+
   async function poll() {
     if (document.hidden) return;
+    /* the push stream is delivering — no need to poll */
+    if (MK.lastStreamAt && Date.now() - MK.lastStreamAt < 4000) return;
     try {
       const r = await getJSON('/api/market/quotes', {}, 7000);
       if (r.res && r.res.ok && r.data && r.data.ok) {
@@ -563,9 +591,9 @@
 
   function appendPoint(c, time, value) {
     try {
+      /* same second → update the live point in place (no drift into the future) */
       c.series.update({ time, value: Number(value) });
-      c.lastTime = time;
-      c.points += 1;
+      if (time > c.lastTime) { c.lastTime = time; c.points += 1; }
     } catch (e) { /* out-of-order tick */ }
   }
 
@@ -580,7 +608,7 @@
       try { s = LT.summary(me().id); } catch (e) { return; }
       if (!s) return;
       const now = Math.floor(Date.now() / 1000);
-      const time = now > c.lastTime ? now : c.lastTime + 1;
+      const time = Math.max(now, c.lastTime);
       appendPoint(c, time, s.valueCoins);
       return;
     }
@@ -599,7 +627,7 @@
     }
     syncPriceLines();
     const now = Math.floor(Date.now() / 1000);
-    const time = now > c.lastTime ? now : c.lastTime + 1;
+    const time = Math.max(now, c.lastTime);
     appendPoint(c, time, q.price);
     if (c.points > 900) {
       stockData(ticker).then((fresh) => {
@@ -1131,10 +1159,11 @@
     if (typeof DB === 'undefined') return setTimeout(boot, 400);
     patchTick();
     poll();
+    startStream();
     setInterval(poll, 2500);
     setInterval(() => { try { paintNotice(); paintAdminStatus(); } catch (e) {} }, 3000);
-    setInterval(() => { try { if (MK.chart && MK.chart.mode === 'portfolio') updateChart(); } catch (e) {} }, 1000);
-    setInterval(() => { try { if (MK.chart) updateChart(); checkSettledToasts(); } catch (e) {} }, 2000);
+    setInterval(() => { try { if (MK.chart && !document.hidden) updateChart(); } catch (e) {} }, 1000);
+    setInterval(() => { try { checkSettledToasts(); } catch (e) {} }, 2000);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
