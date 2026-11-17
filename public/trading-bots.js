@@ -14,7 +14,13 @@
   B.adminLoading = false;
   B.adminLoadedAt = 0;
 
-  const CYCLE_TEXT = { daily: 'day', weekly: 'week', monthly: 'month', one_time: 'one-time' };
+  const CYCLE_TEXT = { daily: '24 hrs', weekly: 'week', monthly: 'month', yearly: 'year', one_time: 'one-time' };
+  const DURS = [['daily', '24 hours'], ['weekly', 'Weekly'], ['monthly', 'Monthly'], ['yearly', 'Yearly']];
+  function tp(t, d) {
+    if (t && t.prices && t.prices[d] != null) return Number(t.prices[d]) || 0;
+    const f = { daily: 0.1, weekly: 0.35, monthly: 1, yearly: 10 };
+    return Math.round((Number(t && t.priceUsd) || 0) * f[d] * 100) / 100;
+  }
   function escB(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
   function num(v, n) { return (Number(v) || 0).toFixed(n == null ? 2 : n); }
   function money(v) { return '$' + num(v, 2); }
@@ -84,10 +90,34 @@
     return `<span class="bot-avatar-fb" style="width:${sz}px;height:${sz}px;font-size:${Math.round(sz * 0.34)}px">${initialsOf(t && t.name)}</span>`;
   }
 
+  function accessBanner() {
+    const s = B.state || {};
+    if (s.botAccess) {
+      return '<div class="tiny up" style="margin:8px 0;line-height:1.6">Bot Assisted Trading is unlocked (one-time). Pick any bot, choose 24 hours, weekly, monthly or yearly, then subscribe. The fee is taken from your investment trade capital and renews automatically while you have balance. If your balance runs out the bot turns off until you renew it manually.</div>';
+    }
+    const price = window.WC_SUBS ? window.WC_SUBS.price('botassist') : 19.99;
+    return '<div class="card" style="margin:10px 0"><b>Unlock Bot Assisted Trading · ' + money(price) + ' one-time</b>' +
+      '<div class="tiny muted" style="margin:4px 0 8px">Pay once, then see every bot trader and subscribe to any of them by the day, week, month or year.</div>' +
+      '<button class="btn btn-sm btn-primary" data-act="bot-unlock">Unlock for ' + money(price) + '</button></div>';
+  }
+
   function tierCard(t) {
     const owned = !!t.owned;
     const cycle = cycleText(t.billingCycle);
     const disabled = t.enabled === false;
+    const access = !!(B.state && B.state.botAccess);
+    const sub = t.subscription || null;
+    const lowest = Math.min.apply(null, DURS.map((d) => tp(t, d[0])));
+    const footHTML = owned
+      ? `<div class="between" style="gap:8px"><div>
+            <div class="bot-price">${money(sub && sub.priceUsd)}<span class="tiny muted"> / ${cycleText(sub && sub.billingCycle)}</span></div>
+            <div class="tiny muted">Renews ${sub && sub.expiresAt ? when(sub.expiresAt) : '—'} · auto from trade capital</div></div>
+          <span class="badge badge-success" style="white-space:nowrap">Subscribed</span></div>`
+      : !access
+        ? `<div class="tiny muted">From ${money(lowest)} · unlock Bot Assisted Trading (one-time) to subscribe</div>`
+        : `${t.lapsedAt ? '<div class="tiny down" style="margin-bottom:6px">Expired — renew manually to resume trading</div>' : ''}
+          <div class="row" style="gap:6px"><select class="input grow" id="botDur_${escB(t.id)}">${DURS.map((d) => `<option value="${d[0]}" ${d[0] === 'monthly' ? 'selected' : ''}>${d[1]} · ${money(tp(t, d[0]))}</option>`).join('')}</select>
+          <button class="btn btn-sm btn-primary" data-act="bot-subscribe" data-id="${escB(t.id)}" ${disabled ? 'disabled' : ''}>${t.lapsedAt ? 'Renew' : 'Subscribe'}</button></div>`;
     return `<div class="bot-tier ${owned ? 'owned' : ''} ${disabled ? 'disabled' : ''}">
       <div class="between" style="align-items:flex-start;gap:8px">
         <div class="row" style="gap:9px;align-items:flex-start;min-width:0">
@@ -103,14 +133,8 @@
       </div>
       <div class="bot-acc"><i style="width:${Math.min(100, Math.max(0, Number(t.accuracy) || 0))}%"></i></div>
       <div class="tiny muted" style="margin-top:4px">Simulated trade accuracy</div>
-      <div class="bot-tier-foot">
-        <div>
-          <div class="bot-price">${money(t.priceUsd)}<span class="tiny muted"> / ${cycle}</span></div>
-          <div class="tiny muted">${num(t.priceCoins)} WC${t.intervalMin ? ' · every ' + t.intervalMin + ' min' : ''}</div>
-        </div>
-        ${owned
-          ? `<span class="badge badge-success" style="white-space:nowrap">Owned</span>`
-          : `<button class="btn btn-sm btn-primary" data-act="bot-subscribe" data-id="${escB(t.id)}" ${disabled ? 'disabled' : ''}>Subscribe</button>`}
+      <div class="bot-tier-foot" style="display:block">
+        ${footHTML}
       </div>
     </div>`;
   }
@@ -343,7 +367,8 @@
 
     <div class="card" id="botMarketCard">
       <div class="between"><div class="card-title" style="margin:0">Bot marketplace</div>
-        <span class="tiny muted">Paid from your WC balance · ${B.state.coinsPerUsd} WC = $1</span></div>
+        <span class="tiny muted">Paid from your investment trade capital: ${money(B.state.investUsd)}</span></div>
+      ${accessBanner()}
       <div class="bot-grid">${tiers.map(tierCard).join('')}</div>
       <div class="bot-disclaimer">${ic('shield', 13)} <span>Bot trading is simulated for demonstration. Accuracy is a target hit-rate, not a guarantee. Capital is reserved and isolated while the bot runs.</span></div>
     </div>
@@ -410,15 +435,39 @@
         <input type="hidden" data-f="blurb" value="${escB(t.blurb || '')}"/>
       </td>
       <td><input class="input bot-mini" data-f="accuracy" type="number" min="1" max="100" step="1" value="${num(t.accuracy, 0)}"/></td>
-      <td><input class="input bot-mini" data-f="priceUsd" type="number" min="0" step="0.01" value="${num(t.priceUsd)}"/></td>
-      <td><select class="input bot-mini" data-f="billingCycle">
-        ${['daily', 'weekly', 'monthly', 'one_time'].map((c) => `<option value="${c}" ${t.billingCycle === c ? 'selected' : ''}>${c.replace('_', '-')}</option>`).join('')}
-      </select></td>
+      <td><input class="input bot-mini" data-f="price_daily" type="number" min="0" step="0.01" value="${num(tp(t, 'daily'))}"/></td>
+      <td><input class="input bot-mini" data-f="price_weekly" type="number" min="0" step="0.01" value="${num(tp(t, 'weekly'))}"/></td>
+      <td><input class="input bot-mini" data-f="price_monthly" type="number" min="0" step="0.01" value="${num(tp(t, 'monthly'))}"/></td>
+      <td><input class="input bot-mini" data-f="price_yearly" type="number" min="0" step="0.01" value="${num(tp(t, 'yearly'))}"/></td>
       <td><input class="input bot-mini" data-f="intervalMin" type="number" min="0" max="10080" step="1" value="${Number(t.intervalMin) || 0}" placeholder="global"/></td>
       <td><label class="checkline" style="margin:0"><input type="checkbox" data-f="hot" ${t.hot ? 'checked' : ''}/></label></td>
       <td><label class="checkline" style="margin:0"><input type="checkbox" data-f="enabled" ${t.enabled !== false ? 'checked' : ''}/></label></td>
       <td><button class="btn btn-xs btn-ghost" data-act="bot-edit-assistant" data-id="${escB(t.id)}">Edit</button></td>
     </tr>`;
+  }
+
+  function dtLocal(ms) {
+    if (!ms) return '';
+    const d = new Date(Number(ms));
+    const p = (n) => String(n).padStart(2, '0');
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes());
+  }
+
+  function subsAdminHTML(a) {
+    const subs = (a && a.subscriptions) || [];
+    const head = '<div class="card-title" style="margin:16px 0 4px">Bot subscriptions · renewal dates &amp; amounts</div><div class="tiny muted" style="margin-bottom:6px">Change a subscriber\'s duration, amount or next renewal date. Leave the amount unchanged to keep following the bot price list.</div>';
+    if (!subs.length) return head + '<div class="tiny muted">No bot subscriptions yet.</div>';
+    return head + `<div class="table-wrap"><table class="tbl"><thead><tr><th>User / bot</th><th>Duration</th><th>Amount ($)</th><th>Renews on</th><th>Auto</th><th>Status</th><th></th></tr></thead><tbody>
+      ${subs.map((s) => {
+        const amt = s.priceOverride != null ? s.priceOverride : s.priceUsd;
+        return `<tr data-bot-sub="${escB(s.id)}"><td>@${escB(s.username)}<div class="tiny muted">${escB(s.tierName)}</div></td>
+          <td><select class="input bot-mini" data-sf="billingCycle">${DURS.map((d) => `<option value="${d[0]}" ${s.billingCycle === d[0] ? 'selected' : ''}>${d[1]}</option>`).join('')}</select></td>
+          <td><input class="input bot-mini" data-sf="priceUsd" data-orig="${num(amt)}" type="number" min="0" step="0.01" value="${num(amt)}"/></td>
+          <td><input class="input" data-sf="expiresAt" type="datetime-local" value="${dtLocal(s.expiresAt)}"/></td>
+          <td><input type="checkbox" data-sf="autoRenew" ${s.autoRenew ? 'checked' : ''}/></td>
+          <td>${escB(s.status)}</td>
+          <td><button class="btn btn-xs btn-primary" data-act="bot-admin-sub-save" data-id="${escB(s.id)}">Save</button></td></tr>`;
+      }).join('')}</tbody></table></div>`;
   }
 
   function adminBodyHTML(a) {
@@ -435,9 +484,10 @@
         <div class="tiny muted">Add trading assistants with their own username and profile picture. Mark them HOT to feature them in the marketplace.</div>
         <button class="btn btn-sm btn-primary" data-act="bot-add-assistant">+ Add bot assistant</button>
       </div>
-      <div class="table-wrap"><table class="tbl bot-admin-table"><thead><tr><th>Assistant</th><th>Accuracy %</th><th>Price (USD)</th><th>Billing cycle</th><th>Speed (min)</th><th>Hot</th><th>Live</th><th></th></tr></thead><tbody>
+      <div class="table-wrap"><table class="tbl bot-admin-table"><thead><tr><th>Assistant</th><th>Accuracy %</th><th>24 hrs ($)</th><th>Weekly ($)</th><th>Monthly ($)</th><th>Yearly ($)</th><th>Speed (min)</th><th>Hot</th><th>Live</th><th></th></tr></thead><tbody>
         ${a.tiers.map(adminTierRow).join('')}
       </tbody></table></div>
+      ${subsAdminHTML(a)}
       <div class="bot-admin-grid">
         <div class="field"><label class="label">Offline trade speed (default)</label>
           <select class="input" id="botCfgInterval">${intervals.map(([v, l]) => `<option value="${v}" ${Number(s.intervalMin) === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
@@ -484,20 +534,45 @@
       tmsg('Bot status refreshed', 'ok');
     };
 
+    App.botUnlock = async function () {
+      const S = window.WC_SUBS;
+      if (!S) return tmsg('Subscriptions are still loading, try again', 'err');
+      if (!S.is('botassist')) {
+        const price = S.price('botassist');
+        if (typeof confirmDialog === 'function') {
+          const ok = await confirmDialog({ title: 'Unlock Bot Assisted Trading?', body: money(price) + ' one-time payment from your investment trade capital. You will not be charged for this again.', ok: 'Unlock' });
+          if (!ok) return;
+        }
+        const r = await S.subscribe('botassist', { source: 'tools', method: 'credit', noRender: true });
+        if (!r.ok && !r.already) return tmsg(r.error || 'Could not unlock', 'err');
+        try { if (typeof persist === 'function') persist(true); } catch (e) {}
+        await new Promise((res) => setTimeout(res, 2000));
+      }
+      B.loadedAt = 0;
+      await load(true);
+      render();
+      tmsg('Bot Assisted Trading unlocked — pick a bot to subscribe', 'ok');
+    };
+
     App.botSubscribe = async function (id) {
       const t = (B.state && B.state.tiers || []).find((x) => x.id === id);
       if (!t) return tmsg('Bot tier not found', 'err');
       if (typeof Remote === 'undefined' || !Remote.enabled) return tmsg('Connect the sync server to subscribe', 'err');
+      if (!(B.state && B.state.botAccess)) return tmsg('Unlock Bot Assisted Trading first (one-time payment)', 'err');
+      const durEl = document.getElementById('botDur_' + id);
+      const duration = (durEl && durEl.value) || 'monthly';
+      const durLabel = (DURS.find((d) => d[0] === duration) || [duration, duration])[1];
+      const price = tp(t, duration);
       if (typeof confirmDialog === 'function') {
         const ok = await confirmDialog({
           title: 'Subscribe to ' + t.name + '?',
-          body: `${num(t.priceCoins)} WC (${money(t.priceUsd)} / ${cycleText(t.billingCycle)}) will be deducted from your balance. Simulated accuracy: ${num(t.accuracy, 0)}%.`,
+          body: `${money(price)} for ${durLabel.toLowerCase()} will be deducted from your investment trade capital. It renews automatically while you have balance; if your balance runs out the bot turns off until you renew it manually.`,
           ok: 'Subscribe'
         });
         if (!ok) return;
       }
       try {
-        const r = await api('/api/bots/subscribe', { method: 'POST', body: JSON.stringify({ userId: uidNow(), tierId: id }) }, 25000);
+        const r = await api('/api/bots/subscribe', { method: 'POST', body: JSON.stringify({ userId: uidNow(), tierId: id, duration }) }, 25000);
         if (!r.res || !r.res.ok || !r.data || !r.data.ok) return tmsg((r.data && r.data.error) || 'Subscription failed', 'err');
         await Remote.refresh(true);
         await load(true);
@@ -823,6 +898,25 @@
       openAssistantModal(tier);
     };
 
+    App.botAdminSubSave = async function (id) {
+      if (!isAdmin()) return tmsg('Admin only', 'err');
+      const row = document.querySelector('[data-bot-sub="' + id + '"]');
+      if (!row) return;
+      const f = (n) => row.querySelector('[data-sf="' + n + '"]');
+      const body = { adminId: uidNow(), subId: id, billingCycle: f('billingCycle').value, autoRenew: f('autoRenew').checked };
+      const pe = f('priceUsd');
+      if (pe && pe.value !== pe.getAttribute('data-orig')) body.priceUsd = Number(pe.value);
+      const ee = f('expiresAt');
+      if (ee && ee.value) body.expiresAt = new Date(ee.value).getTime();
+      try {
+        const r = await api('/api/bots/admin/subscription', { method: 'POST', body: JSON.stringify(body) }, 20000);
+        if (!r.res || !r.res.ok || !r.data || !r.data.ok) return tmsg((r.data && r.data.error) || 'Save failed', 'err');
+        B.admin = r.data; B.adminLoadedAt = Date.now();
+        mountAdmin(true);
+        tmsg('Subscription updated', 'ok');
+      } catch (e) { tmsg('Save failed: ' + e.message, 'err'); }
+    };
+
     App.botAdminSave = async function () {
       if (!isAdmin()) return tmsg('Admin only', 'err');
       const tiers = [];
@@ -837,8 +931,7 @@
           blurb: (get('blurb') && get('blurb').value) || '',
           hot: !!(get('hot') && get('hot').checked),
           accuracy: Number(get('accuracy').value),
-          priceUsd: Number(get('priceUsd').value),
-          billingCycle: get('billingCycle').value,
+          prices: { daily: Number(get('price_daily').value), weekly: Number(get('price_weekly').value), monthly: Number(get('price_monthly').value), yearly: Number(get('price_yearly').value) },
           intervalMin: Number(get('intervalMin').value) || 0,
           enabled: get('enabled').checked
         });
