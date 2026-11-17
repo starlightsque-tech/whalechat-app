@@ -183,8 +183,8 @@
         '<div class="ih-row"><span>Capital balance</span><b>' + money2(s.capital) + '</b></div>' +
         '<div class="ih-row"><span>Investment USD balance</span><b>' + money2((me2() && me2().investAcct && me2().investAcct.usd) || 0) + '</b></div>' +
       '</div></div>' +
-      '<div class="card"><div class="tiny muted">USD is the unit for every portfolio balance. To move value to your main WhaleChat wallet, convert USD to WC in the investment account, then transfer.</div>' +
-        '<a class="btn btn-ghost btn-sm" href="#/investment/convert" style="width:100%;margin-top:8px">Convert USD → WC</a></div>';
+      '<div class="card"><div class="tiny muted">USD is the unit for every portfolio balance. Transfer USD back to your WhaleChat account and it is converted to WC automatically.</div>' +
+        '<a class="btn btn-ghost btn-sm" href="#/investment/transfer" style="width:100%;margin-top:8px">Transfer to WhaleChat WC balance</a></div>';
   };
 
   /* -------------------------------- history ------------------------------- */
