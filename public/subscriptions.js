@@ -27,8 +27,8 @@
       surfaces: ['tools', 'bots', 'stock']
     },
     {
-      id: 'botassist', name: 'Bot Assisted Trading', price: 19.99, bot: null,
-      desc: 'Bot monitors active trades and helps manage entries and exits.',
+      id: 'botassist', name: 'Bot Assisted Trading', price: 19.99, bot: null, oneTime: true,
+      desc: 'One-time unlock: see every bot trader and subscribe to any of them for 24 hrs, a week, a month or a year.',
       surfaces: ['tools', 'stock']
     },
     {
@@ -54,7 +54,15 @@
   function tmsg(m, t) { try { if (typeof toast === 'function') toast(m, t || 'ok'); } catch (e) {} }
 
   /* ---- catalogue accessors ------------------------------------------------- */
+  var ONE_TIME_DESC = 'One-time unlock: see every bot trader and subscribe to any of them for 24 hrs, a week, a month or a year.';
+  function isOneTime(id) { return id === 'botassist'; }
+  var FOREVER = 100 * 365 * 864e5;
   function catalog() {
+    var l = catalogRaw();
+    l.forEach(function (t) { if (t && isOneTime(t.id)) { t.oneTime = true; t.desc = ONE_TIME_DESC; } });
+    return l;
+  }
+  function catalogRaw() {
     try {
       if (typeof DB !== 'undefined' && DB) {
         if (!DB.settings) DB.settings = {};
@@ -108,7 +116,7 @@
   /* is the tool paid-up and live right now? */
   S.is = function (id, u) {
     var r = S.record(id, u);
-    if (r && r.active && Number(r.expiresAt) > Date.now()) return true;
+    if (r && r.active && (isOneTime(id) || Number(r.expiresAt) > Date.now())) return true;
     return false;
   };
 
@@ -117,7 +125,7 @@
     var r = S.record(id, u);
     if (!r) return 'none';
     if (r.paused) return 'paused';
-    if (r.active && Number(r.expiresAt) > Date.now()) return 'active';
+    if (r.active && (isOneTime(id) || Number(r.expiresAt) > Date.now())) return 'active';
     return 'expired';
   };
 
@@ -238,12 +246,12 @@
 
     var rec = {
       id: id, active: true, paused: false,
-      expiresAt: Date.now() + MONTH,
-      price: price, paidUsd: paid ? price : 0,
+      expiresAt: Date.now() + (isOneTime(id) ? FOREVER : MONTH),
+      oneTime: isOneTime(id), price: price, paidUsd: paid ? price : 0,
       source: opts.source || 'tools', startedAt: Date.now()
     };
     S.set(id, rec, { silent: true });
-    ledgerLine('Tool subscription · ' + d.name, paid ? -price : 0, 0, { tool: id, source: rec.source });
+    ledgerLine((isOneTime(id) ? 'Tool one-time unlock · ' : 'Tool subscription · ') + d.name, paid ? -price : 0, 0, { tool: id, source: rec.source });
     save();
     S.reconcile({ silent: true });
     notify();
@@ -277,6 +285,10 @@
     catalog().forEach(function (t) {
       var r = a.tools[t.id];
       if (!r || !r.active) return;
+      if (isOneTime(t.id)) {
+        if (Number(r.expiresAt) < now + 50 * 365 * 864e5) { r.expiresAt = now + FOREVER; r.oneTime = true; changed = true; }
+        return;
+      }
       if (Number(r.expiresAt) > now) return;
       if (r.source === 'bots' && r.mirroredAt) { r.active = false; r.expiredAt = now; changed = true; return; }
       var price = Number(t.price) || 0;
