@@ -1,8 +1,8 @@
 {
-  "version": "3.42.0",
-  "build": "2026-11-17T10:40:00Z",
+  "version": "3.43.0",
+  "build": "2026-11-17T10:35:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.42.0 - trade calculation examples only in the FAQ & Trade Guide, real-time price stream that follows live market prints, faster taps and batched background refresh.",
-  "releasedAt": "2026-11-17T10:40:00Z",
+  "notes": "WhaleChat 3.43.0 - new money flow: crypto balance per coin, crypto converts to WC, WC sent to investment trade capital becomes USD, USD top-ups for all four portfolios, USD transfers back to WC.",
+  "releasedAt": "2026-11-17T10:35:00Z",
   "minimum": "3.0.0"
 }
