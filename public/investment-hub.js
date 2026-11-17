@@ -320,6 +320,21 @@
     return b2bHoldings(a).reduce(function (s, h) { return s + h.value; }, 0);
   }
   function b2bProfit(a) { return Number(a.b2bProfit) || 0; }
+  /* lifetime tracking: everything ever sent in, and every profit/loss ever realised */
+  function b2bDeposited(a) {
+    if (!(Number(a.b2bDeposited) >= 0) || a.b2bDeposited === undefined) {
+      a.b2bDeposited = Math.round(((Number(a.portfolios.b2b) || 0) + b2bHoldings(a).reduce(function (s, h) { return s + h.basis; }, 0)) * 100) / 100;
+    }
+    return Number(a.b2bDeposited) || 0;
+  }
+  function b2bProfitEver(a) {
+    if (a.b2bProfitEver === undefined || isNaN(Number(a.b2bProfitEver))) a.b2bProfitEver = Number(a.b2bProfit) || 0;
+    return Number(a.b2bProfitEver) || 0;
+  }
+  /* Total assets balance = capital balance + profit balance */
+  function b2bTotalAssets(a) { return (Number(a.portfolios.b2b) || 0) + (Number(a.b2bProfit) || 0); }
+  /* Portfolio value = all money ever sent in + all profit made since the beginning */
+  function b2bPortfolioValue(a) { return b2bDeposited(a) + b2bProfitEver(a); }
   function b2bCapital(a) { return Number(a.portfolios.b2b) || 0; }
   function b2bAvatar(s) {
     return '<div class="b2b-ic">' + escH(String(s && (s.displayTicker || s.ticker) || '?').replace(/[^A-Za-z0-9]/g, '').slice(0, 2).toUpperCase()) + '</div>';
@@ -331,7 +346,7 @@
     return head(title, sub, back || '#/investment/b2b') +
       '<div class="b2b-balbar">' +
         '<div><span>Capital</span><b>' + money(b2bCapital(a)) + '</b></div>' +
-        '<div><span>Assets</span><b>' + money(b2bAssetsValue(a)) + '</b></div>' +
+        '<div><span>Assets</span><b>' + money(b2bTotalAssets(a)) + '</b></div>' +
         '<div><span>Profit</span><b class="' + (b2bProfit(a) >= 0 ? 'up' : 'down') + '">' + money(b2bProfit(a)) + '</b></div>' +
       '</div>';
   }
@@ -368,9 +383,9 @@
     return head('B2B-Investing', 'Company-contract desk: buy, sell, fund and move your balances.', '#/investment') +
       '<div class="ih-cards">' +
         '<div class="ih-card"><span>Capital balance</span><b>' + money(b2bCapital(a)) + '</b><small>Deposits in · buys are paid from here</small></div>' +
-        '<div class="ih-card"><span>Total assets balance</span><b>' + money(assetsVal) + '</b><small>' + holdings.length + ' open holding' + (holdings.length === 1 ? '' : 's') + ' at live price</small></div>' +
+        '<div class="ih-card"><span>Total assets balance</span><b>' + money(b2bTotalAssets(a)) + '</b><small>Capital + profit · ' + holdings.length + ' open holding' + (holdings.length === 1 ? '' : 's') + '</small></div>' +
         '<div class="ih-card"><span>Profit balance</span><b class="' + (b2bProfit(a) >= 0 ? 'up' : 'down') + '">' + money(b2bProfit(a)) + '</b><small>Payout credited on every sell</small></div>' +
-        '<div class="ih-card"><span>Account value</span><b>' + money(b2bCapital(a) + assetsVal + b2bProfit(a)) + '</b><small>Capital + assets + profit</small></div>' +
+        '<div class="ih-card"><span>Portfolio value</span><b>' + money(b2bPortfolioValue(a)) + '</b><small>Total sent in + total profit since the start</small></div>' +
       '</div>' +
 
       (window.WC_B2B_MARKET ? '<div class="card"><div class="between"><div class="card-title" style="margin:0">Live market</div>' +
@@ -534,7 +549,8 @@
       '</div>' +
       '<div class="card"><div class="ih-list">' +
         '<div class="ih-row"><span>Capital balance</span><b>' + money(b2bCapital(a)) + '</b></div>' +
-        '<div class="ih-row"><span>Total assets balance</span><b>' + money(b2bAssetsValue(a)) + '</b></div>' +
+        '<div class="ih-row"><span>Total assets balance</span><b>' + money(b2bTotalAssets(a)) + '</b></div>' +
+        '<div class="ih-row"><span>Portfolio value</span><b>' + money(b2bPortfolioValue(a)) + '</b></div>' +
         '<div class="ih-row"><span>Profit balance</span><b>' + money(b2bProfit(a)) + '</b></div>' +
       '</div></div>';
   }
@@ -941,6 +957,7 @@
       var basis = units * (Number(h.avgPrice) || q.price);
       var payout = proceeds - basis;
       /* payout (profit or loss) is credited to the profit balance, principal back to capital */
+      b2bDeposited(a); a.b2bProfitEver = Math.round((b2bProfitEver(a) + payout) * 100) / 100;
       a.b2bProfit = Math.round((b2bProfit(a) + payout) * 100) / 100;
       a.portfolios.b2b = Math.round((b2bCapital(a) + basis) * 100) / 100;
       h.units = Math.round((Number(h.units) - units) * 1e8) / 1e8;
@@ -986,6 +1003,7 @@
       if ((Number(a.usd) || 0) < amount - 0.001) return toastH('Not enough in your trade capital (' + money(a.usd) + ')', 'err');
       a.usd = Math.round((Number(a.usd) - amount) * 100) / 100;
       ledger(u, 'Trade capital → B2B capital', -amount, 0, { source: 'trade-capital' });
+      b2bDeposited(a); a.b2bDeposited = Math.round((b2bDeposited(a) + amount) * 100) / 100;
       a.portfolios.b2b = Math.round((b2bCapital(a) + amount) * 100) / 100;
       save(); toastH('B2B capital topped up · ' + money(amount), 'ok'); render();
     };
