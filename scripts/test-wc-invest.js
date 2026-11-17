@@ -42,6 +42,7 @@ vm.createContext(sandbox);
 const P = sandbox.WC_INVEST;
 const V = sandbox.VIEWS;
 let pass = 0, fail = 0;
+const round2 = (v) => Math.round(v * 100) / 100;
 const check = (n, c, x) => { c ? (pass++, console.log('  ok   ' + n)) : (fail++, console.log('  FAIL ' + n + (x ? '  → ' + x : ''))); };
 
 console.log('\n— shares payout formula —');
@@ -71,6 +72,29 @@ const inv2 = P.wallet().plans.find((p) => p.status === 'active');
 inv2.endsAt = Date.now() - 1000;
 P.sweep();
 check('auto reinvest re-activates with the same capital', P.summary().activeCount >= 1 && P.wallet().plans.some((p) => p.autoReinvested), JSON.stringify(P.wallet().plans.map((p) => [p.planName, p.status, !!p.autoReinvested])));
+
+console.log('\n— daily price payout + crash rule —');
+DB.settings.sharePriceUsd = 12.45; P.wallet().autoReinvest = false;
+const capBefore = P.wallet().capital, profBefore = P.wallet().profit;
+const dropInv = P.activate({ planId: 'starter', capitalUsd: 100 }).investment;
+dropInv.priceLog = [8, 8, 8, 8, 8, 8, 8]; dropInv.endsAt = Date.now() - 1000;
+P.sweep();
+check('price at $8 every day pays 0.24 × 7 × 100 = 168', Math.abs(P.wallet().profit - profBefore - 168) < 0.01, String(P.wallet().profit - profBefore));
+check('capital returned to the capital balance at maturity', Math.abs(P.wallet().capital - capBefore) < 1e-9, String(P.wallet().capital) + ' vs ' + capBefore);
+check('mixed daily prices are summed', P.totalRoiFromPrices([12.45, 10, 8, 8, 8, 8, 8], 3, 100) === Math.round((12.45 + 10 + 40) * 0.03 * 100 * 100) / 100);
+const cap2 = P.wallet().capital, prof2 = P.wallet().profit;
+const crashInv = P.activate({ planId: 'starter', capitalUsd: 100 }).investment;
+crashInv.priceLog = [12.45, 6, 4, 3, 3, 3, 3]; crashInv.endsAt = Date.now() - 1000;
+P.sweep();
+check('average below 50% of entry = total loss (no profit)', P.wallet().profit === prof2 && crashInv.totalLoss === true, JSON.stringify({ p: P.wallet().profit, tl: crashInv.totalLoss }));
+check('total loss keeps the capital', Math.abs(P.wallet().capital - (cap2 - 100)) < 1e-9, String(P.wallet().capital));
+const liveInv = P.activate({ planId: 'starter', capitalUsd: 100 }).investment;
+liveInv.startedAt = Date.now() - 2.5 * 864e5; liveInv.endsAt = liveInv.startedAt + 7 * 864e5; liveInv.priceLog = [12.45, 12.45];
+DB.settings.sharePriceUsd = 10; P.sweep();
+const lp = P.progress(liveInv, 10);
+check('live accrual uses each day\'s price', Math.abs(lp.accruedUsd - (12.45 * 2 + 10 * 0.5) * 3) < 0.02, String(lp.accruedUsd));
+liveInv.status = 'cancelled'; P.wallet().capital = round2(P.wallet().capital + 100);
+DB.settings.sharePriceUsd = 12.45;
 
 console.log('\n— loss handling —');
 DB.settings.sharePriceUsd = 6;                      // price halved since entry
