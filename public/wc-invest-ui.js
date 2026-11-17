@@ -39,7 +39,9 @@
         '<div class="tiny muted">of ' + usd(s.totalRoiUsd) + ' projected</div>' +
       '</div></div>' +
       '<div class="wci-bar"><i style="width:' + Math.max(0, Math.min(100, s.pct)) + '%"></i></div>' +
-      '<div class="tiny muted" style="margin-top:6px">Entry ' + usd(inv.entryPriceUsd) + ' · ' + Number(inv.shares || 0).toFixed(6) + ' shares · matures ' + new Date(Number(inv.endsAt)).toLocaleDateString() + '</div>' +
+      '<div class="tiny muted" style="margin-top:6px">Day ' + s.dayNo + ' of ' + s.days + ' · Whalecoin now ' + usd(s.priceNow) + ' → today ' + usd(s.priceNow * (Number(inv.ratePct) || 0) / 100) + ' × ' + usd(inv.capitalUsd) + ' = <b class="up">' + usd(s.todayDailyUsd) + '</b>/day</div>' +
+      '<div class="tiny muted">Entry ' + usd(inv.entryPriceUsd) + ' · average ' + usd(s.avgPriceUsd) + ' · crash level ' + usd(s.crashLevelUsd) + ' · matures ' + new Date(Number(inv.endsAt)).toLocaleDateString() + '</div>' +
+      (s.atRisk ? '<div class="tiny down" style="margin-top:4px"><b>At risk:</b> the average Whalecoin price is below the crash level. If it ends the plan below ' + usd(s.crashLevelUsd) + ' the plan is a total loss.</div>' : '') +
       '<div class="wci-chartwrap">' + P.chart(P.series(inv, 24), { height: 78, color: '#2ee6c9', uid: inv.id }) + '</div>' +
       '<div class="between tiny"><span class="muted">20%</span><span class="up">ROI ' + usd(s.accruedUsd) + '</span><span class="muted">100%</span></div>' +
     '</div>';
@@ -67,7 +69,7 @@
 
       '<div class="card"><div class="between"><div class="card-title" style="margin:0">Auto reinvestment</div>' +
         '<button class="wci-switch ' + (s.autoReinvest ? 'on' : '') + '" data-act="wci-auto-reinvest" aria-pressed="' + s.autoReinvest + '"><i></i><span>' + (s.autoReinvest ? 'ON' : 'OFF') + '</span></button></div>' +
-        '<div class="tiny muted" style="margin-top:6px">When on, a plan that matures is automatically re-activated with the same capital. Profits go to the profit balance; a loss returns the remaining capital to leftover capital, and a total loss closes the plan.</div></div>' +
+        '<div class="tiny muted" style="margin-top:6px">When on, a plan that matures is automatically re-activated with the same capital. At maturity profit goes to the profit balance and capital returns to the capital balance; if the average Whalecoin price ends below the crash level the plan is a total loss.</div></div>' +
 
       '<div class="card"><div class="between"><div class="card-title" style="margin:0">Active plans</div>' +
         '<a href="#/invest/shares/active" class="tiny">View all →</a></div>' +
@@ -111,6 +113,13 @@
         '<button class="btn btn-primary" data-act="wci-invest" data-plan="' + esc(selPlan.id) + '" style="width:100%;margin-top:10px">Activate ' + esc(selPlan.name || 'plan') + '</button>' +
       '</div>' +
 
+      '<div class="card"><div class="card-title">How the payout works</div>' +
+        '<div class="tiny">Daily profit = Whalecoin price that day × plan %. Total profit = the sum of every day\'s daily profit × capital.</div>' +
+        '<div class="tiny muted" style="margin-top:6px">Price holds at $12.45 · Starter 3% · 7 days · $100: 12.45 × 3% = $0.3735/day → 0.3735 × 7 × 100 = <b class="up">$261.45</b> profit.</div>' +
+        '<div class="tiny muted" style="margin-top:4px">Price drops to $8 and holds: 8 × 3% = $0.24/day → 0.24 × 7 × 100 = <b class="up">$168.00</b> profit.</div>' +
+        '<div class="tiny muted" style="margin-top:4px">At the end, profit goes to your Profit balance and your capital returns to your Capital balance.</div>' +
+        '<div class="tiny down" style="margin-top:4px">Risk: if the average Whalecoin price over the plan falls below ' + P.crashPct() + '% of the price at activation (now ' + usd(price * P.crashPct() / 100) + '), the plan ends in a total loss: no profit and no capital back.</div>' +
+      '</div>' +
       '<div class="card wc-guide-link"><div class="between" style="gap:10px;align-items:center;flex-wrap:wrap">' +
           '<div><div class="card-title" style="margin:0">How is my payout calculated?</div>' +
           '<div class="tiny muted" style="margin-top:3px">Worked examples and formulas are in the FAQ &amp; Trade Guide.</div></div>' +
@@ -251,6 +260,7 @@
       pv.innerHTML = '<div class="between"><span>Daily ROI</span><b>' + usd(daily) + '</b></div>' +
         '<div class="between"><span>Total ROI (' + days + ' days)</span><b class="up">+' + usd(total) + '</b></div>' +
         '<div class="between"><span>Payout at maturity</span><b>' + usd(amount + total) + '</b></div>' +
+        '<div class="tiny muted">Projected at today\'s Whalecoin price. The final profit uses each day\'s real price.</div>' +
         '<div class="between"><span>Cost in WhaleCoin</span><b>' + wcv(amount) + ' WC</b></div>';
     }
   }, false);
