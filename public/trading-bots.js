@@ -212,7 +212,7 @@
           <input class="input" id="botDuration" type="number" min="0" step="1" placeholder="No limit"/></div>
       </div>
       <button class="btn btn-primary" data-act="bot-start" style="width:100%;margin-top:10px" ${owned.length ? '' : 'disabled'}>${typeof ic === 'function' ? ic('play', 15) : ''} Start trading now</button>
-      <div class="tiny muted" style="margin-top:6px;line-height:1.6">The bot trades real stocks from the available market. Each trade stake comes from the capital balance; the payout (stake + profit) goes to the profit balance. Trades run every ${(st.settings || {}).intervalMin || 5} minutes.</div>
+      <div class="tiny muted" style="margin-top:6px;line-height:1.6">The bot trades real stocks from the available market. Each trade stake comes from the capital balance. Profit = stake × price move % × leverage; payout = stake + profit − (stake × ${(st.settings || {}).tradeFeePct != null ? st.settings.tradeFeePct : 0.5}% trade fee), and the payout goes to the profit balance. Trades run every ${(st.settings || {}).intervalMin || 5} minutes.</div>
     </div>` : '';
     return `<div class="card" id="botAccountCard">
       <div class="between" style="align-items:flex-start;gap:10px">
@@ -498,10 +498,15 @@
           <input class="input" id="botCfgMinPool" type="number" min="1" max="100" step="1" value="${s.minPoolPct}"/></div>
         <div class="field"><label class="label">Stake per trade (% of pool)</label>
           <input class="input" id="botCfgStake" type="number" min="1" max="100" step="1" value="${s.stakePct}"/></div>
-        <div class="field"><label class="label">Gain on a win (% of stake)</label>
+        <div class="field"><label class="label">Price move on a win (%)</label>
           <input class="input" id="botCfgWin" type="number" min="0.1" step="0.1" value="${s.winPct}"/></div>
-        <div class="field"><label class="label">Loss on a loss (% of stake)</label>
+        <div class="field"><label class="label">Price move on a loss (%)</label>
           <input class="input" id="botCfgLoss" type="number" min="0.1" step="0.1" value="${s.lossPct}"/></div>
+        <div class="field"><label class="label">Leverage (x)</label>
+          <input class="input" id="botCfgLev" type="number" min="1" max="100" step="1" value="${s.leverage != null ? s.leverage : 5}"/></div>
+        <div class="field"><label class="label">Trade fee (% of stake, taken from payout)</label>
+          <input class="input" id="botCfgFee" type="number" min="0" max="50" step="0.1" value="${s.tradeFeePct != null ? s.tradeFeePct : 0.5}"/>
+          <div class="tiny muted" style="margin-top:4px">profit = stake × move % × leverage · payout = stake + profit − fee</div></div>
         <div class="field"><label class="label">Auto Secure price (USD)</label>
           <input class="input" id="botCfgAutoPrice" type="number" min="0" step="0.01" value="${Number((a.autoSecure || {}).priceUsd != null ? a.autoSecure.priceUsd : s.autoSecurePriceUsd) || 20}"/>
           <div class="tiny muted" style="margin-top:4px">Charged as ${money(((Number((a.autoSecure || {}).priceUsd) || Number(s.autoSecurePriceUsd) || 20) * 2)*0.5)} (1 WC = $0.50).</div></div>
@@ -944,6 +949,8 @@
         stakePct: val('botCfgStake', 20),
         winPct: val('botCfgWin', 4),
         lossPct: val('botCfgLoss', 6),
+        leverage: val('botCfgLev', 5),
+        tradeFeePct: val('botCfgFee', 0.5),
         autoSecurePriceUsd: val('botCfgAutoPrice', 20),
         autoSecureCycle: (document.getElementById('botCfgAutoCycle') || {}).value || 'monthly'
       };
