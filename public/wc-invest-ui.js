@@ -111,12 +111,10 @@
         '<button class="btn btn-primary" data-act="wci-invest" data-plan="' + esc(selPlan.id) + '" style="width:100%;margin-top:10px">Activate ' + esc(selPlan.name || 'plan') + '</button>' +
       '</div>' +
 
-      '<div class="card"><div class="card-title">How the payout is calculated</div>' +
-        '<div class="tiny muted" style="line-height:1.7">' +
-          '<b>Daily ROI</b> = share price × plan rate %<br/>' +
-          '<b>Total ROI</b> = daily ROI × days × capital<br/>' +
-          '<b>Payout</b> = capital + total ROI<br/><br/>' +
-          'Example: ' + usd(12.45) + ' × 3% = ' + usd(0.3735) + ' daily · ' + usd(0.3735) + ' × 7 days × ' + usd(100) + ' = <b class="up">' + usd(261.45) + '</b> total ROI on a ' + usd(100) + ' starter plan.' +
+      '<div class="card wc-guide-link"><div class="between" style="gap:10px;align-items:center;flex-wrap:wrap">' +
+          '<div><div class="card-title" style="margin:0">How is my payout calculated?</div>' +
+          '<div class="tiny muted" style="margin-top:3px">Worked examples and formulas are in the FAQ &amp; Trade Guide.</div></div>' +
+          '<div class="row" style="gap:6px"><a class="btn btn-soft btn-sm" href="#/how-it-works">Trade Guide</a><a class="btn btn-ghost btn-sm" href="#/investment/faq?q=wc-payout">FAQ</a></div>' +
         '</div></div>';
   };
 
