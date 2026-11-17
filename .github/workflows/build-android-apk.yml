@@ -46,6 +46,107 @@ jobs:
           if [ ! -d android ]; then npx cap add android; fi
           npx cap sync android
 
+      - name: Integrate Amazon Appstore DRM
+        working-directory: mobile/android
+        env:
+          APPSTORE_SDK_VERSION: "3.0.+"
+        run: |
+          set -e
+          python3 - <<'PY'
+          import os, re, glob
+
+          sdk = os.environ.get("APPSTORE_SDK_VERSION", "3.0.+")
+
+          # 1) Gradle dependency
+          gradle = "app/build.gradle"
+          s = open(gradle).read()
+          dep = "    implementation 'com.amazon.device:amazon-appstore-sdk:%s'\n" % sdk
+          if "amazon-appstore-sdk" not in s:
+              s = re.sub(r"dependencies\s*\{\n", lambda m: m.group(0) + dep, s, count=1)
+              open(gradle, "w").write(s)
+
+          # 2) Manifest: ResponseReceiver + queries
+          mf = "app/src/main/AndroidManifest.xml"
+          m = open(mf).read()
+          if "com.amazon.device.drm.ResponseReceiver" not in m:
+              receiver = (
+                  '    <receiver android:name="com.amazon.device.drm.ResponseReceiver"\n'
+                  '        android:exported="true"\n'
+                  '        android:permission="com.amazon.drm.Permission.NOTIFY">\n'
+                  '        <intent-filter>\n'
+                  '            <action android:name="com.amazon.drm.NOTIFY" />\n'
+                  '        </intent-filter>\n'
+                  '    </receiver>\n'
+              )
+              m = m.replace("</application>", receiver + "</application>", 1)
+          if "com.amazon.venezia" not in m:
+              queries = (
+                  '    <queries>\n'
+                  '        <package android:name="com.amazon.sdktestclient" />\n'
+                  '        <package android:name="com.amazon.venezia" />\n'
+                  '    </queries>\n'
+              )
+              m = m.replace("</manifest>", queries + "</manifest>", 1)
+          open(mf, "w").write(m)
+
+          # 3) Java: license check on launch
+          main = glob.glob("app/src/main/java/**/MainActivity.java", recursive=True)[0]
+          pkg = re.search(r"^package\s+([\w.]+);", open(main).read(), re.M).group(1)
+          d = os.path.dirname(main)
+
+          open(main, "w").write("""package %s;
+
+          import android.os.Bundle;
+          import com.amazon.device.drm.LicensingService;
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+              @Override
+              public void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  LicensingService.verifyLicense(getApplicationContext(), new LicenseVerificationCallback());
+              }
+          }
+          """.replace("\n          ", "\n") % pkg)
+
+          open(os.path.join(d, "LicenseVerificationCallback.java"), "w").write("""package %s;
+
+          import android.util.Log;
+          import com.amazon.device.drm.LicensingListener;
+          import com.amazon.device.drm.model.LicenseResponse;
+
+          public class LicenseVerificationCallback implements LicensingListener {
+              private static final String TAG = "WhaleChatDRM";
+
+              @Override
+              public void onLicenseCommandResponse(final LicenseResponse licenseResponse) {
+                  final LicenseResponse.RequestStatus status = licenseResponse.getRequestStatus();
+                  Log.d(TAG, "onLicenseCommandResponse: RequestStatus (" + status + ")");
+                  switch (status) {
+                      case LICENSED:
+                          Log.d(TAG, "LICENSED");
+                          break;
+                      case NOT_LICENSED:
+                          Log.d(TAG, "NOT_LICENSED");
+                          break;
+                      case ERROR_VERIFICATION:
+                          Log.d(TAG, "ERROR_VERIFICATION");
+                          break;
+                      case ERROR_INVALID_LICENSING_KEYS:
+                          Log.d(TAG, "ERROR_INVALID_LICENSING_KEYS");
+                          break;
+                      case EXPIRED:
+                          Log.d(TAG, "EXPIRED");
+                          break;
+                      default:
+                          Log.d(TAG, "UNKNOWN_ERROR");
+                  }
+              }
+          }
+          """.replace("\n          ", "\n") % pkg)
+          print("DRM integrated into package", pkg)
+          PY
+
       - name: Build release APK
         working-directory: mobile/android
         run: ./gradlew assembleRelease
@@ -83,3 +184,12 @@ jobs:
           git commit -m "Add signed Android APK" || echo "No changes"
           git pull --rebase origin main
           git push origin HEAD:main
+
+      - name: Publish APK as GitHub Release (download fallback)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete apk-latest --yes --cleanup-tag || true
+          gh release create apk-latest public/whalechat.apk \
+            --title "WhaleChat Android APK (latest)" \
+            --notes "Signed WhaleChat APK with Amazon Appstore DRM. Built by GitHub Actions."
