@@ -25,7 +25,7 @@
       '<div><h1 style="margin:0">' + esc(title) + '</h1><p class="muted" style="margin:2px 0 0">' + esc(sub) + '</p></div></div></div>';
   }
 
-  function money2(v) { return '<span>' + usd(v) + '</span><small class="tiny muted">' + wcv(v) + ' WC</small>'; }
+  function money2(v) { return '<span>' + usd(v) + '</span>'; }
 
   function planRow(inv) {
     var s = P.progress(inv, P.sharePrice());
@@ -53,9 +53,9 @@
     var plans = s.active.slice(0, 3);
     return head('WC-Investing', 'WhaleChat Shares plans, profits and ROI.', '#/investment') +
       '<div class="ih-cards">' +
-        '<div class="ih-card"><span>Capital balance</span><b>' + usd(s.capital) + '</b><small>' + wcv(s.capital) + ' WC · used to activate plans</small></div>' +
-        '<div class="ih-card"><span>Profits</span><b class="' + (s.profit >= 0 ? 'up' : 'down') + '">' + usd(s.profit) + '</b><small>' + wcv(s.profit) + ' WC · credited at maturity</small></div>' +
-        '<div class="ih-card"><span>Leftover capital</span><b>' + usd(s.leftover) + '</b><small>' + wcv(s.leftover) + ' WC · returned after a loss</small></div>' +
+        '<div class="ih-card"><span>Capital balance</span><b>' + usd(s.capital) + '</b><small>Used to activate plans</small></div>' +
+        '<div class="ih-card"><span>Profits</span><b class="' + (s.profit >= 0 ? 'up' : 'down') + '">' + usd(s.profit) + '</b><small>Credited at maturity</small></div>' +
+        '<div class="ih-card"><span>Leftover capital</span><b>' + usd(s.leftover) + '</b><small>Returned after a loss</small></div>' +
         '<div class="ih-card"><span>Active plans</span><b>' + s.activeCount + '</b><small>' + usd(s.investedUsd) + ' working · +' + usd(s.accruedUsd) + ' ROI</small></div>' +
       '</div>' +
 
@@ -90,7 +90,7 @@
     var price = P.sharePrice();
     var selPlan = P.plan(sel) || plans[0] || { id: '', name: '', ratePct: 0, days: 1, minUsd: 0 };
     return head('Invest in WhaleChat Shares', 'Choose a plan, enter the amount in dollars and activate it.', '#/invest/shares') +
-      '<div class="wci-live">Share price now <b>' + usd(price) + '</b> · ' + wcv(price) + ' WC · capital available <b>' + usd(s.capital) + '</b></div>' +
+      '<div class="wci-live">Share price now <b>' + usd(price) + '</b> · capital available <b>' + usd(s.capital) + '</b></div>' +
 
       '<div class="card"><div class="card-title">1 · Choose a plan</div>' +
         '<div class="wci-plangrid">' + plans.map(function (p) {
@@ -105,7 +105,7 @@
         '<div class="field"><label class="label">Amount to invest (USD)</label>' +
           '<div class="input-wrap"><span class="inv-prefix">$</span>' +
           '<input class="input" id="wciAmount" type="number" step="0.01" min="0" placeholder="' + Number(selPlan.minUsd || 0).toFixed(2) + '" data-wci-amount/></div>' +
-          '<div class="tiny muted mt6">Charged from your WC-Investing capital · <span id="wciAmountWc">' + wcv(0) + ' WC</span></div></div>' +
+          '<div class="tiny muted mt6">Charged from your WC-Investing capital · <span id="wciAmountWc">' + usd(0) + '</span></div></div>' +
         '<div class="field"><label class="label">Duration in days (optional)</label>' +
           '<input class="input" id="wciDays" type="number" step="1" min="1" placeholder="' + Number(selPlan.days || 1) + ' (plan default)" data-wci-days/>' +
           '<div class="tiny muted mt6">Leave empty to use the plan duration of ' + Number(selPlan.days) + ' days.</div></div>' +
@@ -254,7 +254,7 @@
     var daily = price * (Number(plan.ratePct) / 100);
     var total = daily * days * amount;
     var wcEl = document.getElementById('wciAmountWc');
-    if (wcEl) wcEl.textContent = wcv(amount) + ' WC';
+    if (wcEl) wcEl.textContent = usd(amount);
     var pv = document.getElementById('wciPreview');
     if (pv) {
       pv.innerHTML = '<div class="between"><span>Daily ROI</span><b>' + usd(daily) + '</b></div>' +
