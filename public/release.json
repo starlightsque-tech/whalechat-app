@@ -1,8 +1,8 @@
 {
-  "version": "3.41.0",
-  "build": "2026-11-17T10:05:00Z",
+  "version": "3.42.0",
+  "build": "2026-11-17T10:40:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.41.0 - single USD capital field on the stock trade ticket, Convert only on the WhaleChat account dashboard, no automatic page scrolling, seamless background refresh, bolder screen-fitted UI.",
-  "releasedAt": "2026-11-17T10:05:00Z",
+  "notes": "WhaleChat 3.42.0 - trade calculation examples only in the FAQ & Trade Guide, real-time price stream that follows live market prints, faster taps and batched background refresh.",
+  "releasedAt": "2026-11-17T10:40:00Z",
   "minimum": "3.0.0"
 }
