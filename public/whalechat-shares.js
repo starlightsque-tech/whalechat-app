@@ -175,7 +175,6 @@
         <div><span>Min</span><b>$${num(p.minUsd)} <i class="tiny muted">(${num(p.minCoins)} WC)</i></b></div>
         <div><span>Max</span><b>$${num(p.maxUsd)} <i class="tiny muted">(${num(p.maxCoins)} WC)</i></b></div>
       </div>
-      <div class="tiny muted" style="margin-top:6px">Example: $100 → <b>$${num(100 + 100 * (Number(p.returnPct) || 0) * (Number(p.durationDays) || 1) / 100)}</b> at maturity (${num((Number(p.returnPct) || 0) * (Number(p.durationDays) || 1), 2)}% total)</div>
       <button class="btn btn-primary btn-sm" style="width:100%;margin-top:9px" data-act="shares-open" data-id="${escS(p.id)}">
         Invest in ${escS(p.name)}
       </button>
@@ -404,7 +403,11 @@
 
     <div id="sharesLiveMount">${heroHTML()}${marketChartHTML()}${activeMountHTML()}</div>
     ${planPerfHTML()}
-    ${exampleHTML(plans)}
+    <div class="card wc-guide-link"><div class="between" style="gap:10px;align-items:center;flex-wrap:wrap">
+      <div><div class="card-title" style="margin:0">How is my investment profit calculated?</div>
+        <div class="tiny muted" style="margin-top:3px">Worked examples and formulas are in the FAQ &amp; Trade Guide.</div></div>
+      <div class="row" style="gap:6px"><a class="btn btn-soft btn-sm" href="#/how-it-works">Trade Guide</a><a class="btn btn-ghost btn-sm" href="#/investment/faq?q=wc-payout">FAQ</a></div>
+    </div></div>
 
     <div class="card" id="sharesPlansCard">
       <div class="between"><div class="card-title" style="margin:0">Investment plans</div>
