@@ -17,6 +17,47 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
+/* Stock trading portfolio book (USD, same unit as the trade stake):
+   - capital returned  -> investAcct.portfolios.stock  (Trade capital balance)
+   - profit            -> investAcct.stockProfit       (Profit balance)
+   - capital left after a loss -> investAcct.stockLeftover (Leftover capital) */
+function stockBook(u) {
+  if (!u.investAcct || typeof u.investAcct !== 'object') u.investAcct = { usd: 0, payout: 0, wcBalance: 0, portfolios: { stock: 0, wc: 0, b2b: 0, bot: 0 } };
+  const a = u.investAcct;
+  if (!a.portfolios || typeof a.portfolios !== 'object') a.portfolios = { stock: 0, wc: 0, b2b: 0, bot: 0 };
+  ['stockProfit', 'stockLeftover'].forEach((k) => { if (!Number.isFinite(Number(a[k]))) a[k] = 0; });
+  return a;
+}
+function r2(v) { return Math.round((Number(v) || 0) * 100) / 100; }
+function creditStockProfit(u, amount) {
+  const a = stockBook(u);
+  a.stockProfit = r2((Number(a.stockProfit) || 0) + Math.max(0, Number(amount) || 0));
+  return a.stockProfit;
+}
+/* Close-out rule: profit -> Profit balance and full capital -> Trade capital
+   balance; a loss deducts the loss and the remaining capital goes to Leftover
+   capital; a total loss returns nothing. Returns the split that was booked. */
+function settleToStock(u, stake, pnl) {
+  const a = stockBook(u);
+  const capital = r2(Math.max(0, Number(stake) || 0));
+  const p = r2(Math.max(-capital, Number(pnl) || 0));
+  const out = { capital: 0, profit: 0, leftover: 0, loss: 0 };
+  if (p >= 0) {
+    out.capital = capital; out.profit = p;
+    a.portfolios.stock = r2((Number(a.portfolios.stock) || 0) + capital);
+    a.stockProfit = r2((Number(a.stockProfit) || 0) + p);
+  } else {
+    out.loss = r2(-p); out.leftover = r2(capital + p);
+    if (out.leftover > 0) a.stockLeftover = r2((Number(a.stockLeftover) || 0) + out.leftover);
+  }
+  return out;
+}
+function settleText(ticker, split) {
+  if (split.profit > 0 || (split.capital > 0 && !split.loss)) return `${ticker} closed: +$${split.profit.toFixed(2)} profit credited to your Profit balance and $${split.capital.toFixed(2)} capital returned to your Trade capital balance.`;
+  if (split.leftover > 0) return `${ticker} closed with a $${split.loss.toFixed(2)} loss. The remaining $${split.leftover.toFixed(2)} of capital was credited to your Leftover capital.`;
+  return `${ticker} closed with a total loss. Nothing was returned.`;
+}
+
 const TICKERS = ['AAPL', 'TSLA', 'NVDA', 'COIN', 'MSTR', 'MARA', 'KO', 'JPM', 'NKE', 'UNH', 'AVGO', 'WMT', 'DIS', 'V', 'UBER', 'AMZN'];
 
 const BASE_PRICES = {
@@ -1033,8 +1074,12 @@ class MarketService {
   autoSecureActive(db, userId) {
     if (!db || !userId) return false;
     const now = Date.now();
-    return (db.autoSecureSubs || []).some((sub) => sub && sub.userId === userId &&
-      sub.status === 'active' && sub.enabled !== false && (!sub.expiresAt || Number(sub.expiresAt) > now));
+    const sub = (db.autoSecureSubs || []).find((x) => x && x.userId === userId && x.status === 'active' && (!x.expiresAt || Number(x.expiresAt) > now));
+    if (sub) return sub.enabled !== false;
+    /* subscribed from the Tools / stock page: the shared record lives on the user */
+    const u = (db.users || []).find((x) => x && x.id === userId);
+    const rec = u && u.investAcct && u.investAcct.tools && u.investAcct.tools.autosecure;
+    return !!(rec && rec.active && !rec.paused && (!rec.expiresAt || Number(rec.expiresAt) > now));
   }
 
   /* Secure (queue) the open profit without crediting it. The user claims it
@@ -1077,11 +1122,11 @@ class MarketService {
       t.stopLossPrice = t.trailingStopPrice;
     }
     db.notifications = db.notifications || [];
-    db.notifications.unshift({
+    if (!t.lastSecureNoteAt || now - Number(t.lastSecureNoteAt) > 60000) { t.lastSecureNoteAt = now; db.notifications.unshift({
       id: id('nt_'), userId: t.userId, title: 'Profit secured — claim it anytime',
-      body: `${t.ticker}: ${profit} WC secured at $${round(q.price, 4)}. Open Orders and press Take profit on the secured entry to credit it to your balance.`,
+      body: `${t.ticker}: +$${profit.toFixed(2)} secured at $${round(q.price, 4)}. Claim it anytime — it is credited to your stock Profit balance.`,
       link: '#/invest/orders', icon: 'lock', read: false, createdAt: now
-    });
+    }); }
     console.log('[market] auto-secured', profit, 'WC on', t.ticker, 'for user', t.userId);
     return profit;
   }
@@ -1128,7 +1173,7 @@ class MarketService {
     const now = Date.now();
     const coins = round(Number(rec.coins) || 0, 2);
     if (!(coins > 0)) throw new Error('Nothing to claim');
-    u.balance = round((Number(u.balance) || 0) + coins, 2);
+    creditStockProfit(u, coins);
     rec.claimed = true;
     rec.claimedAt = now;
     rec.claimedCoins = coins;
@@ -1136,18 +1181,18 @@ class MarketService {
     db.txs = db.txs || [];
     db.txs.unshift({
       id: id('tx_'), userId, type: 'secured-profit-claim',
-      label: `Secured profit claimed · ${t.ticker} · +${coins} WC`, coins,
+      label: `Secured profit claimed · ${t.ticker} · +$${coins.toFixed(2)} to Profit balance`, coins,
       meta: { tradeId: t.id, profitId: rec.id, securedAt: rec.at, server: true }, createdAt: now
     });
     db.notifications = db.notifications || [];
     db.notifications.unshift({
       id: id('nt_'), userId, title: 'Secured profit credited',
-      body: `+${coins} WC from your ${t.ticker} secured profit was added to your balance.`,
+      body: `+$${coins.toFixed(2)} from your ${t.ticker} secured profit was added to your stock Profit balance.`,
       link: '#/wallet', icon: 'check', read: false, createdAt: now
     });
     this.persist();
     try { this.broadcast('change', { rev: null, source: 'secured-profit-claim', at: now }); } catch (e) {}
-    return { ok: true, coins, balance: u.balance, tradeId: t.id, profitId: rec.id };
+    return { ok: true, coins, balance: u.balance, stockProfit: stockBook(u).stockProfit, tradeId: t.id, profitId: rec.id };
   }
 
   /* Claim every unclaimed secured entry in one go. */
@@ -1175,22 +1220,22 @@ class MarketService {
       });
     });
     if (!count) throw new Error('No secured profit to claim');
-    u.balance = round((Number(u.balance) || 0) + total, 2);
+    creditStockProfit(u, total);
     db.txs = db.txs || [];
     db.txs.unshift({
       id: id('tx_'), userId, type: 'secured-profit-claim',
-      label: `Claimed ${count} secured profit${count === 1 ? '' : 's'} · +${total} WC`, coins: total,
+      label: `Claimed ${count} secured profit${count === 1 ? '' : 's'} · +$${total.toFixed(2)} to Profit balance`, coins: total,
       meta: { count, all: true, server: true }, createdAt: now
     });
     db.notifications = db.notifications || [];
     db.notifications.unshift({
       id: id('nt_'), userId, title: 'Secured profits credited',
-      body: `+${total} WC from ${count} secured take-profit ${count === 1 ? 'entry was' : 'entries were'} added to your balance.`,
+      body: `+$${total.toFixed(2)} from ${count} secured take-profit ${count === 1 ? 'entry was' : 'entries were'} added to your stock Profit balance.`,
       link: '#/wallet', icon: 'check', read: false, createdAt: now
     });
     this.persist();
     try { this.broadcast('change', { rev: null, source: 'secured-profit-claim-all', at: now }); } catch (e) {}
-    return { ok: true, coins: total, count, balance: u.balance };
+    return { ok: true, coins: total, count, balance: u.balance, stockProfit: stockBook(u).stockProfit };
   }
 
   skimProfit(t, q, db, now, reason, forceCredit) {
@@ -1211,7 +1256,7 @@ class MarketService {
     const profit = round(Math.max(0, (Number(t.capitalCoins) || 0) * lev * move * dir), 2);
     if (!(profit > 0)) return 0;
     if (!t.initialEntryPrice) t.initialEntryPrice = entry;
-    u.balance = round((Number(u.balance) || 0) + profit, 2);
+    creditStockProfit(u, profit);
     t.profitTakenCoins = round((Number(t.profitTakenCoins) || 0) + profit, 2);
     t.entryPrice = round(q.price, 6);
     t.lastProfitAt = now;
@@ -1230,13 +1275,13 @@ class MarketService {
     db.txs = db.txs || [];
     db.txs.unshift({
       id: id('tx_'), userId: u.id, type: 'trade-profit',
-      label: `${reason || 'Take Profit'} · ${t.ticker} · +${profit} WC taken, trade continues`,
+      label: `${reason || 'Take Profit'} · ${t.ticker} · +$${profit.toFixed(2)} to Profit balance, trade continues`,
       coins: profit, meta: { tradeId: t.id, pnlCoins: profit, price: q.price, continues: true, server: true }, createdAt: now
     });
     db.notifications = db.notifications || [];
     db.notifications.unshift({
       id: id('nt_'), userId: u.id, title: 'Profit taken — trade continues',
-      body: `${t.ticker}: +${profit} WC credited to your balance. The trade is still running — it closes on stop loss, at the timer, or when you press Stop trade.`,
+      body: `${t.ticker}: +$${profit.toFixed(2)} credited to your stock Profit balance. The trade is still running — it closes on stop loss, at the timer, or when you press Stop trade.`,
       link: '#/invest/orders', icon: 'trend', read: false, createdAt: now
     });
     console.log('[market] TP skim', t.ticker, 'for', u.username, '· +', profit, 'WC · trade continues');
@@ -1260,7 +1305,8 @@ class MarketService {
     const move = (q.price - t.entryPrice) / t.entryPrice;
     const pnlCoins = round(Math.max(-(Number(t.capitalCoins) || 0), (Number(t.capitalCoins) || 0) * lev * move * dir), 2);
     const payout = Math.max(0, round((Number(t.capitalCoins) || 0) + pnlCoins, 2));
-    u.balance = round((Number(u.balance) || 0) + payout, 2);
+    const split = settleToStock(u, t.capitalCoins, pnlCoins);
+    t.settlement = split;
     t.status = 'Completed';
     t.closedAt = now;
     t.closeReason = reason || 'Stopped by user';
@@ -1273,22 +1319,18 @@ class MarketService {
     db.txs = db.txs || [];
     db.txs.unshift({
       id: id('tx_'), userId, type: 'trade-close',
-      label: `${t.ticker} trade ${t.closeReason} · ${payout ? '+' + payout + ' WC returned' : 'total loss'}`,
-      coins: payout, meta: { tradeId: t.id, pnlCoins, reason: t.closeReason, server: true }, createdAt: now
+      label: `${t.ticker} trade ${t.closeReason} · ${split.loss ? (split.leftover ? '$' + split.leftover.toFixed(2) + ' to Leftover capital' : 'total loss') : '+$' + split.profit.toFixed(2) + ' profit · $' + split.capital.toFixed(2) + ' capital returned'}`,
+      coins: payout, meta: { tradeId: t.id, pnlCoins, reason: t.closeReason, settlement: split, server: true }, createdAt: now
     });
     db.notifications = db.notifications || [];
     db.notifications.unshift({
       id: id('nt_'), userId, title: t.closeReason === 'Stop Loss Hit' ? 'Take loss — trade closed' : 'Trade stopped',
-      body: payout <= 0
-        ? `${t.ticker} closed with a total loss. Nothing was returned.`
-        : pnlCoins >= 0
-          ? `${t.ticker} closed with +${pnlCoins} WC profit. ${payout} WC credited.`
-          : `${t.ticker} closed with −${Math.abs(pnlCoins)} WC. ${payout} WC of capital returned.`,
+      body: settleText(t.ticker, split),
       link: '#/invest/orders', icon: payout <= 0 ? 'ban' : 'check', read: false, createdAt: now
     });
     this.persist();
     try { this.broadcast('change', { rev: null, source: 'manual-trade-close', at: now }); } catch (e) {}
-    return { ok: true, payout, pnlCoins, reason: t.closeReason, balance: u.balance };
+    return { ok: true, payout, pnlCoins, settlement: split, reason: t.closeReason, balance: u.balance };
   }
 
   /* Manual Take Profit button: server-authoritative, cannot double-credit. */
@@ -1394,7 +1436,8 @@ class MarketService {
         const u = (db.users || []).find((x) => x.id === t.userId);
         if (!u) continue;
 
-        u.balance = round((Number(u.balance) || 0) + payout, 2);
+        const split = settleToStock(u, t.capitalCoins, pnlCoins);
+        t.settlement = split;
 
         /* duration-scaled virtual dividend, paid only when the timer expires */
         let dividendCoins = 0;
@@ -1413,7 +1456,7 @@ class MarketService {
           if (mode === 'wins' && pnlCoins <= 0) bonus = 0;
           if (bonus > 0) {
             dividendCoins = round(bonus, 2);
-            u.balance = round((Number(u.balance) || 0) + dividendCoins, 2);
+            creditStockProfit(u, dividendCoins);
             t.dividendPaid = true;
             t.dividendCoins = dividendCoins;
             t.dividendPaidAt = now;
@@ -1448,15 +1491,11 @@ class MarketService {
         db.txs = db.txs || [];
         db.txs.unshift({
           id: id('tx_'), userId: u.id, type: 'trade-close',
-          label: `${t.ticker} trade ${reason} · ${payout ? '+' + payout + ' WC returned' : 'total loss'}`,
-          coins: payout, meta: { tradeId: t.id, pnlCoins, reason, server: true }, createdAt: now
+          label: `${t.ticker} trade ${reason} · ${split.loss ? (split.leftover ? '$' + split.leftover.toFixed(2) + ' to Leftover capital' : 'total loss') : '+$' + split.profit.toFixed(2) + ' profit · $' + split.capital.toFixed(2) + ' capital returned'}`,
+          coins: payout, meta: { tradeId: t.id, pnlCoins, reason, settlement: split, server: true }, createdAt: now
         });
         db.notifications = db.notifications || [];
-        const body = payout <= 0
-          ? `${t.ticker} moved against your position and the stake was lost. Nothing was returned.`
-          : pnlCoins >= 0
-            ? `${t.ticker} closed with +${pnlCoins} WC profit. ${payout} WC (capital + profit) was credited.`
-            : `${t.ticker} closed with −${Math.abs(pnlCoins)} WC. ${payout} WC of capital was returned.`;
+        const body = settleText(t.ticker, split);
         db.notifications.unshift({
           id: id('nt_'), userId: u.id,
           title: reason === 'Take Profit Hit' ? 'Take Profit Hit — trade won'
