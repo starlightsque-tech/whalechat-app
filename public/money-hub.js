@@ -13,6 +13,50 @@
   var RATE = (typeof COIN_USD === 'number') ? COIN_USD : 0.5;
   var COINS = ['USDT', 'USDC', 'BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'DOGE', 'TRX', 'LTC', 'ADA', 'MATIC'];
 
+  /* ---- crypto balance display: each coin shown in its own units ---------- */
+  var STABLE = { USDT: 1, USDC: 1, BUSD: 1, DAI: 1, FDUSD: 1, TUSD: 1, USD: 1 };
+  var priceCache = {};
+  function coinPrice(coin) {
+    coin = String(coin || '').toUpperCase();
+    if (STABLE[coin]) return 1;
+    try {
+      var q = (window.WC_MARKET && window.WC_MARKET.feed && window.WC_MARKET.feed.quotes) || {};
+      var hit = q[coin + 'USDT'] || q[coin + 'USD'] || q[coin];
+      var p = hit && Number(hit.price);
+      if (p > 0) { priceCache[coin] = p; return p; }
+    } catch (e) {}
+    return priceCache[coin] || 0;
+  }
+  function fmtQty(q) {
+    q = Number(q) || 0;
+    if (q >= 1000) return q.toFixed(2);
+    if (q >= 1) return String(Math.round(q * 10000) / 10000);
+    if (q === 0) return '0';
+    return String(Number(q.toPrecision(4)));
+  }
+  function coinLabel(coin, usd) {
+    var p = coinPrice(coin);
+    coin = String(coin || '').toUpperCase();
+    if (!(p > 0)) return moneyM(usd) + ' of ' + coin;
+    return fmtQty((Number(usd) || 0) / p) + ' ' + coin;
+  }
+  (function primePrices() {
+    try {
+      var url = (typeof Remote !== 'undefined' && Remote.enabled) ? Remote.url('/api/market/quotes') : '/api/market/quotes';
+      fetch(url).then(function (r) { return r.json(); }).then(function (d) {
+        var q = (d && (d.quotes || d)) || {};
+        var list = Array.isArray(q) ? q : Object.keys(q).map(function (k) { var x = q[k] || {}; if (!x.symbol) x.symbol = k; return x; });
+        list.forEach(function (x) {
+          var s = String(x.symbol || '').toUpperCase(); var p = Number(x.price);
+          if (!(p > 0)) return;
+          var m = s.match(/^([A-Z0-9]+?)(USDT|USD)$/);
+          if (m && !priceCache[m[1]]) priceCache[m[1]] = p;
+        });
+      }).catch(function () {});
+    } catch (e) {}
+  })();
+  window.WC_COIN = { price: coinPrice, label: coinLabel, qty: fmtQty };
+
   function escM(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
       return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
@@ -75,11 +119,9 @@
     var a = ia(u);
     var d = u.depositBalances || {};
     var list = [
-      { id: 'wallet_usd', group: 'Whalechat account', label: '$ balance', cur: 'USD', get: function () { return Number(u.walletUsd) || 0; }, set: function (v) { u.walletUsd = roundM(v); }, out: true, in: true },
-      { id: 'wallet_wc', group: 'Whalechat account', label: 'Whalecoin balance', cur: 'WC', get: function () { return Number(u.balance) || 0; }, set: function (v) { u.balance = roundM(v); }, out: true, in: true },
-      { id: 'inv_usd', group: 'Investment account', label: 'Total assets balance', cur: 'USD', get: function () { return Number(a.usd) || 0; }, set: function (v) { a.usd = roundM(v); }, out: true, in: true },
-      { id: 'inv_payout', group: 'Investment account', label: 'Payout balance', cur: 'USD', get: function () { return Number(a.payout) || 0; }, set: function (v) { a.payout = roundM(v); }, out: true, in: true },
-      { id: 'inv_wc', group: 'Investment account', label: 'Investment WhaleCoin', cur: 'WC', get: function () { return Number(a.wcBalance) || 0; }, set: function (v) { a.wcBalance = roundM(v); }, out: true, in: true },
+      { id: 'wallet_wc', group: 'Whalechat account', label: 'WC balance', cur: 'WC', get: function () { return Number(u.balance) || 0; }, set: function (v) { u.balance = roundM(v); }, out: true, in: true },
+      { id: 'inv_usd', group: 'Investment account', label: 'Trade capital (USD)', cur: 'USD', get: function () { return Number(a.usd) || 0; }, set: function (v) { a.usd = roundM(v); }, out: true, in: true },
+      { id: 'inv_payout', group: 'Investment account', label: 'Payout balance', cur: 'USD', get: function () { return Number(a.payout) || 0; }, set: function (v) { a.payout = roundM(v); }, out: true, in: false },
       { id: 'stock_capital', group: 'Stock trading', label: 'Trade capital balance', cur: 'USD', get: function () { return Number(a.portfolios.stock) || 0; }, set: function (v) { a.portfolios.stock = roundM(v); }, out: false, in: true },
       { id: 'stock_profit', group: 'Stock trading', label: 'Profit balance', cur: 'USD', get: function () { return Number(a.stockProfit) || 0; }, set: function (v) { a.stockProfit = roundM(v); }, out: true, in: true },
       { id: 'wc_capital', group: 'WC-Investing', label: 'Capital balance', cur: 'USD', get: function () { return Number(a.portfolios.wc) || 0; }, set: function (v) { a.portfolios.wc = roundM(v); }, out: false, in: true },
@@ -89,13 +131,22 @@
       { id: 'bot_capital', group: 'Bot trading', label: 'Bot capital allocation', cur: 'USD', get: function () { return Number(a.portfolios.bot) || 0; }, set: function (v) { a.portfolios.bot = roundM(v); }, out: false, in: true },
       { id: 'bot_profit', group: 'Bot trading', label: 'Bot profit balance', cur: 'USD', get: function () { return botProfitUsd(); }, set: function () {}, out: true, in: false }
     ];
-    Object.keys(d).forEach(function (coin) {
-      if (!(Number(d[coin]) > 0.004)) return;
-      list.push({ id: 'coin:' + coin, group: 'Crypto deposit', label: moneyM(d[coin]) + ' || ' + coin, cur: 'USD', get: function () { return Number(u.depositBalances[coin]) || 0; }, set: function (v) { u.depositBalances[coin] = roundM(v); if (u.depositBalances[coin] <= 0.004) delete u.depositBalances[coin]; }, out: true, in: true, coin: coin });
-    });
-    // always offer USDT as a crypto destination
-    if (!d.USDT) list.push({ id: 'coin:USDT', group: 'Crypto deposit', label: 'USDT crypto balance', cur: 'USD', get: function () { return Number(u.depositBalances.USDT) || 0; }, set: function (v) { u.depositBalances.USDT = roundM(v); }, out: true, in: true, coin: 'USDT' });
+    /* balances from the old flow stay intact; they can only move to the WC balance */
+    if (Number(u.walletUsd) > 0.004) list.push({ id: 'wallet_usd', group: 'Whalechat account', label: 'Old $ balance', cur: 'USD', get: function () { return Number(u.walletUsd) || 0; }, set: function (v) { u.walletUsd = roundM(v); }, out: true, in: false });
+    if (Number(a.wcBalance) > 0.004) list.push({ id: 'inv_wc', group: 'Investment account', label: 'Old investment WhaleCoin', cur: 'WC', get: function () { return Number(a.wcBalance) || 0; }, set: function (v) { a.wcBalance = roundM(v); }, out: true, in: false });
     return list;
+  }
+  /* money-flow rules
+     WC balance            -> investment trade capital (auto WC -> USD)
+     trade capital (USD)   -> stock / WC-Investing / B2B / bot capital, or back to WC balance
+     profit/payout (USD)   -> WC balance (auto USD -> WC) or trade capital
+     old $ / old inv. WC   -> WC balance only
+     crypto never transfers: convert it to WC on the dashboard */
+  function allowedTargets(srcId) {
+    if (srcId === 'wallet_wc') return ['inv_usd'];
+    if (srcId === 'wallet_usd' || srcId === 'inv_wc') return ['wallet_wc'];
+    if (srcId === 'inv_usd') return ['stock_capital', 'wc_capital', 'b2b_capital', 'bot_capital', 'wallet_wc'];
+    return ['wallet_wc', 'inv_usd'];
   }
   function defById(u, id) {
     var list = definitions(u);
@@ -126,10 +177,8 @@
     var srcOpts = list.filter(function (x) { return x.out; }).map(function (x) {
       return '<option value="' + x.id + '">' + escM(x.group + ' · ' + x.label) + ' — ' + display(x, x.get()) + '</option>';
     }).join('');
-    var dstOpts = list.filter(function (x) { return x.in; }).map(function (x) {
-      return '<option value="' + x.id + '">' + escM(x.group + ' · ' + x.label) + '</option>';
-    }).join('');
-    return headM('Transfer between balances', 'Move money between your Whalechat, investment, stock, WC-Investing, bot and B2B balances. No PIN is required between your own accounts.', '#/account') +
+    var dstOpts = '';
+    return headM('Transfer', 'Send WC to your investment trade capital (it becomes USD), top up your portfolios in USD, or move USD back to your WC balance.', '#/account') +
       idBanner(u) +
       '<div class="card mh-grid"><div class="mh-col">' +
         '<div class="field"><label class="label">From</label><select class="input" id="mhFrom">' + srcOpts + '</select></div>' +
@@ -139,7 +188,7 @@
           '<button type="button" class="ac-max" id="mhMax">Max</button></div><div class="help" id="mhHint"></div></div>' +
         '<div class="mh-preview"><div><span>From</span><b id="mhFromVal">—</b></div><div class="mh-arrow">→</div><div><span>To</span><b id="mhToVal">—</b></div></div>' +
         '<button class="btn btn-primary btn-block btn-lg" data-act="mh-transfer">' + icM('send', 15) + ' Transfer now</button>' +
-        '<div class="tiny muted" style="margin-top:9px">Portfolio balances can only be transferred out of their <b>profit balance</b>. Capital balances can receive funds but cannot be a source.</div>' +
+        '<div class="tiny muted" style="margin-top:9px">WC sent to your trade capital is converted to USD at $' + RATE.toFixed(2) + ' per WC. USD sent back to your WC balance is converted to WC at the same rate. Crypto is converted to WC on the Convert page of your WhaleChat account.</div>' +
       '</div><div class="mh-col mh-side">' +
         '<div class="card-title">Balance snapshot</div>' +
         list.filter(function (x) { return x.out; }).map(function (x) {
@@ -155,6 +204,18 @@
     var amount = document.getElementById('mhAmount');
     if (!from || !to || !amount) return;
     var u = acct(me());
+    function fillTargets() {
+      var keep = to.value;
+      var ids = allowedTargets(from.value);
+      to.innerHTML = ids.map(function (id) { var d = defById(u, id); return d ? '<option value="' + d.id + '">' + escM(d.group + ' · ' + d.label) + '</option>' : ''; }).join('');
+      if (ids.indexOf(keep) >= 0) to.value = keep;
+    }
+    try {
+      var want = (location.hash.match(/[?&]to=([a-z_]+)/) || [])[1];
+      if (want === 'inv_usd' || want === 'trade') from.value = 'wallet_wc';
+      if (want === 'wallet_wc' && from.value === 'wallet_wc') from.value = 'inv_usd';
+    } catch (e) {}
+    fillTargets();
     function update() {
       var s = defById(u, from.value);
       var d = defById(u, to.value);
@@ -166,7 +227,7 @@
       document.getElementById('mhToVal').textContent = display(d, converted(v, s, d));
       document.getElementById('mhHint').textContent = 'Available: ' + display(s, s.get()) + ' · no PIN needed.';
     }
-    from.onchange = update; to.onchange = update; amount.oninput = update;
+    from.onchange = function () { fillTargets(); update(); }; to.onchange = update; amount.oninput = update;
     document.getElementById('mhMax').onclick = function () {
       var s = defById(u, from.value);
       if (s) amount.value = (Number(s.get()) || 0).toFixed(2);
@@ -191,6 +252,7 @@
     var amt = roundM(Number((document.getElementById('mhAmount') || {}).value || 0));
     if (!src || !dst) return toastM('Choose both balances', 'err');
     if (src.id === dst.id) return toastM('Choose two different balances', 'err');
+    if (allowedTargets(src.id).indexOf(dst.id) < 0) return toastM(src.label + ' cannot be sent to ' + dst.label, 'err');
     if (!(amt > 0)) return toastM('Enter an amount greater than zero', 'err');
     if (amt > src.get() + 0.001) return toastM('Not enough in ' + src.label, 'err');
     var receive = converted(amt, src, dst);
@@ -223,10 +285,10 @@
   function convertPage() {
     var u = acct(me()); if (!u) return '';
     var rows = Object.keys(u.depositBalances || {}).filter(function (k) { return Number(u.depositBalances[k]) > 0.004; });
-    var opts = rows.map(function (c) { return '<option value="coin:' + escM(c) + '">Crypto deposit · ' + moneyM(u.depositBalances[c]) + ' || ' + escM(c) + '</option>'; }).join('');
-    opts += '<option value="usd">$ balance · ' + moneyM(u.walletUsd) + '</option>';
-    opts += '<option value="wc">Whalecoin balance · ' + wcM(u.balance) + ' WC</option>';
-    return headM('Convert balance', 'Crypto deposits convert to USD or WhaleCoin. USD converts to WhaleCoin. WhaleCoin converts to USDT crypto for withdrawal.', '#/account') +
+    var opts = rows.map(function (c) { return '<option value="coin:' + escM(c) + '">Crypto · ' + escM(coinLabel(c, u.depositBalances[c])) + ' (' + moneyM(u.depositBalances[c]) + ')</option>'; }).join('');
+    if (Number(u.walletUsd) > 0.004) opts += '<option value="usd">Old $ balance · ' + moneyM(u.walletUsd) + '</option>';
+    opts += '<option value="wc">WC balance · ' + wcM(u.balance) + ' WC</option>';
+    return headM('Convert', 'Convert your crypto to WhaleCoin (WC). To withdraw, convert WC back to USDT crypto.', '#/account') +
       idBanner(u) +
       '<div class="card mh-grid"><div class="mh-col">' +
         '<div class="field"><label class="label">Convert from</label><select class="input" id="mhCvFrom">' + opts + '</select></div>' +
@@ -237,9 +299,9 @@
         '<div class="mh-preview"><div><span>You convert</span><b id="mhCvIn">$0.00</b></div><div class="mh-arrow">→</div><div><span>You receive</span><b id="mhCvOut">$0.00</b></div></div>' +
         '<button class="btn btn-primary btn-block btn-lg" data-act="mh-convert">' + icM('refresh', 15) + ' Convert now</button></div>' +
       '<div class="mh-col mh-side"><div class="card-title">Balances</div>' +
-        rows.map(function (c) { return '<div class="mh-row"><span>' + escM(c) + '</span><b>' + moneyM(u.depositBalances[c]) + '</b></div>'; }).join('') +
-        '<div class="mh-row"><span>$ balance</span><b>' + moneyM(u.walletUsd) + '</b></div>' +
-        '<div class="mh-row"><span>Whalecoin</span><b>' + wcM(u.balance) + ' WC</b></div></div></div>';
+        rows.map(function (c) { return '<div class="mh-row"><span>' + escM(c) + '</span><b>' + escM(coinLabel(c, u.depositBalances[c])) + '</b></div>'; }).join('') +
+        (Number(u.walletUsd) > 0.004 ? '<div class="mh-row"><span>Old $ balance</span><b>' + moneyM(u.walletUsd) + '</b></div>' : '') +
+        '<div class="mh-row"><span>WC balance</span><b>' + wcM(u.balance) + ' WC</b></div></div></div>';
   }
 
   function bindConvert() {
@@ -257,8 +319,8 @@
     }
     function targets() {
       var k = source();
-      if (k === 'coin') return [['usd', '$ balance'], ['wc', 'Whalecoin balance']];
-      if (k === 'usd') return [['wc', 'Whalecoin balance']];
+      if (k === 'coin') return [['wc', 'WC balance']];
+      if (k === 'usd') return [['wc', 'WC balance']];
       return [['crypto', 'USDT crypto balance (for withdrawal)']];
     }
     function build() {
@@ -267,7 +329,7 @@
       if (to.options.length) to.selectedIndex = 0;
       document.getElementById('mhCvUnit').textContent = source() === 'wc' ? 'WC' : '$';
       document.getElementById('mhCvLabel').textContent = source() === 'wc' ? 'Amount (WC)' : 'Amount (USD)';
-      document.getElementById('mhCvTarget').textContent = source() === 'wc' ? 'Whalecoin converts to USDT at $' + RATE.toFixed(2) + '/WC.' : (source() === 'usd' ? 'USD converts to WC at $' + RATE.toFixed(2) + '/WC.' : 'Crypto deposits convert at their USD value.');
+      document.getElementById('mhCvTarget').textContent = source() === 'wc' ? 'WC converts to USDT at $' + RATE.toFixed(2) + '/WC.' : (source() === 'usd' ? 'USD converts to WC at $' + RATE.toFixed(2) + '/WC.' : 'Enter the USD value to convert. 1 WC = $' + RATE.toFixed(2) + '.');
       update();
     }
     function update() {
@@ -277,9 +339,9 @@
       if (k === 'wc' && t === 'crypto') out = moneyM(v * RATE) + ' || USDT';
       else if (t === 'wc') out = wcM(v / RATE) + ' WC';
       else out = moneyM(v);
-      document.getElementById('mhCvIn').textContent = k === 'wc' ? wcM(v) + ' WC' : moneyM(v);
+      document.getElementById('mhCvIn').textContent = k === 'wc' ? wcM(v) + ' WC' : (k === 'coin' ? coinLabel(coin(), v) + ' (' + moneyM(v) + ')' : moneyM(v));
       document.getElementById('mhCvOut').textContent = out;
-      document.getElementById('mhCvHint').textContent = 'Available: ' + (k === 'wc' ? wcM(avail()) + ' WC' : moneyM(avail())) + '.';
+      document.getElementById('mhCvHint').textContent = 'Available: ' + (k === 'wc' ? wcM(avail()) + ' WC' : (k === 'coin' ? coinLabel(coin(), avail()) + ' (' + moneyM(avail()) + ')' : moneyM(avail()))) + '.';
     }
     from.onchange = build; to.onchange = update; amount.oninput = update;
     document.getElementById('mhCvMax').onclick = function () { amount.value = avail().toFixed(2); update(); };
@@ -296,10 +358,10 @@
       var coin = from.slice(5);
       var av = Number(u.depositBalances[coin]) || 0;
       if (amt > av + 0.001) return toastM('Not enough ' + coin, 'err');
+      if (to !== 'wc') return toastM('Crypto can only be converted to WC', 'err');
       u.depositBalances[coin] = roundM(av - amt);
       if (u.depositBalances[coin] <= 0.004) delete u.depositBalances[coin];
-      if (to === 'usd') { u.walletUsd = roundM((Number(u.walletUsd) || 0) + amt); ledgerM(u, 'Converted ' + moneyM(amt) + ' ' + coin + ' to $ balance', amt, 0); }
-      else if (to === 'wc') { var got = roundM(amt / RATE); u.balance = roundM((Number(u.balance) || 0) + got); ledgerM(u, 'Converted ' + moneyM(amt) + ' ' + coin + ' to WC', -amt, got); }
+      if (to === 'wc') { var got = roundM(amt / RATE); u.balance = roundM((Number(u.balance) || 0) + got); ledgerM(u, 'Converted ' + moneyM(amt) + ' ' + coin + ' to WC', -amt, got); }
       else return toastM('Choose a destination', 'err');
     } else if (from === 'usd') {
       var avUsd = Number(u.walletUsd) || 0;
@@ -336,7 +398,7 @@
         '<a href="#/account/convert" class="btn btn-primary">Convert WC to USDT</a></div>';
     }
     var nets = []; try { nets = DB.settings.networks || []; } catch (e) {}
-    var opts = rows.map(function (c) { return '<option value="' + escM(c) + '">' + moneyM(u.depositBalances[c]) + ' || ' + escM(c) + '</option>'; }).join('');
+    var opts = rows.map(function (c) { return '<option value="' + escM(c) + '">' + escM(coinLabel(c, u.depositBalances[c])) + ' (' + moneyM(u.depositBalances[c]) + ')</option>'; }).join('');
     return headM('Withdraw crypto', 'Withdrawals are paid only from your crypto deposit balance. USD and Whalecoin are not withdrawable.', '#/account') +
       idBanner(u) +
       '<div class="card mh-grid"><div class="mh-col">' +
