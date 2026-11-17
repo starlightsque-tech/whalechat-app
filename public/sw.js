@@ -1,7 +1,7 @@
 /* =========================================================================
    WhaleChat service worker — offline shell, in-place updates, Web Push
    ========================================================================= */
-const VERSION = 'wc-v3.45.0-1';
+const VERSION = 'wc-v3.46.0-1';
 const SHELL = [
   './',
   './index.html',
