@@ -87,7 +87,21 @@
       a.wcInvest = { capital: 0, profit: 0, leftover: 0, autoReinvest: false, plans: [], history: [] };
     }
     var w = a.wcInvest;
-    ['capital', 'profit', 'leftover'].forEach(function (k) { if (!(Number(w[k]) >= 0)) w[k] = Number(w[k]) || 0; });
+    /* the WC-Investing capital balance IS the investment account's WC-Investing
+       portfolio (a.portfolios.wc), so every transfer shows up here */
+    if (!a.portfolios) a.portfolios = { stock: 0, wc: 0, b2b: 0, bot: 0 };
+    if (Object.prototype.hasOwnProperty.call(w, 'capital') && !Object.getOwnPropertyDescriptor(w, 'capital').get) {
+      a.portfolios.wc = Math.round(((Number(a.portfolios.wc) || 0) + (Number(w.capital) || 0)) * 100) / 100;
+      delete w.capital;
+    }
+    if (!Object.getOwnPropertyDescriptor(w, 'capital')) {
+      Object.defineProperty(w, 'capital', {
+        enumerable: false, configurable: true,
+        get: function () { return Number(a.portfolios.wc) || 0; },
+        set: function (v) { a.portfolios.wc = Math.round((Number(v) || 0) * 100) / 100; }
+      });
+    }
+    ['profit', 'leftover'].forEach(function (k) { if (!(Number(w[k]) >= 0)) w[k] = Number(w[k]) || 0; });
     if (!Array.isArray(w.plans)) w.plans = [];
     if (!Array.isArray(w.history)) w.history = [];
     w.autoReinvest = !!w.autoReinvest;
