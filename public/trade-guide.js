@@ -29,7 +29,7 @@
     var profit = (capitalUsd * 0.02 * lev).toFixed(2);
     return 'I want to show you this company called WhaleChat. Have you heard about them before?\n\n' +
       'WhaleChat is a Social Finance ecosystem — an all-in-one chat, shopping and sales, trade and investing app. You can chat with friends, buy and sell products in the company marketplace, trade 24/7, and invest in the company shares in real time.\n\n' +
-      'How trading works: 1 WC = $' + rate.toFixed(2) + '. Pick a live 24/7 asset like ' + asset + ' or BTC/USD, choose LONG if you think it will go up or SHORT if you think it will go down, set your capital, take profit and take loss, then trade. Example: $' + capitalUsd + ' (' + capitalWc + ' WC) with ' + lev + 'x leverage and a +2% move in your favour = $' + profit + ' profit, auto-closed. Take Loss protects you if it goes the other way.\n\n' +
+      'How trading works: 1 WC = $' + rate.toFixed(2) + '. Pick a live 24/7 asset like ' + asset + ' or BTC/USD, choose LONG if you think it will go up or SHORT if you think it will go down, set your capital, take profit and take loss, then trade. Example: $' + capitalUsd + ' with ' + lev + 'x leverage and a +2% move in your favour = $' + profit + ' profit, auto-closed. Take Loss protects you if it goes the other way.\n\n' +
       'The current stock-trade fee is ' + fee + '%. You can also buy WhaleChat Shares for long-term ownership, or become a Vendor and sell in the marketplace. All markets are LIVE 24/7 — no weekend closure.\n\n' +
       'Want me to send you my link and guide you on your first trade?\n' +
       'Check it here: https://whalechat-qkgd.onrender.com';
@@ -92,6 +92,15 @@
     if (u === 'months') return Math.round(v * 30);
     if (u === 'years') return Math.round(v * 365);
     return v;
+  }
+  /* Uses the app's own close-out function (LT.previewClose) so guide examples
+     always follow the live payout flow; falls back to the same formula. */
+  function closeSplit(cap, movePct, lev, feePctVal) {
+    var pnl = cap * (movePct / 100) * lev, fee = cap * (feePctVal / 100);
+    try { if (window.LT_PREVIEW_CLOSE) return window.LT_PREVIEW_CLOSE(cap, pnl, fee); } catch (e) {}
+    var p = Math.max(-cap, pnl), f = Math.min(fee, Math.max(0, cap + p));
+    return p >= 0 ? { capital: cap - Math.max(0, f - p), profit: Math.max(0, p - f), leftover: 0, loss: 0, fee: f, grossPnl: p, payout: Math.max(0, cap + p - f) }
+                  : { capital: 0, profit: 0, leftover: Math.max(0, cap + p - f), loss: -p, fee: f, grossPnl: p, payout: Math.max(0, cap + p - f) };
   }
   function money(n) { return '$' + (Math.round((Number(n) || 0) * 100) / 100).toFixed(2); }
   function pct(n) { return (Math.round((Number(n) || 0) * 100) / 100).toFixed(2) + '%'; }
@@ -207,19 +216,20 @@
         '<div class="tg-formula">profit = capital × price move % × leverage<br>' +
         'payout = capital + profit − (capital × ' + fee + '%)</div>' +
         '<table class="tg-table"><thead><tr><th>Capital</th><th>Leverage</th><th>Move</th><th>Profit</th></tr></thead><tbody>' +
-        '<tr><td>$20</td><td>3x</td><td>+2%</td><td class="up">+$1.20</td></tr>' +
-        '<tr><td>$20</td><td>' + lev + 'x (default)</td><td>+2%</td><td class="up">+$2.00</td></tr>' +
-        '<tr><td>$100</td><td>3x</td><td>+2%</td><td class="up">+$6.00</td></tr>' +
+        '<tr><td>$20</td><td>3x</td><td>+2%</td><td class="up">+' + money(closeSplit(20,2,3,0).grossPnl) + '</td></tr>' +
+        '<tr><td>$20</td><td>' + lev + 'x (default)</td><td>+2%</td><td class="up">+' + money(closeSplit(20,2,lev,0).grossPnl) + '</td></tr>' +
+        '<tr><td>$100</td><td>3x</td><td>+2%</td><td class="up">+' + money(closeSplit(100,2,3,0).grossPnl) + '</td></tr>' +
         '<tr><td>$100</td><td>' + lev + 'x (default)</td><td>+2%</td><td class="up">+' + money(100 * 0.02 * lev) + '</td></tr>' +
-        '<tr><td>$500</td><td>3x</td><td>+2%</td><td class="up">+$30.00</td></tr>' +
+        '<tr><td>$500</td><td>3x</td><td>+2%</td><td class="up">+' + money(closeSplit(500,2,3,0).grossPnl) + '</td></tr>' +
         '<tr><td>$500</td><td>' + lev + 'x (default)</td><td>+2%</td><td class="up">+' + money(500 * 0.02 * lev) + '</td></tr>' +
         '</tbody></table>' +
-        '<div class="tg-formula"><b>Gain trade</b> · capital $20, move +5%, ' + lev + 'x<br>profit = 20 × (+5%) × ' + lev + ' = ' + money(20 * 0.05 * lev) + '<br>payout = $20 + ' + money(20 * 0.05 * lev) + ' − ($20 × ' + fee + '%) = <b>' + money(Math.max(0, 20 + 20 * 0.05 * lev - 20 * fee / 100)) + '</b></div>' +
-        '<div class="tg-formula"><b>Loss trade</b> · capital $20, move −5%, ' + lev + 'x<br>loss = 20 × (−5%) × ' + lev + ' = −' + money(20 * 0.05 * lev) + '<br>payout = $20 + (−' + money(20 * 0.05 * lev) + ') − ($20 × ' + fee + '%) = <b>' + money(Math.max(0, 20 - 20 * 0.05 * lev - 20 * fee / 100)) + '</b></div>' +
+        (function(){var x=closeSplit(20,5,lev,fee);return '<div class="tg-formula"><b>Gain trade</b> · capital $20, move +5%, ' + lev + 'x<br>profit = 20 × (+5%) × ' + lev + ' = ' + money(x.grossPnl) + '<br>fee = $20 × ' + fee + '% = ' + money(x.fee) + '<br>payout = $20 + ' + money(x.grossPnl) + ' − ' + money(x.fee) + ' = <b>' + money(x.payout) + '</b><br>→ ' + money(x.capital) + ' back to Trade capital, ' + money(x.profit) + ' to Profit balance</div>';})() +
+        (function(){var x=closeSplit(20,-5,lev,fee);return '<div class="tg-formula"><b>Loss trade</b> · capital $20, move −5%, ' + lev + 'x<br>loss = 20 × (−5%) × ' + lev + ' = −' + money(x.loss) + '<br>fee = $20 × ' + fee + '% = ' + money(x.fee) + '<br>payout = $20 − ' + money(x.loss) + ' − ' + money(x.fee) + ' = <b>' + money(x.payout) + '</b><br>→ ' + money(x.leftover) + ' to Leftover capital</div>';})() +
+        '<p><b>Buying stocks:</b> a purchase is paid from your Trade capital balance first, then from your Leftover capital if the capital balance is not enough. All balances and payouts are shown in USD.</p>' +
         '<p>On a gain the capital returns to your Trade capital balance and the profit minus the fee goes to your Profit balance. On a loss the remaining payout goes to your Leftover capital. Bot trading uses the same formula.</p>' +
         '<p>Loss is capped only when <b>Take Loss</b> is set. Once the loss reaches the limit, the trade stops automatically and the remaining capital is returned. If no Take Loss is set, price can move against the trade until the capital is exhausted and the trade closes with zero returned. Take Loss limits the loss to the percentage or amount you chose — for example, a −10% Take Loss on $100 stops at about −$10.</p>' +
         '<p><b>Auto Secure / Take Profit bot:</b> a subscribed bot watches your active trades in real time, locks in profit when a trade is in the green and keeps it available for you to claim. You do not need to watch the screen to secure a profit.</p>' +
-        '<p class="tg-note">Payout timing is instant to your WC wallet on the portfolio where the trade happened. The stock trade fee is <b>' + fee + '%</b> and is deducted from the payout when the trade closes. Withdrawal fees apply only to withdrawals; deposits are free. No hidden fees.</p>' +
+        '<p class="tg-note">Payout timing is instant, in dollars, to the portfolio where the trade happened (capital to Trade capital, profit to Profit balance, remainder after a loss to Leftover capital). The stock trade fee is <b>' + fee + '%</b> and is deducted from the payout when the trade closes. Withdrawal fees apply only to withdrawals; deposits are free. No hidden fees.</p>' +
         '<p class="tg-note"><b>Risk levels:</b> low-risk leverage 1x–5x. High-risk leverage 10x–100x (higher potential profit and higher potential loss). You choose per trade; the default is ' + lev + 'x.</p>' +
         '<div class="tg-live-assets"><b>Active 24/7 assets (' + assets().length + '):</b><div>' + assets().map(function (a) { return '<span>' + esc(a) + '</span>'; }).join('') + '</div></div>' +
         (g.s4 ? '<div class="tg-admin-note"><b>Admin note:</b> ' + esc(g.s4) + '</div>' : ''),
@@ -351,12 +361,12 @@
     var dir = Number((document.getElementById('tgDir') || {}).value) || 1;
     var profit = cap * (mv / 100) * lev * dir;
     var fee = cap * (feePct() / 100);
-    var payout = Math.max(0, cap + profit - fee);
+    var sp = closeSplit(cap, mv * dir, lev, feePct()); profit = sp.grossPnl; fee = sp.fee; var payout = sp.payout;
     var out = document.getElementById('tgStockOut');
     if (!out) return;
     out.innerHTML = 'Estimated profit: <b class="' + (profit >= 0 ? 'up' : 'down') + '">' + (profit >= 0 ? '+' : '−') + money(Math.abs(profit)) + '</b><br>' +
       'Trade fee (' + feePct() + '%): ' + money(fee) + '<br>' +
-      'Estimated payout: <b>' + money(payout) + '</b> · ≈ ' + (wcRate() > 0 ? Math.round(payout / wcRate()) : 0).toLocaleString() + ' WC';
+      'Estimated payout: <b>' + money(payout) + '</b>';
   }
   function calcShares() {
     var ps = plans();
