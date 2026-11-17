@@ -272,7 +272,7 @@ App.depApprove = async function (id) {
   u.acctLedger = Array.isArray(u.acctLedger) ? u.acctLedger : [];
   u.acctLedger.unshift({ id: 'al_' + d.id, label: 'Deposit approved · $' + Number(d.usd || 0).toFixed(2) + ' || ' + coin, usd: Number(d.usd) || 0, wc: 0, meta: { depositId: d.id, coin }, at: Date.now() });
   u.totalDeposits = Math.round(((u.totalDeposits || 0) + d.usd) * 100) / 100;
-  notify(u.id, 'Deposit approved ✅', `$${Number(d.usd || 0).toFixed(2)} || ${coin} has been credited to your deposit balance. Convert it to $ or WC anytime.`, '#/account', 'wallet');
+  notify(u.id, 'Deposit approved ✅', `$${Number(d.usd || 0).toFixed(2)} || ${coin} has been credited to your crypto balance. Convert it to WC anytime from your WhaleChat account.`, '#/account', 'wallet');
   // referral payout on first approved deposit (idempotent)
   try { resolvePendingReferrals(); } catch (e) {}
   let bonus = false;
