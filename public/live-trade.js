@@ -651,11 +651,7 @@ const LT = {
       <div class="field"><label class="label">Capital (USD)</label>
         <div class="input-wrap"><span class="inv-prefix">$</span>
           <input class="input" id="ltCapital" type="number" step="1" min="${this.MIN_CAPITAL}" placeholder="0"/></div>
-        <div class="tiny muted" id="ltCapitalUsd">≈ $0.00 · stock cash ${usd(INV.stockCash(me()))}</div></div>
-      <div class="field"><label class="label">or enter the trade amount in USD</label>
-        <div class="input-wrap"><span class="inv-prefix">$</span>
-          <input class="input" id="ltCapitalUsdIn" type="number" step="0.01" min="0" placeholder="0.00" data-act="lt-usd-in"/></div>
-        <div class="tiny muted">Converts automatically at 1 USD = $0.50</div></div>
+        <div class="tiny muted" id="ltCapitalUsd">Available stock cash ${usd(INV.stockCash(me()))}</div></div>
       <div class="lt-tpsl-grid">
         <div class="lt-level-box" data-k="tp" data-mode="${LT.levels.tp}">
           <div class="between"><label class="label">Take Profit <span class="tiny muted">skims profit, trade continues</span></label>
@@ -2451,7 +2447,7 @@ function ltMountStock() {
   const cap = document.getElementById('ltCapital');
   if (cap) cap.addEventListener('input', () => {
     const usdEl = document.getElementById('ltCapitalUsd');
-    if (usdEl) usdEl.textContent = '≈ ' + usd(Number(cap.value) || 0) + ' · stock cash ' + usd(INV.stockCash(me()));
+    if (usdEl) usdEl.textContent = 'Available stock cash ' + usd(INV.stockCash(me()));
     LT.previewTargets();
   });
   ['ltTp', 'ltSl', 'ltTrailPct'].forEach((id) => {
