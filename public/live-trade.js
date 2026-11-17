@@ -1240,8 +1240,8 @@ LT.paintDash = function () {
   set('[data-ltd="value-usd"]', '≈ ' + usd(s.valueUsd) + ' USD');
   set('[data-ltd="invested"]', usd(s.capital));
   set('[data-ltd="earnings"]', (s.pnl >= 0 ? '+' : '−') + usd(Math.abs(s.pnl)));
-  set('[data-ltd="cash"]', coins(s.cash) + ' WC');
-  set('[data-ltd="secured"]', '+' + coins(s.securedCoins) + ' WC');
+  set('[data-ltd="cash"]', usd(s.cash));
+  set('[data-ltd="secured"]', '+' + usd(s.securedCoins * 0.5));
   set('[data-ltd="secured-count"]', s.securedCount + ' entr' + (s.securedCount === 1 ? 'y' : 'ies') + ' to claim');
   const day = document.querySelector('[data-ltd="day"]');
   if (day) {
