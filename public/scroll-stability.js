@@ -90,7 +90,12 @@
     .btn{padding-left:12px;padding-right:12px}
     .card{padding-left:12px;padding-right:12px}
   }
-  @media (min-width:900px){ body{font-size:16.5px} }`;
+  @media (min-width:900px){ body{font-size:16.5px} }
+  /* instant taps: no double-tap-zoom wait, immediate press feedback */
+  a,button,.btn,[data-act],[onclick],summary,label,.bnav a,select{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+  .btn,button,[data-act]{transition:transform .08s ease,filter .08s ease}
+  .btn:active,button:active,[data-act]:active{transform:scale(.97);filter:brightness(1.12)}
+  .wc-busy{pointer-events:none;opacity:.75}`;
     document.head.appendChild(st);
   }
 })();
