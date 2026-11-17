@@ -104,7 +104,7 @@
   function investmentHome(u) {
     var a = account(u);
     var quick = [
-      ['send', 'Transfer', '#/investment/transfer'],
+      ['send', 'Transfer', '#/investment/transfer'], ['wallet', 'Profit to WC', '#/investment/transfer?to=wallet_wc'],
       ['trend', 'Stock trading', '#/invest'], ['briefcase', 'WC-Investing', '#/invest/shares'],
       ['users', 'B2B-Investing', '#/investment/b2b'], ['settings', 'Tools', '#/investment/tools'],
       ['clock', 'History', '#/investment/history'], ['more', 'More', '#/investment/more']
@@ -115,8 +115,8 @@
     return head('Investment account', 'Your portfolio balances, transfers, top-ups and specialist desks.', '#/profile') +
       '<div class="ih-cards ih-inv-cards">' +
         '<div class="ih-card ih-card-main"><span>Trade capital (USD)</span><b>' + money(a.usd) + '</b><small>WC you send here becomes USD · top up portfolios and tools</small></div>' +
-        '<div class="ih-card"><span>Whalecoin balance</span><b>' + wc(a.wcBalance || 0) + ' <em>WC</em></b><small>≈ ' + money((Number(a.wcBalance) || 0) * RATE) + ' · transferable to your Whalechat WC balance</small></div>' +
-        '<div class="ih-card"><span>Payout balance</span><b>' + money(a.payout) + '</b><small>Profits received from your portfolios</small></div>' +
+        '<div class="ih-card"><span>Total profit balance</span><b>' + money(a.payout) + '</b><small>Portfolio profits collect here · the only balance you can send back to your WC balance</small></div>' +
+        (Number(a.wcBalance) > 0.004 ? '<div class="ih-card"><span>Old investment WhaleCoin</span><b>' + wc(a.wcBalance || 0) + ' <em>WC</em></b><small>From the previous system · can move to your WhaleChat WC balance</small></div>' : '') +
       '</div>' +
       '<div class="card ih-actions"><div class="card-title" style="margin:0 0 9px">Investment account</div><div class="ih-quickgrid ih-inv-actions">' +
         quick.map(function (x) { return '<a href="' + x[2] + '" class="ih-quickbtn"><span>' + investIcon(x[0], 17) + '</span><b>' + x[1] + '</b></a>'; }).join('') +
@@ -144,7 +144,7 @@
         '<div class="ih-row"><span>Whalechat WC balance</span><b>' + wc(u.balance) + ' WC</b></div>' +
         '<div class="ih-row"><span>Trade capital (USD)</span><b>' + money(a.usd) + '</b></div>' +
         '<div class="ih-row"><span>Investment WhaleCoin</span><b>' + wc(a.wcBalance || 0) + ' WC</b></div>' +
-        '<div class="ih-row"><span>Payout balance</span><b>' + money(a.payout) + '</b></div></div>' +
+        '<div class="ih-row"><span>Total profit balance</span><b>' + money(a.payout) + '</b></div></div>' +
       '<div class="tiny muted" style="margin-top:8px">Only investment WhaleCoin can leave the investment account, and it lands in your Whalechat WC balance.</div></div>';
   }
 
@@ -154,7 +154,7 @@
       '<div class="card"><div class="field"><label class="label">Convert from</label><select class="input" id="ihCvFrom"><option value="payout">Payout balance — ' + money(a.payout) + '</option><option value="total">Total assets balance — ' + money(a.usd) + '</option></select></div>' +
       '<div class="field"><label class="label">Amount (USD)</label><input class="input" id="ihCvAmount" type="number" step="0.01" min="0" placeholder="0.00"/><div class="tiny muted" id="ihCvPreview">Rate: 1 WC = $0.50</div></div>' +
       '<button class="btn btn-primary" data-act="ih-convert" style="width:100%">Convert now</button></div>' +
-      '<div class="card"><div class="ih-list"><div class="ih-row"><span>Investment WC balance</span><b>' + wc(a.wcBalance || 0) + ' WC</b></div><div class="ih-row"><span>Payout balance</span><b>' + money(a.payout) + '</b></div><div class="ih-row"><span>Total assets</span><b>' + money(a.usd) + '</b></div></div></div>';
+      '<div class="card"><div class="ih-list"><div class="ih-row"><span>Investment WC balance</span><b>' + wc(a.wcBalance || 0) + ' WC</b></div><div class="ih-row"><span>Total profit balance</span><b>' + money(a.payout) + '</b></div><div class="ih-row"><span>Total assets</span><b>' + money(a.usd) + '</b></div></div></div>';
   }
 
   function topupPage(u, params) {
@@ -558,7 +558,7 @@
       '</div>' +
       '<div class="card"><div class="ih-list">' +
         '<div class="ih-row"><span>B2B profit balance</span><b>' + money(b2bProfit(a)) + '</b></div>' +
-        '<div class="ih-row"><span>Investment profit (payout) balance</span><b>' + money(a.payout) + '</b></div>' +
+        '<div class="ih-row"><span>Total profit balance</span><b>' + money(a.payout) + '</b></div>' +
         '<div class="ih-row"><span>B2B capital balance</span><b>' + money(b2bCapital(a)) + '</b></div>' +
       '</div></div>';
   }
@@ -596,7 +596,7 @@
         '<div class="ih-row"><span>Account created</span><b>' + new Date(u.createdAt || Date.now()).toLocaleDateString() + '</b></div>' +
         '<div class="ih-row"><span>Main WC balance</span><b>' + wc(u.balance) + ' WC</b></div>' +
         '<div class="ih-row"><span>Trade capital (USD)</span><b>' + money(a.usd) + '</b></div>' +
-        '<div class="ih-row"><span>Payout balance</span><b>' + money(a.payout) + '</b></div>' +
+        '<div class="ih-row"><span>Total profit balance</span><b>' + money(a.payout) + '</b></div>' +
         '<div class="ih-row"><span>Total deposits</span><b>' + wc(u.totalDeposits || 0) + ' WC</b></div>' +
         '<div class="ih-row"><span>Total withdrawals</span><b>' + wc(u.totalWithdrawals || 0) + ' WC</b></div>' +
         '<div class="ih-row"><span>Referrals</span><b>' + (DB.users || []).filter(function (x) { return x.referredBy === u.id; }).length + '</b></div>' +
@@ -806,7 +806,7 @@
         }
         var strip = '<div class="ih-cards ih-account-strip">' +
           '<div class="ih-card"><span>Crypto balance</span><b>' + depositSummary(u) + '</b><small>Deposited coin assets</small></div>' +
-          '<div class="ih-card"><span>$ balance</span><b>' + money(u.walletUsd || 0) + '</b><small>USD wallet balance</small></div>' +
+          (Number(u.walletUsd) > 0.004 ? '<div class="ih-card"><span>Old $ balance</span><b>' + money(u.walletUsd || 0) + '</b><small>Move it to your WC balance</small></div>' : '') +
           '<div class="ih-card"><span>WhaleCoin balance</span><b>' + wc(u.balance) + ' WC</b><small>Spendable WC</small></div>' +
         '</div>';
         html = html.replace('<div class="card mb16 profile-banner">', strip + '<div class="card mb16 profile-banner">');
