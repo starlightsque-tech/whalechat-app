@@ -221,7 +221,7 @@ class SpotService {
     if (!(amountUsd > 0) && Number(opts.amountCoins) > 0) amountUsd = Number(opts.amountCoins) * 0.5;
     let shares = Number(opts.shares);
     if (!(shares > 0) && amountUsd > 0) shares = amountUsd / exec;
-    if (!(shares > 0)) throw new Error('Enter an investment amount (WC) or a number of shares');
+    if (!(shares > 0)) throw new Error('Enter an investment amount (USD) or a number of shares');
     if (!(amountUsd > 0)) amountUsd = shares * exec;
 
     shares = round(shares, 8);
@@ -229,10 +229,15 @@ class SpotService {
     const investedUsd = round(shares * exec, 6);
     const investedCoins = round(investedUsd * COINS_PER_USD, 2);
     if (!(investedCoins > 0)) throw new Error('Investment is too small');
+    /* buy from Trade capital first, then from Leftover capital */
     const availUsd = pf(u, 'stock');
-    if (availUsd + 1e-9 < investedUsd) {
-      throw new Error(`Not enough stock trading balance — this purchase needs $${investedUsd.toFixed(2)} (you have $${availUsd.toFixed(2)})`);
+    const acct = u.investAcct || {};
+    const leftUsd = Math.max(0, Number(acct.stockLeftover) || 0);
+    if (availUsd + leftUsd + 1e-9 < investedUsd) {
+      throw new Error(`Not enough balance — this purchase needs $${investedUsd.toFixed(2)} (capital $${availUsd.toFixed(2)} + leftover $${leftUsd.toFixed(2)})`);
     }
+    const fromCapital = Math.min(availUsd, investedUsd);
+    const fromLeftover = round(Math.max(0, investedUsd - fromCapital), 6);
 
     const tp = Number(opts.tpPrice) || 0;
     const sl = Number(opts.slPrice) || 0;
@@ -240,7 +245,8 @@ class SpotService {
     if (sl > 0 && sl >= exec) throw new Error('Stop Loss must be below the current market price');
 
     /* --- critical section: fully synchronous, no awaits ------------------- */
-    setPf(u, 'stock', availUsd - investedUsd);
+    setPf(u, 'stock', availUsd - fromCapital);
+    if (fromLeftover > 0) acct.stockLeftover = round(Math.max(0, leftUsd - fromLeftover), 2);
 
     const now = Date.now();
     let h = this.holding(db, userId, ticker);
@@ -288,12 +294,12 @@ class SpotService {
       orderId: order.id, ticker, shares, priceUsd: exec, marketPriceUsd: live, adminProfitPct: pct
     });
     this.notify(db, userId, 'Buy order filled',
-      `${shares.toFixed(6)} ${ticker} bought at $${exec.toFixed(4)} · ${investedCoins.toFixed(2)} WC deducted. On close this position pays a locked ${pct}% profit (${round(investedCoins * pct / 100, 2).toFixed(2)} WC).`,
+      `${shares.toFixed(6)} ${ticker} bought at $${exec.toFixed(4)} · $${investedUsd.toFixed(2)} paid (capital $${fromCapital.toFixed(2)}${fromLeftover > 0 ? ' + leftover $' + fromLeftover.toFixed(2) : ''}). On close this position pays a locked ${pct}% profit ($${round(investedUsd * pct / 100, 2).toFixed(2)}).`,
       'trend');
     /* ---------------------------------------------------------------------- */
 
     this.changed('spot-buy');
-    return { ok: true, order, position: this.positionView(h, live), balance: pf(u, 'stock'), stockUsd: pf(u, 'stock') };
+    return { ok: true, order, position: this.positionView(h, live), balance: pf(u, 'stock'), stockUsd: pf(u, 'stock'), leftoverUsd: Number(acct.stockLeftover) || 0, fromCapital, fromLeftover };
   }
 
   /* --------------------------------- sell --------------------------------- */
