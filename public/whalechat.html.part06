@@ -134,7 +134,7 @@ VIEWS.profile = function () {
         <div class="between"><div class="tiny" style="opacity:.8;letter-spacing:.08em;font-weight:700">ACCOUNT BALANCE</div>${u.verified ? `<span class="badge" style="background:rgba(255,255,255,.15);border-color:rgba(255,255,255,.25);color:#fff">Verified</span>` : ''}</div>
         <div class="row" style="gap:8px;align-items:baseline;margin-top:6px"><span class="wallet-bal">${coins(u.balance)}</span><span class="small" style="opacity:.8">WC</span></div>
         <div class="small" style="opacity:.8;margin-top:2px">≈ ${usd(coinsToUsd(u.balance))} USD</div>
-        <div class="wallet-actions"><a href="#/deposit" class="btn">Deposit</a><a href="#/withdraw" class="btn">Withdraw</a><button class="btn" data-act="invite-friends">${ic('gift', 14)} Invite friends</button></div>
+        <div class="wallet-actions"><a href="#/deposit" class="btn">Deposit</a><a href="#/withdraw" class="btn">Withdraw</a><button class="btn" data-act="invite-friends">${ic('gift', 14)} Invite friends</button><a href="#/account/convert" class="btn">${ic('refresh', 14)} Convert</a><a href="#/account/transfer" class="btn">${ic('send', 14)} Transfer</a></div>
       </div>
       <div class="col gap12">
         <div class="grid-kpi" style="grid-template-columns:1fr 1fr">
