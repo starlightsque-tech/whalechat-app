@@ -204,12 +204,12 @@
           '<div class="between" style="align-items:flex-start"><div><b>' + escH(t.name) + '</b>' +
             '<div class="tiny muted">' + escH(t.desc || '') + '</div>' +
             (where.length ? '<div class="tiny up">' + where.join(' · ') + '</div>' : '') +
-            (on && rec.expiresAt ? '<div class="tiny muted">Active until ' + new Date(Number(rec.expiresAt)).toLocaleDateString() + '</div>' : '') +
+            (on && t.oneTime ? '<div class="tiny muted">One-time payment · unlocked for good</div>' : on && rec.expiresAt ? '<div class="tiny muted">Active until ' + new Date(Number(rec.expiresAt)).toLocaleDateString() + '</div>' : '') +
             (t.bot ? '<div class="tiny muted">Also available in Bot trading</div>' : '') +
           '</div>' + subBadge(t.id, u) + '</div>' +
-          '<div class="ih-tool-foot"><b>' + money(t.price) + ' / month</b>' +
+          '<div class="ih-tool-foot"><b>' + money(t.price) + (t.oneTime ? ' one-time' : ' / month') + '</b>' +
           '<div class="row" style="gap:6px">' +
-            (on ? '<button class="btn btn-xs btn-ghost" data-act="ih-tool-toggle" data-tool="' + t.id + '">Turn off</button>'
+            (on && t.oneTime ? '<span class="tiny up">Unlocked</span>' : on ? '<button class="btn btn-xs btn-ghost" data-act="ih-tool-toggle" data-tool="' + t.id + '">Turn off</button>'
                 : '<button class="btn btn-xs btn-primary" data-act="ih-tool-sub" data-tool="' + t.id + '">Subscribe</button>') +
           '</div></div></div>';
       }).join('') + '</div>' +
