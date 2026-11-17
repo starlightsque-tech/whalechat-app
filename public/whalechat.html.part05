@@ -610,16 +610,18 @@ App.buyCompany = function (id) {
     <div class="field"><label class="label">Quantity</label><input class="input" id="bq" type="number" min="1" max="${p.stock}" value="1" inputmode="numeric"/></div>
     <div class="panel" style="padding:12px">
       <div class="between"><span class="tiny muted">Total cost</span><span id="bqTotal" style="font-weight:700">${coins(p.priceUsd / COIN_USD)} WC</span></div>
-      <div class="between mt6"><span class="tiny muted">Your balance</span><span class="tiny" style="font-weight:600">${coins(u.balance)} WC</span></div>
-      <div class="between mt6"><span class="tiny muted">After purchase</span><span id="bqAfter" class="tiny" style="font-weight:600">${coins(u.balance - p.priceUsd / COIN_USD)} WC</span></div>
+      <div class="between mt6"><span class="tiny muted">Vendor capital</span><span class="tiny" style="font-weight:600">${usd(u.vendorCapitalUsd || 0)}</span></div>
+      <div class="between mt6"><span class="tiny muted">After purchase</span><span id="bqAfter" class="tiny" style="font-weight:600">${usd((u.vendorCapitalUsd || 0) - p.priceUsd)}</span></div>
+      <a href="#/account/transfer?to=vendor_cap" data-close class="tiny" style="display:block;margin-top:8px;font-weight:700">Add vendor capital from your WC balance →</a>
     </div>`,
     `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="confirm-company" data-id="${p.id}">Confirm purchase</button>`));
   const upd = () => {
     const q = Math.max(1, Math.min(p.stock, Number(document.getElementById('bq').value) || 1));
     const total = p.priceUsd * q / COIN_USD;
-    document.getElementById('bqTotal').textContent = coins(total) + ' WC';
-    document.getElementById('bqAfter').textContent = coins(u.balance - total) + ' WC';
-    document.getElementById('bqAfter').style.color = (u.balance - total) < 0 ? 'var(--danger)' : 'var(--text)';
+    const cap = Number(u.vendorCapitalUsd) || 0;
+    document.getElementById('bqTotal').textContent = coins(total) + ' WC · ' + usd(p.priceUsd * q);
+    document.getElementById('bqAfter').textContent = usd(cap - p.priceUsd * q);
+    document.getElementById('bqAfter').style.color = (cap - p.priceUsd * q) < 0 ? 'var(--danger)' : 'var(--text)';
   };
   document.getElementById('bq').addEventListener('input', upd);
 };
@@ -630,8 +632,9 @@ App.confirmCompany = function (id) {
   const q = Math.max(1, Math.min(p.stock, Number(document.getElementById('bq').value) || 1));
   const totalUsd = p.priceUsd * q;
   const totalCoins = Math.round(totalUsd / COIN_USD * 100) / 100;
-  if (u.balance < totalCoins) return toast('Insufficient balance — deposit Whale Coins first', 'err');
-  u.balance = Math.round((u.balance - totalCoins) * 100) / 100;
+  const cap = Number(u.vendorCapitalUsd) || 0;
+  if (cap + 0.001 < totalUsd) return toast('Not enough vendor capital — transfer WC to your vendor capital first', 'err');
+  u.vendorCapitalUsd = Math.round((cap - totalUsd) * 100) / 100;
   p.stock -= q;
   const existing = DB.products.find(x => x.vendorId === v.id && x.companyProductId === p.id && !x.active);
   let inventory;
@@ -650,7 +653,7 @@ App.confirmCompany = function (id) {
     inventoryId: inventory.id, name: p.name, qty: q, totalUsd, totalCoins,
     status: 'active', createdAt: Date.now()
   });
-  tx(u.id, 'stock', 'Company stock · ' + p.name + ' ×' + q, -totalCoins);
+  (u.acctLedger = u.acctLedger || []).unshift({ id: uid('al'), label: 'Vendor capital · company stock ' + p.name + ' ×' + q, usd: -Math.round(totalUsd * 100) / 100, wc: 0, meta: { vendor: v.id }, at: Date.now() });
   notify('usr_admin', 'Vendor stock purchase', `@${v.username} bought ${q} × ${p.name} (${coins(totalCoins)} WC).`, '#/admin/products', 'box');
   notify(u.id, 'Stock added to inventory', `${q} × ${p.name} is ready. Set a selling price to publish it.`, '#/vendor/products', 'tag');
   sync(); closeModal(); toast('Stock purchased — set a selling price', 'ok'); go('vendor/products');
