@@ -240,7 +240,8 @@ const LT = {
     const p = this.calc(t);
     const payout = p.totalLoss ? 0 : p.payoutCoins;
     const ia = INV.investAcct(u);
-    ia.portfolios.stock = Math.round((Number(ia.portfolios.stock) + payout) * 100) / 100;
+    const split = LT.bookClose(ia, t.capitalCoins, p.pnlCoins);
+    t.settlement = split;
 
     let dividendCoins = 0;
     if (reason === 'Time limit reached' && !t.dividendPaid) {
@@ -251,7 +252,7 @@ const LT = {
       if (mode === 'wins' && p.pnlCoins <= 0) bonus = 0;
       if (bonus > 0) {
         dividendCoins = Math.round(bonus * 100) / 100;
-        ia.portfolios.stock = Math.round((Number(ia.portfolios.stock) + dividendCoins) * 100) / 100;
+        ia.stockProfit = Math.round(((Number(ia.stockProfit) || 0) + dividendCoins) * 100) / 100;
         t.dividendPaid = true;
         t.dividendCoins = dividendCoins;
         t.dividendPaidAt = Date.now();
@@ -273,8 +274,8 @@ const LT = {
     t.payoutCoins = payout;
     t.result = p.totalLoss ? 'loss' : p.pnlCoins > 0 ? 'profit' : 'flat';
 
-    tx(u.id, 'trade-close', `${t.ticker} trade ${reason} · ${payout ? '+' + usd(payout) + ' USD returned' : 'total loss'}`,
-      payout, { tradeId: t.id, pnlCoins: p.pnlCoins, reason });
+    tx(u.id, 'trade-close', `${t.ticker} trade ${reason} · ${LT.splitLabel(split)}`,
+      payout, { tradeId: t.id, pnlCoins: p.pnlCoins, reason, settlement: split });
 
     if (p.totalLoss) {
       notify(u.id, 'Trade closed — total loss',
@@ -283,14 +284,14 @@ const LT = {
       toast(`${t.ticker} closed at a total loss`, 'err');
     } else if (p.pnlCoins >= 0) {
       notify(u.id, 'Take profit — trade closed',
-        `${t.ticker} closed with +${usd(p.pnlCoins)} USD profit. ${usd(payout)} USD (capital + profit) was credited.`,
+        `${t.ticker} closed: +${usd(split.profit)} USD profit credited to your Profit balance and ${usd(split.capital)} USD capital returned to your Trade capital balance.`,
         '#/invest/orders', 'trend');
-      toast(`Profit taken — ${usd(payout)} USD credited`, 'ok');
+      toast(`Closed — +${usd(split.profit)} to Profit balance, ${usd(split.capital)} capital returned`, 'ok');
     } else {
       notify(u.id, 'Trade closed at a loss',
-        `${t.ticker} closed with −${usd(Math.abs(p.pnlCoins))} USD. ${usd(payout)} USD of capital was returned.`,
+        `${t.ticker} closed with a −${usd(split.loss)} USD loss. The remaining ${usd(split.leftover)} USD of capital was credited to your Leftover capital.`,
         '#/invest/orders', 'down');
-      toast(`Trade stopped — ${usd(payout)} USD returned`, 'ok');
+      toast(`Trade closed — ${usd(split.leftover)} USD to Leftover capital`, 'ok');
     }
     try { sync(); } catch (e) {}
     persist();
@@ -307,9 +308,10 @@ const LT = {
     const p = this.calc(t);
     const profit = Math.round((Number(p.pnlCoins) || 0) * 100) / 100;
     if (!(profit > 0)) { toast('No profit to take yet — wait for the chart to move in your favour', 'err'); return false; }
+    if (reason === 'Take Profit Hit' && LT.autoSecureOn(t.userId)) return LT.secureLocal(t, 'Take Profit Hit');
     if (!t.initialEntryPrice) t.initialEntryPrice = t.entryPrice;
     const ia = INV.investAcct(u);
-    ia.portfolios.stock = Math.round((Number(ia.portfolios.stock) + profit) * 100) / 100;
+    ia.stockProfit = Math.round(((Number(ia.stockProfit) || 0) + profit) * 100) / 100;
     /* re-base the position so the remaining trade starts from the current price */
     t.entryPrice = Math.round((Number(p.price) || 0) * 10000) / 10000;
     t.profitTakenCoins = Math.round(((Number(t.profitTakenCoins) || 0) + profit) * 100) / 100;
@@ -331,7 +333,7 @@ const LT = {
     tx(u.id, 'trade-profit', `${label} · ${t.ticker} · +${usd(profit)} USD taken, trade continues`, profit,
       { tradeId: t.id, pnlCoins: profit, price: p.price, continues: true });
     notify(u.id, 'Profit taken — trade continues',
-      `${t.ticker}: +${usd(profit)} USD profit credited to your balance. The trade is still running — it closes at your stop loss, when the timer ends, or when you press Stop trade.`,
+      `${t.ticker}: +${usd(profit)} USD profit credited to your stock Profit balance. The trade is still running — it closes at your stop loss, when the timer ends, or when you press Stop trade.`,
       '#/invest/orders', 'trend');
     try { sync(); } catch (e) {}
     persist();
@@ -348,7 +350,9 @@ const LT = {
       this.updateTrailing(t);
       /* Finnhub-covered symbols are settled by the backend so a closed browser
          cannot miss a payout — avoid paying the same trade twice. */
-      if (typeof USD_MARKET !== 'undefined' && typeof USD_MARKET.feedFresh === 'function' && USD_MARKET.feedFresh() && USD_MARKET.feed.quotes && USD_MARKET.feed.quotes[t.ticker]) return;
+      if (this.serverCovered(t)) return;
+      /* Auto Secure: lock any profit the moment it appears (backend does this for covered symbols) */
+      if (this.autoSecureOn(t.userId)) this.secureLocal(t, 'Auto Secure');
       const p = this.calc(t);
       const dir = this.dirOf(t);
       const lv = this.tpslOf(t);
@@ -429,6 +433,7 @@ const LT = {
         <button class="btn btn-sm btn-ghost grow" data-act="lt-sl" data-id="${t.id}" data-lt-sl-btn="${t.id}" ${p.pnlCoins < 0 ? '' : 'disabled'} title="${p.pnlCoins < 0 ? 'Close the trade at a loss now' : 'Only available while the trade is losing'}">
           ${ic('down', 13)} Take loss <span data-lt-sl-amt="${t.id}">${p.pnlCoins < 0 ? '(−' + usd(Math.abs(p.pnlCoins)) + ')' : ''}</span></button>
       </div>
+      <div class="lt-secure-line" data-lt-secure="${t.id}">${this.secureTradeHTML(t)}</div>
       ${(() => {
         const pending = (t.securedProfits || []).filter((x) => x && !x.claimed);
         if (!pending.length) return '';
@@ -1055,11 +1060,13 @@ LT.autoSecureStrip = function () {
       </div>
       <span class="badge ${on ? 'badge-success' : st === 'expired' || st === 'paused' ? 'badge-warn' : ''}">${on ? 'Subscribed' : st === 'paused' ? 'Paused' : st === 'expired' ? 'Expired' : 'Not subscribed'}</span>
     </div>
-    ${on ? `<div class="tiny up" style="margin-top:6px">Subscribed — secured profit awaiting claim: <b>+${coins(secured.securedCoins)} WC</b> · ${secured.securedCount} entr${secured.securedCount === 1 ? 'y' : 'ies'}</div>` : ''}
+    ${on ? `<div class="tiny up" style="margin-top:6px">Subscribed — secured profit awaiting claim: <b data-as-total>+${usd(secured.securedCoins)} USD</b> · <span data-as-count>${secured.securedCount} entr${secured.securedCount === 1 ? 'y' : 'ies'}</span></div>
+      <div class="lt-as-live" data-as-live>${LT.secureLiveHTML(me().id)}</div>` : ''}
     <div class="row" style="gap:8px;margin-top:9px;flex-wrap:wrap">
       ${on
         ? `<button class="btn btn-sm btn-ghost" data-act="lt-autosecure-off">Turn off</button>`
         : `<button class="btn btn-sm btn-primary" data-act="lt-autosecure-on">Subscribe · ${usd(price)} / month</button>`}
+      ${on && secured.securedCount ? `<button class="btn btn-sm btn-primary" data-act="lt-claim-all-profits">Claim all secured profit</button>` : ''}
       <a class="btn btn-sm btn-ghost" href="#/invest/bots">Open bot trading</a>
     </div>
   </div>`;
@@ -1241,7 +1248,7 @@ LT.paintDash = function () {
   set('[data-ltd="invested"]', usd(s.capital));
   set('[data-ltd="earnings"]', (s.pnl >= 0 ? '+' : '−') + usd(Math.abs(s.pnl)));
   set('[data-ltd="cash"]', usd(s.cash));
-  set('[data-ltd="secured"]', '+' + usd(s.securedCoins * 0.5));
+  set('[data-ltd="secured"]', '+' + usd(s.securedCoins));
   set('[data-ltd="secured-count"]', s.securedCount + ' entr' + (s.securedCount === 1 ? 'y' : 'ies') + ' to claim');
   const day = document.querySelector('[data-ltd="day"]');
   if (day) {
@@ -2136,7 +2143,7 @@ App.ltClaimAllProfits = async function () {
   if (!list.length) return toast('No secured profit to claim', 'err');
   const total = list.reduce((a, x) => a + (Number(x.profit.coins) || 0), 0);
   if (typeof confirmDialog === 'function') {
-    const ok = await confirmDialog({ title: 'Claim all secured profits?', body: `${list.length} entries totalling ${coins(total)} WC will be credited to your balance.`, ok: 'Claim all' });
+    const ok = await confirmDialog({ title: 'Claim all secured profits?', body: `${list.length} entries totalling ${usd(total)} USD will be credited to your stock Profit balance.`, ok: 'Claim all' });
     if (!ok) return;
   }
   if (typeof Remote !== 'undefined' && Remote && Remote.enabled) {
@@ -2146,7 +2153,7 @@ App.ltClaimAllProfits = async function () {
       }, 10000);
       if (r.res && r.res.ok && r.data && r.data.ok) {
         await Remote.refresh(true);
-        toast(`Claimed ${r.data.count} secured profit${Number(r.data.count) === 1 ? '' : 's'} — +${coins(Number(r.data.coins) || 0)} WC credited`, 'ok');
+        toast(`Claimed ${r.data.count} secured profit${Number(r.data.count) === 1 ? '' : 's'} — +${usd(Number(r.data.coins) || 0)} USD to Profit balance`, 'ok');
         return;
       }
       if (r.data && r.data.error) return toast(r.data.error, 'err');
@@ -2163,7 +2170,7 @@ App.ltClaimAllProfits = async function () {
     trade.claimedSecuredCoins = Math.round(((Number(trade.claimedSecuredCoins) || 0) + c) * 100) / 100;
   });
   const ia = INV.investAcct(u);
-  ia.portfolios.stock = Math.round((Number(ia.portfolios.stock) + coinsTotal) * 100) / 100;
+  ia.stockProfit = Math.round(((Number(ia.stockProfit) || 0) + coinsTotal) * 100) / 100;
   tx(u.id, 'secured-profit-claim', `Claimed ${list.length} secured profits · +${coins(coinsTotal)} WC`, coinsTotal, { count: list.length, all: true });
   notify(u.id, 'Secured profits credited', `+${coins(coinsTotal)} WC was added to your balance.`, '#/wallet', 'check');
   persist(); render();
@@ -2185,7 +2192,7 @@ App.ltClaimProfit = async function (id, ds) {
       }, 8000);
       if (r.res && r.res.ok && r.data && r.data.ok) {
         await Remote.refresh(true);
-        toast(`Take profit claimed — +${coins(Number(r.data.coins) || 0)} WC credited`, 'ok');
+        toast(`Secured profit claimed — +${usd(Number(r.data.coins) || 0)} USD to Profit balance`, 'ok');
         return;
       }
       if (r.data && r.data.error) return toast(r.data.error, 'err');
@@ -2194,7 +2201,7 @@ App.ltClaimProfit = async function (id, ds) {
   const u = findUser(t.userId);
   if (!u) return toast('User not found', 'err');
   const ia2 = INV.investAcct(u);
-  ia2.portfolios.stock = Math.round((Number(ia2.portfolios.stock) + (Number(rec.coins) || 0)) * 100) / 100;
+  ia2.stockProfit = Math.round(((Number(ia2.stockProfit) || 0) + (Number(rec.coins) || 0)) * 100) / 100;
   rec.claimed = true;
   rec.claimedAt = Date.now();
   tx(u.id, 'secured-profit-claim', `Secured profit claimed · ${t.ticker} · +${coins(rec.coins)} WC`, rec.coins,
@@ -2213,7 +2220,7 @@ async function ltManualClose(t, action, reason) {
       }, 8000);
       if (r.res && r.res.ok && r.data && r.data.ok) {
         await Remote.refresh(true);
-        toast(action === 'sl' ? `Take loss — ${coins(Number(r.data.payout) || 0)} WC returned` : `Trade stopped — ${coins(Number(r.data.payout) || 0)} WC returned`, 'ok');
+        toast(LT.splitLabel(r.data.settlement || { capital: 0, profit: 0, leftover: Number(r.data.payout) || 0, loss: 1 }), 'ok');
         return true;
       }
       if (r.data && r.data.error) { toast(r.data.error, 'err'); return false; }
@@ -2507,3 +2514,177 @@ setInterval(() => {
     else if (location.hash.indexOf('#/invest/stock/') === 0) ltMountStock();
   } catch (e) {}
 }, 2500);
+
+
+/* =====================================================================
+   Auto Secure Take Profit — always-on monitor + real-time progress
+   ===================================================================== */
+LT.serverCovered = function (t) {
+  try {
+    return !!(typeof USD_MARKET !== 'undefined' && typeof USD_MARKET.feedFresh === 'function' && USD_MARKET.feedFresh() &&
+      USD_MARKET.feed.quotes && USD_MARKET.feed.quotes[t.ticker]);
+  } catch (e) { return false; }
+};
+LT.autoSecureOn = function (userId) {
+  try {
+    const u = userId ? findUser(userId) : me();
+    const S = window.WC_SUBS;
+    const rec = S && S.record ? S.record('autosecure', u) : null;
+    if (rec && rec.active && !rec.paused && (!rec.expiresAt || Number(rec.expiresAt) > Date.now())) return true;
+    const st = window.WC_BOTS && window.WC_BOTS.state && window.WC_BOTS.state.autoSecure;
+    return !!(st && st.active && st.enabled && (!u || !me() || u.id === me().id));
+  } catch (e) { return false; }
+};
+/* profit -> Profit balance + capital -> Trade capital; loss -> remaining capital to Leftover capital */
+LT.bookClose = function (ia, stake, pnl) {
+  const r = (v) => Math.round((Number(v) || 0) * 100) / 100;
+  if (!ia.portfolios) ia.portfolios = { stock: 0, wc: 0, b2b: 0, bot: 0 };
+  const capital = r(Math.max(0, Number(stake) || 0));
+  const p = r(Math.max(-capital, Number(pnl) || 0));
+  const out = { capital: 0, profit: 0, leftover: 0, loss: 0 };
+  if (p >= 0) {
+    out.capital = capital; out.profit = p;
+    ia.portfolios.stock = r((Number(ia.portfolios.stock) || 0) + capital);
+    ia.stockProfit = r((Number(ia.stockProfit) || 0) + p);
+  } else {
+    out.loss = r(-p); out.leftover = r(capital + p);
+    if (out.leftover > 0) ia.stockLeftover = r((Number(ia.stockLeftover) || 0) + out.leftover);
+  }
+  return out;
+};
+LT.splitLabel = function (sp) {
+  if (!sp) return 'Trade closed';
+  if (!sp.loss) return `+${usd(sp.profit)} USD to Profit balance · ${usd(sp.capital)} USD capital returned`;
+  if (sp.leftover > 0) return `−${usd(sp.loss)} USD loss · ${usd(sp.leftover)} USD to Leftover capital`;
+  return 'Total loss — nothing returned';
+};
+/* lock the open profit into a claimable entry and re-base the trade (mirrors the backend) */
+LT.secureLocal = function (t, reason) {
+  if (!t || t.status !== 'Open') return false;
+  const now = Date.now();
+  if (t.lastSecureAt && now - Number(t.lastSecureAt) < 2000) return false;
+  const p = this.calc(t);
+  const profit = Math.round((Number(p.pnlCoins) || 0) * 100) / 100;
+  if (!(profit >= 0.01) || !(p.price > 0)) return false;
+  if (!t.initialEntryPrice) t.initialEntryPrice = t.entryPrice;
+  t.securedProfits = Array.isArray(t.securedProfits) ? t.securedProfits : [];
+  t.securedProfits.unshift({
+    id: uid('sp'), coins: profit, at: now, price: Math.round(p.price * 1e6) / 1e6,
+    entryBefore: t.entryPrice, reason: reason || 'Auto Secure', claimed: false, local: true
+  });
+  if (t.securedProfits.length > 100) t.securedProfits.length = 100;
+  t.securedProfitCoins = Math.round(((Number(t.securedProfitCoins) || 0) + profit) * 100) / 100;
+  t.securedProfitCount = (Number(t.securedProfitCount) || 0) + 1;
+  t.entryPrice = Math.round(p.price * 1e6) / 1e6;
+  t.lastSecureAt = now; t.lastProfitAt = now; t.lastProfitPrice = p.price;
+  if (reason === 'Take Profit Hit') { t.takeProfitPrice = null; t.takeProfitWc = null; t.takeProfitMode = 'PRICE'; t.tpPct = 0; }
+  if (t.trailingActive && Number(t.trailingStopPct) > 0) {
+    const dist = Math.max(0.05, Math.min(50, Number(t.trailingStopPct))) / 100;
+    t.trailingStopPrice = Math.round((this.dirOf(t) === 'FALL' ? p.price * (1 + dist) : p.price * (1 - dist)) * 10000) / 10000;
+    t.stopLossPrice = t.trailingStopPrice;
+  }
+  if (!t.lastSecureNoteAt || now - Number(t.lastSecureNoteAt) > 60000) {
+    t.lastSecureNoteAt = now;
+    notify(t.userId, 'Profit secured — claim it anytime', `${t.ticker}: +${usd(profit)} USD secured. Claim it anytime — it goes to your stock Profit balance.`, '#/invest/orders', 'lock');
+  }
+  persist();
+  return true;
+};
+LT.ago = function (ms) {
+  const s = Math.max(0, Math.floor((Date.now() - Number(ms)) / 1000));
+  if (s < 60) return s + 's ago';
+  if (s < 3600) return Math.floor(s / 60) + 'm ago';
+  return Math.floor(s / 3600) + 'h ago';
+};
+LT.tradeSecured = function (t) {
+  let sum = 0, n = 0, last = 0;
+  (t.securedProfits || []).forEach((x) => {
+    if (!x) return;
+    sum += Number(x.coins) || 0; n += 1; last = Math.max(last, Number(x.at) || 0);
+  });
+  return { sum: Math.round(sum * 100) / 100, n, last };
+};
+LT.secureTradeHTML = function (t) {
+  if (!this.autoSecureOn(t.userId)) return '';
+  const p = this.calc(t);
+  const sc = this.tradeSecured(t);
+  const live = p.pnlCoins > 0;
+  /* progress toward the next lock: the engine locks every ~2s, so show the cycle */
+  const since = t.lastSecureAt ? Date.now() - Number(t.lastSecureAt) : 2000;
+  const pct = live ? Math.min(100, Math.max(8, (since / 2000) * 100)) : 0;
+  return `<div class="lt-as-row">
+      <span class="lt-as-dot ${live ? 'busy' : ''}"></span>
+      <b>Auto Secure</b>
+      <span class="${live ? 'up' : 'muted'}">${live ? 'securing +' + usd(p.pnlCoins) + ' now' : 'watching — waiting for profit'}</span>
+      <span class="grow"></span>
+      <span class="up">secured <b>+${usd(sc.sum)}</b> · ${sc.n} lock${sc.n === 1 ? '' : 's'}${sc.last ? ' · ' + this.ago(sc.last) : ''}</span>
+    </div>
+    <div class="lt-as-bar"><i style="width:${pct}%"></i></div>`;
+};
+LT.secureLiveHTML = function (userId) {
+  const open = this.open(userId);
+  let sum = 0, n = 0, last = 0, pending = 0;
+  open.forEach((t) => { const p = this.calc(t); if (p.pnlCoins > 0) pending += p.pnlCoins; });
+  (DB.trades || []).forEach((t) => {
+    if (!t || t.userId !== userId) return;
+    (t.securedProfits || []).forEach((x) => { if (!x) return; sum += Number(x.coins) || 0; n += 1; last = Math.max(last, Number(x.at) || 0); });
+  });
+  return `<div class="lt-as-row" style="margin-top:7px">
+      <span class="lt-as-dot ${open.length ? 'busy' : ''}"></span>
+      <b>${open.length ? 'Actively monitoring ' + open.length + ' open trade' + (open.length === 1 ? '' : 's') : 'Standing by — no open trades'}</b>
+      <span class="grow"></span>
+      <span class="muted">${last ? 'last lock ' + this.ago(last) : 'no locks yet'}</span>
+    </div>
+    <div class="lt-as-grid">
+      <div><span>Securing now</span><b class="up">+${usd(pending)}</b></div>
+      <div><span>Secured total</span><b class="up">+${usd(Math.round(sum * 100) / 100)}</b></div>
+      <div><span>Locks</span><b>${n}</b></div>
+    </div>`;
+};
+LT.paintSecure = function () {
+  const u = me(); if (!u) return;
+  document.querySelectorAll('[data-lt-secure]').forEach((el) => {
+    const t = (DB.trades || []).find((x) => x && x.id === el.getAttribute('data-lt-secure'));
+    if (t && t.status === 'Open') el.innerHTML = LT.secureTradeHTML(t);
+  });
+  const liveEl = document.querySelector('[data-as-live]');
+  if (liveEl) liveEl.innerHTML = LT.secureLiveHTML(u.id);
+  const s = LT.summary(u.id);
+  const tot = document.querySelector('[data-as-total]');
+  if (tot) tot.textContent = '+' + usd(s.securedCoins) + ' USD';
+  const cnt = document.querySelector('[data-as-count]');
+  if (cnt) cnt.textContent = s.securedCount + ' entr' + (s.securedCount === 1 ? 'y' : 'ies');
+  const hero = document.querySelector('[data-ltd="secured"]');
+  if (hero) hero.textContent = '+' + usd(s.securedCoins);
+  const heroCnt = document.querySelector('[data-ltd="secured-count"]');
+  if (heroCnt) heroCnt.textContent = s.securedCount + ' entr' + (s.securedCount === 1 ? 'y' : 'ies') + ' to claim';
+};
+(function () {
+  try {
+    const css = document.createElement('style');
+    css.textContent = `
+      .lt-secure-line:empty{display:none}
+      .lt-secure-line{margin-top:8px;padding:7px 9px;border:1px solid rgba(46,214,166,.35);border-radius:9px;background:rgba(46,214,166,.07)}
+      .lt-as-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11.5px}
+      .lt-as-dot{width:8px;height:8px;border-radius:50%;background:#9aa4b2;flex:0 0 auto}
+      .lt-as-dot.busy{background:#2fd6a6;box-shadow:0 0 0 0 rgba(47,214,166,.6);animation:ltAsPulse 1.2s infinite}
+      @keyframes ltAsPulse{0%{box-shadow:0 0 0 0 rgba(47,214,166,.6)}70%{box-shadow:0 0 0 8px rgba(47,214,166,0)}100%{box-shadow:0 0 0 0 rgba(47,214,166,0)}}
+      .lt-as-bar{height:4px;border-radius:4px;background:rgba(127,127,127,.18);margin-top:6px;overflow:hidden}
+      .lt-as-bar i{display:block;height:100%;background:linear-gradient(90deg,#2ee6c9,#2fd6a6);transition:width .9s linear}
+      .lt-as-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-top:8px}
+      .lt-as-grid div{display:flex;flex-direction:column;gap:1px;padding:7px;border:1px solid var(--border);border-radius:9px;background:var(--surface-2)}
+      .lt-as-grid span{font-size:9px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted-2);font-weight:700}
+      .lt-as-grid b{font-size:12.5px;font-variant-numeric:tabular-nums}`;
+    document.head.appendChild(css);
+  } catch (e) {}
+})();
+/* monitor + paint every second, even when the tab is in the background */
+setInterval(() => {
+  try {
+    if (!DB || !me()) return;
+    if (LT.autoSecureOn(me().id)) {
+      LT.open(me().id).forEach((t) => { if (!LT.serverCovered(t)) LT.secureLocal(t, 'Auto Secure'); });
+    }
+    if (!document.hidden) LT.paintSecure();
+  } catch (e) { console.error('auto secure tick', e); }
+}, 1000);
