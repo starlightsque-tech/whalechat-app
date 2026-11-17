@@ -153,7 +153,8 @@ const LT = {
     const q = INV.quote(t.ticker) || { price: t.entryPrice };
     /* direction is authoritative: FALL profits when price falls, RISE when it rises */
     const dir = this.dirOf(t) === 'FALL' ? -1 : 1;
-    const move = t.entryPrice ? (q.price - t.entryPrice) / t.entryPrice : 0;
+    /* price move % = (current price - entry price) / entry price x 100, from the live feed quote */
+    const move = LT.priceMovePct(t.entryPrice, q.price) / 100;
     let pnlCoins = t.capitalCoins * (t.leverage || 1) * move * dir;
     pnlCoins = Math.max(-t.capitalCoins, pnlCoins);          /* never lose more than the stake */
     /* payout = capital + profit − (capital × trade fee %); the fee is taken at close */
@@ -1032,7 +1033,7 @@ LT.seriesWithTrades = function (tf, userId) {
       const started = now - (t.createdAt || now);
       if (msAgo > started) { v += p.capital; return; }           /* before entry: flat capital */
       const dir = t.side === 'short' ? -1 : 1;
-      const move = t.entryPrice ? (price - t.entryPrice) / t.entryPrice : 0;
+      const move = LT.priceMovePct(t.entryPrice, price) / 100;
       const pnl = Math.max(-p.capital, p.capital * (t.leverage || 1) * move * dir);
       v += Math.max(0, p.capital + pnl);
     });
@@ -2553,6 +2554,14 @@ LT.closeFee = function (t) {
   if (Number.isFinite(v) && v >= 0) return Math.round(v * 100) / 100;
   return Math.round((Number(t.capitalCoins) || 0) * LT.feePct() / 100 * 100) / 100;
 };
+/* Price move % = (current - entry) / entry x 100.  Example: entry $100, now $125 -> 25 / 100 = 0.25 = 25%.
+   Single source of truth for live P&L, charts and the trade guide. */
+LT.priceMovePct = function (entry, price) {
+  const e = Number(entry), p = Number(price);
+  if (!(e > 0) || !(p > 0)) return 0;
+  return ((p - e) / e) * 100;
+};
+window.LT_PRICE_MOVE = (...a) => LT.priceMovePct(...a);
 LT.bookClose = function (ia, stake, pnl, fee) {
   const r = (v) => Math.round((Number(v) || 0) * 100) / 100;
   if (!ia.portfolios) ia.portfolios = { stock: 0, wc: 0, b2b: 0, bot: 0 };
