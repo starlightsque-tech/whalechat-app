@@ -104,11 +104,12 @@
 
     var depBody = rows.length
       ? rows.map(function (r) {
+          var lbl = (window.WC_COIN && window.WC_COIN.label) ? window.WC_COIN.label(r.coin, r.usd) : (moneyA(r.usd) + ' of ' + r.coin);
           return '<div class="ac-coin"><span class="ac-coin-dot">' + escA(r.coin.slice(0, 1)) + '</span>' +
-            '<b>' + moneyA(r.usd) + ' <i>|| ' + escA(r.coin) + '</i></b>' +
-            '<small>' + wcA(r.usd / RATE) + ' WC</small></div>';
+            '<b>' + escA(lbl) + '</b>' +
+            '<small>' + moneyA(r.usd) + ' · ' + wcA(r.usd / RATE) + ' WC</small></div>';
         }).join('')
-      : '<div class="ac-empty">No approved deposits yet.<br><span>Your coin deposits appear here after approval.</span></div>';
+      : '<div class="ac-empty">No crypto yet.<br><span>Your crypto deposits appear here, coin by coin, after approval.</span></div>';
 
     var actions = [
       ['download', 'Deposit', '#/deposit', 'primary'],
@@ -134,21 +135,21 @@
 
     return headA('Whalechat account', 'Your spendable balances, deposits and account actions.') +
       '<div class="ac-grid">' +
-        '<div class="ac-card ac-card-dep"><div class="ac-card-top"><span>Deposit balance</span><span class="ac-ic">' + iconA('wallet', 17) + '</span></div>' +
+        '<div class="ac-card ac-card-dep"><div class="ac-card-top"><span>Crypto balance</span><span class="ac-ic">' + iconA('wallet', 17) + '</span></div>' +
           '<div class="ac-big">' + moneyA(depTotal) + '</div>' +
-          '<div class="ac-sub">Across ' + rows.length + ' coin' + (rows.length === 1 ? '' : 's') + ' · held until converted</div>' +
+          '<div class="ac-sub">' + rows.length + ' coin' + (rows.length === 1 ? '' : 's') + ' · total value · convert to WC to spend or invest</div>' +
           '<div class="ac-coins">' + depBody + '</div>' +
-          '<a href="#/account/convert" class="ac-link">Convert deposit balance →</a></div>' +
-        '<div class="ac-card ac-card-usd"><div class="ac-card-top"><span>$ balance</span><span class="ac-ic">' + iconA('download', 17) + '</span></div>' +
+          '<a href="#/account/convert" class="ac-link">Convert crypto to WC →</a></div>' +
+        (Number(u.walletUsd) > 0.004 ? '<div class="ac-card ac-card-usd"><div class="ac-card-top"><span>Old $ balance</span><span class="ac-ic">' + iconA('download', 17) + '</span></div>' +
           '<div class="ac-big">' + moneyA(u.walletUsd) + '</div>' +
-          '<div class="ac-sub">USD available to transfer to your investment account</div>' +
+          '<div class="ac-sub">From the previous account system. Move it to your WC balance to use it.</div>' +
           '<div class="ac-minirow"><span>≈ ' + wcA(u.walletUsd / RATE) + ' WC</span><span>1 WC = $' + RATE.toFixed(2) + '</span></div>' +
-          '<a href="#/account/transfer" class="ac-link">Transfer to investment →</a></div>' +
-        '<div class="ac-card ac-card-wc"><div class="ac-card-top"><span>Whalecoin balance</span><span class="ac-ic">WC</span></div>' +
+          '<a href="#/account/convert" class="ac-link">Move to WC balance →</a></div>' : '') +
+        '<div class="ac-card ac-card-wc"><div class="ac-card-top"><span>WC balance</span><span class="ac-ic">WC</span></div>' +
           '<div class="ac-big">' + wcA(u.balance) + ' <em>WC</em></div>' +
           '<div class="ac-sub">≈ ' + moneyA(Number(u.balance || 0) * RATE) + ' USD · used for all purchases and vendor payments</div>' +
           '<div class="ac-minirow"><span>Spendable</span><span>WC</span></div>' +
-          '<a href="#/deposit" class="ac-link">Top up WhaleCoin →</a></div>' +
+          '<a href="#/account/transfer?to=inv_usd" class="ac-link">Send WC to investment trade capital →</a></div>' +
       '</div>' +
 
       '<div class="card ac-actions-card"><div class="card-title" style="margin:0 0 10px">Account actions</div>' +
