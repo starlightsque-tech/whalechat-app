@@ -388,7 +388,7 @@
       if (w > 0 && h > 0) this.chart.applyOptions({ width: w, height: h });
     }
 
-    _priceFormat() { return this.view === 'portfolio' ? 'wc' : 'usd'; }
+    _priceFormat() { return 'usd'; }
 
     async _render() {
       if (!this.chart || this.destroyed) return;
@@ -504,7 +504,7 @@
 
     _livePrice() {
       if (this.view === 'portfolio') {
-        try { return Number(LT.summary(meId()).valueCoins) || this._lastPrice; } catch (e) { return this._lastPrice; }
+        try { return Number(LT.summary(meId()).valueUsd) || this._lastPrice; } catch (e) { return this._lastPrice; }
       }
       const q = quote(this.ticker);
       return q && Number(q.price) > 0 ? Number(q.price) : this._lastPrice;
@@ -521,7 +521,7 @@
       const tm = new Date(Number(param.time) * 1000);
       const stamp = tm.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + tm.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       const val = this.view === 'portfolio'
-        ? (Number(value) || 0).toFixed(2) + ' WC'
+        ? usd(Number(value) || 0)
         : value != null ? usd(value) : '—';
       this.el.hover.textContent = stamp + ' · ' + val;
     }
@@ -530,13 +530,13 @@
       if (!this.el.price) return;
       if (this.view === 'portfolio') {
         const v = Number(price) || 0;
-        this.el.price.textContent = v.toFixed(2) + ' WC';
+        this.el.price.textContent = usd(v);
         let pnl = 0;
         try { pnl = Number(LT.summary(meId()).pnl) || 0; } catch (e) {}
         const up = pnl >= 0;
         this.el.chg.textContent = 'Portfolio';
         this.el.chg.className = '';
-        this.el.pnl.textContent = (up ? '+' : '−') + Math.abs(pnl).toFixed(2) + ' WC';
+        this.el.pnl.textContent = (up ? '+' : '−') + usd(Math.abs(pnl));
         this.el.pnl.className = up ? 'up' : 'down';
         return;
       }
@@ -689,7 +689,7 @@
         return;
       }
       openModal(modalShell('Buy ' + this.ticker, `
-        <div class="tiny muted" style="margin-bottom:10px">Live ${usd(live)} · ${(live * 2).toFixed(2)} WC · 1 WC = $0.50</div>
+        <div class="tiny muted" style="margin-bottom:10px">Live ${usd(live)} per share · all amounts in USD</div>
         <div class="field"><label class="label">Amount in USD</label>
           <div class="input-wrap"><span class="inv-prefix">$</span>
             <input class="input" id="pcBuyUsd" type="number" min="1" step="0.01" value="${last}"/></div>
@@ -704,7 +704,7 @@
       const preview = () => {
         const v = Number(amountEl && amountEl.value) || 0;
         const el = document.getElementById('pcBuyPreview');
-        if (el) el.innerHTML = v > 0 ? '<b>' + usd(v) + '</b> = <b>' + (v / 0.5).toFixed(2) + ' WC</b> · ' + (v / live).toFixed(6) + ' shares' : 'Enter a USD amount.';
+        if (el) el.innerHTML = v > 0 ? '<b>' + usd(v) + '</b> · ' + (v / live).toFixed(6) + ' shares' : 'Enter a USD amount.';
       };
       if (amountEl) amountEl.addEventListener('input', preview);
       preview();
@@ -737,7 +737,7 @@
         const r = await postJSON('/api/market/spot/sell', { userId: meId(), ticker: this.ticker }, 30000);
         if (!r.res || !r.res.ok || !r.data || !r.data.ok) return toast((r.data && r.data.error) || 'Sell failed', 'err');
         try { await Remote.refresh(true); } catch (e) {}
-        toast('Sold · ' + Number(r.data.payout).toFixed(2) + ' WC credited', 'ok');
+        toast('Sold · ' + usd(Number(r.data.payout) * 0.5) + ' credited', 'ok');
         if (typeof render === 'function') render();
       } catch (e) { toast('Sell failed: ' + e.message, 'err'); }
     }
