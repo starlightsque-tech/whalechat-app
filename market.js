@@ -34,28 +34,49 @@ function creditStockProfit(u, amount) {
   a.stockProfit = r2((Number(a.stockProfit) || 0) + Math.max(0, Number(amount) || 0));
   return a.stockProfit;
 }
-/* Close-out rule: profit -> Profit balance and full capital -> Trade capital
-   balance; a loss deducts the loss and the remaining capital goes to Leftover
-   capital; a total loss returns nothing. Returns the split that was booked. */
-function settleToStock(u, stake, pnl) {
+/* Close-out rule (fee is taken from the payout when the trade closes):
+     profit = capital × price move % × leverage
+     payout = capital + profit − (capital × trade fee %)
+   Gain: capital -> Trade capital balance, profit − fee -> Profit balance
+         (if the fee is bigger than the profit, the rest comes off the capital).
+   Loss: the loss and the fee are deducted; what is left goes to Leftover
+         capital. A total loss returns nothing. Returns the split that was booked. */
+function settleToStock(u, stake, pnl, fee) {
   const a = stockBook(u);
   const capital = r2(Math.max(0, Number(stake) || 0));
   const p = r2(Math.max(-capital, Number(pnl) || 0));
-  const out = { capital: 0, profit: 0, leftover: 0, loss: 0 };
+  const f = r2(Math.min(Math.max(0, Number(fee) || 0), Math.max(0, capital + p)));
+  const out = { capital: 0, profit: 0, leftover: 0, loss: 0, fee: f, grossPnl: p, payout: r2(Math.max(0, capital + p - f)) };
   if (p >= 0) {
-    out.capital = capital; out.profit = p;
-    a.portfolios.stock = r2((Number(a.portfolios.stock) || 0) + capital);
-    a.stockProfit = r2((Number(a.stockProfit) || 0) + p);
+    out.profit = r2(Math.max(0, p - f));
+    out.capital = r2(capital - Math.max(0, f - p));
+    a.portfolios.stock = r2((Number(a.portfolios.stock) || 0) + out.capital);
+    a.stockProfit = r2((Number(a.stockProfit) || 0) + out.profit);
   } else {
-    out.loss = r2(-p); out.leftover = r2(capital + p);
+    out.loss = r2(-p); out.leftover = r2(Math.max(0, capital + p - f));
     if (out.leftover > 0) a.stockLeftover = r2((Number(a.stockLeftover) || 0) + out.leftover);
   }
   return out;
 }
+/* Fee charged at close. Trades opened before this rule already paid the fee
+   when they started, so they are not charged again. */
+function closeFeeFor(t, db) {
+  if (!t || !t.feeAtClose) return 0;
+  const v = Number(t.closeFeeCoins);
+  if (Number.isFinite(v) && v >= 0) return r2(v);
+  const pct = Math.max(0, Number(db && db.invest && db.invest.feePct != null ? db.invest.feePct : 0.5) || 0);
+  return r2((Number(t.capitalCoins) || 0) * pct / 100);
+}
 function settleText(ticker, split) {
-  if (split.profit > 0 || (split.capital > 0 && !split.loss)) return `${ticker} closed: +$${split.profit.toFixed(2)} profit credited to your Profit balance and $${split.capital.toFixed(2)} capital returned to your Trade capital balance.`;
-  if (split.leftover > 0) return `${ticker} closed with a $${split.loss.toFixed(2)} loss. The remaining $${split.leftover.toFixed(2)} of capital was credited to your Leftover capital.`;
+  const fee = split.fee > 0 ? ` after the $${split.fee.toFixed(2)} trade fee` : '';
+  if (!split.loss) return `${ticker} closed: payout $${(split.payout || 0).toFixed(2)}${fee} — +$${split.profit.toFixed(2)} profit credited to your Profit balance and $${split.capital.toFixed(2)} capital returned to your Trade capital balance.`;
+  if (split.leftover > 0) return `${ticker} closed with a $${split.loss.toFixed(2)} loss${fee}. The remaining $${split.leftover.toFixed(2)} of capital was credited to your Leftover capital.`;
   return `${ticker} closed with a total loss. Nothing was returned.`;
+}
+function splitShort(split) {
+  const fee = split.fee > 0 ? ' · $' + split.fee.toFixed(2) + ' fee' : '';
+  if (!split.loss) return '+$' + split.profit.toFixed(2) + ' profit · $' + split.capital.toFixed(2) + ' capital returned' + fee;
+  return split.leftover ? '−$' + split.loss.toFixed(2) + ' loss' + fee + ' · $' + split.leftover.toFixed(2) + ' to Leftover capital' : 'total loss';
 }
 
 const TICKERS = ['AAPL', 'TSLA', 'NVDA', 'COIN', 'MSTR', 'MARA', 'KO', 'JPM', 'NKE', 'UNH', 'AVGO', 'WMT', 'DIS', 'V', 'UBER', 'AMZN'];
@@ -1304,9 +1325,10 @@ class MarketService {
     const dir = direction === 'FALL' ? -1 : 1;
     const move = (q.price - t.entryPrice) / t.entryPrice;
     const pnlCoins = round(Math.max(-(Number(t.capitalCoins) || 0), (Number(t.capitalCoins) || 0) * lev * move * dir), 2);
-    const payout = Math.max(0, round((Number(t.capitalCoins) || 0) + pnlCoins, 2));
-    const split = settleToStock(u, t.capitalCoins, pnlCoins);
+    const split = settleToStock(u, t.capitalCoins, pnlCoins, closeFeeFor(t, db));
+    const payout = split.payout;
     t.settlement = split;
+    t.closeFeeCoins = split.fee;
     t.status = 'Completed';
     t.closedAt = now;
     t.closeReason = reason || 'Stopped by user';
@@ -1319,7 +1341,7 @@ class MarketService {
     db.txs = db.txs || [];
     db.txs.unshift({
       id: id('tx_'), userId, type: 'trade-close',
-      label: `${t.ticker} trade ${t.closeReason} · ${split.loss ? (split.leftover ? '$' + split.leftover.toFixed(2) + ' to Leftover capital' : 'total loss') : '+$' + split.profit.toFixed(2) + ' profit · $' + split.capital.toFixed(2) + ' capital returned'}`,
+      label: `${t.ticker} trade ${t.closeReason} · ${splitShort(split)}`,
       coins: payout, meta: { tradeId: t.id, pnlCoins, reason: t.closeReason, settlement: split, server: true }, createdAt: now
     });
     db.notifications = db.notifications || [];
@@ -1432,12 +1454,13 @@ class MarketService {
           pnlCoins = round(pnl, 2);
           pct = (Number(t.capitalCoins) || 0) ? (pnlCoins / t.capitalCoins) * 100 : 0;
         }
-        const payout = Math.max(0, round((Number(t.capitalCoins) || 0) + pnlCoins, 2));
         const u = (db.users || []).find((x) => x.id === t.userId);
         if (!u) continue;
 
-        const split = settleToStock(u, t.capitalCoins, pnlCoins);
+        const split = settleToStock(u, t.capitalCoins, pnlCoins, closeFeeFor(t, db));
+        const payout = split.payout;
         t.settlement = split;
+        t.closeFeeCoins = split.fee;
 
         /* duration-scaled virtual dividend, paid only when the timer expires */
         let dividendCoins = 0;
@@ -1491,7 +1514,7 @@ class MarketService {
         db.txs = db.txs || [];
         db.txs.unshift({
           id: id('tx_'), userId: u.id, type: 'trade-close',
-          label: `${t.ticker} trade ${reason} · ${split.loss ? (split.leftover ? '$' + split.leftover.toFixed(2) + ' to Leftover capital' : 'total loss') : '+$' + split.profit.toFixed(2) + ' profit · $' + split.capital.toFixed(2) + ' capital returned'}`,
+          label: `${t.ticker} trade ${reason} · ${splitShort(split)}`,
           coins: payout, meta: { tradeId: t.id, pnlCoins, reason, settlement: split, server: true }, createdAt: now
         });
         db.notifications = db.notifications || [];
