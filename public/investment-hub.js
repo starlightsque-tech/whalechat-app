@@ -122,7 +122,7 @@
       '</div><div class="tiny muted" style="margin-top:8px">Top-ups are paid in USD from your trade capital. Fund trade capital by sending WC from your WhaleChat account.</div></div>' +
       '<div class="card"><div class="card-title">Portfolio balances</div><div class="ih-list">' +
         [['Stock trading', a.portfolios.stock], ['WC-Investing', a.portfolios.wc], ['B2B-Investing', a.portfolios.b2b], ['Bot trading', a.portfolios.bot]]
-          .map(function (x) { return '<div class="ih-row"><span>' + x[0] + '</span><b>' + money(x[1]) + '</b><span class="tiny muted">' + wc(x[1] / RATE) + ' WC</span></div>'; }).join('') +
+          .map(function (x) { return '<div class="ih-row"><span>' + x[0] + '</span><b>' + money(x[1]) + '</b></div>'; }).join('') +
       '</div></div>';
   }
 
@@ -692,7 +692,7 @@
     var leftover = Number(a.stockLeftover) || 0;
     var cap = Number(a.portfolios.stock) || 0;
     return '<div class="ih-cards">' +
-      '<div class="ih-card"><span>Trade capital balance</span><b data-ih-stock="cap">' + money(cap) + '</b><small>' + wc(cap / RATE) + ' WC · capital returned on close</small></div>' +
+      '<div class="ih-card"><span>Trade capital balance</span><b data-ih-stock="cap">' + money(cap) + '</b><small>Capital returned on close</small></div>' +
       '<div class="ih-card"><span>Profit balance</span><b class="up" data-ih-stock="profit">' + money(profit) + '</b><small>Claimed + closed trade profit</small></div>' +
       '<div class="ih-card"><span>Leftover capital</span><b data-ih-stock="leftover">' + money(leftover) + '</b><small>Returned after losses</small></div>' +
     '</div><div class="card ih-actions"><div class="ih-btn-grid">' +
@@ -728,8 +728,8 @@
           .map(function (x) { return '<a href="' + x[1] + '" class="btn btn-ghost btn-sm">' + x[0] + '</a>'; }).join('') + '</div></div>';
     }
     return '<div class="ih-cards">' +
-      '<div class="ih-card"><span>Capital balance</span><b>' + money(s.capital) + '</b><small>' + wc(s.capital / RATE) + ' WC · plan funding</small></div>' +
-      '<div class="ih-card"><span>Profits</span><b class="' + (s.profit >= 0 ? 'up' : 'down') + '">' + money(s.profit) + '</b><small>' + wc(s.profit / RATE) + ' WC credited</small></div>' +
+      '<div class="ih-card"><span>Capital balance</span><b>' + money(s.capital) + '</b><small>Plan funding</small></div>' +
+      '<div class="ih-card"><span>Profits</span><b class="' + (s.profit >= 0 ? 'up' : 'down') + '">' + money(s.profit) + '</b><small>Profits credited in USD</small></div>' +
       '<div class="ih-card"><span>Leftover capital</span><b>' + money(s.leftover) + '</b><small>Returned after a loss</small></div>' +
       '<div class="ih-card"><span>Active plans</span><b>' + s.activeCount + '</b><small>+' + money(s.accruedUsd) + ' ROI accrued</small></div>' +
     '</div>' +
