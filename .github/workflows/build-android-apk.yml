@@ -23,16 +23,30 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Check signing secrets
-        run: |
-          for v in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
-            if [ -z "${!v}" ]; then echo "Missing repository secret $v"; exit 1; fi
-          done
+      - name: Prepare signing key (use repo secrets, else generate one)
         env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          S_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          S_PW: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          S_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          S_KPW: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -e
+          if [ -n "$S_B64" ] && [ -n "$S_PW" ] && [ -n "$S_ALIAS" ] && [ -n "$S_KPW" ]; then
+            echo "Using repository signing secrets"
+            B64="$S_B64"; PW="$S_PW"; ALIAS="$S_ALIAS"; KPW="$S_KPW"
+          else
+            echo "No signing secrets set: generating a new keystore for this build"
+            PW=$(openssl rand -hex 16); KPW="$PW"; ALIAS=whalechat
+            keytool -genkeypair -keystore "$RUNNER_TEMP/gen.jks" -storepass "$PW" -keypass "$PW" -alias "$ALIAS" -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=WhaleChat, O=WhaleChat, C=US"
+            B64=$(base64 -w0 "$RUNNER_TEMP/gen.jks")
+          fi
+          echo "::add-mask::$PW"; echo "::add-mask::$KPW"
+          {
+            echo "ANDROID_KEYSTORE_BASE64=$B64"
+            echo "ANDROID_KEYSTORE_PASSWORD=$PW"
+            echo "ANDROID_KEY_ALIAS=$ALIAS"
+            echo "ANDROID_KEY_PASSWORD=$KPW"
+          } >> "$GITHUB_ENV"
 
       - name: Install and bundle web app
         working-directory: mobile
@@ -152,11 +166,6 @@ jobs:
         run: ./gradlew assembleRelease
 
       - name: Align and sign APK
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -e
           echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
