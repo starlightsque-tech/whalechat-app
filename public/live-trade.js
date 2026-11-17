@@ -182,7 +182,8 @@ const LT = {
     const capital = Math.round((Number(capitalCoins) || 0) * 100) / 100;
     if (capital < this.MIN_CAPITAL) { toast('Minimum trade is ' + this.MIN_CAPITAL + ' USD', 'err'); return false; }
     const ia = INV.investAcct(u);
-    if (capital > Number(ia.portfolios.stock || 0)) { toast('Not enough stock trading balance — top up in USD first', 'err'); return false; }
+    const capBal = Number(ia.portfolios.stock || 0), leftBal = Math.max(0, Number(ia.stockLeftover) || 0);
+    if (capital > capBal + leftBal + 1e-9) { toast('Not enough balance — capital ' + usd(capBal) + ' + leftover ' + usd(leftBal) + '. Top up in USD first', 'err'); return false; }
     if (INV.paused && INV.paused(ticker)) { toast(ticker + ' trading is paused', 'err'); return false; }
     const q = INV.quote(ticker);
     if (!q || !(Number(q.price) > 0)) { toast('No live Finnhub quote for this asset yet', 'err'); return false; }
@@ -224,7 +225,11 @@ const LT = {
       status: 'Open', createdAt: Date.now(), feeCoins: fee, feeAtClose: true, closeFeeCoins: fee
     };
     /* only the capital is held now — the trade fee comes off the payout when the trade closes */
-    ia.portfolios.stock = Math.round((Number(ia.portfolios.stock) - capital) * 100) / 100;
+    /* draw from Trade capital first, then from Leftover capital */
+    const fromCap = Math.min(capBal, capital), fromLeft = Math.round((capital - fromCap) * 100) / 100;
+    ia.portfolios.stock = Math.round((capBal - fromCap) * 100) / 100;
+    if (fromLeft > 0) ia.stockLeftover = Math.round(Math.max(0, leftBal - fromLeft) * 100) / 100;
+    trade.fundedFromLeftover = fromLeft;
     DB.trades.unshift(trade);
     tx(u.id, 'trade-open', `${direction === 'FALL' ? 'Fall' : 'Rise'} ${this.label(ticker)} · ${usd(capital)} USD`, -capital,
       { tradeId: trade.id, leverage: trade.leverage, entry: q.price, direction });
@@ -661,7 +666,7 @@ const LT = {
       <div class="field"><label class="label">Capital (USD)</label>
         <div class="input-wrap"><span class="inv-prefix">$</span>
           <input class="input" id="ltCapital" type="number" step="1" min="${this.MIN_CAPITAL}" placeholder="0"/></div>
-        <div class="tiny muted" id="ltCapitalUsd">Available stock cash ${usd(INV.stockCash(me()))}</div></div>
+        <div class="tiny muted" id="ltCapitalUsd">Available to trade ${usd(LT.available(me()))} (capital + leftover)</div></div>
       <div class="lt-tpsl-grid">
         <div class="lt-level-box" data-k="tp" data-mode="${LT.levels.tp}">
           <div class="between"><label class="label">Take Profit <span class="tiny muted">skims profit, trade continues</span></label>
@@ -956,9 +961,9 @@ LT.positions = function (userId) {
     const valueUsd = h.shares * q.price;
     return {
       kind: 'spot', holding: h, ticker: h.ticker, side: 'long', lev: 1,
-      capital: usdToCoins(h.shares * h.avgPrice), entry: h.avgPrice,
-      pnlCoins: usdToCoins(valueUsd - h.shares * h.avgPrice),
-      valueCoins: usdToCoins(valueUsd),
+      capital: h.shares * h.avgPrice, entry: h.avgPrice,
+      pnlCoins: valueUsd - h.shares * h.avgPrice,
+      valueCoins: valueUsd,
       pnlPct: h.avgPrice ? (q.price / h.avgPrice - 1) * 100 : 0, price: q.price
     };
   });
@@ -968,8 +973,8 @@ LT.positions = function (userId) {
 LT.summary = function (userId) {
   const pos = LT.positions(userId);
   const bot = LT.botSession(userId);
-  const botValue = bot ? (Number(bot.poolCoins) || 0) : 0;
-  const botCapital = bot ? (Number(bot.allocatedCoins) || 0) : 0;
+  const botValue = bot ? coinsToUsd(Number(bot.poolCoins) || 0) : 0;
+  const botCapital = bot ? coinsToUsd(Number(bot.allocatedCoins) || 0) : 0;
   const botPnl = bot ? Math.round((botValue - botCapital) * 100) / 100 : 0;
   let valueCoins = pos.reduce((s, p) => s + p.valueCoins, 0);
   let capital = pos.reduce((s, p) => s + p.capital, 0);
@@ -988,9 +993,9 @@ LT.summary = function (userId) {
   const u = me();
   return {
     pos, valueCoins, capital, pnl,
-    valueUsd: coinsToUsd(valueCoins),
-    capitalUsd: coinsToUsd(capital),
-    pnlUsd: coinsToUsd(pnl),
+    valueUsd: valueCoins,
+    capitalUsd: capital,
+    pnlUsd: pnl,
     pnlPct: capital ? (pnl / capital) * 100 : 0,
     cash: (u && INV.stockCash(u)) || 0,
     live: pos.filter(p => p.kind === 'trade').length,
@@ -1016,11 +1021,11 @@ LT.seriesWithTrades = function (tf, userId) {
   const out = [];
   for (let i = 0; i < len; i++) {
     const msAgo = (1 - i / Math.max(1, len - 1)) * win;
-    let v = bot ? LT.botValueAt(bot, now - msAgo) : 0;
+    let v = bot ? coinsToUsd(LT.botValueAt(bot, now - msAgo)) : 0;
     series.forEach(({ p, data }) => {
       if (!data.length) { v += p.capital; return; }
       const price = data[Math.min(i, data.length - 1)];
-      if (p.kind === 'spot') { v += (p.holding.shares * price) * (1 / COIN_USD); return; }
+      if (p.kind === 'spot') { v += p.holding.shares * price; return; }
       const t = p.trade;
       const idx = Math.min(data.length - 1, i);
       const msAgo = (1 - idx / Math.max(1, data.length - 1)) * win;
@@ -1040,8 +1045,8 @@ LT.allocSlices = function (userId) {
   const map = {};
   LT.positions(userId).forEach(p => { map[p.ticker] = (map[p.ticker] || 0) + p.valueCoins; });
   const bot = LT.botSession(userId);
-  if (bot) map['Trading Bot'] = (map['Trading Bot'] || 0) + (Number(bot.poolCoins) || 0);
-  return Object.keys(map).map(t => ({ ticker: t, value: coinsToUsd(map[t]) })).sort((a, b) => b.value - a.value);
+  if (bot) map['Trading Bot'] = (map['Trading Bot'] || 0) + coinsToUsd(Number(bot.poolCoins) || 0);
+  return Object.keys(map).map(t => ({ ticker: t, value: map[t] })).sort((a, b) => b.value - a.value);
 };
 
 /* Auto Secure Take Profit on the stock trading page — reads the shared
@@ -1087,7 +1092,7 @@ LT.autoSecureStrip = function () {
       if (!(v > 0)) return;
       wcEl.value = String(Math.round((v / 0.5) * 100) / 100);
       const hint = document.getElementById('ltCapitalUsd');
-      if (hint) hint.textContent = '≈ $' + v.toFixed(2) + ' · stock cash ' + usd(INV.stockCash(me()));
+      if (hint) hint.textContent = '≈ $' + v.toFixed(2) + ' · available ' + usd(LT.available(me()));
     };
   }
 
@@ -1142,7 +1147,7 @@ LT.dash = function (params) {
   <div class="inv-hero">
     <div class="tiny muted">Total portfolio value</div>
     <div class="inv-big"><span data-ltd="value">${usd(s.valueUsd)}</span> <span class="inv-unit">USD</span></div>
-    <div class="tiny muted" data-ltd="value-usd">≈ ${usd(s.valueUsd)} USD</div>
+    <div class="tiny muted" data-ltd="value-usd">All balances shown in USD</div>
     <div class="lt-day ${dayUp ? 'up' : dayDown ? 'down' : ''}" data-ltd="day">
       ${ic(dayUp ? 'trend' : 'down', 14)}
       <b>${s.pnl >= 0 ? '+' : '−'}${usd_LT(Math.abs(s.pnlUsd))}</b>
@@ -1174,7 +1179,7 @@ LT.dash = function (params) {
     </div>
     ${s.botActive ? `<div class="tiny center ${s.botPnl >= 0 ? 'up' : 'down'}" style="margin-top:5px" data-lt-bot-line>
       ${ic('trend', 11)} ${esc(s.botTier || 'Trading bot')} · ${usd(s.botValue)} equity · ${s.botPnl >= 0 ? '+' : '−'}${usd(Math.abs(s.botPnl))} · ${s.botTrades} trade${s.botTrades === 1 ? '' : 's'}${s.botStatus === 'running' ? ' · live' : ''}
-      ${s.botLast ? `<span class="muted"> · last ${esc(s.botLast.ticker || '')} ${Number(s.botLast.pnlCoins) >= 0 ? '+' : '−'}${usd(Math.abs(Number(s.botLast.pnlCoins) || 0))}</span>` : ''}
+      ${s.botLast ? `<span class="muted"> · last ${esc(s.botLast.ticker || '')} ${Number(s.botLast.pnlCoins) >= 0 ? '+' : '−'}${usd(coinsToUsd(Math.abs(Number(s.botLast.pnlCoins) || 0)))}</span>` : ''}
     </div>` : ''}
     <div class="tiny muted center wc-feed-notice" data-market-notice="1" style="margin-top:6px">Simulated market data · 24/7</div>
   </div>
@@ -1186,7 +1191,7 @@ LT.dash = function (params) {
         <div class="inv-legend">${slices.slice(0, 6).map((x, i) => `<div class="row" style="gap:7px;align-items:center">
           <i style="width:8px;height:8px;border-radius:3px;background:${cols[i % cols.length]};display:inline-block"></i>
           <span class="tiny ellipsis grow">${esc(x.ticker)}</span>
-          <span class="tiny muted">${((x.value / (coinsToUsd(s.valueCoins) || 1)) * 100).toFixed(0)}%</span></div>`).join('')}</div></div>`
+          <span class="tiny muted">${((x.value / (s.valueUsd || 1)) * 100).toFixed(0)}%</span></div>`).join('')}</div></div>`
         : `<div class="inv-empty"><p class="small muted">Allocation appears once you own stocks or have a live trade.</p></div>`}</div>
     </div>
 
@@ -1207,12 +1212,12 @@ LT.positionsHTML = function (userId) {
   const bot = LT.botSession(userId);
   if (!pos.length && !bot) return `<div class="inv-empty">${ic('bag', 26)}<p class="small muted">No open positions. Buy a stock or start a trade to begin.</p><a href="#/invest/market" class="btn btn-sm btn-primary">Browse stocks</a></div>`;
   const botRow = bot ? (() => {
-    const pnl = Math.round(((Number(bot.poolCoins) || 0) - (Number(bot.allocatedCoins) || 0)) * 100) / 100;
+    const pnl = coinsToUsd((Number(bot.poolCoins) || 0) - (Number(bot.allocatedCoins) || 0));
     return `<a class="inv-row" href="#/invest/bots">
       <span class="inv-logo" style="width:38px;height:38px;background:linear-gradient(135deg,#2ee6c9,#3aa0ff)"><b style="font-size:12px">BOT</b></span>
       <div class="grow" style="min-width:0">
         <div class="small ellipsis" style="font-weight:650">${esc(bot.tierName || 'Trading Bot')} <span class="lt-side long">Auto</span></div>
-        <div class="tiny muted">${usd(Number(bot.allocatedCoins) || 0)} in · ${usd(Number(bot.poolCoins) || 0)} equity</div>
+        <div class="tiny muted">${usd(coinsToUsd(Number(bot.allocatedCoins) || 0))} in · ${usd(coinsToUsd(Number(bot.poolCoins) || 0))} equity</div>
         <div class="tiny muted">${Number(bot.tradeCount) || 0} bot trade${(Number(bot.tradeCount) || 0) === 1 ? '' : 's'}${bot.status === 'running' ? ' · live' : ''}</div>
       </div>
       <div style="text-align:right">
@@ -1248,8 +1253,7 @@ LT.paintDash = function () {
   if (!has) return;
   const s = LT.summary(u.id);
   const set = (sel, txt) => { const el = document.querySelector(sel); if (el) el.textContent = txt; };
-  set('[data-ltd="value"]', coins(s.valueCoins));
-  set('[data-ltd="value-usd"]', '≈ ' + usd(s.valueUsd) + ' USD');
+  set('[data-ltd="value"]', usd(s.valueUsd));
   set('[data-ltd="invested"]', usd(s.capital));
   set('[data-ltd="earnings"]', (s.pnl >= 0 ? '+' : '−') + usd(Math.abs(s.pnl)));
   set('[data-ltd="cash"]', usd(s.cash));
@@ -1278,7 +1282,7 @@ LT.paintDash = function () {
       <div class="inv-legend">${slices.slice(0, 6).map((x, i) => `<div class="row" style="gap:7px;align-items:center">
         <i style="width:8px;height:8px;border-radius:3px;background:${cols[i % cols.length]};display:inline-block"></i>
         <span class="tiny ellipsis grow">${esc(x.ticker)}</span>
-        <span class="tiny muted">${((x.value / (coinsToUsd(s.valueCoins) || 1)) * 100).toFixed(0)}%</span></div>`).join('')}</div></div>`
+        <span class="tiny muted">${((x.value / (s.valueUsd || 1)) * 100).toFixed(0)}%</span></div>`).join('')}</div></div>`
       : `<div class="inv-empty"><p class="small muted">Allocation appears once you own stocks or have a live trade.</p></div>`;
   }
   const posEl = document.getElementById('ltDashPos');
@@ -1482,9 +1486,9 @@ function ltVendorInvestCard(v) {
       <a href="#/invest" class="btn btn-xs btn-soft">${ic('trend', 12)} Open Invest</a>
     </div>
     <div class="inv-hero-grid" style="border-top:none;padding-top:2px;margin-top:6px">
-      ${stat('Portfolio value', coins(p.valueCoins) + ' WC')}
-      ${stat('Invested', coins(p.capital) + ' WC')}
-      ${stat('Live earnings', (p.pnl >= 0 ? '+' : '−') + coins(Math.abs(p.pnl)) + ' WC', p.pnl >= 0 ? 'up' : 'down')}
+      ${stat('Portfolio value', usd(p.valueUsd))}
+      ${stat('Invested', usd(p.capital))}
+      ${stat('Live earnings', (p.pnl >= 0 ? '+' : '−') + usd(Math.abs(p.pnl)), p.pnl >= 0 ? 'up' : 'down')}
     </div>
     <div class="tiny muted mt6">${p.live ? p.live + ' live trade' + (p.live === 1 ? '' : 's') + ' running' : 'No live trades'}
       · ${p.pos.length} position${p.pos.length === 1 ? '' : 's'}</div>
@@ -1507,9 +1511,9 @@ VIEWS.vendor = function (parts, params) {
         <div><span class="tiny muted">Units sold</span><b>${st.units}</b></div>
       </div>
       <div class="between mt10"><span class="tiny muted">Credited to your wallet</span>
-        <b class="small">${coins(st.paidCoins)} WC</b></div>
+        <b class="small">${usd(coinsToUsd(st.paidCoins))}</b></div>
       <div class="between mt6"><span class="tiny muted">Wallet balance</span>
-        <b class="small">${coins(st.balance)} WC</b></div>
+        <b class="small">${usd(coinsToUsd(st.balance))}</b></div>
       <div class="between mt6"><span class="tiny muted">Storefront views</span>
         <b class="small">${(Number(v.views) || 0).toLocaleString('en-US')}</b></div>
       <div class="between mt6"><span class="tiny muted">View-to-sale conversion</span>
@@ -1539,7 +1543,7 @@ LT.stockHistory = function (ticker) {
   return `<div class="card mt14">
     <div class="between"><div class="card-title" style="margin:0">Your ${esc(INV.assetTicker ? INV.assetTicker(ticker) : ticker)} history</div>
       <span class="badge ${realized >= 0 ? 'badge-success' : 'badge-danger'}">
-        ${realized >= 0 ? '+' : '−'}${coins(Math.abs(realized))} WC realised</span></div>
+        ${realized >= 0 ? '+' : '−'}${usd(coinsToUsd(Math.abs(realized)))} realised</span></div>
     <div class="inv-hero-grid" style="border-top:none;padding-top:2px;margin-top:6px">
       <div><span class="tiny muted">Closed trades</span><b>${total}</b></div>
       <div><span class="tiny muted">Win / loss</span><b>${wins} / ${losses}</b></div>
@@ -1551,13 +1555,13 @@ LT.stockHistory = function (ticker) {
         <div class="grow" style="min-width:0">
           <div class="small" style="font-weight:650">${t.side === 'short' ? 'Fall' : 'Rise'} ${t.leverage}×
             <span class="tiny muted">· ${esc(t.closeReason || 'closed')}</span></div>
-          <div class="tiny muted">${coins(t.capitalCoins)} WC · ${this.px(t.ticker, t.entryPrice)} → ${this.px(t.ticker, t.exitPrice || 0)} · ${dateLabel(t.closedAt)}</div>
+          <div class="tiny muted">${usd(coinsToUsd(t.capitalCoins))} · ${this.px(t.ticker, t.entryPrice)} → ${this.px(t.ticker, t.exitPrice || 0)} · ${dateLabel(t.closedAt)}</div>
           <div class="lt-hist-levels">${Number(t.takeProfitPrice) > 0 ? `<span class="tp">TP ${usd(t.takeProfitPrice)}${Number(t.takeProfitWc) > 0 ? ' · ' + Number(t.takeProfitWc) + ' WC' : ''}</span>` : '<span>TP —</span>'}
             ${Number(t.stopLossPrice) > 0 ? `<span class="sl">${t.trailingActive ? 'TSL' : 'SL'} ${usd(t.stopLossPrice)}${Number(t.stopLossWc) > 0 ? ' · ' + Number(t.stopLossWc) + ' WC' : ''}</span>` : '<span>SL —</span>'}
             ${t.trailingActive ? `<span class="trail">trail ${Number(t.trailingStopPct).toFixed(1)}%</span>` : ''}
-            ${Number(t.dividendCoins) > 0 ? `<span class="div">+${Number(t.dividendCoins)} WC div</span>` : ''}</div>
+            ${Number(t.dividendCoins) > 0 ? `<span class="div">+${usd(coinsToUsd(Number(t.dividendCoins)))} div</span>` : ''}</div>
         </div>
-        <span class="tiny ${(t.pnlCoins || 0) >= 0 ? 'up' : 'down'}">${(t.pnlCoins || 0) >= 0 ? '+' : '−'}${coins(Math.abs(t.pnlCoins || 0))} WC</span>
+        <span class="tiny ${(t.pnlCoins || 0) >= 0 ? 'up' : 'down'}">${(t.pnlCoins || 0) >= 0 ? '+' : '−'}${usd(coinsToUsd(Math.abs(t.pnlCoins || 0)))}</span>
       </div>`).join('')}
     </div>
   </div>`;
@@ -1670,7 +1674,7 @@ LT.placeBotOrder = function (botUser, rec) {
   try {
     tx(vendorUser.id, 'sale', 'Demo order · ' + p.name, totalCoins, { orderId: order.id, simulated: true });
     notify(vendorUser.id, 'New order received',
-      `${botUser.fullName} ordered ${qty} × ${p.name} · ${coins(totalCoins)} WC. (Demo shopper — simulated revenue.)`,
+      `${botUser.fullName} ordered ${qty} × ${p.name} · ${usd(coinsToUsd(totalCoins))}. (Demo shopper — simulated revenue.)`,
       '#/vendor/orders', 'bag');
   } catch (e) {}
 
@@ -1804,7 +1808,7 @@ function ltBotsView() {
           <div class="tiny muted">${rec.cadence.map(d => days[d]).join(' · ')} · next ${new Date(rec.nextAt).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</div>
         </div>
         <div style="text-align:right"><div class="tiny muted">balance</div>
-          <div class="small" style="font-weight:650">${coins(u.balance)} WC</div></div>
+          <div class="small" style="font-weight:650">${usd(coinsToUsd(u.balance))}</div></div>
       </div>`).join('')}
     </div>
   </div>`;
@@ -2066,7 +2070,7 @@ LT.updateDividendEstimate = function () {
     return;
   }
   const bonus = LT.dividendBonusFor(ticker, cap, minutes);
-  el.innerHTML = `<b>+${coins(bonus)} WC</b> dividend bonus · yield ${y.toFixed(2)}% · ${label} · paid when the timer completes`;
+  el.innerHTML = `<b>+${usd(coinsToUsd(bonus))}</b> dividend bonus · yield ${y.toFixed(2)}% · ${label} · paid when the timer completes`;
 };
 
 App.ltMode = function (id, ds) {
@@ -2107,7 +2111,7 @@ App.ltStart = function (id, ds) {
   const trailOn = !!(document.getElementById('ltTrail') || {}).checked;
   const trailPct = trailOn ? (Number((document.getElementById('ltTrailPct') || {}).value) || 2) : 0;
   if ((LT.levels.tp === 'wc' && tpRaw > 0 && !(tpPrice > 0)) || (LT.levels.sl === 'wc' && slRaw > 0 && !(slPrice > 0))) {
-    return toast('Enter a capital amount first — or use a smaller WC target', 'err');
+    return toast('Enter a capital amount first — or use a smaller dollar target', 'err');
   }
   const err = LT.validateLevels(direction, q.price, tpPrice, trailOn ? 0 : slPrice);
   if (err) return toast(err, 'err');
@@ -2135,7 +2139,7 @@ App.ltTp = async function (id, ds) {
       }, 8000);
       if (r.res && r.res.ok && r.data && r.data.ok) {
         await Remote.refresh(true);
-        toast(`Profit taken — ${coins(Number(r.data.profit) || 0)} WC credited. Trade continues`, 'ok');
+        toast(`Profit taken — ${usd(coinsToUsd(Number(r.data.profit) || 0))} credited. Trade continues`, 'ok');
         return;
       }
       if (r.data && r.data.error) return toast(r.data.error, 'err');
@@ -2176,10 +2180,10 @@ App.ltClaimAllProfits = async function () {
   });
   const ia = INV.investAcct(u);
   ia.stockProfit = Math.round(((Number(ia.stockProfit) || 0) + coinsTotal) * 100) / 100;
-  tx(u.id, 'secured-profit-claim', `Claimed ${list.length} secured profits · +${coins(coinsTotal)} WC`, coinsTotal, { count: list.length, all: true });
-  notify(u.id, 'Secured profits credited', `+${coins(coinsTotal)} WC was added to your balance.`, '#/wallet', 'check');
+  tx(u.id, 'secured-profit-claim', `Claimed ${list.length} secured profits · +${usd(coinsToUsd(coinsTotal))}`, coinsTotal, { count: list.length, all: true });
+  notify(u.id, 'Secured profits credited', `+${usd(coinsToUsd(coinsTotal))} was added to your balance.`, '#/wallet', 'check');
   persist(); render();
-  toast(`Claimed ${list.length} secured profits — +${coins(coinsTotal)} WC credited`, 'ok');
+  toast(`Claimed ${list.length} secured profits — +${usd(coinsToUsd(coinsTotal))} credited`, 'ok');
 };
 
 App.ltClaimProfit = async function (id, ds) {
@@ -2209,11 +2213,11 @@ App.ltClaimProfit = async function (id, ds) {
   ia2.stockProfit = Math.round(((Number(ia2.stockProfit) || 0) + (Number(rec.coins) || 0)) * 100) / 100;
   rec.claimed = true;
   rec.claimedAt = Date.now();
-  tx(u.id, 'secured-profit-claim', `Secured profit claimed · ${t.ticker} · +${coins(rec.coins)} WC`, rec.coins,
+  tx(u.id, 'secured-profit-claim', `Secured profit claimed · ${t.ticker} · +${usd(coinsToUsd(rec.coins))}`, rec.coins,
     { tradeId: t.id, profitId: rec.id });
-  notify(u.id, 'Secured profit credited', `+${coins(rec.coins)} WC from ${t.ticker} was added to your balance.`, '#/wallet', 'check');
+  notify(u.id, 'Secured profit credited', `+${usd(coinsToUsd(rec.coins))} from ${t.ticker} was added to your balance.`, '#/wallet', 'check');
   persist(); render();
-  toast(`Take profit claimed — +${coins(rec.coins)} WC credited`, 'ok');
+  toast(`Take profit claimed — +${usd(coinsToUsd(rec.coins))} credited`, 'ok');
 };
 
 async function ltManualClose(t, action, reason) {
@@ -2459,7 +2463,7 @@ function ltMountStock() {
   const cap = document.getElementById('ltCapital');
   if (cap) cap.addEventListener('input', () => {
     const usdEl = document.getElementById('ltCapitalUsd');
-    if (usdEl) usdEl.textContent = 'Available stock cash ' + usd(INV.stockCash(me()));
+    if (usdEl) usdEl.textContent = 'Available to trade ' + usd(LT.available(me())) + ' (capital + leftover)';
     LT.previewTargets();
   });
   ['ltTp', 'ltSl', 'ltTrailPct'].forEach((id) => {
@@ -2567,6 +2571,24 @@ LT.bookClose = function (ia, stake, pnl, fee) {
   }
   return out;
 };
+/* Pure preview of the close-out split (same maths as bookClose, no balances touched).
+   The trade guide calls this so its examples always match the real payout flow. */
+LT.previewClose = function (stake, pnl, fee) {
+  const r = (v) => Math.round((Number(v) || 0) * 100) / 100;
+  const capital = r(Math.max(0, Number(stake) || 0));
+  const p = r(Math.max(-capital, Number(pnl) || 0));
+  const f = r(Math.min(Math.max(0, Number(fee) || 0), Math.max(0, capital + p)));
+  const out = { capital: 0, profit: 0, leftover: 0, loss: 0, fee: f, grossPnl: p, payout: r(Math.max(0, capital + p - f)) };
+  if (p >= 0) { out.profit = r(Math.max(0, p - f)); out.capital = r(capital - Math.max(0, f - p)); }
+  else { out.loss = r(-p); out.leftover = r(Math.max(0, capital + p - f)); }
+  return out;
+};
+/* Spendable balance for buying stocks: Trade capital + Leftover capital */
+LT.available = function (u) {
+  const ia = INV.investAcct(u);
+  return (Number(ia.portfolios.stock) || 0) + Math.max(0, Number(ia.stockLeftover) || 0);
+};
+window.LT_PREVIEW_CLOSE = (...a) => LT.previewClose(...a);
 LT.splitLabel = function (sp) {
   if (!sp) return 'Trade closed';
   const fee = sp.fee > 0 ? ` · ${usd(sp.fee)} USD fee` : '';
