@@ -55,6 +55,9 @@ if (!parts.length) {
   }
 }
 
+/* 2b. market data proxy routes are wired into server.js at build time */
+try { const ps = require('./patch-server'); ps.patchConnections(require('path').join(__dirname, '..', 'connections.js')); ps.patchServer(require('path').join(__dirname, '..', 'server.js')); } catch (e) { console.warn('[app] patch-server failed: ' + e.message); }
+
 /* 3. app modules owned by the repo ------------------------------------------- */
 const MODULES = [
   { file: 'subscriptions.js', marker: 'wc-subs' },
@@ -67,6 +70,7 @@ const MODULES = [
   { file: 'market-live.js', marker: 'wc-market-live' },
   { file: 'market-keys.js', marker: 'wc-market-keys' },
   { file: 'wc-extras.js', marker: 'wc-extras' },
+  { file: 'market-data-ui.js', marker: 'wc-market-data-ui' },
   { file: 'market-247.js', marker: 'wc-market-247' },
   { file: 'trade-guide.js', marker: 'wc-trade-guide' },
   { file: 'investment-hub.js', marker: 'wc-investment-hub' },
