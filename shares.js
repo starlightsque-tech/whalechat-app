@@ -79,6 +79,10 @@ class ShareService {
       changed = true;
     }
     if (!Array.isArray(db.shareInvestments)) { db.shareInvestments = []; changed = true; }
+    if (!db.shareSettings || typeof db.shareSettings !== 'object') {
+      db.shareSettings = { investmentsPaused: false, pauseReason: '', volatilityPct: 0.6 };
+      changed = true;
+    }
     if (!db.shareMarket || typeof db.shareMarket !== 'object') {
       db.shareMarket = { priceUsd: BASE_SHARE_PRICE, basePriceUsd: BASE_SHARE_PRICE, history: [], updatedAt: Date.now() };
       changed = true;
@@ -222,6 +226,8 @@ class ShareService {
         updatedAt: market.updatedAt || Date.now(),
         history: (market.history || []).slice(-240)
       },
+      investmentsPaused: !!(db.shareSettings && db.shareSettings.investmentsPaused),
+      pauseReason: (db.shareSettings && db.shareSettings.investmentsPaused && db.shareSettings.pauseReason) || '',
       serverTime: Date.now()
     };
   }
@@ -234,6 +240,8 @@ class ShareService {
     const userId = String(opts.userId || '');
     const u = (db.users || []).find((x) => x.id === userId);
     if (!u) throw new Error('User not found');
+    const ss = db.shareSettings || {};
+    if (ss.investmentsPaused) throw new Error('New WhaleChat share investments are paused by an administrator' + (ss.pauseReason ? ': ' + ss.pauseReason : ''));
     const plan = this.plan(String(opts.planId || ''));
     if (!plan || plan.enabled === false) throw new Error('That investment plan is not available');
 
@@ -289,6 +297,7 @@ class ShareService {
       plans: this.plans(),
       market: { priceUsd: round(this.sharePrice(), 4), priceCoins: round(this.sharePrice() * 2, 2), updatedAt: this.market().updatedAt },
       units: ['days', 'months', 'years'],
+      settings: this.settingsView(),
       stats: {
         plans: this.plans().length,
         active: active.length,
@@ -338,6 +347,119 @@ class ShareService {
     return this.adminState();
   }
 
+  /* ------------------------ admin: settings + investments ------------------ */
+  settingsView() {
+    const db = this.getDb && this.getDb();
+    if (!db) throw new Error('Database not ready');
+    this.ensureDefaults(db);
+    const ss = db.shareSettings || {};
+    const m = db.shareMarket || {};
+    return {
+      basePriceUsd: round(Number(m.basePriceUsd) || BASE_SHARE_PRICE, 4),
+      priceUsd: round(this.sharePrice(), 4),
+      volatilityPct: clamp(ss.volatilityPct, 0, 10, 0.6),
+      investmentsPaused: !!ss.investmentsPaused,
+      pauseReason: ss.pauseReason || ''
+    };
+  }
+
+  /* returns { before, after, state } so the caller can write admin_logs */
+  saveSettings(opts) {
+    const db = this.getDb && this.getDb();
+    if (!db) throw new Error('Database not ready');
+    this.ensureDefaults(db);
+    const before = this.settingsView();
+    const ss = db.shareSettings;
+    const m = db.shareMarket;
+    if (opts.basePriceUsd != null && opts.basePriceUsd !== '') {
+      const b = Number(opts.basePriceUsd);
+      if (!(b >= 0.01 && b <= 1000000)) throw new Error('Base share price must be between $0.01 and $1,000,000');
+      m.basePriceUsd = round(b, 4);
+    }
+    if (opts.resetPriceToBase === true) {
+      m.priceUsd = round(Number(m.basePriceUsd) || BASE_SHARE_PRICE, 4);
+      m.history = m.history || [];
+      m.history.push({ t: Date.now(), p: m.priceUsd });
+    }
+    if (opts.volatilityPct != null && opts.volatilityPct !== '') {
+      const v = Number(opts.volatilityPct);
+      if (!(v >= 0 && v <= 10)) throw new Error('Volatility must be between 0% and 10% per tick');
+      ss.volatilityPct = round(v, 3);
+    }
+    if (typeof opts.investmentsPaused === 'boolean') ss.investmentsPaused = opts.investmentsPaused;
+    if (opts.pauseReason != null) ss.pauseReason = String(opts.pauseReason).slice(0, 200);
+    m.updatedAt = Date.now();
+    this.changed('share-settings');
+    const after = this.settingsView();
+    return { before, after, state: this.adminState() };
+  }
+
+  adminInvestments(q) {
+    const db = this.getDb && this.getDb();
+    if (!db) throw new Error('Database not ready');
+    this.ensureDefaults(db);
+    const status = String((q && q.status) || 'active');
+    const search = String((q && q.q) || '').trim().toLowerCase();
+    const users = new Map((db.users || []).map((u) => [u.id, u]));
+    const rows = (db.shareInvestments || []).filter((x) => x && (status === 'all' || x.status === status)).map((x) => {
+      const u = users.get(x.userId) || {};
+      return Object.assign(this.investmentView(x), { userId: x.userId, username: u.username || '', fullName: u.fullName || '', email: u.email || '', cancelledAt: x.cancelledAt || null, adminNote: x.adminNote || '' });
+    }).filter((r) => !search || [r.username, r.fullName, r.email, r.planName, r.id].some((v) => String(v || '').toLowerCase().includes(search)));
+    rows.sort((a, b) => b.startAt - a.startAt);
+    return { ok: true, investments: rows.slice(0, 500), total: rows.length };
+  }
+
+  /* opts: { id, action: 'edit' | 'cancel', dailyReturnPct?, endAt?, note?, refund? }
+     returns { before, after, view } */
+  adminUpdateInvestment(opts) {
+    const db = this.getDb && this.getDb();
+    if (!db) throw new Error('Database not ready');
+    this.ensureDefaults(db);
+    const inv = (db.shareInvestments || []).find((x) => x && x.id === String(opts.id || ''));
+    if (!inv) throw new Error('Investment not found');
+    if (inv.status !== 'active') throw new Error('Only active investments can be changed');
+    const snapshot = (x) => ({ status: x.status, dailyReturnPct: x.dailyReturnPct, totalReturnPct: x.totalReturnPct, durationDays: x.durationDays, endAt: x.endAt, amountUsd: x.amountUsd, amountCoins: x.amountCoins, adminNote: x.adminNote || '' });
+    const before = snapshot(inv);
+    const now = Date.now();
+    const note = opts.note != null ? String(opts.note).slice(0, 200) : null;
+    if (opts.action === 'cancel') {
+      const u = (db.users || []).find((x) => x.id === inv.userId);
+      const refund = opts.refund !== false;
+      inv.status = 'cancelled';
+      inv.cancelledAt = now;
+      inv.endAt = Math.min(Number(inv.endAt) || now, now);
+      inv.refundedUsd = refund ? round(inv.amountUsd, 2) : 0;
+      if (note != null) inv.adminNote = note;
+      if (u && refund) {
+        setPf(u, 'wc', pf(u, 'wc') + round(inv.amountUsd, 2));
+        this.tx(db, inv.userId, `WhaleChat shares cancelled · ${inv.planName} · principal refunded`, round(inv.amountCoins, 2), 'share-cancel', { investmentId: inv.id, refundedUsd: inv.refundedUsd });
+      }
+      if (u) this.notify(db, inv.userId, 'WhaleChat share investment cancelled', `${inv.planName} was cancelled by an administrator.` + (refund ? ` Your $${round(inv.amountUsd, 2).toFixed(2)} principal was returned to WC-Investing capital.` : '') + (note ? ' Note: ' + note : ''), 'trend');
+    } else if (opts.action === 'edit') {
+      if (opts.dailyReturnPct != null && opts.dailyReturnPct !== '') {
+        const r = Number(opts.dailyReturnPct);
+        if (!(r >= 0 && r <= 1000)) throw new Error('Daily return must be between 0% and 1000%');
+        inv.dailyReturnPct = r;
+        inv.returnPct = r;
+      }
+      if (opts.endAt != null && opts.endAt !== '') {
+        const e = Number(opts.endAt) || Date.parse(opts.endAt);
+        if (!(e > (Number(inv.startAt) || 0) + 60000)) throw new Error('End date must be after the start date');
+        if (e > (Number(inv.startAt) || now) + 3650 * 86400000) throw new Error('End date is too far in the future');
+        inv.endAt = e;
+        inv.durationDays = Math.max(1, Math.round((e - Number(inv.startAt)) / 86400000));
+        inv.durationLabel = inv.durationDays + ' day' + (inv.durationDays === 1 ? '' : 's');
+      }
+      inv.totalReturnPct = round((Number(inv.dailyReturnPct) || 0) * (Number(inv.durationDays) || 1), 2);
+      if (note != null) inv.adminNote = note;
+      this.notify(db, inv.userId, 'WhaleChat share investment updated', `${inv.planName} now pays ${inv.dailyReturnPct}% daily and matures ${new Date(inv.endAt).toLocaleDateString()}.`, 'trend');
+    } else {
+      throw new Error('action must be edit or cancel');
+    }
+    this.changed('share-admin-investment');
+    return { before, after: snapshot(inv), view: this.investmentView(inv) };
+  }
+
   /* --------------------------------- worker -------------------------------- */
   tick() {
     const db = this.getDb && this.getDb();
@@ -348,7 +470,8 @@ class ShareService {
     const base = Number(market.basePriceUsd) || BASE_SHARE_PRICE;
     let price = Number(market.priceUsd) || base;
     /* small random walk with gentle mean reversion around the base price */
-    const noise = (Math.random() - 0.5) * 0.006;
+    const vol = clamp(db.shareSettings && db.shareSettings.volatilityPct, 0, 10, 0.6) / 100;
+    const noise = (Math.random() - 0.5) * vol;
     const drift = (base - price) / base * 0.004;
     price = Math.max(1, price * (1 + noise + drift));
     market.priceUsd = round(price, 4);

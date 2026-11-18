@@ -4,7 +4,8 @@
    talks to /api/market/symbols|quote|candles|symbol-search and /ws/market.
    - quote cache 5s, candle cache 30s
    - provider failure -> last cached value flagged delayed:true
-   - demo data only when no provider can serve the symbol (flagged source:"demo")
+   - never a made-up price: no demo/synthetic quotes or candles (3.46)
+   - when market-admin is wired in, quote() is answered from market_price_cache
    ========================================================================= */
 'use strict';
 const https = require('https');
@@ -15,7 +16,6 @@ const TFS = { '1m': 60, '5m': 300, '15m': 900, '1H': 3600, '4H': 14400, '1D': 86
 const CRYPTO = ['BTCUSDT','ETHUSDT','BNBUSDT','SOLUSDT','XRPUSDT','DOGEUSDT','ADAUSDT','AVAXUSDT','LINKUSDT','TRXUSDT','DOTUSDT','LTCUSDT'];
 const STOCKS = ['AAPL','MSFT','NVDA','TSLA','AMZN','GOOGL','META','NFLX','AMD','JPM','V','DIS'];
 const FOREX = ['EURUSD','GBPUSD','USDJPY','AUDUSD','USDCAD','USDCHF','NZDUSD','EURGBP'];
-const DEMO_BASE = { BTCUSDT: 65000, ETHUSDT: 3200, AAPL: 190, MSFT: 420, NVDA: 900, TSLA: 200, EURUSD: 1.08 };
 
 function getJSON(url, headers) {
   return new Promise((resolve, reject) => {
@@ -82,29 +82,26 @@ function createMarketData(opts) {
     return null;
   }
 
-  function demoQuote(sym) {
-    const base = DEMO_BASE[sym] || 100;
-    const t = Math.floor(Date.now() / 5000);
-    const price = base * (1 + 0.01 * Math.sin(t / 37) + 0.004 * Math.sin(t / 7));
-    return { symbol: sym, price: +price.toFixed(base < 10 ? 5 : 2), change: 0, changePct: 0, source: 'demo', demo: true };
-  }
+  let quoteSource = null;   // market-admin: provider-only market_price_cache
+  function setQuoteSource(fn) { quoteSource = typeof fn === 'function' ? fn : null; }
 
   async function quote(symbol) {
     const sym = String(symbol || '').toUpperCase().replace(/[^A-Z0-9.]/g, '');
     if (!sym) throw new Error('symbol required');
+    if (quoteSource) return quoteSource(sym);
     const hit = qCache.get(sym);
     if (hit && Date.now() - hit.at < QUOTE_TTL) return hit.v;
     try {
-      let q = await quoteRaw(sym);
-      if (!q) { q = demoQuote(sym); }
-      q.ts = Date.now(); q.delayed = false;
-      qCache.set(sym, { at: Date.now(), v: q, real: !q.demo });
+      const q = await quoteRaw(sym);
+      if (!q) throw new Error('no provider configured for ' + sym);
+      q.ts = Date.now(); q.delayed = false; q.is_delayed = false;
+      qCache.set(sym, { at: Date.now(), v: q, real: true });
       return q;
     } catch (e) {
       const pv = kindOf(sym) === 'crypto' ? 'binance' : (cfg().finnhub.apiKey && kindOf(sym) === 'stocks' ? 'finnhub' : 'twelvedata');
       setHealth(pv, false, e);
-      if (hit && hit.real) { const v = Object.assign({}, hit.v, { delayed: true, label: 'Delayed Data', stale: Date.now() - hit.v.ts }); return v; }
-      const d = demoQuote(sym); d.delayed = true; d.label = 'Delayed Data'; d.error = 'provider_unavailable'; return d;
+      if (hit && hit.real) { const v = Object.assign({}, hit.v, { delayed: true, is_delayed: true, label: 'Delayed Data', stale: Date.now() - hit.v.ts }); return v; }
+      throw new Error('no_price');
     }
   }
 
@@ -144,17 +141,6 @@ function createMarketData(opts) {
     });
     return out;
   }
-  function demoCandles(sym, tf) {
-    const sec = TFS[tf], base = DEMO_BASE[sym] || 100, now = Math.floor(Date.now() / 1000 / sec) * sec, out = [];
-    let p = base;
-    for (let i = 300; i >= 0; i--) {
-      const t = now - i * sec, o = p;
-      p = o * (1 + 0.004 * Math.sin((t / sec) / 5) + 0.002 * Math.cos((t / sec) / 2));
-      out.push({ time: t, open: o, high: Math.max(o, p) * 1.001, low: Math.min(o, p) * 0.999, close: p, volume: 100 + (i * 37) % 90 });
-    }
-    return out;
-  }
-
   async function candles(symbol, tf) {
     const sym = String(symbol || '').toUpperCase().replace(/[^A-Z0-9.]/g, '');
     if (!TFS[tf]) tf = '1H';
@@ -162,13 +148,14 @@ function createMarketData(opts) {
     if (hit && Date.now() - hit.at < CANDLE_TTL) return hit.v;
     try {
       const r = await candlesRaw(sym, tf);
-      const v = r ? { symbol: sym, tf, source: r.source, candles: r.candles, delayed: false } : { symbol: sym, tf, source: 'demo', demo: true, candles: demoCandles(sym, tf), delayed: false };
-      cCache.set(key, { at: Date.now(), v, real: !v.demo });
+      if (!r) return { symbol: sym, tf, source: null, candles: [], delayed: false, error: 'no_provider' };
+      const v = { symbol: sym, tf, source: r.source, candles: r.candles, delayed: false };
+      cCache.set(key, { at: Date.now(), v, real: true });
       return v;
     } catch (e) {
       log('[market-data] candles ' + sym + ': ' + e.message);
       if (hit && hit.real) return Object.assign({}, hit.v, { delayed: true, label: 'Delayed Data' });
-      return { symbol: sym, tf, source: 'demo', demo: true, delayed: true, label: 'Delayed Data', error: 'provider_unavailable', candles: demoCandles(sym, tf) };
+      return { symbol: sym, tf, source: null, delayed: true, label: 'Delayed Data', error: 'provider_unavailable', candles: [] };
     }
   }
 
@@ -263,6 +250,6 @@ function createMarketData(opts) {
     if (t.unref) t.unref();
   }
 
-  return { quote, candles, symbols, search, status, save, test, attachWs, kindOf };
+  return { quote, candles, symbols, search, status, save, test, attachWs, kindOf, setQuoteSource };
 }
 module.exports = { createMarketData };
