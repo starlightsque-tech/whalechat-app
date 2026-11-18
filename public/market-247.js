@@ -8,13 +8,13 @@
                             NVDA 24/7 AMZN 24/7
      · Indices 24/7         US30 24/7 US100 24/7 GOLD 24/7 OIL 24/7
 
-   · the list is filtered to that universe — traditional exchange listings are
-     never shown even if an old database still carries them
+   · the list is filtered to that universe until the admin connects a data
+     provider (Finnhub, Binance or Alpaca); after that every listed asset shows
    · every card carries a pulsing dot + "LIVE — 24/7" and synthetic assets a
      "24/7 SYNTHETIC · ALWAYS LIVE" badge
    · a watchdog forces a feed refresh when any quote is older than 5 seconds,
-     and a local continuity tick keeps prices (and therefore charts) moving if
-     the network is unreachable, so nothing ever freezes on a weekend
+     and a local continuity tick keeps synthetic prices moving if the network
+     is unreachable; real-feed assets never receive invented ticks
    · trade flow, payouts, TP/SL and the wallet are untouched
    ========================================================================= */
 'use strict';
@@ -36,10 +36,31 @@
   var CATS = ['All Live', 'Crypto', 'US Stocks', 'Forex', 'Indices'];
   var DISCLAIMER = 'WhaleChat trades live real stock prices mirroring real markets, but the trade flow is built for the future because the WhaleChat trading system is designed to let users have tools that can help them never take a total loss on any trade — whether the market is falling or rising against the user\'s trade direction. This ensures no user ends with a negative or zero trade balance, and users can also earn dividends reward bonuses on each trade held until time closing. It also allows users to trade NYSE/NASDAQ-style assets. This is what allows 24/7 trading.';
 
+  /* feed detection: any connected provider switches the full list on */
+  function pollFeeds() {
+    var base = '';
+    try { if (typeof Remote !== 'undefined' && Remote && Remote.enabled) base = Remote.base || ''; } catch (e) {}
+    fetch(base + '/api/market/status', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (st) {
+      if (!st) return;
+      var f = st.feeds || {};
+      var on = !!(st.hasKey || f.finnhub || f.binance || f.alpaca || Number(st.realTickers) > 0);
+      if (on !== !!window.__wcFeedsOn) {
+        window.__wcFeedsOn = on;
+        try { if (typeof render === 'function') render(); } catch (e) {}
+      }
+    }).catch(function () {});
+  }
+  pollFeeds();
+  setInterval(pollFeeds, 20000);
+
   function inv() {
     try { return (typeof INV !== 'undefined') ? INV : null; } catch (e) { return null; }
   }
   function dbOk() { try { return typeof DB !== 'undefined' && DB && DB.stocks; } catch (e) { return false; } }
+  function strict247(s) {
+    var w = window.__wcFeedsOn; window.__wcFeedsOn = false;
+    try { return is247(s); } finally { window.__wcFeedsOn = w; }
+  }
   function is247(s) {
     if (!s || !s.ticker) return false;
     var t = String(s.ticker).toUpperCase();
@@ -48,6 +69,9 @@
     var n = String(s.name || '');
     if (/24\/7/i.test(n)) return true;
     if (s.twentyFourSeven === true && s.hidden !== true) return true;
+    /* once the admin has connected Finnhub, Binance or Alpaca, every listed
+       (non-hidden) asset joins the market list */
+    if (window.__wcFeedsOn && s.hidden !== true) return true;
     return false;
   }
   function synthetic(s) {
@@ -62,6 +86,12 @@
     if (UNIVERSE.forex.indexOf(t) >= 0) return 'Forex';
     if (UNIVERSE.stocks.indexOf(t) >= 0) return 'US Stocks';
     if (UNIVERSE.indices.indexOf(t) >= 0) return 'Indices';
+    var ac = String((s && s.assetClass) || '').toLowerCase();
+    if (window.__wcFeedsOn && ac) {
+      if (ac === 'crypto') return 'Crypto';
+      if (ac === 'forex') return 'Forex';
+      if (ac === 'us' || ac === 'global') return 'US Stocks';
+    }
     var n = String((s && s.name) || '');
     if (/crypto|btc|eth|sol|doge|xrp|bnb/i.test(t + ' ' + n)) return 'Crypto';
     if (/forex|synthetic pair/i.test(String((s && s.sector) || ''))) return 'Forex';
@@ -128,7 +158,7 @@
     var baseCard = I.cardHTML;
     I.cardHTML = function (s) {
       var html = baseCard.apply(this, arguments);
-      if (!is247(s)) return html;
+      if (!strict247(s)) return html;
       var badge = synthetic(s)
         ? '<span class="wc247-badge">24/7 SYNTHETIC · ALWAYS LIVE</span>'
         : '<span class="wc247-badge live">LIVE · 24/7</span>';
@@ -173,7 +203,7 @@
       var s = null;
       try { s = I.stock(ticker); } catch (e) {}
       var html = base.apply(this, arguments);
-      if (!s || !is247(s)) return html;
+      if (!s || !strict247(s)) return html;
       var bar = '<div class="wc247-livebar"><span class="wc247-dot"></span><b>LIVE — 24/7</b>' +
         '<span class="wc247-badge' + (synthetic(s) ? '' : ' live') + '">' + (synthetic(s) ? '24/7 SYNTHETIC · ALWAYS LIVE' : 'CONTINUOUS MARKET') + '</span>' +
         '<span class="wc247-updated" data-wc247-updated="' + s.ticker + '">updating…</span></div>';
@@ -248,10 +278,12 @@
     try { list = I.visibleStocks(); } catch (e) { return; }
     list.forEach(function (s) {
       var q = I.live && I.live[s.ticker];
+      /* real-feed assets are never given invented ticks */
+      var synth = strict247(s);
       /* The feed can be empty before the first poll — seed the first quote. */
-      if (!q || !(Number(q.price) > 0)) { tickLocal(s.ticker); stale = true; return; }
+      if (!q || !(Number(q.price) > 0)) { if (synth) tickLocal(s.ticker); stale = true; return; }
       var age = now - (Number(q.updatedAt) || 0);
-      if (age > 5000) { stale = true; tickLocal(s.ticker); }
+      if (age > 5000) { stale = true; if (synth) tickLocal(s.ticker); }
       paintTicker(s.ticker);
     });
     if (stale) {
