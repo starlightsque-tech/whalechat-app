@@ -310,6 +310,7 @@ const LT = {
 
     t.status = 'Completed';
     t.closedAt = Date.now();
+    t.totalMoveCount = LT.totalMovesOf(t);
     t.closeReason = reason;
     t.exitPrice = p.price;
     t.pnlCoins = p.pnlCoins;
@@ -454,6 +455,7 @@ const LT = {
       <div class="lt-row">
         <span class="tiny muted">Price <b data-lt-price="${t.id}">${this.px(t.ticker, p.price)}</b>
           <span data-lt-move="${t.id}" class="${p.movePct >= 0 ? 'up' : 'down'}">${p.movePct >= 0 ? '▲' : '▼'} ${Math.abs(p.movePct).toFixed(2)}%</span></span>
+        <span class="tiny muted">Moves <b data-lt-moves="${t.id}">${LT.totalMovesOf(t)}</b></span>
         <span class="tiny muted" data-lt-left="${t.id}">⏱ ${this.clock(p.left)}</span>
       </div>
       <div class="lt-levels">
@@ -536,6 +538,7 @@ const LT = {
       ${row('Take loss', esc(slText), slPx > 0 || slPct > 0 || trail > 0 ? 'down' : '')}
       ${row('Trade duration', esc(dur))}
       ${row('Capital', usd(Number(pick('capitalCoins')) || 0) + ' USD')}
+      ${row(live ? 'Trade moves so far' : 'Trade moves (open → close)', esc(String(LT.totalMovesOf(t))) + (live ? ' <small class="muted">(live)</small>' : ''))}
       ${live ? '' : `<div class="tiny ${pnl > 0 ? 'up' : pnl < 0 ? 'down' : 'muted'}" style="margin-top:6px">Closed ${t.closedAt ? esc(new Date(t.closedAt).toLocaleString()) : ''} at ${this.px(t.ticker, t.exitPrice || 0)} · ${pnl >= 0 ? '+' : '−'}${usd(Math.abs(pnl))} USD P/L</div>`}
     </div>`;
   },
@@ -558,6 +561,7 @@ const LT = {
         <div class="small" style="font-weight:650">${esc(this.label(t.ticker))} ${t.side === 'short' ? 'Fall' : 'Rise'}
           <span class="tiny muted">· ${t.leverage}× · ${esc(t.closeReason || 'closed')}</span></div>
         <div class="tiny muted">${usd(t.capitalCoins)} USD @ ${this.px(t.ticker, t.entryPrice)} → ${this.px(t.ticker, t.exitPrice || 0)} · ${dateLabel(t.closedAt)} ${clockTime(t.closedAt)}</div>
+        <div class="tiny muted">${LT.totalMovesOf(t)} trade move${LT.totalMovesOf(t) === 1 ? '' : 's'} from open to close</div>
         <div class="lt-hist-levels">${Number(t.takeProfitPrice) > 0 ? `<span class="tp">TP ${usd(t.takeProfitPrice)}</span>` : '<span>TP —</span>'}
           ${Number(t.stopLossPrice) > 0 ? `<span class="sl">${t.trailingActive ? 'TSL' : 'SL'} ${usd(t.stopLossPrice)}</span>` : '<span>SL —</span>'}
           ${t.trailingActive ? `<span class="trail">trail ${Number(t.trailingStopPct).toFixed(1)}%</span>` : ''}</div>
@@ -586,6 +590,7 @@ const LT = {
       set('[data-lt-price="' + t.id + '"]', this.px(t.ticker, p.price));
       set('[data-lt-move="' + t.id + '"]', (p.movePct >= 0 ? '▲ ' : '▼ ') + Math.abs(p.movePct).toFixed(2) + '%');
       set('[data-lt-left="' + t.id + '"]', '⏱ ' + this.clock(p.left));
+      set('[data-lt-moves="' + t.id + '"]', String(LT.totalMovesOf(t)));
       document.querySelectorAll('[data-lt-pnl="' + t.id + '"], [data-lt-pct="' + t.id + '"]').forEach(el => {
         el.classList.toggle('up', p.pnlCoins > 0);
         el.classList.toggle('down', p.pnlCoins < 0);
@@ -2659,8 +2664,17 @@ LT.movesOf = function (t, price) {
   const n = Number(t.moveCount) || 0;
   const p = Number(price);
   if (t._cEntry !== t.entryPrice) { t._cEntry = t.entryPrice; t._cMoves = 0; t._cLast = undefined; }
-  if (p > 0 && p !== t._cLast) { if (t._cLast > 0) t._cMoves = (t._cMoves || 0) + 1; t._cLast = p; }
+  if (p > 0 && p !== t._cLast) {
+    if (t._cLast > 0) { t._cMoves = (t._cMoves || 0) + 1; t.clientMoveTotal = (Number(t.clientMoveTotal) || 0) + 1; }
+    t._cLast = p;
+  }
   return Math.max(1, n, t._cMoves || 0);
+};
+/* total trade moves from open to close (never reset by Auto Secure / take-profit re-bases).
+   Server count (totalMoveCount) wins; older trades fall back to the moves since the last re-base. */
+LT.totalMovesOf = function (t) {
+  if (!t) return 0;
+  return Math.max(Number(t.totalMoveCount) || 0, Number(t.clientMoveTotal) || 0, Number(t.moveCount) || 0, t._cMoves || 0);
 };
 LT.priceMovePct = function (entry, price) {
   const e = Number(entry), p = Number(price);
