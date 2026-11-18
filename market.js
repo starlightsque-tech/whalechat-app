@@ -1426,7 +1426,10 @@ class MarketService {
         if (!t.direction) t.direction = direction;
         /* count each distinct real price change since entry */
         if (Number(q.price) > 0 && q.price !== t.lastMovePrice) {
-          if (Number(t.lastMovePrice) > 0) t.moveCount = (Number(t.moveCount) || 0) + 1;
+          if (Number(t.lastMovePrice) > 0) {
+            t.moveCount = (Number(t.moveCount) || 0) + 1;
+            t.totalMoveCount = (Number(t.totalMoveCount) || 0) + 1; /* whole trade, never reset */
+          }
           t.lastMovePrice = q.price;
         }
         if (t.stakeAmount == null) t.stakeAmount = t.capitalCoins;
