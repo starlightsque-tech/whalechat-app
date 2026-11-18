@@ -60,11 +60,12 @@ const ofs = path.join(PUB, 'offline-first.js');
 if (!fs.existsSync(ofs)) fail.push('public/offline-first.js missing');
 else {
   const s = read(ofs);
-  if (!/var DB_VER = 2/.test(s)) fail.push('IndexedDB schema is not at version 2');
-  ['messages', 'chats', 'profiles', 'products', 'cart', 'orders', 'outbox'].forEach((st) => {
+  const ver = (s.match(/var DB_VER = (\d+)/) || [])[1];
+  if (!ver || Number(ver) < 3) fail.push('IndexedDB schema is at version ' + ver + ', expected >= 3');
+  ['messages', 'chats', 'profiles', 'products', 'cart', 'orders', 'txs', 'outbox'].forEach((st) => {
     if (!new RegExp("'" + st + "'").test(s)) fail.push('IndexedDB store missing: ' + st);
   });
-  ok.push('IndexedDB v2: chat, messages, profiles, products, cart, orders, outbox');
+  ok.push('IndexedDB v3: chat, messages, profiles, products, cart, orders, wallet txs, outbox');
 }
 
 /* 2c. offline data + diagnostics modules --------------------------------- */
@@ -82,10 +83,12 @@ const msFile = path.join(PUB, 'message-search.js');
 if (!fs.existsSync(msFile)) fail.push('public/message-search.js missing');
 else {
   const s = read(msFile);
-  if (!/WC_MSG_SEARCH/.test(s)) fail.push('message-search.js does not expose WC_MSG_SEARCH');
-  if (!/searchMessages/.test(s)) fail.push('message-search.js does not use the offline mirror');
+  if (!/WC_SEARCH/.test(s)) fail.push('message-search.js does not expose WC_SEARCH');
+  if (!/searchMessages|OF\.all\('messages'\)/.test(s)) fail.push('message-search.js does not use the offline mirror');
   if (!/wc-ms-row/.test(s)) fail.push('message-search.js has no result rows');
-  ok.push('message search: memory + IndexedDB mirror, highlighted results');
+  if (!/wc-ms-group/.test(s)) fail.push('message-search.js does not group results by type');
+  if (!/wc-chat-search/.test(s)) fail.push('message-search.js does not mount a search box on Chats');
+  ok.push('device-wide search: memory + IndexedDB, grouped by type, single Chats box');
 }
 const oaFile = path.join(PUB, 'offline-actions.js');
 if (!fs.existsSync(oaFile)) fail.push('public/offline-actions.js missing');

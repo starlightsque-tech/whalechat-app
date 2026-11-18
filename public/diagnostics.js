@@ -97,7 +97,7 @@
           if (v.at > out.api.newest) out.api.newest = v.at;
           if (!out.api.oldest || v.at < out.api.oldest) out.api.oldest = v.at;
         });
-        var stores = ['messages', 'chats', 'profiles', 'products', 'cart', 'orders', 'outbox'];
+        var stores = ['messages', 'chats', 'profiles', 'products', 'cart', 'orders', 'txs', 'outbox'];
         for (var s = 0; s < stores.length; s++) {
           out.mirror[stores[s]] = await OF.count(stores[s]);
         }

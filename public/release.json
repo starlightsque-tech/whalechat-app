@@ -1,8 +1,8 @@
 {
-  "version": "3.50.0",
-  "build": "2026-11-18T23:58:00Z",
+  "version": "3.51.0",
+  "build": "2026-11-19T00:20:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.50.0 - Offline message search from the Chat screen (memory + IndexedDB mirror, highlighted snippets, tap to open) and device mode for money: deposits, withdrawals, transfers and invest trades recorded on the device and synced on reconnect, with an explicit explanation for server-only spot tickets, shares and bots.",
-  "releasedAt": "2026-11-18T23:58:00Z",
+  "notes": "WhaleChat 3.51.0 - One device-wide search on the Chats screen: messages, products, orders and wallet history from memory + IndexedDB, grouped by type with counts, deep links into each result. Same behaviour online and offline.",
+  "releasedAt": "2026-11-19T00:20:00Z",
   "minimum": "3.0.0"
 }

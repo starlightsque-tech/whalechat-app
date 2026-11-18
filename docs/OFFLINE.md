@@ -220,3 +220,26 @@ notice and point to Invest, which does work offline.
 A **Device mode** notice appears at the top of wallet / deposit / withdraw /
 transfer / checkout / invest pages while offline, naming exactly what is saved
 locally and what happens on reconnect.
+
+## One search box for everything on the device
+
+The Chats screen carries a single search field — *“Search messages, products,
+orders, wallet”* — plus magnifiers in the Chats and chat-room headers and
+`Ctrl/Cmd + F` inside a conversation (`WC_SEARCH.open()`). Results are grouped
+by type with a count per group:
+
+| Group | Matches on | Opens |
+| --- | --- | --- |
+| Messages | message text | that conversation |
+| Products | name, category, description, ticker | the product page |
+| Orders | order ref/id, status, item names | Orders / tracking |
+| Wallet | transaction label and type | Wallet |
+
+Each result is tagged **on device** when it came from IndexedDB rather than the
+live store, and every row deep-links with `data-wcgo`. The search is local in
+both modes — online it reads the live store first and falls back to the mirror,
+offline it reads only the mirror — so the same query returns the same shape with
+or without a connection.
+
+Wallet history is mirrored into the `txs` store (schema v3) alongside messages,
+chats, profiles, products, cart and orders.

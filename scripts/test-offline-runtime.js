@@ -58,7 +58,8 @@ const DB = {
   products: [{ id: 'p1', name: 'Shirt', priceUsd: 10, stock: 5, active: true }],
   messages: [],
   chatsMeta: {},
-  orders: [],
+  orders: [{ id: 'ord1', ref: 'WC-ABC12', buyerId: 'u1', vendorId: 'v1', items: [{ name: 'Shirt', qty: 2, priceUsd: 10 }], totalUsd: 20, totalCoins: 40, status: 'processing', createdAt: Date.now() }],
+  txs: [{ id: 'tx1', userId: 'u1', type: 'deposit', label: 'Deposit approved', coins: 50, createdAt: Date.now() }],
   investAcct: { b2bAlerts: [] }
 };
 let renders = 0;
@@ -141,6 +142,20 @@ const check = (name, cond, extra) => { results.push({ name, ok: !!cond, extra })
   check('search result highlights the match', !!window.document.querySelector('.wc-ms-snip mark'));
   check('search result says the data is on device', /on device/i.test(window.document.getElementById('wcMsMeta').textContent + (rows[0] ? rows[0].textContent : '')));
   window.WC_MSG_SEARCH.close();
+
+  /* ---- 2b2. one box, grouped by type across products/orders/wallet ----- */
+  const gAll = await window.WC_SEARCH.searchAll('shirt');
+  check('search finds products', gAll.products.length >= 1, String(gAll.products.length));
+  check('search finds orders by item name', gAll.orders.length >= 1, String(gAll.orders.length));
+  const gWallet = await window.WC_SEARCH.searchAll('deposit');
+  check('search finds wallet history', gWallet.wallet.length >= 1, String(gWallet.wallet.length));
+  window.WC_SEARCH.open('shirt');
+  await new Promise((r) => setTimeout(r, 400));
+  const groups = window.document.querySelectorAll('.wc-ms-group');
+  check('results grouped by type', groups.length >= 2, String(groups.length));
+  const heads = Array.prototype.map.call(groups, (x) => x.querySelector('h5').textContent).join('|');
+  check('group headers carry counts', /Products\s*\d/.test(heads) || /Products/.test(heads), heads);
+  window.WC_SEARCH.close();
 
   /* ---- 2c. money action queued offline (deposit request) --------------- */
   window.App.submitDeposit('crypto');

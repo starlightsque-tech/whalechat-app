@@ -35,7 +35,7 @@
   var META_STORE = 'meta';
   var OUTBOX_STORE = 'outbox';
   var DB_NAME = 'wc-offline';
-  var DB_VER = 2;
+  var DB_VER = 3;
   var MAX_CACHE_BYTES = 1500000;
   var API_TTL = 7 * 24 * 3600 * 1000;      /* last-known data stays a week */
 
@@ -49,7 +49,8 @@
     profiles: null,
     products: null,
     cart: null,
-    orders: null
+    orders: null,
+    txs: null
   };
 
   var OF = window.WC_OFFLINE = {
@@ -96,6 +97,12 @@
         if (!d.objectStoreNames.contains('orders')) {
           var os2 = d.createObjectStore('orders', { keyPath: 'id' });
           os2.createIndex('createdAt', 'createdAt', { unique: false });
+        }
+        /* v3 — wallet history */
+        if (!d.objectStoreNames.contains('txs')) {
+          var txs = d.createObjectStore('txs', { keyPath: 'id' });
+          txs.createIndex('createdAt', 'createdAt', { unique: false });
+          txs.createIndex('userId', 'userId', { unique: false });
         }
       };
       r.onsuccess = function () { resolve(r.result); };

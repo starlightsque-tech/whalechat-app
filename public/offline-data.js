@@ -213,12 +213,21 @@
       };
     });
 
+    var txs = (dbx.txs || []).slice(0, 900).map(function (t) {
+      return {
+        id: t.id, userId: t.userId || null, type: t.type || 'entry',
+        label: t.label || '', coins: Number(t.coins) || 0,
+        createdAt: t.createdAt || now, meta: t.meta || null
+      };
+    });
+
     return Promise.all([
       OF.bulk('profiles', users),
       OF.bulk('products', products),
       OF.bulk('messages', msgs),
       OF.bulk('chats', chats),
       OF.bulk('orders', orders),
+      OF.bulk('txs', txs),
       /* cart is keyed by productId, not id */
       (function () {
         return OF.clear('cart').then(function () {
