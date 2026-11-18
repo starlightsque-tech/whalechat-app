@@ -194,9 +194,32 @@ const templates = {
            <a href="${escapeHtml(buyUrl)}" style="display:inline-block;background:#22c55e;color:#04220f;text-decoration:none;font-weight:700;padding:11px 18px;border-radius:10px;margin:0 8px 0 0">Buy now</a>
            <a href="${escapeHtml(sellUrl)}" style="display:inline-block;background:#ef4444;color:#2a0505;text-decoration:none;font-weight:700;padding:11px 18px;border-radius:10px">Sell now</a>
          </div>
-         <div style="margin-top:16px;font-size:12px;color:#63798a">This alert stays active until you remove it on the desk. Price alerts are informational and do not place orders for you.</div>`,
+         <div style="margin-top:16px;font-size:12px;color:#63798a">This alert stays active until you remove it on the desk. Price alerts do not place orders for you unless you selected Auto Buy/Sell for this asset.</div>`,
         { label: isBuy ? 'Buy ' + ticker + ' now' : 'Sell ' + ticker + ' now', url: primary }),
       text: title + '. ' + ticker + ' is ' + money(price) + ' (target ' + money(target) + '). Buy: ' + buyUrl + ' · Sell: ' + sellUrl
+    };
+  },
+  b2bAutoTrade(data, ctx) {
+    const d = data || {};
+    const user = d.user || {};
+    const first = String(user.fullName || user.username || 'there').split(' ')[0];
+    const ticker = String(d.ticker || '').toUpperCase();
+    const isBuy = String(d.side || 'buy') === 'buy';
+    const money = (v) => '$' + (Math.round((Number(v) || 0) * 100) / 100).toFixed(2);
+    const units = Number(Number(d.units) || 0).toLocaleString('en-US', { maximumFractionDigits: 6 });
+    const deskUrl = d.deskUrl || (ctx.appUrl + '/whalechat.html#/investment/b2b');
+    const payout = Number(d.payout) || 0;
+    const title = isBuy ? 'Auto Buy/Sell bought ' + ticker : 'Auto Buy/Sell sold ' + ticker;
+    const line = isBuy
+      ? 'Your Auto Buy/Sell tool bought <b style="color:#e9f4f9">' + units + ' ' + escapeHtml(ticker) + '</b> for ' + money(d.amount) + ' at your buy price of <b style="color:#e9f4f9">' + money(d.price) + '</b>. It was paid from your B2B capital balance.'
+      : 'Your Auto Buy/Sell tool sold <b style="color:#e9f4f9">' + units + ' ' + escapeHtml(ticker) + '</b> at your sell price of <b style="color:#e9f4f9">' + money(d.price) + '</b> (' + money(d.proceeds) + '). Payout <b style="color:' + (payout >= 0 ? '#22c55e' : '#ef4444') + '">' + (payout >= 0 ? '+' : '') + money(payout) + '</b> went to your B2B profit balance and ' + money(d.basis) + ' capital returned to your capital balance.';
+    return {
+      subject: title + ' · WhaleChat',
+      html: layout(title,
+        `Hi ${escapeHtml(first)},<br/><br/>${line}<br/><br/>
+         <div style="margin-top:16px;font-size:12px;color:#63798a">Auto Buy/Sell only trades assets where you selected "Use Auto Buy/Sell" and set a buy or sell price. You can switch it off on the B2B desk at any time.</div>`,
+        { label: 'Open the B2B desk', url: deskUrl }),
+      text: title + '. ' + units + ' ' + ticker + ' at ' + money(d.price) + (isBuy ? ' for ' + money(d.amount) : ' · payout ' + money(payout)) + '. ' + deskUrl
     };
   },
   verifyCode(data, ctx) {
