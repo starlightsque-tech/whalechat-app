@@ -161,7 +161,7 @@ const LT = {
     /* price move % = (current price - entry price) / capital; profit = capital x move% x leverage x number of price moves */
     const cap = Number(t.capitalCoins) || 0;
     const movePctCap = cap > 0 ? (Number(q.price) - Number(t.entryPrice)) / cap : 0;
-    let pnlCoins = cap * (movePctCap / 100) * (t.leverage || 1) * dir * Math.max(1, Number(t.moveCount) || 0);
+    let pnlCoins = cap * (movePctCap / 100) * (t.leverage || 1) * dir * LT.movesOf(t, q.price);
     pnlCoins = Math.max(-t.capitalCoins, pnlCoins);          /* never lose more than the stake */
     /* payout = capital + profit − (capital × trade fee %); the fee is taken at close */
     const fee = Math.min(LT.closeFee(t), Math.max(0, t.capitalCoins + pnlCoins));
@@ -1041,7 +1041,7 @@ LT.seriesWithTrades = function (tf, userId) {
       if (msAgo > started) { v += p.capital; return; }           /* before entry: flat capital */
       const dir = t.side === 'short' ? -1 : 1;
       const move = LT.priceMovePct(t.entryPrice, price) / 100;
-      const pnl = Math.max(-p.capital, p.capital * (((price - t.entryPrice) / (p.capital || 1)) / 100) * (t.leverage || 1) * dir * Math.max(1, Number(t.moveCount) || 0));
+      const pnl = Math.max(-p.capital, p.capital * (((price - t.entryPrice) / (p.capital || 1)) / 100) * (t.leverage || 1) * dir * Math.max(1, Number(t.moveCount) || 0, t._cMoves || 0));
       v += Math.max(0, p.capital + pnl);
     });
     out.push(v);
@@ -2563,6 +2563,14 @@ LT.closeFee = function (t) {
 };
 /* Price move % = (current - entry) / entry x 100.  Example: entry $100, now $125 -> 25 / 100 = 0.25 = 25%.
    Single source of truth for live P&L, charts and the trade guide. */
+/* number of real price moves seen on the live feed since entry (or last re-base): each distinct new price counts once; never a fixed number */
+LT.movesOf = function (t, price) {
+  const n = Number(t.moveCount) || 0;
+  const p = Number(price);
+  if (t._cEntry !== t.entryPrice) { t._cEntry = t.entryPrice; t._cMoves = 0; t._cLast = undefined; }
+  if (p > 0 && p !== t._cLast) { if (t._cLast > 0) t._cMoves = (t._cMoves || 0) + 1; t._cLast = p; }
+  return Math.max(1, n, t._cMoves || 0);
+};
 LT.priceMovePct = function (entry, price) {
   const e = Number(entry), p = Number(price);
   if (!(e > 0) || !(p > 0)) return 0;
