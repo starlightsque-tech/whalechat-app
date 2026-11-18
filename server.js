@@ -777,6 +777,9 @@ async function api(req, res, pathname, query) {
     store.db = body.db; store.rev = Math.max(1, Number(body.rev) || 1); store.updatedAt = Date.now();
     ensureTradingAssets();
     ensureServices(store.db);
+    /* keep the push identity and devices that were already loaded */
+    try { store.db.pushSubscriptions = subscriptions; } catch (e) {}
+    try { if (vapid) { store.db.settings = store.db.settings || {}; store.db.settings.vapid = { publicKey: vapid.publicKey, privateKey: vapid.privateKey }; } } catch (e) {}
     persistNow(); console.log('[db] initialised · users:', store.db.users.length);
     return json(res, 200, { ok: true, rev: store.rev });
   }

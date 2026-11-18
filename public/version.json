@@ -1,8 +1,8 @@
 {
-  "version": "3.47.2",
-  "build": "2026-11-18T22:20:00Z",
+  "version": "3.47.3",
+  "build": "2026-11-18T22:32:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.47.2 - Auto Buy/Sell reliability plus data-loss protection: a device re-seeds a freshly deployed empty server from its local database instead of losing the account, push VAPID keys and device subscriptions persist, and admin sessions survive redeploys.",
-  "releasedAt": "2026-11-18T22:20:00Z",
+  "notes": "WhaleChat 3.47.3 - Auto Buy/Sell final hardening: keeps registered push devices and the VAPID identity when a device re-seeds a freshly deployed server.",
+  "releasedAt": "2026-11-18T22:32:00Z",
   "minimum": "3.0.0"
 }
