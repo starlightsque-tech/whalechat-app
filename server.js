@@ -768,7 +768,10 @@ async function api(req, res, pathname, query) {
   }
   if (pathname === '/api/state' && req.method === 'GET') return json(res, 200, { rev: store.rev, db: store.db, updatedAt: store.updatedAt });
   if (pathname === '/api/state/init' && req.method === 'POST') {
-    if (store.db) return json(res, 409, { ok: false, error: 'already_initialised', rev: store.rev });
+    /* an empty state (fresh instance) may be re-seeded by a device that still
+       has the account locally; a state with users is never overwritten */
+    const existingUsers = (store.db && Array.isArray(store.db.users)) ? store.db.users.length : 0;
+    if (store.db && existingUsers > 0) return json(res, 409, { ok: false, error: 'already_initialised', rev: store.rev });
     const body = await readBody(req);
     if (!body || !body.db || !Array.isArray(body.db.users)) return json(res, 400, { ok: false, error: 'invalid_db' });
     store.db = body.db; store.rev = Math.max(1, Number(body.rev) || 1); store.updatedAt = Date.now();

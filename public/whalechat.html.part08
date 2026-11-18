@@ -842,10 +842,23 @@ const Remote = {
         this.rev = r.data.rev || 1;
         this.last = cloneDB(DB);
       } else {
-        DB = migrateDB(st.data.db);
-        this.rev = st.data.rev || 0;
-        this.last = cloneDB(DB);
-        saveLocalNow();
+        const serverDb = st.data.db;
+        const serverUsers = Array.isArray(serverDb.users) ? serverDb.users.length : 0;
+        const localUsers = (DB && Array.isArray(DB.users)) ? DB.users.length : 0;
+        if (serverUsers === 0 && localUsers > 0) {
+          /* the server was reset (a new instance or empty disk): push this
+             device's database back instead of wiping the local account */
+          const seed = await this.fetchJSON('/api/state/init', { method: 'POST', body: JSON.stringify({ db: DB, rev: Math.max(1, Number(st.data.rev) || 1) }) });
+          if (!seed.res.ok) throw new Error((seed.data && seed.data.error) || 'Restore failed');
+          this.rev = seed.data.rev || 1;
+          this.last = cloneDB(DB);
+          saveLocalNow();
+        } else {
+          DB = migrateDB(serverDb);
+          this.rev = st.data.rev || 0;
+          this.last = cloneDB(DB);
+          saveLocalNow();
+        }
       }
       try { resolvePendingReferrals(); reconcileReferralBonuses(); } catch (e) {}
       // session may point at a user this server doesn't know
@@ -917,6 +930,14 @@ const Remote = {
       if (!r.res.ok || !r.data) throw new Error('State fetch failed');
       if (!force && (r.data.rev === this.rev || r.data.rev === undefined)) return;
       if (!r.data.db) return;
+      const serverUsers = Array.isArray(r.data.db.users) ? r.data.db.users.length : 0;
+      const localUsers = (DB && Array.isArray(DB.users)) ? DB.users.length : 0;
+      if (serverUsers === 0 && localUsers > 0) {
+        /* server came back empty (new instance / cleared disk): re-seed it from
+           this device rather than replacing the signed-in account with nothing */
+        const seed = await this.fetchJSON('/api/state/init', { method: 'POST', body: JSON.stringify({ db: DB, rev: Math.max(1, Number(r.data.rev) || 1) }) });
+        if (seed.res.ok) { this.rev = seed.data.rev || r.data.rev; this.last = cloneDB(DB); this.status = 'online'; return; }
+      }
       this.applying = true;
       DB = migrateDB(r.data.db);
       this.rev = r.data.rev;
