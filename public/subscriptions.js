@@ -169,7 +169,10 @@
 
   function ledgerLine(label, usd, coins, meta) {
     var a = acct(); if (!a) return;
-    a.ledger.unshift({ id: 'il_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), label: label, usd: Number(usd) || 0, coins: Number(coins) || 0, meta: meta || null, at: Date.now() });
+    var m = meta || null;
+    var tid = String((m && m.tool) || '').toLowerCase();
+    var scope = tid === 'autobuysell' ? 'b2b' : tid === 'autosecure' ? 'stock' : (/^bot|tier/.test(tid) ? 'bot' : 'general');
+    a.ledger.unshift({ id: 'il_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), label: label, usd: Number(usd) || 0, coins: Number(coins) || 0, scope: scope, meta: m, at: Date.now() });
     if (a.ledger.length > 300) a.ledger.length = 300;
   }
   S.ledger = ledgerLine;
@@ -356,7 +359,8 @@
     return '<div class="wc-auto-box" style="margin-top:8px;padding:8px;border:1px dashed var(--border);border-radius:10px">' +
       '<label class="row" style="gap:8px;align-items:center;font-size:12px"><input type="checkbox" id="' + sfxId('On', sfx) + '"' + (al.auto ? ' checked' : '') + dis + '/> <b>Use Auto Buy/Sell</b> to buy and sell ' + escS(ticker) + ' at these prices</label>' +
       '<div class="field" style="margin:6px 0 0"><label class="label">Auto-buy amount (USD from B2B capital)</label>' +
-        '<input class="input" id="' + sfxId('Amt', sfx) + '" type="number" step="0.01" min="0" placeholder="0.00" value="' + (Number(al.autoAmount) > 0 ? Number(al.autoAmount) : '') + '"' + dis + '/></div>' +
+        '<input class="input" id="' + sfxId('Amt', sfx) + '" type="number" step="0.01" min="0" placeholder="Up to $100" value="' + (Number(al.autoAmount) > 0 ? Number(al.autoAmount) : '') + '"' + dis + '/>' +
+        '<div class="tiny muted">Leave blank and the tool uses up to $100 of your B2B capital.</div></div>' +
       '<label class="row" style="gap:8px;align-items:center;font-size:11px;margin-top:6px"><input type="checkbox" id="' + sfxId('Rep', sfx) + '"' + (al.autoRepeat ? ' checked' : '') + dis + '/> Buy again at the buy price after each auto sell</label>' +
       (sub
         ? (S.autoOn() ? '' : '<div class="tiny warn" style="margin-top:4px">Auto Buy/Sell is switched off — turn it on from the B2B desk.</div>')
@@ -376,7 +380,6 @@
     if (!opts || !opts.auto) return '';
     if (!S.autoSubscribed()) return 'Subscribe to the Auto Buy/Sell tool first';
     if (!(buy > 0) && !(sell > 0)) return 'Set a buy or sell price for ' + ticker + ' so Auto Buy/Sell knows when to trade';
-    if (buy > 0 && !(opts.amount > 0)) return 'Enter the amount Auto Buy/Sell should buy ' + ticker + ' with';
     if (buy > 0 && sell > 0 && sell <= buy) return 'The sell price must be above the buy price for ' + ticker;
     return '';
   };
@@ -393,6 +396,8 @@
     if (!al.auto) al.autoState = holding ? al.autoState : '';
     else if (holding) al.autoState = sell > 0 ? 'sell' : 'held';
     else { al.autoState = buy > 0 ? 'buy' : 'sell'; al.autoUnits = 0; }
+    /* selecting the tool on an alert means the user wants it trading */
+    if (al.auto) a.autoBuySellOn = true;
     return al;
   };
   S.autoToggle = function () {

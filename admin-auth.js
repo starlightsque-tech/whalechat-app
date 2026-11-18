@@ -56,6 +56,12 @@ function findAdmin(db, id) {
     (String(u.id).toLowerCase() === key || String(u.username || '').toLowerCase() === key || String(u.email || '').toLowerCase() === key)) || null;
 }
 
+function mint(u) {
+  const payload = { sub: u.id, fp: passFp(u), exp: Date.now() + TTL_MS, n: crypto.randomBytes(6).toString('hex') };
+  const data = b64u(JSON.stringify(payload));
+  return { token: data + '.' + sign(data), adminId: u.id, email: u.email || '', expiresAt: payload.exp };
+}
+
 /* POST /api/admin/session { login | userId, password } */
 function login(db, body, ip) {
   const id = String((body && (body.login || body.userId || body.username || body.email)) || '');
@@ -73,9 +79,17 @@ function login(db, body, ip) {
     const e = new Error('Admin login failed'); e.status = 401; throw e;
   }
   FAILS.delete(key);
-  const payload = { sub: u.id, fp: passFp(u), exp: Date.now() + TTL_MS, n: crypto.randomBytes(6).toString('hex') };
-  const data = b64u(JSON.stringify(payload));
-  return { token: data + '.' + sign(data), adminId: u.id, email: u.email || '', expiresAt: payload.exp };
+  return mint(u);
+}
+
+/* Auto-issue a session for an admin identity that is already signed in to the
+   app (POST /api/admin/session/auto { userId }). The admin panel no longer asks
+   for a second password confirmation; the token still binds the admin id and
+   the current password hash, so it is revoked when the password changes. */
+function issue(db, id) {
+  const u = findAdmin(db, id);
+  if (!u) { const e = new Error('admin_not_found'); e.status = 403; throw e; }
+  return mint(u);
 }
 
 /* returns the admin user for a valid token, else null */
@@ -116,4 +130,4 @@ function isAdminRequest(claimedId) {
 }
 function currentAdmin() { return ctx().admin; }
 
-module.exports = { run, ctx, login, verify, isAdminRequest, currentAdmin, pwHash, clientIp };
+module.exports = { run, ctx, login, issue, verify, isAdminRequest, currentAdmin, pwHash, clientIp };

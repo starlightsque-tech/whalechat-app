@@ -245,7 +245,9 @@ function createConnections(opts) {
     } catch (e) {}
   }
 
-  return { boot, apply, status, saveFrom, stored, file };
+  function saveExtra(key, val) { const o = {}; o[key] = val; save(o); }
+
+  return { boot, apply, status, saveFrom, saveExtra, stored, file };
 }
 
 module.exports = { createConnections };

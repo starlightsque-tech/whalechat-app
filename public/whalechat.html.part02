@@ -393,7 +393,7 @@ const NAV_PARENT = {
   'investment/b2b/buy': 'investment/b2b', 'investment/b2b/sell': 'investment/b2b',
   'investment/b2b/assets': 'investment/b2b', 'investment/b2b/topup': 'investment/b2b',
   'investment/b2b/transfer': 'investment/b2b',
-  'investment/history': 'investment', 'investment/more': 'investment',
+  'investment/history': 'investment', 'investment/history/b2b': 'investment/history', 'investment/history/stock': 'investment/history', 'investment/history/bot': 'investment/history', 'investment/history/wc': 'investment/history', 'investment/more': 'investment',
   'investment/statement': 'investment', 'investment/disputes': 'investment',
   'deposit': 'wallet', 'withdraw': 'wallet', 'wallet': 'home', 'wallet/activity': 'wallet',
   'account': 'home', 'account/convert': 'account', 'account/transfer': 'account', 'account/more': 'account', 'orders': 'profile',

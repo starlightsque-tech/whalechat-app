@@ -111,7 +111,10 @@
   }
   function ledgerM(u, label, usdDelta, wcDelta, meta) {
     acct(u);
-    u.acctLedger.unshift({ id: nowIdM('al_'), label: label, usd: roundM(usdDelta), wc: roundM(wcDelta), meta: meta || null, at: Date.now() });
+    var m = meta || null;
+    var id = String((m && (m.from || m.to)) || '');
+    var scope = /^b2b/.test(id) ? 'b2b' : /^stock/.test(id) ? 'stock' : /^wc_/.test(id) ? 'wc' : /^bot/.test(id) ? 'bot' : 'general';
+    u.acctLedger.unshift({ id: nowIdM('al_'), label: label, usd: roundM(usdDelta), wc: roundM(wcDelta), scope: scope, meta: m, at: Date.now() });
     if (u.acctLedger.length > 200) u.acctLedger.length = 200;
   }
 

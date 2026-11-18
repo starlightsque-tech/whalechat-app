@@ -126,7 +126,7 @@
   function ledgerLine(u, label, usdDelta) {
     try {
       var a = u.investAcct;
-      a.ledger.unshift({ id: nowId('il_'), label: label, usd: round2(usdDelta), coins: 0, at: Date.now() });
+      a.ledger.unshift({ id: nowId('il_'), label: label, usd: round2(usdDelta), coins: 0, scope: 'wc', at: Date.now() });
       if (a.ledger.length > 300) a.ledger.length = 300;
     } catch (e) {}
   }

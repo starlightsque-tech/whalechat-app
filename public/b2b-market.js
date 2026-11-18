@@ -321,7 +321,7 @@
       var autoErr = (autoOpts && WC_SUBS.checkAuto) ? WC_SUBS.checkAuto(t, buy, sell, autoOpts) : '';
       if (autoErr) return tmsg(autoErr, 'err');
       var ex = a.b2bAlerts.filter(function (x) { return x.ticker === t; })[0];
-      if (ex) { ex.buy = buy; ex.sell = sell; ex.buyHit = false; ex.sellHit = false; ex.buyHitAt = 0; ex.sellHitAt = 0; ex.buyEmailAt = 0; ex.sellEmailAt = 0; }
+      if (ex) { ex.buy = buy; ex.sell = sell; ex.buyHit = false; ex.sellHit = false; ex.buyHitAt = 0; ex.sellHitAt = 0; ex.buyEmailAt = 0; ex.sellEmailAt = 0; ex.buyNotifyAt = 0; ex.sellNotifyAt = 0; ex.buyRearmAt = 0; ex.sellRearmAt = 0; }
       else { ex = { id: 'al_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), ticker: t, buy: buy, sell: sell, email: true, createdAt: Date.now() }; a.b2bAlerts.push(ex); }
       if (autoOpts && WC_SUBS.applyAuto) WC_SUBS.applyAuto(ex, autoOpts);
       save(); tmsg('Alert saved for ' + t + (ex.auto ? ' · Auto Buy/Sell ON' : ''), 'ok'); repaint();
@@ -348,7 +348,7 @@
         var autoOpts = (window.WC_SUBS && WC_SUBS.readAuto) ? WC_SUBS.readAuto('m_' + t) : null;
         var autoErr = (autoOpts && WC_SUBS.checkAuto) ? WC_SUBS.checkAuto(t, buy, sell, autoOpts) : '';
         if (autoErr) { autoErrors.push(autoErr); return; }
-        if (ex) { ex.buy = buy; ex.sell = sell; ex.email = byEmail; ex.buyHit = false; ex.sellHit = false; ex.buyHitAt = 0; ex.sellHitAt = 0; ex.buyEmailAt = 0; ex.sellEmailAt = 0; }
+        if (ex) { ex.buy = buy; ex.sell = sell; ex.email = byEmail; ex.buyHit = false; ex.sellHit = false; ex.buyHitAt = 0; ex.sellHitAt = 0; ex.buyEmailAt = 0; ex.sellEmailAt = 0; ex.buyNotifyAt = 0; ex.sellNotifyAt = 0; ex.buyRearmAt = 0; ex.sellRearmAt = 0; }
         else { ex = { id: 'al_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), ticker: t, buy: buy, sell: sell, email: byEmail, createdAt: Date.now() }; a.b2bAlerts.push(ex); }
         if (autoOpts && WC_SUBS.applyAuto) WC_SUBS.applyAuto(ex, autoOpts);
         if (ex.auto) autoCount++;

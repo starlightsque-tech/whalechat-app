@@ -41,8 +41,87 @@
   }
   function ledger(u, label, usdDelta, wcDelta, meta) {
     var a = account(u);
-    a.ledger.unshift({ id: nowId('il_'), label: label, usd: Number(usdDelta) || 0, coins: Number(wcDelta) || 0, meta: meta || null, at: Date.now() });
+    var m = meta || null;
+    a.ledger.unshift({ id: nowId('il_'), label: label, usd: Number(usdDelta) || 0, coins: Number(wcDelta) || 0, scope: (m && m.scope) || scopeOfEntry({ label: label, meta: m }), meta: m, at: Date.now() });
     if (a.ledger.length > 300) a.ledger.length = 300;
+  }
+
+  /* Which account does a ledger line belong to? New lines carry `scope`;
+     older lines are classified from their label/meta so existing history and
+     server-written lines (Auto Buy/Sell) still land in the right account. */
+  function toolScope(id) {
+    id = String(id || '').toLowerCase();
+    if (id === 'autobuysell') return 'b2b';
+    if (id === 'autosecure') return 'stock';
+    if (/^bot|tier/.test(id)) return 'bot';
+    return 'general';
+  }
+  function scopeOfEntry(x) {
+    if (!x) return 'general';
+    if (x.scope) return x.scope;
+    var m = x.meta || {};
+    if (m.scope) return m.scope;
+    var label = String(x.label || '');
+    var l = label.toLowerCase();
+    if (m.portfolio) return ({ stock: 'stock', wc: 'wc', b2b: 'b2b', bot: 'bot' })[m.portfolio] || 'general';
+    if (m.tool) return toolScope(m.tool);
+    var acct = String(m.from || m.to || '');
+    if (/^b2b/.test(acct)) return 'b2b';
+    if (/^stock/.test(acct)) return 'stock';
+    if (/^wc_/.test(acct)) return 'wc';
+    if (/^bot/.test(acct)) return 'bot';
+    if (m.auto || /auto buy\/sell|\bb2b\b/.test(l)) return 'b2b';
+    if (/wc-investing|wc capital|wc profit|→ wc\b/.test(l)) return 'wc';
+    if (/\bbot\b|bot trading/.test(l)) return 'bot';
+    if (/\bstock\b|auto secure|auto secured|take profit/.test(l)) return 'stock';
+    return 'general';
+  }
+  var HISTORY_SCOPES = [
+    { id: 'all', label: 'All activity', title: 'Investment history', sub: 'Trades, transfers, top-ups, tools and portfolio movements.' },
+    { id: 'b2b', label: 'B2B-Investing', title: 'B2B-Investing history', sub: 'Only transactions on your B2B-Investing account: capital, buys, sells, profit and Auto Buy/Sell fills.' },
+    { id: 'stock', label: 'Stock trading', title: 'Stock trading history', sub: 'Only transactions on your stock trading account: live trades and stock portfolio movements.' },
+    { id: 'bot', label: 'Bot trading', title: 'Bot trading history', sub: 'Only transactions on your bot trading account: sessions, allocations, payouts and bot balances.' },
+    { id: 'wc', label: 'WC-Investing', title: 'WC-Investing history', sub: 'Only WC-Investing transactions: plan activations, ROI credits, capital and transfers.' }
+  ];
+  function scopeInfo(id) {
+    for (var i = 0; i < HISTORY_SCOPES.length; i++) if (HISTORY_SCOPES[i].id === id) return HISTORY_SCOPES[i];
+    return HISTORY_SCOPES[0];
+  }
+  function historyTabs(scope) {
+    return '<div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:10px">' + HISTORY_SCOPES.map(function (s) {
+      return '<a class="btn btn-xs ' + (s.id === scope ? 'btn-primary' : 'btn-ghost') + '" href="#/investment/history' + (s.id === 'all' ? '' : '/' + s.id) + '">' + escH(s.label) + '</a>';
+    }).join('') + '</div>';
+  }
+  function ledgerRowsHTML(u, scope) {
+    var rows = account(u).ledger.filter(function (x) { return scope === 'all' ? true : scopeOfEntry(x) === scope; });
+    if (!rows.length) return '';
+    return '<div class="card"><div class="card-title">' + (scope === 'all' ? 'All transactions' : escH(scopeInfo(scope).label) + ' transactions') + '</div><div class="ih-list">' + rows.map(function (x) {
+      return '<div class="ih-row"><div class="grow"><b>' + escH(x.label) + '</b><div class="tiny muted">' + new Date(x.at).toLocaleString() + '</div></div><div style="text-align:right"><b class="' + (x.usd >= 0 ? 'up' : 'down') + '">' + (x.usd >= 0 ? '+' : '') + money(x.usd) + '</b>' + (x.coins ? '<div class="tiny muted">' + (x.coins >= 0 ? '+' : '') + wc(x.coins) + ' WC</div>' : '') + '</div></div>';
+    }).join('') + '</div></div>';
+  }
+  function botSessionsBlock(u) {
+    var st = (window.WC_BOTS && window.WC_BOTS.state) || {};
+    var list = [];
+    if (st.session) list.push(st.session);
+    if (Array.isArray(st.history)) list = list.concat(st.history);
+    if (!list.length) return '';
+    return '<div class="card"><div class="card-title">Bot sessions</div><div class="ih-list">' + list.map(function (s, i) {
+      var live = s.status === 'running' || s.status === 'cooling';
+      var profit = Number(s.profitCoins != null ? s.profitCoins : 0) * RATE;
+      var pool = Number(s.poolCoins != null ? s.poolCoins : (s.allocatedCoins || 0)) * RATE;
+      return '<div class="ih-row"><div class="grow"><b>' + escH(s.tierName || 'Bot session') + (i === 0 && live ? ' <span class="badge badge-success">ACTIVE</span>' : '') + '</b>' +
+        '<div class="tiny muted">' + (live ? 'Started ' : 'Stopped ') + new Date(Number(s.stoppedAt || s.startedAt) || Date.now()).toLocaleString() + ' · ' + Number(s.tradeCount || 0) + ' automated trades</div></div>' +
+        '<div style="text-align:right"><b class="' + (profit >= 0 ? 'up' : 'down') + '">' + (profit >= 0 ? '+' : '') + money(profit) + '</b><div class="tiny muted">' + money(pool) + ' capital</div></div></div>';
+    }).join('') + '</div></div>';
+  }
+  function wcPlanHistoryBlock(u) {
+    var w = null;
+    try { w = window.WC_INVEST && WC_INVEST.wallet ? WC_INVEST.wallet(u) : null; } catch (e) {}
+    var rows = (w && w.history) || [];
+    if (!rows.length) return '';
+    return '<div class="card"><div class="card-title">WC-Investing plan activity</div><div class="ih-list">' + rows.map(function (h) {
+      return '<div class="ih-row"><div class="grow"><b>' + escH(h.label) + '</b><div class="tiny muted">' + new Date(h.at).toLocaleString() + '</div></div><b class="' + ((Number(h.usd) || 0) >= 0 ? 'up' : 'down') + '">' + ((Number(h.usd) || 0) >= 0 ? '+' : '') + money(Number(h.usd) || 0) + '</b></div>';
+    }).join('') + '</div></div>';
   }
   function userTx(u, type, label, coinsAmt, meta) {
     if (typeof tx === 'function') { try { tx(u.id, type, label, coinsAmt, meta || {}); } catch (e) {} }
@@ -381,7 +460,8 @@
             return '<div class="ih-row"><div class="grow" style="min-width:0"><b>' + escH(x.ticker) + '</b><div class="tiny">' + WC_SUBS.autoStatusText(x) + '</div>' + WC_SUBS.autoLogHTML(x) + '</div>' +
               '<a class="btn btn-xs btn-ghost" href="#/investment/b2b/buy?asset=' + encodeURIComponent(x.ticker) + '">Edit</a></div>';
           }).join('') + '</div>' : '<div class="tiny muted">No asset selected yet — open an asset\'s buy page or Price alerts and tick Use Auto Buy/Sell.</div>') +
-          '<button class="btn btn-sm ' + (on ? 'btn-ghost' : 'btn-primary') + '" data-act="ih-b2b-auto-toggle" style="width:100%;margin-top:8px">' + (on ? 'Switch Auto Buy/Sell off' : 'Switch Auto Buy/Sell on') + '</button>'
+          '<button class="btn btn-sm ' + (on ? 'btn-ghost' : 'btn-primary') + '" data-act="ih-b2b-auto-toggle" style="width:100%;margin-top:8px">' + (on ? 'Switch Auto Buy/Sell off' : 'Switch Auto Buy/Sell on') + '</button>' +
+          '<button class="btn btn-sm btn-ghost" data-act="push-enable" style="width:100%;margin-top:6px">Enable home-screen alerts</button>'
         : '<button class="btn btn-sm btn-primary" data-act="ih-tool-sub" data-tool="autobuysell" style="width:100%;margin-top:8px">Subscribe · ' + money(t ? t.price : 0) + ' / month</button>') +
       '</div>';
   }
@@ -426,7 +506,7 @@
         '<a href="#/investment/b2b/alerts" class="btn btn-ghost btn-sm" data-b2b-nav="alerts">Price alerts</a>' +
         '<a href="#/investment/b2b/topup" class="btn btn-ghost btn-sm" data-b2b-nav="topup">Top up</a>' +
         '<a href="#/investment/b2b/transfer" class="btn btn-ghost btn-sm" data-b2b-nav="transfer">Transfer</a>' +
-        '<a href="#/investment/history" class="btn btn-ghost btn-sm">History</a>' +
+        '<a href="#/investment/history/b2b" class="btn btn-ghost btn-sm">History</a>' +
       '</div></div>' +
 
       b2bAutoCard(u) +
@@ -605,15 +685,27 @@
     return b2bDash(u, params);
   }
 
-  function historyPage(u) {
+  function historyPage(u, scope) {
+    scope = scope || 'all';
+    var info = scopeInfo(scope);
     var a = account(u);
     var trades = '';
-    try { if (typeof LT !== 'undefined' && LT.tradeHistoryBlock) trades = LT.tradeHistoryBlock(u.id); } catch (e) { trades = ''; }
-    return head('Investment history', 'Trades, transfers, top-ups, tools and portfolio movements.', '#/investment') +
+    if (scope === 'all' || scope === 'stock') {
+      try { if (typeof LT !== 'undefined' && LT.tradeHistoryBlock) trades = LT.tradeHistoryBlock(u.id); } catch (e) { trades = ''; }
+    }
+    var botBlock = scope === 'bot' ? botSessionsBlock(u) : '';
+    var wcBlock = scope === 'wc' ? wcPlanHistoryBlock(u) : '';
+    var ledgerBlock = ledgerRowsHTML(u, scope);
+    var allScopeRows = a.ledger.filter(function (x) { return scopeOfEntry(x) === scope; });
+    var empty = scope !== 'all' && !ledgerBlock && !trades && !botBlock && !wcBlock;
+    return head(info.title, info.sub, '#/investment') +
+      historyTabs(scope) +
+      (scope !== 'all' ? '<div class="card"><div class="tiny muted">Showing <b>' + escH(info.label) + '</b> only — ' + allScopeRows.length + ' transaction' + (allScopeRows.length === 1 ? '' : 's') + ' on this account. Other accounts stay hidden here.</div></div>' : '') +
       trades +
-      '<div class="card"><div class="ih-list">' + (a.ledger.length ? a.ledger.map(function (x) {
-        return '<div class="ih-row"><div class="grow"><b>' + escH(x.label) + '</b><div class="tiny muted">' + new Date(x.at).toLocaleString() + '</div></div><div style="text-align:right"><b class="' + (x.usd >= 0 ? 'up' : 'down') + '">' + (x.usd >= 0 ? '+' : '') + money(x.usd) + '</b>' + (x.coins ? '<div class="tiny muted">' + (x.coins >= 0 ? '+' : '') + wc(x.coins) + ' WC</div>' : '') + '</div></div>';
-      }).join('') : '<div class="empty" style="padding:18px"><p>No investment transactions yet.</p></div>') + '</div></div>';
+      botBlock +
+      wcBlock +
+      ledgerBlock +
+      (empty ? '<div class="empty" style="padding:18px"><p>No ' + escH(info.label) + ' transactions yet.</p></div>' : '');
   }
 
   function morePage(u) {
@@ -723,7 +815,7 @@
       '<div class="ih-card"><span>Profit balance</span><b class="up" data-ih-stock="profit">' + money(profit) + '</b><small>Claimed + closed trade profit</small></div>' +
       '<div class="ih-card"><span>Leftover capital</span><b data-ih-stock="leftover">' + money(leftover) + '</b><small>Returned after losses</small></div>' +
     '</div><div class="card ih-actions"><div class="ih-btn-grid">' +
-      [['Stocks','#/invest/market'],['Trade now','#/invest/market'],['Transfer','#/investment/transfer'],['Bot traders','#/invest/bots'],['History','#/invest/orders'],['Watchlist','#/invest/watchlist']]
+      [['Stocks','#/invest/market'],['Trade now','#/invest/market'],['Transfer','#/investment/transfer'],['Bot traders','#/invest/bots'],['History','#/investment/history/stock'],['Watchlist','#/invest/watchlist']]
         .map(function(x){return '<a href="'+x[1]+'" class="btn btn-ghost btn-sm">'+x[0]+'</a>';}).join('') + '</div></div>';
   }
 
@@ -737,7 +829,7 @@
       '<div class="ih-card"><span>Profit balance</span><b class="' + (profit >= 0 ? 'up' : 'down') + '">' + money(profit) + '</b></div>' +
       '<div class="ih-card"><span>Leftover capital</span><b>' + money(leftover) + '</b></div></div>' +
       '<div class="card ih-actions"><div class="ih-btn-grid">' +
-      [['Start trading','#/invest/bots'],['Stop trading','#/invest/bots'],['Transfer','#/investment/transfer'],['Turn on/off bot','#/invest/bots'],['Settings','#/invest/bots'],['History','#/investment/history']]
+      [['Start trading','#/invest/bots'],['Stop trading','#/invest/bots'],['Transfer','#/investment/transfer'],['Turn on/off bot','#/invest/bots'],['Settings','#/invest/bots'],['History','#/investment/history/bot']]
         .map(function(x){return '<a href="'+x[1]+'" class="btn btn-ghost btn-sm">'+x[0]+'</a>';}).join('') + '</div></div>';
   }
 
@@ -789,7 +881,7 @@
         if (b2bSub === 'transfer') return b2bTransferPage(u);
         return b2bPage(u, params);
       }
-      if (sub === 'history') return historyPage(u);
+      if (sub === 'history') return historyPage(u, (parts && parts[2]) || 'all');
       if (sub === 'more') return morePage(u);
       if (sub === 'statement') return statementPage(u);
       if (sub === 'disputes') return disputesPage(u);
@@ -963,7 +1055,7 @@
       h.avgPrice = ((Number(h.units) * Number(h.avgPrice)) + amount) / (Number(h.units) + units);
       h.units = Number(h.units) + units;
       a.b2b[t] = h;
-      ledger(u, 'B2B buy ' + t, -amount, 0, { ticker: t, units: units, price: q.price });
+      ledger(u, 'B2B buy ' + t, -amount, 0, { ticker: t, units: units, price: q.price, scope: 'b2b' });
       return { units: units, price: q.price, amount: amount };
     }
     App.ihB2bBuy = function (id, ds) {
@@ -992,7 +1084,7 @@
       h.units = Math.round((Number(h.units) - units) * 1e8) / 1e8;
       if (h.units <= 1e-8) delete a.b2b[t]; else a.b2b[t] = h;
       b2bInventory()[t] = Math.round((b2bAvail(t) + units) * 1e8) / 1e8;
-      ledger(u, 'B2B sell ' + t + (units < Number(h.units) + units ? ' (partial)' : ''), 0, 0, { ticker: t, units: units, price: q.price, proceeds: proceeds, payout: payout });
+      ledger(u, 'B2B sell ' + t + (units < Number(h.units) + units ? ' (partial)' : ''), 0, 0, { ticker: t, units: units, price: q.price, proceeds: proceeds, payout: payout, scope: 'b2b' });
       save();
       toastH('Sold ' + b2bUnits(units) + ' ' + t + ' · payout ' + (payout >= 0 ? '+' : '') + money(payout) + ' to profit balance', 'ok');
       render();
@@ -1031,7 +1123,7 @@
       if (!(amount > 0)) return toastH('Enter an amount', 'err');
       if ((Number(a.usd) || 0) < amount - 0.001) return toastH('Not enough in your trade capital (' + money(a.usd) + ')', 'err');
       a.usd = Math.round((Number(a.usd) - amount) * 100) / 100;
-      ledger(u, 'Trade capital → B2B capital', -amount, 0, { source: 'trade-capital' });
+      ledger(u, 'Trade capital → B2B capital', -amount, 0, { source: 'trade-capital', scope: 'b2b' });
       b2bDeposited(a); a.b2bDeposited = Math.round((b2bDeposited(a) + amount) * 100) / 100;
       a.portfolios.b2b = Math.round((b2bCapital(a) + amount) * 100) / 100;
       save(); toastH('B2B capital topped up · ' + money(amount), 'ok'); render();
@@ -1045,11 +1137,11 @@
       a.b2bProfit = Math.round((b2bProfit(a) - amount) * 100) / 100;
       if (mode === 'profit2capital') {
         a.portfolios.b2b = Math.round((b2bCapital(a) + amount) * 100) / 100;
-        ledger(u, 'B2B profit → capital', 0, 0, { amount: amount, to: 'capital' });
+        ledger(u, 'B2B profit → capital', 0, 0, { amount: amount, to: 'capital', scope: 'b2b' });
         toastH('Moved ' + money(amount) + ' to B2B capital', 'ok');
       } else {
         a.payout = Math.round((Number(a.payout) + amount) * 100) / 100;
-        ledger(u, 'B2B profit → investment profit balance', 0, 0, { amount: amount, to: 'payout' });
+        ledger(u, 'B2B profit → investment profit balance', 0, 0, { amount: amount, to: 'payout', scope: 'b2b' });
         toastH('Moved ' + money(amount) + ' to your investment profit balance', 'ok');
       }
       save(); render();
@@ -1073,7 +1165,7 @@
       var autoErr = (autoOpts && WC_SUBS.checkAuto) ? WC_SUBS.checkAuto(t, buy, sell, autoOpts) : '';
       if (autoErr) return toastH(autoErr, 'err');
       var ex = (a.b2bAlerts || []).find(function (x) { return x.ticker === t; });
-      if (ex) { ex.buy = buy; ex.sell = sell; ex.email = byEmail; ex.buyHit = false; ex.sellHit = false; ex.buyHitAt = 0; ex.sellHitAt = 0; }
+      if (ex) { ex.buy = buy; ex.sell = sell; ex.email = byEmail; ex.buyHit = false; ex.sellHit = false; ex.buyHitAt = 0; ex.sellHitAt = 0; ex.buyEmailAt = 0; ex.sellEmailAt = 0; ex.buyNotifyAt = 0; ex.sellNotifyAt = 0; ex.buyRearmAt = 0; ex.sellRearmAt = 0; }
       else { ex = { id: nowId('al_'), ticker: t, buy: buy, sell: sell, email: byEmail, buyHit: false, sellHit: false, createdAt: Date.now() }; a.b2bAlerts.push(ex); }
       if (autoOpts && WC_SUBS.applyAuto) WC_SUBS.applyAuto(ex, autoOpts);
       save(); toastH('Price alert saved' + (ex.auto ? ' · Auto Buy/Sell ON for ' + t : '') + (byEmail ? ' · email enabled' : ''), 'ok'); render();

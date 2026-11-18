@@ -1,8 +1,8 @@
 {
-  "version": "3.44.0",
-  "build": "2026-11-17T10:45:00Z",
+  "version": "3.47.0",
+  "build": "2026-11-18T21:16:21Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.44.0 - Convert and Transfer buttons on the WhaleChat account card; WC goes to investment trade capital or vendor capital as USD; only the investment total profit balance returns to WC; WC converts to USDT or BTC for withdrawal; vendor stock paid from vendor capital; bolder buttons and text.",
-  "releasedAt": "2026-11-17T10:45:00Z",
+  "notes": "WhaleChat 3.47.0 - Account-scoped investment history (B2B-Investing, stock trading, bot trading, WC-Investing each show only their own transactions). Admin panel opens without the second password prompt or locked banner. Auto Buy/Sell fills at the user buy target and sells at the sell target, with home-screen push + email, capital returned and profit paid to the B2B profit balance.",
+  "releasedAt": "2026-11-18T21:16:21Z",
   "minimum": "3.0.0"
 }

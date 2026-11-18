@@ -59,7 +59,7 @@ function autoToolOn(user, now) {
 /* ...and has the user selected the tool for this asset's alert? */
 function autoOn(user, al) { return !!(al && al.auto && autoToolOn(user)); }
 
-function createB2BAlertWatcher({ getDb, persist, broadcast, quotes, email, appUrl, everyMs, onQuote }) {
+function createB2BAlertWatcher({ getDb, persist, broadcast, quotes, email, appUrl, everyMs, onQuote, push }) {
   const state = {
     lastRunAt: 0, lastHitAt: 0, emailsQueued: 0, notifications: 0, lastError: '', runs: 0,
     auto: { buys: 0, sells: 0, failures: 0, watched: 0, lastFillAt: 0, ticksChecked: 0, reapplied: 0 }
@@ -80,6 +80,17 @@ function createB2BAlertWatcher({ getDb, persist, broadcast, quotes, email, appUr
     };
     (db.notifications = db.notifications || []).unshift(item);
     if (db.notifications.length > 2000) db.notifications.length = 2000;
+    /* home-screen / lock-screen push on the user's devices */
+    if (typeof push === 'function') {
+      try {
+        push(user.id, {
+          title, body,
+          link: link || '#/notifications',
+          tag: 'wc-b2b-' + (item.id || Date.now()),
+          requireInteraction: true
+        });
+      } catch (e) { state.lastError = e.message; }
+    }
     return item;
   }
 
@@ -131,7 +142,7 @@ function createB2BAlertWatcher({ getDb, persist, broadcast, quotes, email, appUr
   }
   function availOf(db, t) { const v = Number(inventory(db)[t]); return v >= 0 ? v : DEFAULT_INVENTORY; }
   function ledgerLine(a, label, usd, meta) {
-    a.ledger.unshift({ id: rid('il_'), label, usd: Number(usd) || 0, coins: 0, meta: meta || null, at: Date.now() });
+    a.ledger.unshift({ id: rid('il_'), label, usd: Number(usd) || 0, coins: 0, scope: 'b2b', meta: meta || null, at: Date.now() });
     if (a.ledger.length > 300) a.ledger.length = 300;
   }
   /* same lifetime totals the desk uses (deposited in / profit ever) */
@@ -244,8 +255,10 @@ function createB2BAlertWatcher({ getDb, persist, broadcast, quotes, email, appUr
     const t = normTicker(al.ticker);
     let e;
     if (side === 'buy') {
-      const amount = r2(al.autoAmount);
-      if (!(amount > 0)) return fail(db, user, al, s, 'buy', 'No auto-buy amount is set for ' + t + '.', now);
+      let amount = r2(al.autoAmount);
+      /* no amount entered: the tool uses up to $100 of the available capital */
+      if (!(amount > 0)) amount = r2(Math.min(capitalOf(a), 100));
+      if (!(amount > 0)) return fail(db, user, al, s, 'buy', 'Your B2B capital balance is empty — top it up to let Auto Buy/Sell buy for you.', now);
       if (capitalOf(a) + 1e-9 < amount) return fail(db, user, al, s, 'buy', 'Your B2B capital balance (' + money(capitalOf(a)) + ') is below the ' + money(amount) + ' auto-buy amount.', now);
       const units = r8(amount / price);
       if (units > availOf(db, t)) return fail(db, user, al, s, 'buy', 'The company contract does not have enough ' + t + ' available.', now);

@@ -1,8 +1,8 @@
 {
-  "version": "3.46.0",
-  "build": "2026-11-18T19:30:00Z",
+  "version": "3.47.0",
+  "build": "2026-11-18T21:16:21Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.46.0 - Admin > Market Controls: provider on/off, encrypted API keys, tradable symbols, global trading pause, audit log. Prices come only from Binance / Twelve Data / Finnhub via the server price cache, with Delayed Data when a provider fails. Server-verified admin sessions. Shares admin: price settings, pause new investments, edit or cancel investments.",
-  "releasedAt": "2026-11-18T19:30:00Z",
+  "notes": "WhaleChat 3.47.0 - Account-scoped investment history (B2B-Investing, stock trading, bot trading, WC-Investing each show only their own transactions). Admin panel opens without the second password prompt or locked banner. Auto Buy/Sell fills at the user buy target and sells at the sell target, with home-screen push + email, capital returned and profit paid to the B2B profit balance.",
+  "releasedAt": "2026-11-18T21:16:21Z",
   "minimum": "3.0.0"
 }

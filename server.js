@@ -59,6 +59,8 @@ const binance = createBinanceFeed ? createBinanceFeed({ getDb: () => store.db, e
 
 /* Durable third-party connection settings (Finnhub, Binance, Brevo, SMTP).
    Applied on every boot so a new release never comes up disconnected. */
+let createMarketData = null;
+try { createMarketData = require('./market-data').createMarketData; } catch (e) { console.error('[market-data] module unavailable:', e.message); }
 const connections = createConnections ? createConnections({
   getDb: () => store.db,
   persist: () => persist(),
@@ -67,6 +69,7 @@ const connections = createConnections ? createConnections({
   log: (m) => console.log(m),
   storageBackend: () => (pool ? 'postgres' : 'file')
 }) : null;
+const marketData = (createMarketData && connections) ? createMarketData({ connections, log: (m) => console.log(m) }) : null;
 
 /* B2B price alerts: evaluate on the server so email + in-app notification are
    delivered even when the user's app is closed. */
@@ -77,6 +80,8 @@ const b2bAlerts = createB2BAlertWatcher ? createB2BAlertWatcher({
   quotes: () => market.quotes || {},
   email,
   appUrl: () => PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || ('http://localhost:' + PORT),
+  /* home-screen push for buy/sell targets and every Auto Buy/Sell fill */
+  push: (userId, payload) => { try { sendPush(userId, payload).catch(() => {}); } catch (e) {} },
   everyMs: Number(process.env.B2B_ALERT_MS || 15000),
   /* Auto Buy/Sell checks every live price tick so a buy/sell target is never skipped */
   onQuote: (fn) => { try { if (market && typeof market.onQuote === 'function') market.onQuote(fn); } catch (e) {} }
@@ -530,6 +535,14 @@ async function api(req, res, pathname, query) {
     try { return json(res, 200, Object.assign({ ok: true }, adminAuth.login(store.db, body, adminAuth.ctx().ip))); }
     catch (e) { return json(res, e.status || 400, { ok: false, error: e.message }); }
   }
+  /* the admin panel opens without a second password step: a signed-in admin gets
+     a signed session for their own account id */
+  if (pathname === '/api/admin/session/auto' && req.method === 'POST') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    const body = await readBody(req);
+    try { return json(res, 200, Object.assign({ ok: true }, adminAuth.issue(store.db, body.userId || body.adminId || body.login))); }
+    catch (e) { return json(res, e.status || 403, { ok: false, error: e.message }); }
+  }
   if (pathname === '/api/admin/session' && req.method === 'GET') {
     const a = adminAuth.currentAdmin();
     return json(res, 200, { ok: true, active: !!a, adminId: a ? a.id : null });
@@ -607,6 +620,35 @@ async function api(req, res, pathname, query) {
     } catch (e) { return json(res, 400, { ok: false, error: e.message }); }
   }
 
+  /* --- market data proxy (keys stay server side) ------------------------- */
+  if (marketData && pathname === '/api/market/symbols' && req.method === 'GET') {
+    return json(res, 200, { ok: true, symbols: marketData.symbols(query.get('type') || 'crypto') });
+  }
+  if (marketData && pathname === '/api/market/quote' && req.method === 'GET') {
+    try { return json(res, 200, { ok: true, quote: await marketData.quote(query.get('symbol')) }); }
+    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+  if (marketData && pathname === '/api/market/candles' && req.method === 'GET') {
+    try { return json(res, 200, Object.assign({ ok: true }, await marketData.candles(query.get('symbol'), query.get('tf') || '1H'))); }
+    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+  if (marketData && pathname === '/api/market/symbol-search' && req.method === 'GET') {
+    return json(res, 200, { ok: true, results: await marketData.search(query.get('q')) });
+  }
+  if (marketData && pathname === '/api/market/providers' && req.method === 'GET') {
+    if (!isAdmin(store.db, query.get('adminId') || '')) return json(res, 403, { ok: false, error: 'admin_only' });
+    return json(res, 200, { ok: true, providers: marketData.status() });
+  }
+  if (marketData && pathname === '/api/market/providers' && req.method === 'POST') {
+    const body = await readBody(req);
+    if (!isAdmin(store.db, body.adminId)) return json(res, 403, { ok: false, error: 'admin_only' });
+    return json(res, 200, { ok: true, providers: marketData.save(body) });
+  }
+  if (marketData && pathname === '/api/market/providers/test' && req.method === 'POST') {
+    const body = await readBody(req);
+    if (!isAdmin(store.db, body.adminId)) return json(res, 403, { ok: false, error: 'admin_only' });
+    return json(res, 200, { ok: true, result: await marketData.test(String(body.which || '')) });
+  }
   /* --- durable connection settings (admin only) -------------------------- */
   if (pathname === '/api/connections' && req.method === 'GET') {
     const adminId = query.get('adminId') || '';
@@ -1237,6 +1279,7 @@ const server = http.createServer(async (req, res) => {
   try { if (handleBrandedRedirect(req, res, pathname)) return; } catch (e) { console.error('[redirect]', e.message); }
   serveStatic(req, res, pathname);
 });
+if (marketData) { try { marketData.attachWs(server); } catch (e) { console.error('[market-data] ws:', e.message); } }
 server.keepAliveTimeout = 65000;
 server.headersTimeout = 70000;
 (async () => {
