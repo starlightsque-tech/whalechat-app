@@ -80,12 +80,13 @@ const LT = {
       if (!t.direction) t.direction = t.side === 'short' ? 'FALL' : 'RISE';
       if (t.stakeAmount == null) t.stakeAmount = t.capitalCoins;
       const entry = Number(t.entryPrice) || 0, lev = Math.max(1, Number(t.leverage) || 1);
-      if (!(Number(t.takeProfitPrice) > 0) && Number(t.tpPct) > 0 && entry > 0) {
-        const d = (Number(t.capitalCoins) || 0) * Number(t.tpPct) / lev;
+      if (t.moveRatePct == null) t.moveRatePct = LT.adminRate(t.ticker);
+      if (!(Number(t.takeProfitPrice) > 0) && Number(t.tpPct) > 0 && entry > 0 && LT.tpslDiff(t, t.tpPct, lev) > 0) {
+        const d = LT.tpslDiff(t, t.tpPct, lev);
         t.takeProfitPrice = Math.round(Math.max(entry * 0.0001, t.direction === 'FALL' ? entry - d : entry + d) * 10000) / 10000;
       }
-      if (!(Number(t.stopLossPrice) > 0) && Number(t.slPct) > 0 && entry > 0) {
-        const d = (Number(t.capitalCoins) || 0) * Number(t.slPct) / lev;
+      if (!(Number(t.stopLossPrice) > 0) && Number(t.slPct) > 0 && entry > 0 && LT.tpslDiff(t, t.slPct, lev) > 0) {
+        const d = LT.tpslDiff(t, t.slPct, lev);
         t.stopLossPrice = Math.round(Math.max(entry * 0.0001, t.direction === 'FALL' ? entry + d : entry - d) * 10000) / 10000;
       }
     });
@@ -158,13 +159,14 @@ const LT = {
     const dir = this.dirOf(t) === 'FALL' ? -1 : 1;
     /* price move % = (current price - entry price) / entry price x 100, from the live feed quote */
     const move = LT.priceMovePct(t.entryPrice, q.price) / 100;
-    /* price move % = (current price - entry price) / capital; profit = capital x move% x leverage x number of price moves */
+    /* price move % = (current price - entry price) x capital x admin profit rate %;
+       profit = capital x move% x leverage x number of price moves */
     const cap = Number(t.capitalCoins) || 0;
-    const movePctCap = cap > 0 ? (Number(q.price) - Number(t.entryPrice)) / cap : 0;
+    const movePctCap = LT.movePctOf(t, q.price);
     let pnlCoins = cap * (movePctCap / 100) * (t.leverage || 1) * dir * (atEnd ? 1 : LT.movesOf(t, q.price));
     pnlCoins = Math.max(-t.capitalCoins, pnlCoins);          /* never lose more than the stake */
-    /* payout = capital + profit − (capital × trade fee %). New trades pay the fee from Trade capital
-       when they open (closeFee = 0 here); older trades opened with feeAtClose still pay it at close */
+    /* payout = capital + profit − (capital × trade fee %); the fee comes out of the profit at close.
+       Trades opened while the fee was charged at open (feeAtClose:false) are not charged again */
     const fee = Math.min(LT.closeFee(t), Math.max(0, t.capitalCoins + pnlCoins));
     const payout = Math.max(0, t.capitalCoins + pnlCoins - fee);
     return {
@@ -191,15 +193,15 @@ const LT = {
     if (capital < this.MIN_CAPITAL) { toast('Minimum trade is ' + this.MIN_CAPITAL + ' USD', 'err'); return false; }
     const ia = INV.investAcct(u);
     const capBal = Number(ia.portfolios.stock || 0), leftBal = Math.max(0, Number(ia.stockLeftover) || 0);
-    /* trade fee = capital x fee % (e.g. $50 x 0.5% = $0.25), deducted from Trade capital the moment the trade opens */
-    const openFee = Math.round(capital * this.feePct() / 100 * 100) / 100;
-    if (openFee > capBal + 1e-9) { toast('Not enough Trade capital for the ' + usd(openFee) + ' USD trade fee. Top up in USD first', 'err'); return false; }
-    if (capital > (capBal - openFee) + leftBal + 1e-9) { toast('Not enough balance — capital ' + usd(capBal) + ' + leftover ' + usd(leftBal) + ' must cover ' + usd(capital) + ' USD + ' + usd(openFee) + ' USD fee. Top up in USD first', 'err'); return false; }
+    /* trade fee = capital x fee % (e.g. $50 x 0.5% = $0.25), taken out of the profit when the trade closes */
+    const closeFee = Math.round(capital * this.feePct() / 100 * 100) / 100;
+    if (capital > capBal + leftBal + 1e-9) { toast('Not enough balance — capital ' + usd(capBal) + ' + leftover ' + usd(leftBal) + ' must cover ' + usd(capital) + ' USD. Top up in USD first', 'err'); return false; }
     if (INV.paused && INV.paused(ticker)) { toast(ticker + ' trading is paused', 'err'); return false; }
     const q = INV.quote(ticker);
     if (!q || !(Number(q.price) > 0)) { toast('No live Finnhub quote for this asset yet', 'err'); return false; }
 
-    const fee = openFee;
+    const fee = closeFee;
+    const moveRate = LT.adminRate(ticker);
     const minutes = Math.max(1, Math.min(7 * 24 * 60, Number(o.minutes) || 60));
     const durationMeta = this.DURATIONS.find(d => d.m === minutes);
     const durationText = durationMeta ? durationMeta.label : minutes + ' min';
@@ -233,7 +235,8 @@ const LT = {
       durationMinutes: minutes, durationLabel: durationText,
       dividendYield: divYield, dividendBonus: divBonus, dividendPaid: false,
       expiresAt: Date.now() + minutes * 60000,
-      status: 'Open', createdAt: Date.now(), feeCoins: fee, feeAtClose: false, closeFeeCoins: 0, feePaidAtOpen: fee
+      status: 'Open', createdAt: Date.now(), feeCoins: fee, feeAtClose: true, closeFeeCoins: fee,
+      moveRatePct: moveRate
     };
     /* frozen snapshot of the stock and the user's settings at the exact moment the trade opened,
        shown on the History page; later TP/SL edits or settlement never change it */
@@ -246,17 +249,16 @@ const LT = {
       quoteAt: Number(q.at || q.ts || q.time || q.updatedAt) || openedAt,
       changePct: Number(q.changePct) || 0, prevClose: Number(q.prevClose) || 0,
       open: Number(q.open) || 0, dayHigh: Number(q.dayHigh) || 0, dayLow: Number(q.dayLow) || 0,
-      direction, side: trade.side, leverage: trade.leverage, capitalCoins: capital, feeCoins: fee,
+      direction, side: trade.side, leverage: trade.leverage, capitalCoins: capital, feeCoins: fee, moveRatePct: moveRate,
       tpPct: trade.tpPct, slPct: trade.slPct,
       takeProfitPrice: trade.takeProfitPrice, takeProfitWc: trade.takeProfitWc,
       stopLossPrice: trade.stopLossPrice, stopLossWc: trade.stopLossWc,
       trailingStopPct: trade.trailingStopPct,
       durationMinutes: minutes, durationLabel: durationText, expiresAt: trade.expiresAt
     };
-    /* the trade fee is taken from Trade capital immediately when the trade opens, so at close
-       the full capital goes back to Trade capital and the full profit goes to Profit balance */
-    const capAfterFee = Math.round((capBal - fee) * 100) / 100;
-    /* then the capital is held: drawn from Trade capital first, then from Leftover capital */
+    /* no fee at open: at close the full capital goes back to Trade capital and profit - fee goes to Profit balance */
+    const capAfterFee = Math.round(capBal * 100) / 100;
+    /* the capital is held: drawn from Trade capital first, then from Leftover capital */
     const fromCap = Math.min(capAfterFee, capital), fromLeft = Math.round((capital - fromCap) * 100) / 100;
     ia.portfolios.stock = Math.round((capAfterFee - fromCap) * 100) / 100;
     if (fromLeft > 0) ia.stockLeftover = Math.round(Math.max(0, leftBal - fromLeft) * 100) / 100;
@@ -264,7 +266,6 @@ const LT = {
     DB.trades.unshift(trade);
     tx(u.id, 'trade-open', `${direction === 'FALL' ? 'Fall' : 'Rise'} ${this.label(ticker)} · ${usd(capital)} USD`, -capital,
       { tradeId: trade.id, leverage: trade.leverage, entry: q.price, direction });
-    if (fee > 0) tx(u.id, 'trade-fee', `Trade fee ${this.feePct()}% · ${this.label(ticker)}`, -fee, { tradeId: trade.id, capital, feePct: this.feePct() });
     notify(u.id, 'Trade opened',
       `${direction === 'FALL' ? 'Fall' : 'Rise'} ${this.label(ticker)} with ${usd(capital)} USD at ${this.px(ticker, q.price)}${tpPrice ? ' · TP ' + usd(tpPrice) : ''}${trailPct ? ' · trailing ' + trailPct + '%' : (slPrice ? ' · SL ' + usd(slPrice) : '')} — closes in ${minutes} min.${divBonus > 0 ? ' Dividend on timer: +' + usd(divBonus) + ' USD.' : ''}`,
       '#/invest/orders', 'trend');
@@ -824,7 +825,7 @@ const LT = {
       <div class="lt-div-est" id="ltDivEst">Dividend bonus · calculating…</div>
       <button class="btn btn-primary" data-act="lt-start" data-t="${esc(ticker)}" style="width:100%">
         ${ic('play', 15)} Buy</button>
-      <div class="tiny muted center mt6">${ic('lock', 11)} Capital is held while the trade runs · ${this.feePct()}% fee taken from Trade capital when the trade opens · payout = capital + profit − fee · take profit skims &amp; continues · stop loss closes automatically · timer ends the trade</div>
+      <div class="tiny muted center mt6">${ic('lock', 11)} Capital is held while the trade runs · ${this.feePct()}% fee taken out of the profit when the trade closes · payout = capital + profit − fee · take profit skims &amp; continues · stop loss closes automatically · timer ends the trade</div>
     </div>`;
   }
 };
@@ -1137,7 +1138,7 @@ LT.seriesWithTrades = function (tf, userId) {
       if (msAgo > started) { v += p.capital; return; }           /* before entry: flat capital */
       const dir = t.side === 'short' ? -1 : 1;
       const move = LT.priceMovePct(t.entryPrice, price) / 100;
-      const pnl = Math.max(-p.capital, p.capital * (((price - t.entryPrice) / (p.capital || 1)) / 100) * (t.leverage || 1) * dir * Math.max(1, Number(t.moveCount) || 0, t._cMoves || 0));
+      const pnl = Math.max(-p.capital, p.capital * (LT.movePctOf(t, price) / 100) * (t.leverage || 1) * dir * Math.max(1, Number(t.moveCount) || 0, t._cMoves || 0));
       v += Math.max(0, p.capital + pnl);
     });
     out.push(v);
@@ -2675,6 +2676,31 @@ LT.movesOf = function (t, price) {
 LT.totalMovesOf = function (t) {
   if (!t) return 0;
   return Math.max(Number(t.totalMoveCount) || 0, Number(t.clientMoveTotal) || 0, Number(t.moveCount) || 0, t._cMoves || 0);
+};
+/* admin profit rate (%) for a stock: its own rate, else the market-type rate (Admin -> Stocks) */
+LT.adminRate = function (ticker) {
+  try { if (typeof INV.effectiveProfitPct === 'function') return Math.max(0, Number(INV.effectiveProfitPct(ticker)) || 0); } catch (e) {}
+  const s = INV.stock && INV.stock(ticker);
+  const n = Number(s && s.profitPct);
+  return Number.isFinite(n) && n >= 0 ? Math.min(500, n) : 0;
+};
+/* rate locked on the trade when it opened (older trades: the stock's current admin rate) */
+LT.moveRateOf = function (t) {
+  const n = Number(t && t.moveRatePct);
+  return Number.isFinite(n) && n >= 0 ? n : LT.adminRate(t && t.ticker);
+};
+/* Price move % = (current price - entry price) x capital x admin profit rate %.
+   e.g. ($125 - $100) x $50 x 1.5% = 18.75 -> +18.75%. Same formula as market.js movePctOf. */
+LT.movePctOf = function (t, price) {
+  const cap = Number(t && t.capitalCoins) || 0, entry = Number(t && t.entryPrice), p = Number(price);
+  if (!(cap > 0) || !(entry > 0) || !(p > 0)) return 0;
+  return (p - entry) * cap * (LT.moveRateOf(t) / 100);
+};
+/* price distance from entry at which one move's profit / loss equals pct % of the capital */
+LT.tpslDiff = function (t, pct, lev) {
+  const cap = Number(t && t.capitalCoins) || 0, rate = LT.moveRateOf(t);
+  if (!(cap > 0) || !(rate > 0) || !(Number(pct) > 0)) return 0;
+  return 100 * Number(pct) / (cap * rate * Math.max(1, Number(lev) || 1));
 };
 LT.priceMovePct = function (entry, price) {
   const e = Number(entry), p = Number(price);
