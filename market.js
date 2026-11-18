@@ -101,7 +101,8 @@ function moveProfit(t, price, lev, dir) {
   if (!(cap > 0) || !(entry > 0) || !(Number(price) > 0)) return 0;
   const movePct = movePctOf(t, price);
   const perMove = cap * (movePct / 100) * lev * dir;
-  return perMove * Math.max(1, Number(t.moveCount) || 0);
+  /* with a take-profit level set, moves are TP levels reached, so profit is not multiplied */
+  return perMove * (tpLevelOf(t) > 0 ? 1 : Math.max(1, Number(t.moveCount) || 0));
 }
 /* Auto take-profit amount: only the profit from price movement in the user's trade
    direction (up for Rise, down for Fall) since the last take / re-base. Moves against the
@@ -115,6 +116,28 @@ function favorableMoveProfit(t, price, lev, dir) {
   const towardUser = dir < 0 ? px < entry : px > entry;
   if (!towardUser) return 0;
   return Math.max(0, cap * (movePctOf(t, px) / 100) * lev * dir);
+}
+/* Take-profit level (USD amount of the trade capital; a % TP is stored as its USD amount). */
+function tpLevelOf(t) {
+  const n = Number(t && t.takeProfitWc);
+  return n > 0 ? n : 0;
+}
+/* Moves with a TP level: how many times the profit in the user's direction has reached the
+   TP level since the last take. e.g. TP $10 and +$50 profit = 5 moves ($50 available). */
+function tpMoves(t, price, lev, dir) {
+  const tp = tpLevelOf(t);
+  if (!(tp > 0)) return 0;
+  return Math.floor((favorableMoveProfit(t, price, lev, dir) + 1e-9) / tp);
+}
+/* After taking whole TP levels, move the entry toward the price by exactly the distance that
+   earned them, so any profit above the taken levels stays in the trade for the next move. */
+function rebaseAfterTake(t, price, amount, lev, dir) {
+  const cap = Number(t.capitalCoins) || 0;
+  const entry = Number(t.entryPrice);
+  const diff = cap > 0 ? tpslDiff(t, (amount / cap) * 100, lev) : 0;
+  if (!(diff > 0) || !(entry > 0)) return round(price, 6);
+  const next = entry + dir * diff;
+  return round(dir > 0 ? Math.min(next, price) : Math.max(next, price), 6);
 }
 /* Trade ended by its timer (no Take Profit taken): move % = (last price at end time - entry price)
    x capital x admin rate %, profit = capital x move% x leverage, with no number-of-moves multiplier. */
@@ -1190,7 +1213,10 @@ class MarketService {
     const entry = Number(t.entryPrice);
     if (!(entry > 0)) return 0;
     if (t.lastSecureAt && now - Number(t.lastSecureAt) < 1000) return 0;
-    const profit = round(favorableMoveProfit(t, q.price, lev, dir), 2);
+    /* with a TP level set, profit is secured in whole TP levels (moves) */
+    const tpLvl = tpLevelOf(t);
+    const levels = tpLvl > 0 ? tpMoves(t, q.price, lev, dir) : 0;
+    const profit = tpLvl > 0 ? round(levels * tpLvl, 2) : round(favorableMoveProfit(t, q.price, lev, dir), 2);
     if (!(profit > 0)) return 0;
     if (!t.initialEntryPrice) t.initialEntryPrice = entry;
     t.securedProfits = Array.isArray(t.securedProfits) ? t.securedProfits : [];
@@ -1202,12 +1228,14 @@ class MarketService {
     if (t.securedProfits.length > 100) t.securedProfits.length = 100;
     t.securedProfitCoins = round((Number(t.securedProfitCoins) || 0) + profit, 2);
     t.securedProfitCount = (Number(t.securedProfitCount) || 0) + 1;
-    t.entryPrice = round(q.price, 6);
+    t.entryPrice = tpLvl > 0 ? rebaseAfterTake(t, q.price, profit, lev, dir) : round(q.price, 6);
+    if (tpLvl > 0) t.tpMovesTaken = (Number(t.tpMovesTaken) || 0) + levels;
     t.moveCount = 0; t.lastMovePrice = q.price;
     t.lastSecureAt = now;
     t.lastProfitAt = now;
     t.lastProfitPrice = q.price;
-    if (clearTp) {
+    /* an amount TP level repeats, so it is kept on the trade */
+    if (clearTp && !(tpLvl > 0)) {
       t.takeProfitPrice = 0;
       t.takeProfitWc = null;
       t.takeProfitMode = 'PRICE';
@@ -1245,7 +1273,9 @@ class MarketService {
     const dir = direction === 'FALL' ? -1 : 1;
     const entry = Number(t.entryPrice);
     if (!(entry > 0)) return 0;
-    const available = round(favorableMoveProfit(t, q.price, lev, dir), 2);
+    const available = tpLevelOf(t) > 0
+      ? round(tpMoves(t, q.price, lev, dir) * tpLevelOf(t), 2)
+      : round(favorableMoveProfit(t, q.price, lev, dir), 2);
     /* secure even small profits immediately — 0.01 WC is the bookkeeping floor */
     if (!(available >= 0.01)) return 0;
     const secured = this.secureProfit(t, q, db, now, 'Auto Secure', false);
@@ -1351,21 +1381,31 @@ class MarketService {
     if (t.lastProfitAt && now - Number(t.lastProfitAt) < 4000) return 0;
     /* automatic Take Profit only takes the move in the user's direction; the manual
        Take profit button (forceCredit) keeps the existing calculation */
-    const profit = forceCredit
-      ? round(Math.max(0, moveProfit(t, q.price, lev, dir)), 2)
-      : round(favorableMoveProfit(t, q.price, lev, dir), 2);
+    /* with a TP level set (USD or % of capital), profit is taken in whole TP levels:
+       TP $10 and +$50 profit in the user's direction = 5 moves = $50 */
+    const tpLvl = tpLevelOf(t);
+    const levels = tpLvl > 0 ? tpMoves(t, q.price, lev, dir) : 0;
+    const profit = tpLvl > 0
+      ? round(levels * tpLvl, 2)
+      : forceCredit
+        ? round(Math.max(0, moveProfit(t, q.price, lev, dir)), 2)
+        : round(favorableMoveProfit(t, q.price, lev, dir), 2);
     if (!(profit > 0)) return 0;
     if (!t.initialEntryPrice) t.initialEntryPrice = entry;
     creditStockProfit(u, profit);
     t.profitTakenCoins = round((Number(t.profitTakenCoins) || 0) + profit, 2);
-    t.entryPrice = round(q.price, 6);
+    t.entryPrice = tpLvl > 0 ? rebaseAfterTake(t, q.price, profit, lev, dir) : round(q.price, 6);
+    if (tpLvl > 0) t.tpMovesTaken = (Number(t.tpMovesTaken) || 0) + levels;
     t.moveCount = 0; t.lastMovePrice = q.price;
     t.lastProfitAt = now;
     t.lastProfitPrice = q.price;
-    t.takeProfitPrice = 0;
-    t.takeProfitWc = null;
-    t.takeProfitMode = 'PRICE';
-    t.tpPct = 0;
+    /* an amount TP level repeats: it stays on the trade and pays again each time profit reaches it */
+    if (!(tpLvl > 0)) {
+      t.takeProfitPrice = 0;
+      t.takeProfitWc = null;
+      t.takeProfitMode = 'PRICE';
+      t.tpPct = 0;
+    }
     t.profitTakenCount = (Number(t.profitTakenCount) || 0) + 1;
     if (t.trailingActive && Number(t.trailingStopPct) > 0) {
       const dist = Math.max(0.05, Math.min(50, Number(t.trailingStopPct))) / 100;
@@ -1376,7 +1416,7 @@ class MarketService {
     db.txs = db.txs || [];
     db.txs.unshift({
       id: id('tx_'), userId: u.id, type: 'trade-profit',
-      label: `${reason || 'Take Profit'} · ${t.ticker} · +$${profit.toFixed(2)} to Profit balance, trade continues`,
+      label: `${reason || 'Take Profit'} · ${t.ticker} · +$${profit.toFixed(2)}${levels > 0 ? ` (${levels} move${levels === 1 ? '' : 's'} of $${tpLvl.toFixed(2)})` : ''} to Profit balance, trade continues`,
       coins: profit, meta: { tradeId: t.id, pnlCoins: profit, price: q.price, continues: true, server: true }, createdAt: now
     });
     db.notifications = db.notifications || [];
@@ -1445,7 +1485,7 @@ class MarketService {
     const q = this.quotes[t.ticker];
     if (!q || !(Number(q.price) > 0)) throw new Error('Waiting for a live quote — try again in a moment');
     const profit = this.skimProfit(t, q, db, Date.now(), 'Take Profit Taken', true);
-    if (!(profit > 0)) throw new Error('No profit to take yet');
+    if (!(profit > 0)) throw new Error(Number(t.takeProfitWc) > 0 ? 'Profit has not reached your $' + Number(t.takeProfitWc).toFixed(2) + ' take-profit level yet' : 'No profit to take yet');
     this.persist();
     try { this.broadcast('change', { rev: null, source: 'manual-take-profit', at: Date.now() }); } catch (e) {}
     return { ok: true, profit, trade: t, balance: ((db.users || []).find((x) => x.id === userId) || {}).balance };
@@ -1477,6 +1517,12 @@ class MarketService {
             t.totalMoveCount = (Number(t.totalMoveCount) || 0) + 1; /* whole trade, never reset */
           }
           t.lastMovePrice = q.price;
+        }
+        /* with a take-profit level set, moves = how many TP levels of profit the trade has reached */
+        if (tpLevelOf(t) > 0) {
+          const lvNow = tpMoves(t, q.price, lev, dir);
+          if (lvNow !== Number(t.moveCount)) { t.moveCount = lvNow; changed++; }
+          t.totalMoveCount = (Number(t.tpMovesTaken) || 0) + lvNow;
         }
         if (t.stakeAmount == null) t.stakeAmount = t.capitalCoins;
         if (!(Number(t.takeProfitPrice) > 0) && Number(t.tpPct) > 0) {
@@ -1519,7 +1565,7 @@ class MarketService {
         const slReason = t.trailingActive ? 'Trailing Stop Hit' : 'Stop Loss Hit';
         let reason = '';
         if (slAmt > 0 && Math.max(-capNow, moveProfit(t, q.price, lev, dir)) <= -slAmt) reason = 'Stop Loss Hit';
-        else if (tpAmt > 0 && favorableMoveProfit(t, q.price, lev, dir) >= tpAmt) reason = 'Take Profit Hit';
+        else if (tpAmt > 0 && tpMoves(t, q.price, lev, dir) >= 1) reason = 'Take Profit Hit';
         if (reason) { /* amount level hit */ }
         else if (direction === 'RISE') {
           if (tpPrice > 0 && q.price >= tpPrice) reason = 'Take Profit Hit';
