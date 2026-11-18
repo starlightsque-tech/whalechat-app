@@ -34,8 +34,7 @@ function creditStockProfit(u, amount) {
   a.stockProfit = r2((Number(a.stockProfit) || 0) + Math.max(0, Number(amount) || 0));
   return a.stockProfit;
 }
-/* Close-out rule (new trades pay the fee from Trade capital when they open, so fee = 0 here
-   and the full capital / full profit are returned; older trades flagged feeAtClose pay it now):
+/* Close-out rule (the fee is charged here, at close; trades that paid it at open pass fee = 0):
      profit = capital × price move % × leverage
      payout = capital + profit − (capital × trade fee %)
    Gain: capital -> Trade capital balance, profit − fee -> Profit balance
@@ -59,8 +58,8 @@ function settleToStock(u, stake, pnl, fee) {
   }
   return out;
 }
-/* Fee charged at close. Only for older trades flagged feeAtClose; new trades pay the fee
-   from Trade capital when they open, so they are not charged again. */
+/* Fee charged at close (capital x fee %), taken out of the profit by settleToStock.
+   Trades flagged feeAtClose:false already paid it from Trade capital when they opened. */
 function closeFeeFor(t, db) {
   if (!t || !t.feeAtClose) return 0;
   const v = Number(t.closeFeeCoins);
@@ -68,24 +67,55 @@ function closeFeeFor(t, db) {
   const pct = Math.max(0, Number(db && db.invest && db.invest.feePct != null ? db.invest.feePct : 0.5) || 0);
   return r2((Number(t.capitalCoins) || 0) * pct / 100);
 }
-/* Price move % = (current price - entry price) / capital (percent units, e.g. 25 / 50 = 0.5 -> +0.5%).
-   Profit per move = capital x move% x leverage; total profit = profit x number of price moves
-   seen since the trade (or its last re-base) started. Loss is capped at the stake by callers. */
+/* Admin profit rate (%) for a stock: its own rate from Admin -> Stocks, otherwise the
+   market-type rate (same rule as spot.adminPct / INV.effectiveProfitPct). */
+function adminRatePct(db, ticker) {
+  const tk = String(ticker || '').toUpperCase();
+  const s = ((db && db.stocks) || []).find((x) => x && String(x.ticker).toUpperCase() === tk) || null;
+  let n = s && s.profitPct != null && s.profitPct !== '' ? Number(s.profitPct) : NaN;
+  if (!Number.isFinite(n) || n < 0) {
+    const rates = (db && db.invest && db.invest.classRates) || {};
+    n = Number(rates[(s && s.assetClass) || 'us']);
+  }
+  return Number.isFinite(n) && n >= 0 ? Math.min(500, n) : 0;
+}
+/* rate locked on the trade when it opened (filled from the admin rate for older trades) */
+function moveRateOf(t) {
+  const n = Number(t && t.moveRatePct);
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+/* Price move % = (current price - entry price) x capital x admin profit rate %.
+   e.g. ($125 - $100) x $50 x 1.5% = 18.75 -> +18.75% */
+function movePctOf(t, price) {
+  const cap = Number(t.capitalCoins) || 0;
+  const entry = Number(t.entryPrice);
+  if (!(cap > 0) || !(entry > 0) || !(Number(price) > 0)) return 0;
+  return (Number(price) - entry) * cap * (moveRateOf(t) / 100);
+}
+/* Profit per move = capital x move% x leverage (e.g. $50 x 18.75% x 5 = $46.875);
+   total profit = profit x number of price moves seen since the trade (or its last re-base)
+   started. Loss is capped at the stake by callers. */
 function moveProfit(t, price, lev, dir) {
   const cap = Number(t.capitalCoins) || 0;
   const entry = Number(t.entryPrice);
   if (!(cap > 0) || !(entry > 0) || !(Number(price) > 0)) return 0;
-  const movePct = (Number(price) - entry) / cap;
+  const movePct = movePctOf(t, price);
   const perMove = cap * (movePct / 100) * lev * dir;
   return perMove * Math.max(1, Number(t.moveCount) || 0);
 }
-/* Trade ended by its timer (no Take Profit taken): move % = (last price at end time - entry price) / capital,
-   profit = capital x move% x leverage, with no number-of-moves multiplier. */
+/* Trade ended by its timer (no Take Profit taken): move % = (last price at end time - entry price)
+   x capital x admin rate %, profit = capital x move% x leverage, with no number-of-moves multiplier. */
+/* price distance from entry at which one move's profit / loss equals pct % of the capital */
+function tpslDiff(t, pct, lev) {
+  const cap = Number(t.capitalCoins) || 0, rate = moveRateOf(t);
+  if (!(cap > 0) || !(rate > 0) || !(Number(pct) > 0)) return 0;
+  return 100 * Number(pct) / (cap * rate * Math.max(1, Number(lev) || 1));
+}
 function moveProfitAtEnd(t, price, lev, dir) {
   const cap = Number(t.capitalCoins) || 0;
   const entry = Number(t.entryPrice);
   if (!(cap > 0) || !(entry > 0) || !(Number(price) > 0)) return 0;
-  const movePct = (Number(price) - entry) / cap;
+  const movePct = movePctOf(t, price);
   return cap * (movePct / 100) * lev * dir;
 }
 /* Trade totals recorded at close: total profit = final move profit + profit still unclaimed
@@ -1420,6 +1450,8 @@ class MarketService {
         if (!t || t.type !== 'live' || t.status !== 'Open') continue;
         const q = this.quotes[t.ticker];
         if (!q || !(Number(t.entryPrice) > 0)) continue;
+        /* lock the admin profit rate on trades opened before it was stored on the trade */
+        if (t.moveRatePct == null) { t.moveRatePct = adminRatePct(db, t.ticker); changed++; }
         const lev = Math.max(1, Math.min(20, Number(t.leverage) || 1));
         const direction = t.direction || (t.side === 'short' ? 'FALL' : 'RISE');
         const dir = direction === 'FALL' ? -1 : 1;
@@ -1434,13 +1466,14 @@ class MarketService {
         }
         if (t.stakeAmount == null) t.stakeAmount = t.capitalCoins;
         if (!(Number(t.takeProfitPrice) > 0) && Number(t.tpPct) > 0) {
-          /* new formula: profit = price diff x leverage / 100, so TP% of capital needs diff = capital x TP% / leverage */
-          const d = (Number(t.capitalCoins) || 0) * Number(t.tpPct) / lev;
-          t.takeProfitPrice = round(Math.max(t.entryPrice * 0.0001, direction === 'FALL' ? t.entryPrice - d : t.entryPrice + d), 4);
+          /* one-move profit = capital x (diff x capital x rate%) x leverage, so TP% of capital needs
+             diff = 100 x TP% / (capital x rate% x leverage) */
+          const d = tpslDiff(t, t.tpPct, lev);
+          if (d > 0) t.takeProfitPrice = round(Math.max(t.entryPrice * 0.0001, direction === 'FALL' ? t.entryPrice - d : t.entryPrice + d), 4);
         }
         if (!(Number(t.stopLossPrice) > 0) && Number(t.slPct) > 0) {
-          const d = (Number(t.capitalCoins) || 0) * Number(t.slPct) / lev;
-          t.stopLossPrice = round(Math.max(t.entryPrice * 0.0001, direction === 'FALL' ? t.entryPrice + d : t.entryPrice - d), 4);
+          const d = tpslDiff(t, t.slPct, lev);
+          if (d > 0) t.stopLossPrice = round(Math.max(t.entryPrice * 0.0001, direction === 'FALL' ? t.entryPrice + d : t.entryPrice - d), 4);
         }
         /* trailing stop: ratchet behind the best price, never loosen */
         if (t.trailingActive && Number(t.trailingStopPct) > 0) {
