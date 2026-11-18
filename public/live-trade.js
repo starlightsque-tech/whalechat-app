@@ -81,12 +81,12 @@ const LT = {
       if (t.stakeAmount == null) t.stakeAmount = t.capitalCoins;
       const entry = Number(t.entryPrice) || 0, lev = Math.max(1, Number(t.leverage) || 1);
       if (!(Number(t.takeProfitPrice) > 0) && Number(t.tpPct) > 0 && entry > 0) {
-        const m = Number(t.tpPct) / (100 * lev);
-        t.takeProfitPrice = Math.round(entry * (t.direction === 'FALL' ? (1 - m) : (1 + m)) * 10000) / 10000;
+        const d = (Number(t.capitalCoins) || 0) * Number(t.tpPct) / lev;
+        t.takeProfitPrice = Math.round(Math.max(entry * 0.0001, t.direction === 'FALL' ? entry - d : entry + d) * 10000) / 10000;
       }
       if (!(Number(t.stopLossPrice) > 0) && Number(t.slPct) > 0 && entry > 0) {
-        const m = Number(t.slPct) / (100 * lev);
-        t.stopLossPrice = Math.round(entry * (t.direction === 'FALL' ? (1 + m) : (1 - m)) * 10000) / 10000;
+        const d = (Number(t.capitalCoins) || 0) * Number(t.slPct) / lev;
+        t.stopLossPrice = Math.round(Math.max(entry * 0.0001, t.direction === 'FALL' ? entry + d : entry - d) * 10000) / 10000;
       }
     });
     return list;
@@ -120,17 +120,20 @@ const LT = {
     if (!v || !(entry > 0)) return 0;
     if (mode === 'price') return Math.round(v * 10000) / 10000;
     const rise = direction === 'RISE';
-    let pct;
+    /* new formula: profit = price difference x leverage / 100 (per move), so the required
+       price difference is  capital x % / leverage  (percent of capital)  or  100 x amount / leverage  (money). */
+    const stake = Number(capital) || 0, lev = Math.max(1, Number(leverage) || 1);
+    let diff;
     if (mode === 'wc') {
-      const stake = Number(capital) || 0, lev = Math.max(1, Number(leverage) || 1);
-      if (!(stake > 0)) return 0;
-      pct = v / (stake * lev);                 /* USD profit / loss -> required price move */
+      diff = 100 * v / lev;
+    } else if (stake > 0) {
+      diff = stake * v / lev;
     } else {
-      pct = v / 100;
+      diff = entry * v / 100;
     }
     const price = kind === 'tp'
-      ? (rise ? entry * (1 + pct) : entry * (1 - pct))
-      : (rise ? entry * (1 - pct) : entry * (1 + pct));
+      ? (rise ? entry + diff : entry - diff)
+      : (rise ? entry - diff : entry + diff);
     if (!(price > 0)) return 0;
     return Math.round(price * 10000) / 10000;
   },
@@ -2335,7 +2338,7 @@ App.ltEditQuick = function (id, ds) {
   if (!t) return;
   const k = ds.k === 'sl' ? 'sl' : 'tp';
   const dir = LT.dirOf(t);
-  const price = LT.levelPrice(dir, Number(t.entryPrice) || 0, ds.pct, 'pct', k);
+  const price = LT.levelPrice(dir, Number(t.entryPrice) || 0, ds.pct, 'pct', k, t.capitalCoins, t.leverage);
   const input = document.getElementById(k === 'tp' ? 'ltEditTp' : 'ltEditSl');
   if (input) input.value = price;
 };
@@ -2517,7 +2520,7 @@ setInterval(() => {
     LT.paintDash();
     LT.paintMarket();
   } catch (e) { console.error('lt tick', e); }
-}, 2000);
+}, 500);
 
 /* catch the app after login/first paint too */
 setInterval(() => {
