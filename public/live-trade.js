@@ -163,7 +163,8 @@ const LT = {
     const movePctCap = cap > 0 ? (Number(q.price) - Number(t.entryPrice)) / cap : 0;
     let pnlCoins = cap * (movePctCap / 100) * (t.leverage || 1) * dir * (atEnd ? 1 : LT.movesOf(t, q.price));
     pnlCoins = Math.max(-t.capitalCoins, pnlCoins);          /* never lose more than the stake */
-    /* payout = capital + profit − (capital × trade fee %); the fee is taken at close */
+    /* payout = capital + profit − (capital × trade fee %). New trades pay the fee from Trade capital
+       when they open (closeFee = 0 here); older trades opened with feeAtClose still pay it at close */
     const fee = Math.min(LT.closeFee(t), Math.max(0, t.capitalCoins + pnlCoins));
     const payout = Math.max(0, t.capitalCoins + pnlCoins - fee);
     return {
@@ -190,12 +191,15 @@ const LT = {
     if (capital < this.MIN_CAPITAL) { toast('Minimum trade is ' + this.MIN_CAPITAL + ' USD', 'err'); return false; }
     const ia = INV.investAcct(u);
     const capBal = Number(ia.portfolios.stock || 0), leftBal = Math.max(0, Number(ia.stockLeftover) || 0);
-    if (capital > capBal + leftBal + 1e-9) { toast('Not enough balance — capital ' + usd(capBal) + ' + leftover ' + usd(leftBal) + '. Top up in USD first', 'err'); return false; }
+    /* trade fee = capital x fee % (e.g. $50 x 0.5% = $0.25), deducted from Trade capital the moment the trade opens */
+    const openFee = Math.round(capital * this.feePct() / 100 * 100) / 100;
+    if (openFee > capBal + 1e-9) { toast('Not enough Trade capital for the ' + usd(openFee) + ' USD trade fee. Top up in USD first', 'err'); return false; }
+    if (capital > (capBal - openFee) + leftBal + 1e-9) { toast('Not enough balance — capital ' + usd(capBal) + ' + leftover ' + usd(leftBal) + ' must cover ' + usd(capital) + ' USD + ' + usd(openFee) + ' USD fee. Top up in USD first', 'err'); return false; }
     if (INV.paused && INV.paused(ticker)) { toast(ticker + ' trading is paused', 'err'); return false; }
     const q = INV.quote(ticker);
     if (!q || !(Number(q.price) > 0)) { toast('No live Finnhub quote for this asset yet', 'err'); return false; }
 
-    const fee = Math.round(capital * this.feePct() / 100 * 100) / 100;
+    const fee = openFee;
     const minutes = Math.max(1, Math.min(7 * 24 * 60, Number(o.minutes) || 60));
     const durationMeta = this.DURATIONS.find(d => d.m === minutes);
     const durationText = durationMeta ? durationMeta.label : minutes + ' min';
@@ -229,17 +233,20 @@ const LT = {
       durationMinutes: minutes, durationLabel: durationText,
       dividendYield: divYield, dividendBonus: divBonus, dividendPaid: false,
       expiresAt: Date.now() + minutes * 60000,
-      status: 'Open', createdAt: Date.now(), feeCoins: fee, feeAtClose: true, closeFeeCoins: fee
+      status: 'Open', createdAt: Date.now(), feeCoins: fee, feeAtClose: false, closeFeeCoins: 0, feePaidAtOpen: fee
     };
-    /* only the capital is held now — the trade fee comes off the payout when the trade closes */
-    /* draw from Trade capital first, then from Leftover capital */
-    const fromCap = Math.min(capBal, capital), fromLeft = Math.round((capital - fromCap) * 100) / 100;
-    ia.portfolios.stock = Math.round((capBal - fromCap) * 100) / 100;
+    /* the trade fee is taken from Trade capital immediately when the trade opens, so at close
+       the full capital goes back to Trade capital and the full profit goes to Profit balance */
+    const capAfterFee = Math.round((capBal - fee) * 100) / 100;
+    /* then the capital is held: drawn from Trade capital first, then from Leftover capital */
+    const fromCap = Math.min(capAfterFee, capital), fromLeft = Math.round((capital - fromCap) * 100) / 100;
+    ia.portfolios.stock = Math.round((capAfterFee - fromCap) * 100) / 100;
     if (fromLeft > 0) ia.stockLeftover = Math.round(Math.max(0, leftBal - fromLeft) * 100) / 100;
     trade.fundedFromLeftover = fromLeft;
     DB.trades.unshift(trade);
     tx(u.id, 'trade-open', `${direction === 'FALL' ? 'Fall' : 'Rise'} ${this.label(ticker)} · ${usd(capital)} USD`, -capital,
       { tradeId: trade.id, leverage: trade.leverage, entry: q.price, direction });
+    if (fee > 0) tx(u.id, 'trade-fee', `Trade fee ${this.feePct()}% · ${this.label(ticker)}`, -fee, { tradeId: trade.id, capital, feePct: this.feePct() });
     notify(u.id, 'Trade opened',
       `${direction === 'FALL' ? 'Fall' : 'Rise'} ${this.label(ticker)} with ${usd(capital)} USD at ${this.px(ticker, q.price)}${tpPrice ? ' · TP ' + usd(tpPrice) : ''}${trailPct ? ' · trailing ' + trailPct + '%' : (slPrice ? ' · SL ' + usd(slPrice) : '')} — closes in ${minutes} min.${divBonus > 0 ? ' Dividend on timer: +' + usd(divBonus) + ' USD.' : ''}`,
       '#/invest/orders', 'trend');
@@ -733,7 +740,7 @@ const LT = {
       <div class="lt-div-est" id="ltDivEst">Dividend bonus · calculating…</div>
       <button class="btn btn-primary" data-act="lt-start" data-t="${esc(ticker)}" style="width:100%">
         ${ic('play', 15)} Buy</button>
-      <div class="tiny muted center mt6">${ic('lock', 11)} Capital is held while the trade runs · ${this.feePct()}% fee taken from the payout at close · payout = capital + profit − fee · take profit skims &amp; continues · stop loss closes automatically · timer ends the trade</div>
+      <div class="tiny muted center mt6">${ic('lock', 11)} Capital is held while the trade runs · ${this.feePct()}% fee taken from Trade capital when the trade opens · payout = capital + profit − fee · take profit skims &amp; continues · stop loss closes automatically · timer ends the trade</div>
     </div>`;
   }
 };
