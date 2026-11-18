@@ -10,6 +10,7 @@ COPY bots.js ./
 COPY shares.js ./
 COPY email.js ./
 COPY finnhub.js ./
+COPY b2b-alerts.js ./
 COPY scripts ./scripts
 COPY public ./public
 RUN node scripts/prepare-assets.js
