@@ -697,7 +697,7 @@ class MarketService {
 
   _settleSoon() {
     const now = Date.now();
-    if (now - this._lastSettleAt < 250) return;
+    if (now - this._lastSettleAt < 25) return;
     this._lastSettleAt = now;
     try { this.settleTrades(); } catch (e) { this.lastError = e.message; }
   }
@@ -1421,12 +1421,13 @@ class MarketService {
         }
         if (t.stakeAmount == null) t.stakeAmount = t.capitalCoins;
         if (!(Number(t.takeProfitPrice) > 0) && Number(t.tpPct) > 0) {
-          const m = Number(t.tpPct) / (100 * lev);
-          t.takeProfitPrice = round(t.entryPrice * (direction === 'FALL' ? (1 - m) : (1 + m)), 4);
+          /* new formula: profit = price diff x leverage / 100, so TP% of capital needs diff = capital x TP% / leverage */
+          const d = (Number(t.capitalCoins) || 0) * Number(t.tpPct) / lev;
+          t.takeProfitPrice = round(Math.max(t.entryPrice * 0.0001, direction === 'FALL' ? t.entryPrice - d : t.entryPrice + d), 4);
         }
         if (!(Number(t.stopLossPrice) > 0) && Number(t.slPct) > 0) {
-          const m = Number(t.slPct) / (100 * lev);
-          t.stopLossPrice = round(t.entryPrice * (direction === 'FALL' ? (1 + m) : (1 - m)), 4);
+          const d = (Number(t.capitalCoins) || 0) * Number(t.slPct) / lev;
+          t.stopLossPrice = round(Math.max(t.entryPrice * 0.0001, direction === 'FALL' ? t.entryPrice + d : t.entryPrice - d), 4);
         }
         /* trailing stop: ratchet behind the best price, never loosen */
         if (t.trailingActive && Number(t.trailingStopPct) > 0) {
@@ -1584,7 +1585,7 @@ class MarketService {
     this.refreshAssets();
     this.seedBaseQuotes();
     /* TP/SL checks run every second so a level hit is settled immediately */
-    this.timers.push(setInterval(() => { try { this.settleTrades(); } catch (e) { this.lastError = e.message; } }, 1000));
+    this.timers.push(setInterval(() => { try { this.settleTrades(); } catch (e) { this.lastError = e.message; } }, 100));
     /* last real prices on disk → instant first paint after a cold start */
     this.timers.push(setInterval(() => { try { this.saveQuotesFile(); } catch (e) {} }, 30000));
     /* The 24/7 engine always runs. Real Finnhub ticks win while they are fresh;
