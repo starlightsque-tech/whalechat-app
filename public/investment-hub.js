@@ -583,7 +583,10 @@
 
   function historyPage(u) {
     var a = account(u);
-    return head('Investment history', 'Transfers, top-ups, tools and portfolio movements.', '#/investment') +
+    var trades = '';
+    try { if (typeof LT !== 'undefined' && LT.tradeHistoryBlock) trades = LT.tradeHistoryBlock(u.id); } catch (e) { trades = ''; }
+    return head('Investment history', 'Trades, transfers, top-ups, tools and portfolio movements.', '#/investment') +
+      trades +
       '<div class="card"><div class="ih-list">' + (a.ledger.length ? a.ledger.map(function (x) {
         return '<div class="ih-row"><div class="grow"><b>' + escH(x.label) + '</b><div class="tiny muted">' + new Date(x.at).toLocaleString() + '</div></div><div style="text-align:right"><b class="' + (x.usd >= 0 ? 'up' : 'down') + '">' + (x.usd >= 0 ? '+' : '') + money(x.usd) + '</b>' + (x.coins ? '<div class="tiny muted">' + (x.coins >= 0 ? '+' : '') + wc(x.coins) + ' WC</div>' : '') + '</div></div>';
       }).join('') : '<div class="empty" style="padding:18px"><p>No investment transactions yet.</p></div>') + '</div></div>';
