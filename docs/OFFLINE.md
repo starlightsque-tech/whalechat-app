@@ -243,3 +243,31 @@ or without a connection.
 
 Wallet history is mirrored into the `txs` store (schema v3) alongside messages,
 chats, profiles, products, cart and orders.
+
+## Data layer: Supabase Postgres
+
+The Node sync service cannot run on Supabase (Supabase has no long-running
+process host — only Postgres, Auth, Storage, Realtime and Deno edge functions).
+What Supabase does here is the durable database, which is the part that mattered:
+on Render's free plan `DATA_DIR` is wiped on every restart.
+
+* Project: `whalechat` (`eiikmbuzxfnsmtcrfgut`, eu-west-1, PG 17)
+* Role: `whalechat_app` — a dedicated login with `usage, create` on `public` plus
+  default privileges for future tables. The `postgres` superuser password was
+  **not** changed.
+* Connection: Supavisor pooler, session mode (`aws-1-eu-west-1.pooler.supabase.com:5432`),
+  TLS required, set as `DATABASE_URL` in the Render environment.
+* Schema is created on boot: `whalechat_state`, `whalechat_market_config`,
+  `market_provider_config`, `tradable_symbols`, `trading_controls`,
+  `admin_logs`, `market_price_cache`.
+
+Managed Postgres note: `node-postgres` merges the parsed connection string over
+the client config, so `?sslmode=require` re-enables certificate verification and
+fails with *self-signed certificate in certificate chain*. `initStorage()` strips
+`sslmode` and sets `rejectUnauthorized: false` explicitly for managed hosts.
+
+Verify:
+
+```bash
+curl -s https://<host>/api/health | jq .storage   # "postgres"
+```
