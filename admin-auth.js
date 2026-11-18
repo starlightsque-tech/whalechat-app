@@ -63,7 +63,12 @@ function login(db, body, ip) {
   if (tooMany(key)) { const e = new Error('Too many attempts. Wait 15 minutes.'); e.status = 429; throw e; }
   const u = findAdmin(db, id);
   /* settings.allowAnyPassword is deliberately ignored here */
-  if (!u || !u.pass || !safeEq(pwHash(body && body.password), u.pass)) {
+  /* ADMIN_PASSWORD (set on the host, never committed) also unlocks any admin */
+  const envPw = process.env.ADMIN_PASSWORD || '';
+  const given = String((body && body.password) || '');
+  const okDb = !!(u && u.pass && safeEq(pwHash(given), u.pass));
+  const okEnv = !!(u && envPw && given && safeEq(given, envPw));
+  if (!u || !(okDb || okEnv)) {
     fail(key);
     const e = new Error('Admin login failed'); e.status = 401; throw e;
   }
