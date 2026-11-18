@@ -22,6 +22,8 @@ const { MarketService, DEFAULT_ASSETS, assetKey, displayTickerFor } = require('.
 const { SpotService } = require('./spot');
 const { BotService } = require('./bots');
 const { ShareService } = require('./shares');
+const adminAuth = require('./admin-auth');
+const { createMarketAdmin } = require('./market-admin');
 let createConnections = null;
 try { createConnections = require('./connections').createConnections; } catch (e) { console.error('[connections] module unavailable:', e.message); }
 let createBinanceFeed = null;
@@ -90,6 +92,22 @@ const STATE_FILE = path.join(DATA_DIR, 'state.json');
 const SUBS_FILE = path.join(DATA_DIR, 'push-subscriptions.json');
 const VAPID_FILE = path.join(DATA_DIR, 'vapid.json');
 const store = { rev: 0, db: null, updatedAt: 0, loadedFrom: 'empty' };
+/* provider config, tradable symbols, trading controls, admin_logs and the
+   provider-only price cache (market-admin.js, db/migrations/001_market_admin.sql) */
+const marketAdmin = createMarketAdmin({
+  log: (m) => console.log(m),
+  legacyKeys: () => {
+    try {
+      const s = (connections && connections.stored && connections.stored()) || {};
+      const m = s.marketData || {};
+      return {
+        binance: { apiKey: (s.binance || {}).apiKey || '', secret: (m.binance || {}).secret || '' },
+        finnhub: { apiKey: (s.finnhub || {}).apiKey || '' },
+        twelvedata: { apiKey: (m.twelvedata || {}).apiKey || '' }
+      };
+    } catch (e) { return {}; }
+  }
+});
 const clients = new Set();
 /* live price stream: every 400 ms push only the quotes that changed */
 const marketClients = new Set();
@@ -271,7 +289,7 @@ async function sendPush(userId, payload) {
 
 function json(res, code, body) {
   const data = JSON.stringify(body);
-  res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(data), 'cache-control': 'no-store', 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type', 'access-control-allow-methods': 'GET,POST,OPTIONS' });
+  res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(data), 'cache-control': 'no-store', 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type, x-admin-token', 'access-control-allow-methods': 'GET,POST,OPTIONS' });
   res.end(data);
 }
 function readBody(req) {
@@ -377,8 +395,17 @@ function serveStatic(req, res, pathname) {
 
 const COLLECTIONS = ['users', 'vendors', 'companyProducts', 'products', 'orders', 'deposits', 'withdrawals', 'messages', 'statuses', 'notifications', 'contacts', 'blocks', 'txs', 'referrals', 'purchases', 'refunds', 'vendorApplications', 'reports', 'bonuses', 'bonusClaims', 'emailCampaigns', 'stocks', 'holdings', 'trades', 'watchlist', 'alerts', 'audit', 'portfolioAudit', 'botAccounts', 'botEvents', 'traffic', 'shareInvestments', 'serviceRequests'];
 
+/* Admin checks need a valid server-issued admin session token (x-admin-token
+   header, see admin-auth.js). The adminId sent by the browser alone is not
+   trusted any more. */
 function isAdmin(db, adminId) {
-  return !!(db && Array.isArray(db.users) && db.users.some((u) => u && u.id === adminId && u.role === 'admin'));
+  return adminAuth.isAdminRequest(adminId);
+}
+function adminFor(adminId) {
+  return adminAuth.isAdminRequest(adminId) ? adminAuth.currentAdmin() : null;
+}
+function adminRequired(res) {
+  return json(res, 401, { ok: false, error: 'admin_session_required', message: 'Confirm your admin password to continue' });
 }
 function ensureServices(db) {
   if (!db) return;
@@ -412,6 +439,66 @@ function applyOps(db, ops) {
   }
   return { pushes, events };
 }
+/* Sync-channel guard (runs before applyOps).
+   /api/ops is not authenticated, so without an admin session it must not be
+   able to: change anyone's role, take over an admin account (pass, pin,
+   email, username, banned), delete an admin, or replace whole collections.
+   It also enforces trading_controls / tradable_symbols on trades that the
+   web app opens through the sync channel: a blocked trade and the balance
+   change sent with it are dropped, the user gets a notification and every
+   client is told to resync. */
+const ADMIN_LOCKED_FIELDS = ['role', 'pass', 'pin', 'email', 'username', 'banned'];
+function guardOps(db, ops) {
+  const admin = adminAuth.currentAdmin();
+  const users = Array.isArray(db.users) ? db.users : [];
+  const byId = new Map(users.map((u) => [u && u.id, u]));
+  const blockedUsers = new Set();
+  const blocked = [];
+  let modified = false;
+  const existingTrades = new Set((db.trades || []).map((t) => t && t.id));
+  for (const op of ops) {
+    if (op && op.col === 'trades' && op.op === 'push' && op.item && op.item.id && op.item.status === 'Open' && !existingTrades.has(op.item.id)) {
+      const reason = marketAdmin.gate('open', { ticker: op.item.ticker, leverage: op.item.leverage });
+      if (reason) { op.__drop = true; blockedUsers.add(op.item.userId); blocked.push({ userId: op.item.userId, ticker: op.item.ticker, reason }); }
+    }
+  }
+  const out = [];
+  for (const op of ops) {
+    if (!op || typeof op !== 'object') continue;
+    if (op.__drop) { modified = true; continue; }
+    if (op.op === 'set' && !admin && (COLLECTIONS.includes(op.key) || /^share|^market/i.test(String(op.key || '')))) { modified = true; continue; }
+    if (op.col === 'users') {
+      const id = op.op === 'push' ? (op.item && op.item.id) : op.id;
+      const cur = byId.get(id);
+      if (blockedUsers.has(id) && op.op !== 'remove') { modified = true; continue; }
+      if (op.op === 'remove' && cur && cur.role === 'admin' && !admin) { modified = true; continue; }
+      const next = op.op === 'push' ? op.item : op.op === 'update' ? op.patch : null;
+      if (next && typeof next === 'object' && !admin) {
+        if (cur) {
+          const locked = cur.role === 'admin' ? ADMIN_LOCKED_FIELDS : ['role'];
+          for (const f of locked) {
+            if (JSON.stringify(next[f]) === JSON.stringify(cur[f])) continue;
+            if (!(f in next) && op.op === 'update') continue;
+            if (cur[f] === undefined) delete next[f]; else next[f] = cur[f];
+            modified = true;
+          }
+        } else if (next.role && next.role !== 'user') {
+          next.role = 'user';
+          modified = true;
+        }
+      }
+    }
+    out.push(op);
+  }
+  if (blocked.length) {
+    db.notifications = Array.isArray(db.notifications) ? db.notifications : [];
+    blocked.forEach((b) => {
+      db.notifications.unshift({ id: 'nt_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), userId: b.userId, title: 'Trade not opened', body: (b.ticker ? b.ticker + ': ' : '') + b.reason + '. No funds were taken.', link: '#/markets', icon: 'shield', read: false, createdAt: Date.now() });
+    });
+    if (db.notifications.length > 400) db.notifications.length = 400;
+  }
+  return { ops: out, modified, blocked };
+}
 function previewText(msg) {
   if (!msg) return 'New message';
   if (msg.type === 'image') return '📷 Photo';
@@ -436,16 +523,100 @@ async function dispatchPushes(pushes, db) {
 }
 
 async function api(req, res, pathname, query) {
+  /* --- admin session (server-verified password -> signed token) ---------- */
+  if (pathname === '/api/admin/session' && req.method === 'POST') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    const body = await readBody(req);
+    try { return json(res, 200, Object.assign({ ok: true }, adminAuth.login(store.db, body, adminAuth.ctx().ip))); }
+    catch (e) { return json(res, e.status || 400, { ok: false, error: e.message }); }
+  }
+  if (pathname === '/api/admin/session' && req.method === 'GET') {
+    const a = adminAuth.currentAdmin();
+    return json(res, 200, { ok: true, active: !!a, adminId: a ? a.id : null });
+  }
+
+  /* the pre-3.46 key form stored provider keys in plain text: retired */
+  if (pathname === '/api/market/providers' && req.method === 'POST') {
+    return json(res, 410, { ok: false, error: 'moved', message: 'Save provider keys in Admin > Market Controls (stored encrypted).' });
+  }
+
+  /* --- market: provider-only price cache (public) ------------------------- */
+  if (pathname === '/api/market/quote' && req.method === 'GET') {
+    try { return json(res, 200, { ok: true, quote: await marketAdmin.quote(query.get('symbol') || '', { admin: !!adminAuth.currentAdmin() }) }); }
+    catch (e) { return json(res, e.status || 400, { ok: false, error: e.message, is_delayed: true }); }
+  }
+  if (pathname === '/api/market/symbols' && req.method === 'GET') {
+    return json(res, 200, { ok: true, symbols: marketAdmin.symbolsPublic(query.get('type') || '') });
+  }
+  if (pathname === '/api/market/trading-status' && req.method === 'GET') {
+    return json(res, 200, Object.assign({ ok: true }, marketAdmin.controls()));
+  }
+
+  /* --- market admin (token required, every change -> admin_logs) ---------- */
+  if (pathname.startsWith('/api/admin/market/') || pathname === '/api/admin/logs') {
+    const admin = adminAuth.currentAdmin();
+    if (!admin) return adminRequired(res);
+    const rc = adminAuth.ctx();
+    try {
+      if (pathname === '/api/admin/market/overview' && req.method === 'GET') return json(res, 200, marketAdmin.overview());
+      if (pathname === '/api/admin/logs' && req.method === 'GET') {
+        return json(res, 200, { ok: true, logs: await marketAdmin.logs({ limit: query.get('limit'), action: query.get('action'), entity_type: query.get('entity_type') }) });
+      }
+      if (req.method === 'POST') {
+        const body = await readBody(req);
+        if (pathname === '/api/admin/market/provider') return json(res, 200, { ok: true, provider: await marketAdmin.updateProvider(admin, rc, body) });
+        if (pathname === '/api/admin/market/provider/test') return json(res, 200, { ok: true, provider: await marketAdmin.testProvider(admin, rc, String(body.provider || '')) });
+        if (pathname === '/api/admin/market/controls') {
+          const out = await marketAdmin.updateControls(admin, rc, body);
+          try { broadcast('change', { rev: store.rev, source: 'trading-controls', at: Date.now() }); } catch (e) {}
+          return json(res, 200, { ok: true, controls: out });
+        }
+        if (pathname === '/api/admin/market/symbol') return json(res, 200, { ok: true, symbol: await marketAdmin.upsertSymbol(admin, rc, body) });
+      }
+      return json(res, 404, { ok: false, error: 'not_found' });
+    } catch (e) { return json(res, e.status || 400, { ok: false, error: e.message }); }
+  }
+
+  /* --- WhaleChat shares admin extras (token required, logged) ------------- */
+  if (pathname === '/api/shares/admin/settings' && req.method === 'POST') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    const admin = adminAuth.currentAdmin();
+    if (!admin) return adminRequired(res);
+    const body = await readBody(req);
+    try {
+      const r = shares.saveSettings(body);
+      await marketAdmin.audit(admin, adminAuth.ctx(), 'share_settings_updated', 'share_settings', 'whalechat-shares', r.before, r.after).catch((e) => console.error('[admin_logs]', e.message));
+      return json(res, 200, r.state);
+    } catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+  if (pathname === '/api/shares/admin/investments' && req.method === 'GET') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    if (!adminAuth.currentAdmin()) return adminRequired(res);
+    try { return json(res, 200, shares.adminInvestments({ status: query.get('status'), q: query.get('q') })); }
+    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+  if (pathname === '/api/shares/admin/investment' && req.method === 'POST') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    const admin = adminAuth.currentAdmin();
+    if (!admin) return adminRequired(res);
+    const body = await readBody(req);
+    try {
+      const r = shares.adminUpdateInvestment(body);
+      await marketAdmin.audit(admin, adminAuth.ctx(), body.action === 'cancel' ? 'share_investment_cancelled' : 'share_investment_updated', 'share_investment', String(body.id || ''), r.before, Object.assign({}, r.after, body.action === 'cancel' ? { refund: body.refund !== false } : {})).catch((e) => console.error('[admin_logs]', e.message));
+      return json(res, 200, { ok: true, investment: r.view });
+    } catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+
   /* --- durable connection settings (admin only) -------------------------- */
   if (pathname === '/api/connections' && req.method === 'GET') {
     const adminId = query.get('adminId') || '';
-    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === adminId && u.role === 'admin') : null;
+    const admin = adminFor(adminId);
     if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
     return json(res, 200, connections ? connections.status() : { ok: false, error: 'connections_disabled' });
   }
   if (pathname === '/api/connections' && req.method === 'POST') {
     const body = await readBody(req);
-    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === body.adminId && u.role === 'admin') : null;
+    const admin = adminFor(body.adminId);
     if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
     if (!connections) return json(res, 503, { ok: false, error: 'connections_disabled' });
     try { return json(res, 200, connections.saveFrom(body)); }
@@ -453,7 +624,7 @@ async function api(req, res, pathname, query) {
   }
   if (pathname === '/api/connections/test' && req.method === 'POST') {
     const body = await readBody(req);
-    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === body.adminId && u.role === 'admin') : null;
+    const admin = adminFor(body.adminId);
     if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
     const which = String(body.which || 'all');
     const out = { ok: true, at: Date.now(), results: {} };
@@ -482,7 +653,7 @@ async function api(req, res, pathname, query) {
   if (pathname === '/api/market/binance/config' && req.method === 'POST') {
     if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
     const body = await readBody(req);
-    const admin = (store.db.users || []).find(u => u.id === body.adminId && u.role === 'admin');
+    const admin = adminFor(body.adminId);
     if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
     if (!store.db.settings) store.db.settings = {};
     const cur = store.db.settings.binance || {};
@@ -535,16 +706,19 @@ async function api(req, res, pathname, query) {
   if (pathname === '/api/ops' && req.method === 'POST') {
     if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
     const body = await readBody(req);
-    const result = applyOps(store.db, Array.isArray(body.ops) ? body.ops : []);
+    const guard = guardOps(store.db, Array.isArray(body.ops) ? body.ops : []);
+    const result = applyOps(store.db, guard.ops);
     const pushes = result.pushes;
     if (Array.isArray(body.ops) && body.ops.some((o) => o && o.col === 'stocks')) {
       setImmediate(() => { try { market.onAssetsChanged(); } catch (e) { console.error('[market] asset refresh:', e.message); } });
     }
     store.rev += 1; store.updatedAt = Date.now(); persist();
-    broadcast('change', { rev: store.rev, source: body.clientId || null, at: store.updatedAt });
+    /* when the guard changed anything, the sender must resync too */
+    broadcast('change', { rev: store.rev, source: guard.modified ? 'server-guard' : (body.clientId || null), at: store.updatedAt });
+    if (guard.blocked.length) console.log('[trading] blocked', guard.blocked.length, 'trade(s) from the sync channel:', guard.blocked.map((b) => b.ticker + ' ' + b.reason).join('; '));
     if (pushes.length) setImmediate(() => dispatchPushes(pushes, store.db).catch(() => {}));
     try { lifecycleEmails(pushes, result.events); } catch (e) { console.error('[email] lifecycle:', e.message); }
-    return json(res, 200, { ok: true, rev: store.rev });
+    return json(res, 200, guard.blocked.length ? { ok: true, rev: store.rev, blocked: guard.blocked } : { ok: true, rev: store.rev });
   }
   if (pathname === '/api/events' && req.method === 'GET') {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache, no-transform', connection: 'keep-alive', 'x-accel-buffering': 'no', 'access-control-allow-origin': '*' });
@@ -582,13 +756,13 @@ async function api(req, res, pathname, query) {
   }
   if (pathname === '/api/market/config' && req.method === 'GET') {
     const adminId = query.get('adminId') || '';
-    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === adminId && u.role === 'admin') : null;
+    const admin = adminFor(adminId);
     if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
     return json(res, 200, market.publicConfig());
   }
   if (pathname === '/api/market/config' && req.method === 'POST') {
     const body = await readBody(req);
-    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === body.adminId && u.role === 'admin') : null;
+    const admin = adminFor(body.adminId);
     if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
     const mode = body.mode === 'hybrid' ? 'hybrid' : 'simulated';
     const refreshSec = Math.min(300, Math.max(5, Math.round(Number(body.refreshSec) || 15)));
@@ -602,7 +776,7 @@ async function api(req, res, pathname, query) {
   }
   if (pathname === '/api/market/search' && req.method === 'GET') {
     const adminId = query.get('adminId') || '';
-    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === adminId && u.role === 'admin') : null;
+    const admin = adminFor(adminId);
     if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
     try {
       const results = await market.searchAssets(query.get('q') || '', query.get('class') || 'us');
@@ -611,7 +785,7 @@ async function api(req, res, pathname, query) {
   }
   if (pathname === '/api/market/assets/add' && req.method === 'POST') {
     const body = await readBody(req);
-    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === body.adminId && u.role === 'admin') : null;
+    const admin = adminFor(body.adminId);
     if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
     try {
       const out = await market.addAsset(body.class || body.assetClass, body.symbol);
@@ -620,14 +794,14 @@ async function api(req, res, pathname, query) {
   }
   if (pathname === '/api/market/dividends/sync' && req.method === 'POST') {
     const body = await readBody(req);
-    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === body.adminId && u.role === 'admin') : null;
+    const admin = adminFor(body.adminId);
     if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
     const status = await market.syncDividends(true);
     return json(res, 200, { ok: true, status });
   }
   if (pathname === '/api/market/test' && req.method === 'POST') {
     const body = await readBody(req);
-    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === body.adminId && u.role === 'admin') : null;
+    const admin = adminFor(body.adminId);
     if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
     if (!market.config.apiKey) return json(res, 400, { ok: false, error: 'no_key', message: 'Save a Finnhub API key first' });
     const q = await market.fetchQuote('AAPL');
@@ -705,6 +879,7 @@ async function api(req, res, pathname, query) {
     return json(res, 200, email ? email.status() : { ok: true, configured: false, queued: 0 });
   }
   if (pathname === '/api/email/broadcast' && req.method === 'POST') {
+    if (!adminAuth.currentAdmin()) return adminRequired(res);
     if (!email || !email.configured()) return json(res, 503, { ok: false, error: 'email_not_configured' });
     const body = await readBody(req);
     const subject = String(body.subject || '').trim().slice(0, 160);
@@ -730,6 +905,7 @@ async function api(req, res, pathname, query) {
     return json(res, 200, { ok: true, campaignId, recipients: users.length, queued });
   }
   if (pathname === '/api/email/backfill' && req.method === 'POST') {
+    if (!adminAuth.currentAdmin()) return adminRequired(res);
     if (!email || !email.configured()) return json(res, 503, { ok: false, error: 'smtp_not_configured' });
     const body = await readBody(req).catch(() => ({}));
     const type = body.type || 'welcome';
@@ -744,6 +920,7 @@ async function api(req, res, pathname, query) {
     return json(res, 200, { ok: true, queued, type, users: (store.db.users || []).length, status: email.status() });
   }
   if (pathname === '/api/email/test' && req.method === 'POST') {
+    if (!adminAuth.currentAdmin()) return adminRequired(res);
     if (!email) return json(res, 503, { ok: false, error: 'email_unavailable' });
     const body = await readBody(req);
     const admin = (store.db && store.db.users.find(u => u.role === 'admin')) || {};
@@ -760,7 +937,7 @@ async function api(req, res, pathname, query) {
   if (pathname === '/api/admin/mail' && req.method === 'POST') {
     const body = await readBody(req);
     const db = (store && store.db) || {};
-    const admin = (db.users || []).find(u => u.id === body.adminId && u.role === 'admin');
+    const admin = adminFor(body.adminId);
     if (!admin) return json(res, 403, { ok: false, error: 'admin only' });
     try {
       const file = path.join(DATA_DIR, 'mail.json');
@@ -778,6 +955,7 @@ async function api(req, res, pathname, query) {
     } catch (e) { return json(res, 500, { ok: false, error: e.message }); }
   }
   if (pathname === '/api/reload' && req.method === 'POST') {
+    if (!adminAuth.currentAdmin()) return adminRequired(res);
     const body = await readBody(req);
     broadcast('reload', { build: body.build || BUILD, version: body.version || null, at: Date.now() });
     return json(res, 200, { ok: true, clients: clients.size });
@@ -800,6 +978,7 @@ async function api(req, res, pathname, query) {
     return res.end(data);
   }
   if (pathname === '/api/state/restore' && req.method === 'POST') {
+    if (!adminAuth.currentAdmin()) return adminRequired(res);
     const body = await readBody(req);
     const db = body && (body.db || body);
     if (!db || !Array.isArray(db.users) || !db.users.length) return json(res, 400, { ok: false, error: 'invalid_backup' });
@@ -834,6 +1013,7 @@ async function api(req, res, pathname, query) {
   // --- live trades: manual stop / take loss (server-authoritative close) ---
   if (pathname === '/api/market/trade/close' && req.method === 'POST') {
     if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    { const blocked = marketAdmin.gate('close'); if (blocked) return json(res, 423, { ok: false, error: blocked, code: 'trading_blocked' }); }
     const body = await readBody(req);
     const owner = (store.db.users || []).find((u) => u && u.id === body.userId);
     if (!owner) return json(res, 400, { ok: false, error: 'User not found' });
@@ -868,6 +1048,7 @@ async function api(req, res, pathname, query) {
   // --- live trades: manual take profit skims profit and keeps running ---
   if (pathname === '/api/market/trade/take-profit' && req.method === 'POST') {
     if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    { const blocked = marketAdmin.gate('close'); if (blocked) return json(res, 423, { ok: false, error: blocked, code: 'trading_blocked' }); }
     const body = await readBody(req);
     const owner = (store.db.users || []).find((u) => u && u.id === body.userId);
     if (!owner) return json(res, 400, { ok: false, error: 'User not found' });
@@ -880,6 +1061,7 @@ async function api(req, res, pathname, query) {
   if (pathname === '/api/market/spot/buy' && req.method === 'POST') {
     if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
     const body = await readBody(req);
+    { const blocked = marketAdmin.gate('open', { ticker: body.ticker, amountUsd: Number(body.amountUsd) > 0 ? Number(body.amountUsd) : (Number(body.amountCoins) > 0 ? Number(body.amountCoins) * 0.5 : null) }); if (blocked) return json(res, 423, { ok: false, error: blocked, code: 'trading_blocked' }); }
     try {
       const out = spot.buy(body);
       return json(res, 200, Object.assign({ ok: true }, out));
@@ -887,6 +1069,7 @@ async function api(req, res, pathname, query) {
   }
   if (pathname === '/api/market/spot/sell' && req.method === 'POST') {
     if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    { const blocked = marketAdmin.gate('close'); if (blocked) return json(res, 423, { ok: false, error: blocked, code: 'trading_blocked' }); }
     const body = await readBody(req);
     try {
       const out = spot.sell(Object.assign({ reason: 'Manual sell' }, body));
@@ -1020,7 +1203,12 @@ async function api(req, res, pathname, query) {
     if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
     const body = await readBody(req);
     if (!isAdmin(store.db, body.adminId)) return json(res, 403, { ok: false, error: 'admin_only' });
-    try { return json(res, 200, shares.savePlans(body)); }
+    try {
+      const beforePlans = JSON.parse(JSON.stringify(shares.plans()));
+      const out = shares.savePlans(body);
+      await marketAdmin.audit(adminAuth.currentAdmin(), adminAuth.ctx(), 'share_plans_updated', 'share_plans', 'whalechat-shares', { plans: beforePlans }, { plans: out.plans }).catch((e) => console.error('[admin_logs]', e.message));
+      return json(res, 200, out);
+    }
     catch (e) { return json(res, 400, { ok: false, error: e.message }); }
   }
 
@@ -1034,11 +1222,11 @@ const server = http.createServer(async (req, res) => {
   const u = new URL(req.url, 'http://localhost');
   const pathname = u.pathname;
   if (req.method === 'OPTIONS') {
-    res.writeHead(204, { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type', 'access-control-allow-methods': 'GET,POST,OPTIONS', 'access-control-max-age': '86400' });
+    res.writeHead(204, { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type, x-admin-token', 'access-control-allow-methods': 'GET,POST,OPTIONS', 'access-control-max-age': '86400' });
     return res.end();
   }
   if (pathname.startsWith('/api/')) {
-    try { return await api(req, res, pathname, u.searchParams); }
+    try { return await adminAuth.run(req, () => store.db, () => api(req, res, pathname, u.searchParams)); }
     catch (e) {
       const code = e.code === 413 ? 413 : e.code === 400 ? 400 : 500;
       console.error('[api]', pathname, e.message);
@@ -1053,6 +1241,8 @@ server.keepAliveTimeout = 65000;
 server.headersTimeout = 70000;
 (async () => {
   await initStorage();
+  try { await marketAdmin.init(pool); } catch (e) { console.error('[market-admin] init:', e.message); }
+  try { if (typeof marketData !== 'undefined' && marketData && marketData.setQuoteSource) marketData.setQuoteSource((sym) => marketAdmin.quote(sym)); } catch (e) { console.error('[market-admin] quote hook:', e.message); }
   ensureTradingAssets();
   const durableMarket = await loadMarketConfig();
   if (durableMarket) {
