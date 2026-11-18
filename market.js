@@ -103,6 +103,19 @@ function moveProfit(t, price, lev, dir) {
   const perMove = cap * (movePct / 100) * lev * dir;
   return perMove * Math.max(1, Number(t.moveCount) || 0);
 }
+/* Auto take-profit amount: only the profit from price movement in the user's trade
+   direction (up for Rise, down for Fall) since the last take / re-base. Moves against the
+   trade earn nothing, and no move-count multiplier is applied, so ticks that went the wrong
+   way can never inflate the amount taken automatically. */
+function favorableMoveProfit(t, price, lev, dir) {
+  const cap = Number(t.capitalCoins) || 0;
+  const entry = Number(t.entryPrice);
+  const px = Number(price);
+  if (!(cap > 0) || !(entry > 0) || !(px > 0)) return 0;
+  const towardUser = dir < 0 ? px < entry : px > entry;
+  if (!towardUser) return 0;
+  return Math.max(0, cap * (movePctOf(t, px) / 100) * lev * dir);
+}
 /* Trade ended by its timer (no Take Profit taken): move % = (last price at end time - entry price)
    x capital x admin rate %, profit = capital x move% x leverage, with no number-of-moves multiplier. */
 /* price distance from entry at which one move's profit / loss equals pct % of the capital */
@@ -1177,8 +1190,7 @@ class MarketService {
     const entry = Number(t.entryPrice);
     if (!(entry > 0)) return 0;
     if (t.lastSecureAt && now - Number(t.lastSecureAt) < 1000) return 0;
-    const move = (q.price - entry) / entry;
-    const profit = round(Math.max(0, moveProfit(t, q.price, lev, dir)), 2);
+    const profit = round(favorableMoveProfit(t, q.price, lev, dir), 2);
     if (!(profit > 0)) return 0;
     if (!t.initialEntryPrice) t.initialEntryPrice = entry;
     t.securedProfits = Array.isArray(t.securedProfits) ? t.securedProfits : [];
@@ -1233,8 +1245,7 @@ class MarketService {
     const dir = direction === 'FALL' ? -1 : 1;
     const entry = Number(t.entryPrice);
     if (!(entry > 0)) return 0;
-    const move = (q.price - entry) / entry;
-    const available = round(Math.max(0, moveProfit(t, q.price, lev, dir)), 2);
+    const available = round(favorableMoveProfit(t, q.price, lev, dir), 2);
     /* secure even small profits immediately — 0.01 WC is the bookkeeping floor */
     if (!(available >= 0.01)) return 0;
     const secured = this.secureProfit(t, q, db, now, 'Auto Secure', false);
@@ -1338,8 +1349,11 @@ class MarketService {
     if (!(entry > 0)) return 0;
     /* a click and a tick must never take the same profit twice */
     if (t.lastProfitAt && now - Number(t.lastProfitAt) < 4000) return 0;
-    const move = (q.price - entry) / entry;
-    const profit = round(Math.max(0, moveProfit(t, q.price, lev, dir)), 2);
+    /* automatic Take Profit only takes the move in the user's direction; the manual
+       Take profit button (forceCredit) keeps the existing calculation */
+    const profit = forceCredit
+      ? round(Math.max(0, moveProfit(t, q.price, lev, dir)), 2)
+      : round(favorableMoveProfit(t, q.price, lev, dir), 2);
     if (!(profit > 0)) return 0;
     if (!t.initialEntryPrice) t.initialEntryPrice = entry;
     creditStockProfit(u, profit);
