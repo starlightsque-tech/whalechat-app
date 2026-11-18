@@ -34,7 +34,8 @@ function creditStockProfit(u, amount) {
   a.stockProfit = r2((Number(a.stockProfit) || 0) + Math.max(0, Number(amount) || 0));
   return a.stockProfit;
 }
-/* Close-out rule (fee is taken from the payout when the trade closes):
+/* Close-out rule (new trades pay the fee from Trade capital when they open, so fee = 0 here
+   and the full capital / full profit are returned; older trades flagged feeAtClose pay it now):
      profit = capital × price move % × leverage
      payout = capital + profit − (capital × trade fee %)
    Gain: capital -> Trade capital balance, profit − fee -> Profit balance
@@ -58,8 +59,8 @@ function settleToStock(u, stake, pnl, fee) {
   }
   return out;
 }
-/* Fee charged at close. Trades opened before this rule already paid the fee
-   when they started, so they are not charged again. */
+/* Fee charged at close. Only for older trades flagged feeAtClose; new trades pay the fee
+   from Trade capital when they open, so they are not charged again. */
 function closeFeeFor(t, db) {
   if (!t || !t.feeAtClose) return 0;
   const v = Number(t.closeFeeCoins);
