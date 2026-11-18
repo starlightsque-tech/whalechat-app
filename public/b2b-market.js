@@ -266,6 +266,7 @@
           '<input class="input" id="b2bmBuy_' + esc(t) + '" type="number" step="0.0001" value="' + (alert.buy || '') + '"/></div>' +
         '<div class="field grow"><label class="label">Sell when price ≥ ($)</label>' +
           '<input class="input" id="b2bmSell_' + esc(t) + '" type="number" step="0.0001" value="' + (alert.sell || '') + '"/></div></div>' +
+        (window.WC_SUBS && WC_SUBS.autoFields ? WC_SUBS.autoFields(t, alert, 'one_' + t) : '') +
         '<button class="btn btn-soft" data-act="wcbm-alert-one" data-t="' + esc(t) + '" style="width:100%">Save alert</button>' +
         '<a class="btn btn-ghost btn-sm" href="#/investment/b2b/alerts" style="width:100%;margin-top:6px">Set alerts for several assets</a></div>';
   };
@@ -288,14 +289,14 @@
             '<div class="b2bm-pickfields">' +
               '<div class="field"><label class="label">Est. buy price ($)</label><input class="input" id="b2bmA_buy_' + esc(x.t) + '" type="number" step="0.0001" value="' + (al.buy || '') + '" placeholder="' + (q.price > 0 ? (q.price * 0.97).toFixed(4) : '') + '"/></div>' +
               '<div class="field"><label class="label">Est. sell price ($)</label><input class="input" id="b2bmA_sell_' + esc(x.t) + '" type="number" step="0.0001" value="' + (al.sell || '') + '" placeholder="' + (q.price > 0 ? (q.price * 1.03).toFixed(4) : '') + '"/></div>' +
-            '</div></div>';
+            '</div>' + (window.WC_SUBS && WC_SUBS.autoFields ? WC_SUBS.autoFields(x.t, al, 'm_' + x.t) : '') + '</div>';
         }).join('') + '</div></div>' +
       '<div class="card b2b-buybar"><div class="between"><b><span id="b2bmPicked">0</span> asset(s) selected</b>' +
         '<label class="row" style="gap:6px;align-items:center;font-size:11px"><input type="checkbox" id="b2bmEmail" checked/> Email me</label></div>' +
         '<button class="btn btn-primary" data-act="wcbm-alert-save" style="width:100%;margin-top:8px">Save alerts</button>' +
         '<div class="tiny muted mt6">When a buy target is reached you get a notification and an email with a <b>Buy now</b> button; a sell target sends a <b>Sell now</b> button.</div></div>' +
       (saved.length ? '<div class="card"><div class="card-title">Your alerts</div><div class="ih-list">' + saved.map(function (x) {
-        return '<div class="ih-row"><span class="grow">' + esc(x.ticker) + '<div class="tiny muted">buy ≤ ' + money(x.buy || 0) + ' · sell ≥ ' + money(x.sell || 0) + (x.email === false ? '' : ' · email') + '</div></span>' +
+        return '<div class="ih-row"><span class="grow">' + esc(x.ticker) + '<div class="tiny muted">buy ≤ ' + money(x.buy || 0) + ' · sell ≥ ' + money(x.sell || 0) + (x.email === false ? '' : ' · email') + '</div>' + (x.auto && window.WC_SUBS && WC_SUBS.autoStatusText ? '<div class="tiny">' + WC_SUBS.autoStatusText(x) + '</div>' : '') + '</span>' +
           '<button class="btn btn-xs btn-ghost" data-act="ih-b2b-alert-clear" data-t="' + esc(x.ticker) + '">Remove</button></div>';
       }).join('') + '</div></div>' : '');
   };
@@ -316,10 +317,14 @@
       var buy = Number((document.getElementById('b2bmBuy_' + t) || {}).value) || 0;
       var sell = Number((document.getElementById('b2bmSell_' + t) || {}).value) || 0;
       if (buy <= 0 && sell <= 0) return tmsg('Enter a buy or sell price', 'err');
+      var autoOpts = (window.WC_SUBS && WC_SUBS.readAuto) ? WC_SUBS.readAuto('one_' + t) : null;
+      var autoErr = (autoOpts && WC_SUBS.checkAuto) ? WC_SUBS.checkAuto(t, buy, sell, autoOpts) : '';
+      if (autoErr) return tmsg(autoErr, 'err');
       var ex = a.b2bAlerts.filter(function (x) { return x.ticker === t; })[0];
       if (ex) { ex.buy = buy; ex.sell = sell; ex.buyHit = false; ex.sellHit = false; ex.buyHitAt = 0; ex.sellHitAt = 0; ex.buyEmailAt = 0; ex.sellEmailAt = 0; }
-      else a.b2bAlerts.push({ id: 'al_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), ticker: t, buy: buy, sell: sell, email: true, createdAt: Date.now() });
-      save(); tmsg('Alert saved for ' + t, 'ok'); repaint();
+      else { ex = { id: 'al_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), ticker: t, buy: buy, sell: sell, email: true, createdAt: Date.now() }; a.b2bAlerts.push(ex); }
+      if (autoOpts && WC_SUBS.applyAuto) WC_SUBS.applyAuto(ex, autoOpts);
+      save(); tmsg('Alert saved for ' + t + (ex.auto ? ' · Auto Buy/Sell ON' : ''), 'ok'); repaint();
     };
 
     App.wcbmAlertSave = function () {
@@ -328,6 +333,8 @@
       var emailEl = document.getElementById('b2bmEmail');
       var byEmail = emailEl ? !!emailEl.checked : true;
       var savedCount = 0;
+      var autoCount = 0;
+      var autoErrors = [];
       Array.prototype.forEach.call(boxes, function (b) {
         var t = String(b.value || '').toUpperCase();
         var buy = Number((document.getElementById('b2bmA_buy_' + t) || {}).value) || 0;
@@ -338,12 +345,18 @@
           return;
         }
         if (buy <= 0 && sell <= 0) return;
+        var autoOpts = (window.WC_SUBS && WC_SUBS.readAuto) ? WC_SUBS.readAuto('m_' + t) : null;
+        var autoErr = (autoOpts && WC_SUBS.checkAuto) ? WC_SUBS.checkAuto(t, buy, sell, autoOpts) : '';
+        if (autoErr) { autoErrors.push(autoErr); return; }
         if (ex) { ex.buy = buy; ex.sell = sell; ex.email = byEmail; ex.buyHit = false; ex.sellHit = false; ex.buyHitAt = 0; ex.sellHitAt = 0; ex.buyEmailAt = 0; ex.sellEmailAt = 0; }
-        else a.b2bAlerts.push({ id: 'al_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), ticker: t, buy: buy, sell: sell, email: byEmail, createdAt: Date.now() });
+        else { ex = { id: 'al_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), ticker: t, buy: buy, sell: sell, email: byEmail, createdAt: Date.now() }; a.b2bAlerts.push(ex); }
+        if (autoOpts && WC_SUBS.applyAuto) WC_SUBS.applyAuto(ex, autoOpts);
+        if (ex.auto) autoCount++;
         savedCount++;
       });
       save();
-      tmsg(savedCount ? savedCount + ' alert' + (savedCount === 1 ? '' : 's') + ' saved' + (byEmail ? ' · email on' : '') : 'Select an asset and set a price', savedCount ? 'ok' : 'err');
+      tmsg(savedCount ? savedCount + ' alert' + (savedCount === 1 ? '' : 's') + ' saved' + (autoCount ? ' · Auto Buy/Sell ON for ' + autoCount : '') + (byEmail ? ' · email on' : '') : 'Select an asset and set a price', savedCount ? 'ok' : 'err');
+      if (autoErrors.length) tmsg(autoErrors[0] + (autoErrors.length > 1 ? ' (+' + (autoErrors.length - 1) + ' more)' : ''), 'err');
       repaint();
     };
 
