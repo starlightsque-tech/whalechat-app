@@ -318,16 +318,18 @@ function createB2BAlertWatcher({ getDb, persist, broadcast, quotes, email, appUr
 
   /* Check one alert against one price. Fills at exactly the price the user set. */
   function evaluate(db, user, al, price, now) {
-    if (!autoOn(user, al) || !(price > 0)) return false;
+    if (!al || !al.auto || !(price > 0)) return false;
+    const tool = autoToolOn(user);
     const s = stateFor(db, user, al);
     const buy = Number(al.buy) || 0, sell = Number(al.sell) || 0;
     let changed = false;
     if (buy > 0 && sell > 0 && sell <= buy) {
       changed = fail(db, user, al, s, s.state === 'sell' ? 'sell' : 'buy', 'The sell price (' + money(sell) + ') must be above the buy price (' + money(buy) + ').', now) || changed;
     } else if (s.state === 'buy' && buy > 0 && price <= buy) {
-      changed = execute(db, user, al, s, 'buy', buy, now) || changed;
+      /* new entries need the tool active; an existing auto holding can always exit */
+      if (tool) changed = execute(db, user, al, s, 'buy', buy, now) || changed;
     } else if (s.state === 'sell' && sell > 0 && price >= sell) {
-      changed = execute(db, user, al, s, 'sell', sell, now) || changed;
+      if (tool || Number(s.units) > 0) changed = execute(db, user, al, s, 'sell', sell, now) || changed;
     }
     if (mirror(al, s)) changed = true;
     return changed;
@@ -340,7 +342,7 @@ function createB2BAlertWatcher({ getDb, persist, broadcast, quotes, email, appUr
     let n = 0;
     for (const user of (db && db.users) || []) {
       const a = user && user.investAcct;
-      if (!a || !Array.isArray(a.b2bAlerts) || !autoToolOn(user)) continue;
+      if (!a || !Array.isArray(a.b2bAlerts)) continue;
       for (const al of a.b2bAlerts) {
         if (!al || !al.auto || !al.ticker || !al.id) continue;
         const k = normTicker(al.ticker);

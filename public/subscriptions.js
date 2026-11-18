@@ -387,17 +387,26 @@
   S.applyAuto = function (al, opts) {
     if (!al || !opts) return al;
     var buy = Number(al.buy) || 0, sell = Number(al.sell) || 0;
+    var amount = opts.amount > 0 ? opts.amount : 0;
+    var repeat = !!opts.repeat;
     var holding = Number(al.autoUnits) > 0 && al.autoState !== 'buy' && al.autoState !== 'done';
+    var wasAuto = !!al.auto;
+    var fingerprint = [buy, sell, amount, repeat ? 1 : 0].join('|');
+    var configChanged = al.autoConfig !== fingerprint;
     al.auto = !!opts.auto;
-    al.autoAmount = opts.amount > 0 ? opts.amount : 0;
-    al.autoRepeat = !!opts.repeat;
-    al.autoArmedAt = Date.now();
+    al.autoAmount = amount;
+    al.autoRepeat = repeat;
+    al.autoConfig = fingerprint;
+    /* only a real change to the trigger restarts the trade cycle; saving the
+       same alert again keeps the server-side buy/sell state intact */
+    if (!wasAuto || configChanged) al.autoArmedAt = Date.now();
     al.autoError = '';
     if (!al.auto) al.autoState = holding ? al.autoState : '';
     else if (holding) al.autoState = sell > 0 ? 'sell' : 'held';
     else { al.autoState = buy > 0 ? 'buy' : 'sell'; al.autoUnits = 0; }
     /* selecting the tool on an alert means the user wants it trading */
-    if (al.auto) a.autoBuySellOn = true;
+    var acc = acct();
+    if (al.auto && acc) acc.autoBuySellOn = true;
     return al;
   };
   S.autoToggle = function () {

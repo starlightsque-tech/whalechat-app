@@ -271,13 +271,45 @@ setInterval(() => snapshot('hourly'), 3600000).unref();
 
 let webpush = null;
 try { webpush = require('web-push'); } catch (e) { webpush = null; }
-let vapid = readJSON(VAPID_FILE, null);
-let subscriptions = readJSON(SUBS_FILE, []);
-if (webpush) {
-  if (!vapid || !vapid.publicKey || !vapid.privateKey) { vapid = webpush.generateVAPIDKeys(); writeJSONAtomic(VAPID_FILE, vapid); console.log('[push] generated VAPID keys'); }
+let vapid = null;
+let subscriptions = [];
+/* Push identity and device subscriptions are kept in the database (and the
+   file cache) so a redeploy that preserves /data or Postgres keeps every
+   registered phone working. Env keys win, so an operator can pin them. */
+function initPush() {
+  if (!webpush) { console.log('[push] web-push not installed — push disabled'); return; }
+  const envPub = process.env.VAPID_PUBLIC_KEY || '';
+  const envPriv = process.env.VAPID_PRIVATE_KEY || '';
+  let stored = (envPub && envPriv) ? { publicKey: envPub, privateKey: envPriv } : null;
+  if (!stored) {
+    try { if (store.db && store.db.settings && store.db.settings.vapid && store.db.settings.vapid.publicKey) stored = store.db.settings.vapid; } catch (e) {}
+  }
+  if (!stored) stored = readJSON(VAPID_FILE, null);
+  if (!stored || !stored.publicKey || !stored.privateKey) {
+    stored = webpush.generateVAPIDKeys();
+    console.log('[push] generated VAPID keys');
+  }
+  vapid = stored;
+  try {
+    if (store.db) {
+      store.db.settings = store.db.settings || {};
+      store.db.settings.vapid = { publicKey: vapid.publicKey, privateKey: vapid.privateKey };
+    }
+  } catch (e) {}
+  try { writeJSONAtomic(VAPID_FILE, vapid); } catch (e) {}
   webpush.setVapidDetails('mailto:' + VAPID_EMAIL, vapid.publicKey, vapid.privateKey);
-} else { console.log('[push] web-push not installed — push disabled'); }
-const saveSubs = () => { try { writeJSONAtomic(SUBS_FILE, subscriptions); } catch (e) {} };
+  let list = null;
+  try { if (store.db && Array.isArray(store.db.pushSubscriptions)) list = store.db.pushSubscriptions; } catch (e) {}
+  if (!list) list = readJSON(SUBS_FILE, []);
+  subscriptions = Array.isArray(list) ? list : [];
+  try { if (store.db) store.db.pushSubscriptions = subscriptions; } catch (e) {}
+  try { persist(); } catch (e) {}
+  console.log('[push] ready · devices', subscriptions.length);
+}
+const saveSubs = () => {
+  try { writeJSONAtomic(SUBS_FILE, subscriptions); } catch (e) {}
+  try { if (store.db) { store.db.pushSubscriptions = subscriptions; persist(); } } catch (e) {}
+};
 
 async function sendPush(userId, payload) {
   if (!webpush || !vapid) return 0;
@@ -1284,6 +1316,7 @@ server.keepAliveTimeout = 65000;
 server.headersTimeout = 70000;
 (async () => {
   await initStorage();
+  initPush();
   try { await marketAdmin.init(pool); } catch (e) { console.error('[market-admin] init:', e.message); }
   try { if (typeof marketData !== 'undefined' && marketData && marketData.setQuoteSource) marketData.setQuoteSource((sym) => marketAdmin.quote(sym)); } catch (e) { console.error('[market-admin] quote hook:', e.message); }
   ensureTradingAssets();
