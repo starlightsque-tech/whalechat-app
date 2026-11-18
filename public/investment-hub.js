@@ -364,6 +364,28 @@
   }
 
   /* ---- 1. dashboard ------------------------------------------------------ */
+  /* Auto Buy / Sell tool card on the B2B desk */
+  function b2bAutoCard(u) {
+    if (!window.WC_SUBS || !WC_SUBS.autoFields) return '';
+    var a = account(u);
+    var sub = WC_SUBS.autoSubscribed(u);
+    var on = WC_SUBS.autoOn(u);
+    var picked = (a.b2bAlerts || []).filter(function (x) { return x && x.auto; });
+    var t = toolById('autobuysell');
+    return '<div class="card"><div class="between"><div class="card-title" style="margin:0">Auto Buy / Sell</div>' +
+        (sub ? '<span class="badge ' + (on ? 'badge-success' : 'badge-warn') + '">' + (on ? 'ON' : 'OFF') + '</span>' : '<span class="badge">Not subscribed</span>') + '</div>' +
+      '<div class="tiny muted mt6">Set a price alert on an asset, tick <b>Use Auto Buy/Sell</b> and enter the amount to buy with. When the price reaches your buy price the tool buys from your capital balance; when it reaches your sell price it sells — profit goes to your profit balance and the capital returns to your capital balance. Assets without the tick only get the alert email, so you buy or sell yourself.</div>' +
+      (sub
+        ? '<div class="tiny mt6">' + picked.length + ' asset' + (picked.length === 1 ? '' : 's') + ' selected for Auto Buy/Sell</div>' +
+          (picked.length ? '<div class="ih-list" style="margin-top:6px">' + picked.map(function (x) {
+            return '<div class="ih-row"><div class="grow" style="min-width:0"><b>' + escH(x.ticker) + '</b><div class="tiny">' + WC_SUBS.autoStatusText(x) + '</div>' + WC_SUBS.autoLogHTML(x) + '</div>' +
+              '<a class="btn btn-xs btn-ghost" href="#/investment/b2b/buy?asset=' + encodeURIComponent(x.ticker) + '">Edit</a></div>';
+          }).join('') + '</div>' : '<div class="tiny muted">No asset selected yet — open an asset\'s buy page or Price alerts and tick Use Auto Buy/Sell.</div>') +
+          '<button class="btn btn-sm ' + (on ? 'btn-ghost' : 'btn-primary') + '" data-act="ih-b2b-auto-toggle" style="width:100%;margin-top:8px">' + (on ? 'Switch Auto Buy/Sell off' : 'Switch Auto Buy/Sell on') + '</button>'
+        : '<button class="btn btn-sm btn-primary" data-act="ih-tool-sub" data-tool="autobuysell" style="width:100%;margin-top:8px">Subscribe · ' + money(t ? t.price : 0) + ' / month</button>') +
+      '</div>';
+  }
+
   function b2bDash(u, params) {
     var a = account(u);
     var holdings = b2bHoldings(a);
@@ -407,12 +429,13 @@
         '<a href="#/investment/history" class="btn btn-ghost btn-sm">History</a>' +
       '</div></div>' +
 
+      b2bAutoCard(u) +
       '<div class="card"><div class="card-title">Your holdings</div>' +
         (holdRows ? '<div class="ih-list">' + holdRows + '</div>' : '<div class="tiny muted">No B2B holdings yet — open the buy page to start.</div>') +
       '</div>' +
       (favs.length ? '<div class="card"><div class="card-title">Favourites</div><div class="b2b-grid">' + favs.map(function (s) { return b2bCard(s, a); }).join('') + '</div></div>' : '') +
       (alerts.length ? '<div class="card"><div class="card-title">Price alerts</div><div class="ih-list">' + alerts.map(function (x) {
-          return '<div class="ih-row"><span class="grow">' + escH(x.ticker) + '<div class="tiny muted">buy ≤ ' + money(x.buy || 0) + ' · sell ≥ ' + money(x.sell || 0) + (x.email !== false ? ' · email on' : '') + '</div></span>' +
+          return '<div class="ih-row"><span class="grow">' + escH(x.ticker) + '<div class="tiny muted">buy ≤ ' + money(x.buy || 0) + ' · sell ≥ ' + money(x.sell || 0) + (x.email !== false ? ' · email on' : '') + '</div>' + (x.auto && window.WC_SUBS && WC_SUBS.autoStatusText ? '<div class="tiny">' + WC_SUBS.autoStatusText(x) + '</div>' : '') + '</span>' +
             '<a class="btn btn-xs btn-ghost" href="#/investment/b2b/buy?asset=' + encodeURIComponent(x.ticker) + '">Buy</a>' +
             '<button class="btn btn-xs btn-ghost" data-act="ih-b2b-alert-clear" data-t="' + escH(x.ticker) + '">Remove</button></div>';
         }).join('') + '</div></div>' : '');
@@ -451,8 +474,9 @@
         '<div class="row" style="gap:8px"><div class="field grow"><label class="label">Buy below (USD)</label><input class="input" id="ihB2bBuyAlert" type="number" step="0.0001" value="' + (alert.buy || '') + '"/></div>' +
         '<div class="field grow"><label class="label">Sell above (USD)</label><input class="input" id="ihB2bSellAlert" type="number" step="0.0001" value="' + (alert.sell || '') + '"/></div></div>' +
         '<label class="row" style="gap:8px;align-items:center;font-size:12px"><input type="checkbox" id="ihB2bAlertEmail" ' + (alert.email === false ? '' : 'checked') + '/> Email me when a target is hit</label>' +
+        (window.WC_SUBS && WC_SUBS.autoFields ? WC_SUBS.autoFields(sel.ticker, alert, 'ih') : '') +
         '<button class="btn btn-soft" data-act="ih-b2b-alert" data-t="' + escH(sel.ticker) + '" style="width:100%;margin-top:8px">Save alerts</button>' +
-        '<div class="tiny muted mt6">You get an in-app notification and an email with a <b>Buy now</b> and a <b>Sell now</b> link.</div></div>' +
+        '<div class="tiny muted mt6">You get an in-app notification and an email with a <b>Buy now</b> and a <b>Sell now</b> link. With <b>Use Auto Buy/Sell</b> selected, the tool buys at your buy price and sells at your sell price for you instead.</div></div>' +
       '<div class="card"><div class="card-title">Browse</div><div class="b2b-grid">' + assets.slice(0, 12).map(function (s) { return b2bCard(s, a); }).join('') + '</div></div>';
   }
 
@@ -1045,14 +1069,24 @@
       var emailEl = document.getElementById('ihB2bAlertEmail');
       var byEmail = emailEl ? !!emailEl.checked : true;
       if (buy <= 0 && sell <= 0) return toastH('Enter a buy or sell target', 'err');
+      var autoOpts = (window.WC_SUBS && WC_SUBS.readAuto) ? WC_SUBS.readAuto('ih') : null;
+      var autoErr = (autoOpts && WC_SUBS.checkAuto) ? WC_SUBS.checkAuto(t, buy, sell, autoOpts) : '';
+      if (autoErr) return toastH(autoErr, 'err');
       var ex = (a.b2bAlerts || []).find(function (x) { return x.ticker === t; });
       if (ex) { ex.buy = buy; ex.sell = sell; ex.email = byEmail; ex.buyHit = false; ex.sellHit = false; ex.buyHitAt = 0; ex.sellHitAt = 0; }
-      else a.b2bAlerts.push({ id: nowId('al_'), ticker: t, buy: buy, sell: sell, email: byEmail, buyHit: false, sellHit: false, createdAt: Date.now() });
-      save(); toastH('Price alert saved' + (byEmail ? ' · email enabled' : ''), 'ok'); render();
+      else { ex = { id: nowId('al_'), ticker: t, buy: buy, sell: sell, email: byEmail, buyHit: false, sellHit: false, createdAt: Date.now() }; a.b2bAlerts.push(ex); }
+      if (autoOpts && WC_SUBS.applyAuto) WC_SUBS.applyAuto(ex, autoOpts);
+      save(); toastH('Price alert saved' + (ex.auto ? ' · Auto Buy/Sell ON for ' + t : '') + (byEmail ? ' · email enabled' : ''), 'ok'); render();
     };
     App.ihB2bAlertClear = function (id, ds) {
       var u = me(); var a = account(u); var t = String((ds && ds.t) || '').toUpperCase();
       a.b2bAlerts = a.b2bAlerts.filter(function (x) { return x.ticker !== t; }); save(); render();
+    };
+    App.ihB2bAutoToggle = function () {
+      if (!window.WC_SUBS || !WC_SUBS.autoToggle) return;
+      if (!WC_SUBS.autoSubscribed()) return toastH('Subscribe to Auto Buy/Sell first', 'err');
+      var on = WC_SUBS.autoToggle();
+      toastH(on ? 'Auto Buy/Sell is ON — it trades every asset you selected' : 'Auto Buy/Sell is OFF — no automatic buys or sells', 'ok');
     };
     App.ihB2bBuyAsset = function (id, ds, ev) {
       var v = (ev && ev.target && ev.target.value) || '';
@@ -1318,6 +1352,8 @@
           (a.b2bAlerts || []).forEach(function (al) {
             var q = null; try { q = INV.quote(al.ticker); } catch (e) {}
             if (!q || !(q.price > 0)) return;
+            /* Auto Buy/Sell handles this asset on the server and sends its own messages */
+            if (al.auto && !al.autoError && window.WC_SUBS && WC_SUBS.autoOn && WC_SUBS.autoOn(u)) return;
             if (al.buy > 0 && !al.buyHit && q.price <= al.buy) { al.buyHit = true; changed = true; if (!al.buyHitAt) al.buyHitAt = Date.now(); notifyH(u, 'Buy target reached', al.ticker + ' is ' + money(q.price) + ' — tap to buy now.', '#/investment/b2b/buy?asset=' + encodeURIComponent(al.ticker), 'trend'); }
             if (al.sell > 0 && !al.sellHit && q.price >= al.sell) { al.sellHit = true; changed = true; if (!al.sellHitAt) al.sellHitAt = Date.now(); notifyH(u, 'Sell target reached', al.ticker + ' is ' + money(q.price) + ' — tap to sell now.', '#/investment/b2b/sell?asset=' + encodeURIComponent(al.ticker), 'wallet'); }
           });
