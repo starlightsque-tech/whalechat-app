@@ -163,7 +163,7 @@ const LT = {
        profit = capital x move% x leverage x number of price moves */
     const cap = Number(t.capitalCoins) || 0;
     const movePctCap = LT.movePctOf(t, q.price);
-    let pnlCoins = cap * (movePctCap / 100) * (t.leverage || 1) * dir * (atEnd ? 1 : LT.movesOf(t, q.price));
+    let pnlCoins = cap * (movePctCap / 100) * (t.leverage || 1) * dir * (atEnd || LT.tpLevelOf(t) > 0 ? 1 : LT.movesOf(t, q.price));
     pnlCoins = Math.max(-t.capitalCoins, pnlCoins);          /* never lose more than the stake */
     /* payout = capital + profit − (capital × trade fee %); the fee comes out of the profit at close.
        Trades opened while the fee was charged at open (feeAtClose:false) are not charged again */
@@ -313,9 +313,9 @@ const LT = {
     }
     t.totalPayoutCoins = Math.round((payout + dividendCoins) * 100) / 100;
 
+    t.totalMoveCount = LT.totalMovesOf(t);
     t.status = 'Completed';
     t.closedAt = Date.now();
-    t.totalMoveCount = LT.totalMovesOf(t);
     t.closeReason = reason;
     t.exitPrice = p.price;
     t.pnlCoins = p.pnlCoins;
@@ -355,23 +355,29 @@ const LT = {
     const u = findUser(t.userId);
     if (!u) return false;
     const p = this.calc(t);
-    const profit = Math.round((Number(p.pnlCoins) || 0) * 100) / 100;
-    if (!(profit > 0)) { toast('No profit to take yet — wait for the chart to move in your favour', 'err'); return false; }
+    /* with a TP level set, profit is taken in whole TP levels (moves): TP $10 and +$50 = 5 moves = $50 */
+    const tpLvl = LT.tpLevelOf(t);
+    const levels = tpLvl > 0 ? LT.tpMoves(t, p.price) : 0;
+    const profit = tpLvl > 0 ? Math.round(levels * tpLvl * 100) / 100 : Math.round((Number(p.pnlCoins) || 0) * 100) / 100;
+    if (!(profit > 0)) { toast(tpLvl > 0 ? 'Profit has not reached your ' + usd(tpLvl) + ' take-profit level yet' : 'No profit to take yet — wait for the chart to move in your favour', 'err'); return false; }
     if (reason === 'Take Profit Hit' && LT.autoSecureOn(t.userId)) return LT.secureLocal(t, 'Take Profit Hit');
     if (!t.initialEntryPrice) t.initialEntryPrice = t.entryPrice;
     const ia = INV.investAcct(u);
     ia.stockProfit = Math.round(((Number(ia.stockProfit) || 0) + profit) * 100) / 100;
     /* re-base the position so the remaining trade starts from the current price */
-    t.entryPrice = Math.round((Number(p.price) || 0) * 10000) / 10000;
+    t.entryPrice = tpLvl > 0 ? LT.rebaseAfterTake(t, p.price, profit) : Math.round((Number(p.price) || 0) * 10000) / 10000;
+    if (tpLvl > 0) t.tpMovesTaken = (Number(t.tpMovesTaken) || 0) + levels;
     t.moveCount = 0;
     t.profitTakenCoins = Math.round(((Number(t.profitTakenCoins) || 0) + profit) * 100) / 100;
     t.lastProfitAt = Date.now();
     t.lastProfitPrice = p.price;
-    /* the taken level is consumed — a new TP can be set from the new entry */
-    t.takeProfitPrice = null;
-    t.takeProfitWc = null;
-    t.takeProfitMode = 'PRICE';
-    t.tpPct = 0;
+    /* an amount TP level repeats; older price levels are consumed */
+    if (!(tpLvl > 0)) {
+      t.takeProfitPrice = null;
+      t.takeProfitWc = null;
+      t.takeProfitMode = 'PRICE';
+      t.tpPct = 0;
+    }
     /* keep a trailing stop anchored to the new price */
     if (t.trailingActive && Number(t.trailingStopPct) > 0) {
       const dist = Math.max(0.05, Math.min(50, Number(t.trailingStopPct))) / 100;
@@ -409,7 +415,7 @@ const LT = {
       const slReason = t.trailingActive ? 'Trailing Stop Hit' : 'Stop Loss Hit';
       /* amount-based levels (set on the trade capital) come first */
       if (!t.trailingActive && Number(t.stopLossWc) > 0 && p.pnlCoins <= -Number(t.stopLossWc)) return void this.settle(t, slReason);
-      if (Number(t.takeProfitWc) > 0 && p.pnlCoins >= Number(t.takeProfitWc)) return void this.takeProfit(t, 'Take Profit Hit');
+      if (LT.tpLevelOf(t) > 0 && LT.tpMoves(t, p.price) >= 1) return void this.takeProfit(t, 'Take Profit Hit');
       if (dir === 'RISE') {
         if (lv.tp > 0 && p.price >= lv.tp) return void this.takeProfit(t, 'Take Profit Hit');
         if (lv.sl > 0 && p.price <= lv.sl) return void this.settle(t, slReason);
@@ -777,12 +783,12 @@ const LT = {
         <div class="tiny muted" id="ltCapitalUsd">Available to trade ${usd(LT.available(me()))} (capital + leftover)</div></div>
       <div class="lt-tpsl-grid">
         <div class="lt-level-box" data-k="tp" data-mode="${LT.levels.tp}">
-          <div class="between"><label class="label">Take Profit <span class="tiny muted">skims profit, trade continues</span></label>
+          <div class="between"><label class="label">Take Profit <span class="tiny muted">repeats each time profit reaches it</span></label>
             <div class="lt-modebtns">
               <button type="button" class="${LT.levels.tp === 'pct' ? 'on' : ''}" data-act="lt-mode" data-k="tp" data-mode="pct">%</button>
-              <button type="button" class="${LT.levels.tp === 'wc' ? 'on' : ''}" data-act="lt-mode" data-k="tp" data-mode="wc">WC</button>
+              <button type="button" class="${LT.levels.tp === 'wc' ? 'on' : ''}" data-act="lt-mode" data-k="tp" data-mode="wc">USD</button>
             </div></div>
-          <div class="input-wrap"><span class="inv-prefix" id="ltTpPrefix">${LT.levels.tp === 'price' ? '$' : LT.levels.tp === 'wc' ? 'WC' : '%'}</span>
+          <div class="input-wrap"><span class="inv-prefix" id="ltTpPrefix">${LT.levels.tp === 'price' ? '$' : LT.levels.tp === 'wc' ? '$' : '%'}</span>
             <input class="input" id="ltTp" type="number" step="0.01" min="0" placeholder="optional"/></div>
           <div class="lt-quick" data-quick="pct">
             <button type="button" data-act="lt-quick" data-k="tp" data-pct="10">+10%</button>
@@ -791,9 +797,9 @@ const LT = {
             <button type="button" data-act="lt-quick" data-k="tp" data-pct="100">+100%</button>
           </div>
           <div class="lt-quick" data-quick="wc">
-            <button type="button" data-act="lt-quick" data-k="tp" data-unit="wc" data-val="10">+10 USD</button>
-            <button type="button" data-act="lt-quick" data-k="tp" data-unit="wc" data-val="25">+25 USD</button>
-            <button type="button" data-act="lt-quick" data-k="tp" data-unit="wc" data-val="50">+50 USD</button>
+            <button type="button" data-act="lt-quick" data-k="tp" data-unit="wc" data-val="10">+$10</button>
+            <button type="button" data-act="lt-quick" data-k="tp" data-unit="wc" data-val="25">+$25</button>
+            <button type="button" data-act="lt-quick" data-k="tp" data-unit="wc" data-val="50">+$50</button>
           </div>
           <div class="lt-preview" id="ltTpPreview">Target —</div>
         </div>
@@ -801,9 +807,9 @@ const LT = {
           <div class="between"><label class="label">Stop Loss <span class="tiny muted">optional</span></label>
             <div class="lt-modebtns">
               <button type="button" class="${LT.levels.sl === 'pct' ? 'on' : ''}" data-act="lt-mode" data-k="sl" data-mode="pct">%</button>
-              <button type="button" class="${LT.levels.sl === 'wc' ? 'on' : ''}" data-act="lt-mode" data-k="sl" data-mode="wc">WC</button>
+              <button type="button" class="${LT.levels.sl === 'wc' ? 'on' : ''}" data-act="lt-mode" data-k="sl" data-mode="wc">USD</button>
             </div></div>
-          <div class="input-wrap"><span class="inv-prefix" id="ltSlPrefix">${LT.levels.sl === 'price' ? '$' : LT.levels.sl === 'wc' ? 'WC' : '%'}</span>
+          <div class="input-wrap"><span class="inv-prefix" id="ltSlPrefix">${LT.levels.sl === 'price' ? '$' : LT.levels.sl === 'wc' ? '$' : '%'}</span>
             <input class="input" id="ltSl" type="number" step="0.01" min="0" placeholder="optional"/></div>
           <div class="lt-quick" data-quick="pct">
             <button type="button" data-act="lt-quick" data-k="sl" data-pct="10">-10%</button>
@@ -812,9 +818,9 @@ const LT = {
             <button type="button" data-act="lt-quick" data-k="sl" data-pct="100">-100%</button>
           </div>
           <div class="lt-quick" data-quick="wc">
-            <button type="button" data-act="lt-quick" data-k="sl" data-unit="wc" data-val="10">-10 USD</button>
-            <button type="button" data-act="lt-quick" data-k="sl" data-unit="wc" data-val="25">-25 USD</button>
-            <button type="button" data-act="lt-quick" data-k="sl" data-unit="wc" data-val="50">-50 USD</button>
+            <button type="button" data-act="lt-quick" data-k="sl" data-unit="wc" data-val="10">-$10</button>
+            <button type="button" data-act="lt-quick" data-k="sl" data-unit="wc" data-val="25">-$25</button>
+            <button type="button" data-act="lt-quick" data-k="sl" data-unit="wc" data-val="50">-$50</button>
           </div>
           <div class="lt-preview" id="ltSlPreview">Target —</div>
         </div>
@@ -824,7 +830,7 @@ const LT = {
         <span class="small">Trailing stop</span>
         <span class="lt-trail-dist"><input class="input" id="ltTrailPct" type="number" step="0.1" min="0.5" max="50" value="2"/>% behind price</span>
       </label>
-      <div class="tiny muted" id="ltTpslHint" style="margin:-2px 0 10px;line-height:1.55">Rise: TP above entry, SL below. Fall: TP below entry, SL above. <b>Take Profit skims the profit into your balance and keeps the trade running</b>; <b>Stop Loss ends the trade</b>. Both are set on the amount you open the trade with (a money amount or a % of your capital), not on the stock price — the Stop Loss is the most you can lose on this trade.</div>
+      <div class="tiny muted" id="ltTpslHint" style="margin:-2px 0 10px;line-height:1.55">Rise: TP above entry, SL below. Fall: TP below entry, SL above. Both are set in <b>%</b> or <b>USD</b> of the capital you open the trade with, not on the stock price. <b>Take Profit repeats</b>: each time the profit in your direction reaches your TP level, that profit can be taken (automatically, or with Take profit) and counts as one move — e.g. TP $10 and +$50 profit = 5 moves. <b>Stop Loss ends the trade</b> when the loss reaches it and returns the rest of your capital to your Leftover balance — e.g. SL $10 on $50 returns $40.</div>
       <div class="field"><label class="label">Trade duration</label>
         <select class="input" id="ltDuration">${this.DURATIONS.map(d => `<option value="${d.m}" ${d.m === 60 ? 'selected' : ''}>${d.label}</option>`).join('')}</select></div>
       <div class="lt-div-est" id="ltDivEst">Dividend bonus · calculating…</div>
@@ -1143,7 +1149,7 @@ LT.seriesWithTrades = function (tf, userId) {
       if (msAgo > started) { v += p.capital; return; }           /* before entry: flat capital */
       const dir = t.side === 'short' ? -1 : 1;
       const move = LT.priceMovePct(t.entryPrice, price) / 100;
-      const pnl = Math.max(-p.capital, p.capital * (LT.movePctOf(t, price) / 100) * (t.leverage || 1) * dir * Math.max(1, Number(t.moveCount) || 0, t._cMoves || 0));
+      const pnl = Math.max(-p.capital, p.capital * (LT.movePctOf(t, price) / 100) * (t.leverage || 1) * dir * (LT.tpLevelOf(t) > 0 ? 1 : Math.max(1, Number(t.moveCount) || 0, t._cMoves || 0)));
       v += Math.max(0, p.capital + pnl);
     });
     out.push(v);
@@ -1666,8 +1672,8 @@ LT.stockHistory = function (ticker) {
           <div class="small" style="font-weight:650">${t.side === 'short' ? 'Fall' : 'Rise'} ${t.leverage}×
             <span class="tiny muted">· ${esc(t.closeReason || 'closed')}</span></div>
           <div class="tiny muted">${usd(coinsToUsd(t.capitalCoins))} · ${this.px(t.ticker, t.entryPrice)} → ${this.px(t.ticker, t.exitPrice || 0)} · ${dateLabel(t.closedAt)}</div>
-          <div class="lt-hist-levels">${Number(t.takeProfitPrice) > 0 ? `<span class="tp">TP ${usd(t.takeProfitPrice)}${Number(t.takeProfitWc) > 0 ? ' · ' + Number(t.takeProfitWc) + ' WC' : ''}</span>` : '<span>TP —</span>'}
-            ${Number(t.stopLossPrice) > 0 ? `<span class="sl">${t.trailingActive ? 'TSL' : 'SL'} ${usd(t.stopLossPrice)}${Number(t.stopLossWc) > 0 ? ' · ' + Number(t.stopLossWc) + ' WC' : ''}</span>` : '<span>SL —</span>'}
+          <div class="lt-hist-levels">${Number(t.takeProfitWc) > 0 ? `<span class="tp">TP +${usd(t.takeProfitWc)} per move</span>` : Number(t.takeProfitPrice) > 0 ? `<span class="tp">TP ${usd(t.takeProfitPrice)}</span>` : '<span>TP —</span>'}
+            ${!t.trailingActive && Number(t.stopLossWc) > 0 ? `<span class="sl">SL −${usd(t.stopLossWc)} max loss</span>` : Number(t.stopLossPrice) > 0 ? `<span class="sl">${t.trailingActive ? 'TSL' : 'SL'} ${usd(t.stopLossPrice)}</span>` : '<span>SL —</span>'}
             ${t.trailingActive ? `<span class="trail">trail ${Number(t.trailingStopPct).toFixed(1)}%</span>` : ''}
             ${Number(t.dividendCoins) > 0 ? `<span class="div">+${usd(coinsToUsd(Number(t.dividendCoins)))} div</span>` : ''}</div>
         </div>
@@ -2161,7 +2167,7 @@ LT.previewTargets = function () {
   const amtOf = (raw, mode) => mode === 'pct' ? capital * Math.abs(raw) / 100 : Math.abs(raw);
   const tpAmt = tpRaw ? amtOf(tpRaw, LT.levels.tp) : 0;
   const slAmt = slRaw ? amtOf(slRaw, LT.levels.sl) : 0;
-  if (tpEl) tpEl.textContent = tpAmt > 0 ? 'Takes ' + usd(tpAmt) + ' profit' + (LT.levels.tp === 'pct' ? ' (' + Math.abs(tpRaw) + '% of capital)' : '') : 'Target —';
+  if (tpEl) tpEl.textContent = tpAmt > 0 ? 'Takes ' + usd(tpAmt) + ' profit each move' + (LT.levels.tp === 'pct' ? ' (' + Math.abs(tpRaw) + '% of capital)' : '') : 'Target —';
   if (slEl) slEl.textContent = trailOn
     ? (trailStop > 0 ? 'Trailing stop · ' + trailPct + '% behind price' : 'Trailing stop —')
     : (slAmt > 0 ? (capital > 0 && slAmt > capital ? 'More than your capital' : 'Most you can lose ' + usd(slAmt) + (LT.levels.sl === 'pct' ? ' (' + Math.abs(slRaw) + '% of capital)' : '')) : 'Target —');
@@ -2197,7 +2203,7 @@ App.ltMode = function (id, ds) {
     b.classList.toggle('on', b.getAttribute('data-mode') === mode);
   });
   const pre = document.getElementById(k === 'tp' ? 'ltTpPrefix' : 'ltSlPrefix');
-  if (pre) pre.textContent = mode === 'price' ? '$' : mode === 'wc' ? 'WC' : '%';
+  if (pre) pre.textContent = mode === 'price' ? '$' : mode === 'wc' ? '$' : '%';
   LT.previewTargets();
 };
 
@@ -2222,7 +2228,7 @@ App.ltStart = function (id, ds) {
   const slRaw = Number((document.getElementById('ltSl') || {}).value) || 0;
   const trailOn = !!(document.getElementById('ltTrail') || {}).checked;
   const trailPct = trailOn ? (Number((document.getElementById('ltTrailPct') || {}).value) || 2) : 0;
-  /* TP / SL are amounts of the capital: WC amount as typed, or % of the capital */
+  /* TP / SL are amounts of the capital: USD amount as typed, or % of the capital */
   const toAmt = (raw, mode) => mode === 'pct' ? Math.round(capital * Math.abs(raw) / 100 * 100) / 100 : Math.abs(raw);
   const tpAmt = tpRaw ? toAmt(tpRaw, LT.levels.tp) : 0;
   const slAmt = slRaw && !trailOn ? toAmt(slRaw, LT.levels.sl) : 0;
@@ -2377,14 +2383,14 @@ App.ltEditTpsl = function (id, ds) {
       <span class="lt-side ${t.side}">${dir === 'RISE' ? 'Rise' : 'Fall'} ${t.leverage}×</span>
       <b>${esc(LT.label(t.ticker))}</b><span class="tiny muted">Entry ${LT.px(t.ticker, entry)}</span>
     </div>
-    <div class="field"><label class="label">Take Profit amount (profit to take, USD)</label>
+    <div class="field"><label class="label">Take Profit level (USD per move, repeats)</label>
       <input class="input" id="ltEditTp" type="number" step="0.01" min="0" value="${Number(t.takeProfitWc) > 0 ? Number(t.takeProfitWc) : ''}" placeholder="optional"/>
       <div class="lt-quick">
         <button type="button" data-act="lt-edit-quick" data-id="${t.id}" data-k="tp" data-pct="10">+10%</button>
         <button type="button" data-act="lt-edit-quick" data-id="${t.id}" data-k="tp" data-pct="25">+25%</button>
         <button type="button" data-act="lt-edit-quick" data-id="${t.id}" data-k="tp" data-pct="50">+50%</button>
-        <button type="button" data-act="lt-edit-quick-wc" data-id="${t.id}" data-k="tp" data-wc="25">+25 WC</button>
-        <button type="button" data-act="lt-edit-quick-wc" data-id="${t.id}" data-k="tp" data-wc="50">+50 WC</button>
+        <button type="button" data-act="lt-edit-quick-wc" data-id="${t.id}" data-k="tp" data-wc="25">+$25</button>
+        <button type="button" data-act="lt-edit-quick-wc" data-id="${t.id}" data-k="tp" data-wc="50">+$50</button>
         <button type="button" class="lt-clear" data-act="lt-edit-clear" data-id="${t.id}" data-k="tp">Clear</button>
       </div></div>
     <div class="field"><label class="label">Stop Loss amount (most you can lose, max ${usd(Number(t.capitalCoins) || 0)})</label>
@@ -2393,8 +2399,8 @@ App.ltEditTpsl = function (id, ds) {
         <button type="button" data-act="lt-edit-quick" data-id="${t.id}" data-k="sl" data-pct="10">-10%</button>
         <button type="button" data-act="lt-edit-quick" data-id="${t.id}" data-k="sl" data-pct="25">-25%</button>
         <button type="button" data-act="lt-edit-quick" data-id="${t.id}" data-k="sl" data-pct="50">-50%</button>
-        <button type="button" data-act="lt-edit-quick-wc" data-id="${t.id}" data-k="sl" data-wc="25">-25 WC</button>
-        <button type="button" data-act="lt-edit-quick-wc" data-id="${t.id}" data-k="sl" data-wc="50">-50 WC</button>
+        <button type="button" data-act="lt-edit-quick-wc" data-id="${t.id}" data-k="sl" data-wc="25">-$25</button>
+        <button type="button" data-act="lt-edit-quick-wc" data-id="${t.id}" data-k="sl" data-wc="50">-$50</button>
         <button type="button" class="lt-clear" data-act="lt-edit-clear" data-id="${t.id}" data-k="sl">Clear</button>
       </div></div>
     <label class="lt-trail-row">
@@ -2402,7 +2408,7 @@ App.ltEditTpsl = function (id, ds) {
       <span class="small">Trailing stop</span>
       <span class="lt-trail-dist"><input class="input" id="ltEditTrailPct" type="number" step="0.1" min="0.5" max="50" value="${trailPct}"/>% behind price</span>
     </label>
-    <div class="tiny muted">Take Profit and Stop Loss are amounts of your ${usd(Number(t.capitalCoins) || 0)} trade capital, not stock prices. % buttons use a share of the capital. A trailing stop follows the price one trail-width behind and only moves in your favour.</div>`;
+    <div class="tiny muted">Take Profit and Stop Loss are USD amounts of your ${usd(Number(t.capitalCoins) || 0)} trade capital, not stock prices. % buttons use a share of the capital. Take Profit repeats: every time profit reaches the level it is taken and counted as one move. A trailing stop follows the price one trail-width behind and only moves in your favour.</div>`;
   openModal(modalShell('Take Profit / Stop Loss', body,
     `<button class="btn btn-ghost" data-close style="flex:1">Cancel</button>
      <button class="btn btn-ghost" id="ltTpClearBoth" style="flex:1">Remove both</button>
@@ -2685,10 +2691,44 @@ LT.movesOf = function (t, price) {
   }
   return Math.max(1, n, t._cMoves || 0);
 };
+/* Take-profit level in USD (a % TP is stored as its USD amount of the capital) */
+LT.tpLevelOf = function (t) {
+  const n = Number(t && t.takeProfitWc);
+  return n > 0 ? n : 0;
+};
+/* profit from price movement in the user's direction only (same as market.js favorableMoveProfit) */
+LT.favorableProfit = function (t, price) {
+  const cap = Number(t && t.capitalCoins) || 0, entry = Number(t && t.entryPrice), px = Number(price);
+  if (!(cap > 0) || !(entry > 0) || !(px > 0)) return 0;
+  const dir = LT.dirOf(t) === 'FALL' ? -1 : 1;
+  if (!(dir < 0 ? px < entry : px > entry)) return 0;
+  return Math.max(0, cap * (LT.movePctOf(t, px) / 100) * (Number(t.leverage) || 1) * dir);
+};
+/* moves with a TP level = how many times the profit has reached the TP level since the last take */
+LT.tpMoves = function (t, price) {
+  const tp = LT.tpLevelOf(t);
+  if (!(tp > 0)) return 0;
+  return Math.floor((LT.favorableProfit(t, price) + 1e-9) / tp);
+};
+/* after taking whole TP levels, move the entry by exactly the distance that earned them */
+LT.rebaseAfterTake = function (t, price, amount) {
+  const cap = Number(t.capitalCoins) || 0, entry = Number(t.entryPrice), px = Number(price) || 0;
+  const dir = LT.dirOf(t) === 'FALL' ? -1 : 1;
+  const diff = cap > 0 ? LT.tpslDiff(t, (amount / cap) * 100, t.leverage) : 0;
+  if (!(diff > 0) || !(entry > 0)) return Math.round(px * 1e6) / 1e6;
+  const next = entry + dir * diff;
+  return Math.round((dir > 0 ? Math.min(next, px) : Math.max(next, px)) * 1e6) / 1e6;
+};
 /* total trade moves from open to close (never reset by Auto Secure / take-profit re-bases).
-   Server count (totalMoveCount) wins; older trades fall back to the moves since the last re-base. */
+   With a TP level: TP levels taken + TP levels available now. Otherwise the server count
+   (totalMoveCount) wins; older trades fall back to the moves since the last re-base. */
 LT.totalMovesOf = function (t) {
   if (!t) return 0;
+  if (LT.tpLevelOf(t) > 0) {
+    if (t.status !== 'Open') return Number(t.totalMoveCount) || Number(t.tpMovesTaken) || 0;
+    const q = INV.quote(t.ticker);
+    return (Number(t.tpMovesTaken) || 0) + LT.tpMoves(t, q ? q.price : t.entryPrice);
+  }
   return Math.max(Number(t.totalMoveCount) || 0, Number(t.clientMoveTotal) || 0, Number(t.moveCount) || 0, t._cMoves || 0);
 };
 /* admin profit rate (%) for a stock: its own rate, else the market-type rate (Admin -> Stocks) */
@@ -2771,7 +2811,9 @@ LT.secureLocal = function (t, reason) {
   const now = Date.now();
   if (t.lastSecureAt && now - Number(t.lastSecureAt) < 2000) return false;
   const p = this.calc(t);
-  const profit = Math.round((Number(p.pnlCoins) || 0) * 100) / 100;
+  const tpLvl = LT.tpLevelOf(t);
+  const levels = tpLvl > 0 ? LT.tpMoves(t, p.price) : 0;
+  const profit = tpLvl > 0 ? Math.round(levels * tpLvl * 100) / 100 : Math.round((Number(p.pnlCoins) || 0) * 100) / 100;
   if (!(profit >= 0.01) || !(p.price > 0)) return false;
   if (!t.initialEntryPrice) t.initialEntryPrice = t.entryPrice;
   t.securedProfits = Array.isArray(t.securedProfits) ? t.securedProfits : [];
@@ -2782,10 +2824,11 @@ LT.secureLocal = function (t, reason) {
   if (t.securedProfits.length > 100) t.securedProfits.length = 100;
   t.securedProfitCoins = Math.round(((Number(t.securedProfitCoins) || 0) + profit) * 100) / 100;
   t.securedProfitCount = (Number(t.securedProfitCount) || 0) + 1;
-  t.entryPrice = Math.round(p.price * 1e6) / 1e6;
+  t.entryPrice = tpLvl > 0 ? LT.rebaseAfterTake(t, p.price, profit) : Math.round(p.price * 1e6) / 1e6;
+  if (tpLvl > 0) t.tpMovesTaken = (Number(t.tpMovesTaken) || 0) + levels;
   t.moveCount = 0;
   t.lastSecureAt = now; t.lastProfitAt = now; t.lastProfitPrice = p.price;
-  if (reason === 'Take Profit Hit') { t.takeProfitPrice = null; t.takeProfitWc = null; t.takeProfitMode = 'PRICE'; t.tpPct = 0; }
+  if (reason === 'Take Profit Hit' && !(tpLvl > 0)) { t.takeProfitPrice = null; t.takeProfitWc = null; t.takeProfitMode = 'PRICE'; t.tpPct = 0; }
   if (t.trailingActive && Number(t.trailingStopPct) > 0) {
     const dist = Math.max(0.05, Math.min(50, Number(t.trailingStopPct))) / 100;
     t.trailingStopPrice = Math.round((this.dirOf(t) === 'FALL' ? p.price * (1 + dist) : p.price * (1 - dist)) * 10000) / 10000;
