@@ -78,6 +78,15 @@ function moveProfit(t, price, lev, dir) {
   const perMove = cap * (movePct / 100) * lev * dir;
   return perMove * Math.max(1, Number(t.moveCount) || 0);
 }
+/* Trade ended by its timer (no Take Profit taken): move % = (last price at end time - entry price) / capital,
+   profit = capital x move% x leverage, with no number-of-moves multiplier. */
+function moveProfitAtEnd(t, price, lev, dir) {
+  const cap = Number(t.capitalCoins) || 0;
+  const entry = Number(t.entryPrice);
+  if (!(cap > 0) || !(entry > 0) || !(Number(price) > 0)) return 0;
+  const movePct = (Number(price) - entry) / cap;
+  return cap * (movePct / 100) * lev * dir;
+}
 /* Trade totals recorded at close: total profit = final move profit + profit still unclaimed
    from Auto Secure; payout record = capital + total profit - fee. Informational only: the
    credited payout is unchanged so earlier profit is never paid twice. */
@@ -1484,6 +1493,11 @@ class MarketService {
           const move = (q.price - t.entryPrice) / t.entryPrice;
           pnl = moveProfit(t, q.price, lev, dir);
           pnl = Math.max(-(Number(t.capitalCoins) || 0), pnl);
+          pnlCoins = round(pnl, 2);
+          pct = (Number(t.capitalCoins) || 0) ? (pnlCoins / t.capitalCoins) * 100 : 0;
+        }
+        if (reason === 'Time limit reached') {
+          pnl = Math.max(-(Number(t.capitalCoins) || 0), moveProfitAtEnd(t, q.price, lev, dir));
           pnlCoins = round(pnl, 2);
           pct = (Number(t.capitalCoins) || 0) ? (pnlCoins / t.capitalCoins) * 100 : 0;
         }
