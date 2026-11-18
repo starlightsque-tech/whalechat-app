@@ -1507,11 +1507,21 @@ class MarketService {
             trailingChanged = true;
           }
         }
-        const tpPrice = Number(t.takeProfitPrice) || 0;
-        const slPrice = Number(t.stopLossPrice) || 0;
+        /* Amount-based Take Profit / Stop Loss: set on the money the user opened the trade
+           with (capital), not on the stock price. TP fires when the profit in the user's
+           direction reaches the amount; SL fires when the loss reaches the amount and the
+           loss is capped there, so a trade can never lose more than the SL amount. */
+        const capNow = Number(t.capitalCoins) || 0;
+        const tpAmt = Number(t.takeProfitWc) > 0 ? Number(t.takeProfitWc) : 0;
+        const slAmt = !t.trailingActive && Number(t.stopLossWc) > 0 ? Math.min(capNow, Number(t.stopLossWc)) : 0;
+        const tpPrice = tpAmt > 0 ? 0 : (Number(t.takeProfitPrice) || 0);
+        const slPrice = slAmt > 0 ? 0 : (Number(t.stopLossPrice) || 0);
         const slReason = t.trailingActive ? 'Trailing Stop Hit' : 'Stop Loss Hit';
         let reason = '';
-        if (direction === 'RISE') {
+        if (slAmt > 0 && Math.max(-capNow, moveProfit(t, q.price, lev, dir)) <= -slAmt) reason = 'Stop Loss Hit';
+        else if (tpAmt > 0 && favorableMoveProfit(t, q.price, lev, dir) >= tpAmt) reason = 'Take Profit Hit';
+        if (reason) { /* amount level hit */ }
+        else if (direction === 'RISE') {
           if (tpPrice > 0 && q.price >= tpPrice) reason = 'Take Profit Hit';
           else if (slPrice > 0 && q.price <= slPrice) reason = slReason;
         } else {
@@ -1544,6 +1554,8 @@ class MarketService {
           const move = (q.price - t.entryPrice) / t.entryPrice;
           pnl = moveProfit(t, q.price, lev, dir);
           pnl = Math.max(-(Number(t.capitalCoins) || 0), pnl);
+          /* amount stop loss: never take more than the amount the user set */
+          if (reason === 'Stop Loss Hit' && slAmt > 0) pnl = Math.max(-slAmt, pnl);
           pnlCoins = round(pnl, 2);
           pct = (Number(t.capitalCoins) || 0) ? (pnlCoins / t.capitalCoins) * 100 : 0;
         }
