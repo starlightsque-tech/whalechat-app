@@ -1,6 +1,6 @@
 {
   "name": "whalechat",
-  "version": "3.51.2",
+  "version": "3.51.3",
   "private": true,
   "description": "WhaleChat — chat, marketplace and wallet. Web app + sync server + Android/iOS shells.",
   "main": "server.js",
@@ -23,7 +23,8 @@
     "test:offline:runtime": "node scripts/test-offline-runtime.js",
     "backup:state": "node scripts/backup-state.mjs",
     "restore:state": "node scripts/restore-state.mjs",
-    "test:ui": "node scripts/test-trading-ui.mjs"
+    "test:ui": "node scripts/test-trading-ui.mjs",
+    "audit:routes": "node scripts/audit-routes.js --all"
   },
   "dependencies": {
     "web-push": "^3.6.7",

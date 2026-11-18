@@ -473,19 +473,21 @@
   function adminBodyHTML(a) {
     if (!a) return '<div class="tiny muted" style="margin-top:10px">Could not load bot configuration.</div>';
     const s = a.settings || {};
+    /* a partial / offline state arrives without stats or tiers — never crash the panel */
+    const st = a.stats || {};
     const intervals = [[1, 'Every minute'], [5, 'Every 5 minutes'], [15, 'Every 15 minutes'], [30, 'Every 30 minutes'], [60, 'Hourly'], [240, 'Every 4 hours'], [1440, 'Daily']];
     return `<div class="bot-admin-stats">
-        <div><span>Active subscriptions</span><b>${a.stats.subscriptions}</b></div>
-        <div><span>Running bots</span><b>${a.stats.running}</b></div>
-        <div><span>Reserved capital</span><b>${money((a.stats.reservedCoins)*0.5)}</b></div>
-        <div><span>Subscription revenue</span><b>${money((a.stats.revenueCoins)*0.5)}</b></div>
+        <div><span>Active subscriptions</span><b>${Number(st.subscriptions) || 0}</b></div>
+        <div><span>Running bots</span><b>${Number(st.running) || 0}</b></div>
+        <div><span>Reserved capital</span><b>${money((Number(st.reservedCoins)||0)*0.5)}</b></div>
+        <div><span>Subscription revenue</span><b>${money((Number(st.revenueCoins)||0)*0.5)}</b></div>
       </div>
       <div class="between" style="margin-top:12px;gap:8px;flex-wrap:wrap">
         <div class="tiny muted">Add trading assistants with their own username and profile picture. Mark them HOT to feature them in the marketplace.</div>
         <button class="btn btn-sm btn-primary" data-act="bot-add-assistant">+ Add bot assistant</button>
       </div>
       <div class="table-wrap"><table class="tbl bot-admin-table"><thead><tr><th>Assistant</th><th>Accuracy %</th><th>24 hrs ($)</th><th>Weekly ($)</th><th>Monthly ($)</th><th>Yearly ($)</th><th>Speed (min)</th><th>Hot</th><th>Live</th><th></th></tr></thead><tbody>
-        ${a.tiers.map(adminTierRow).join('')}
+        ${(a.tiers || []).map(adminTierRow).join('')}
       </tbody></table></div>
       ${subsAdminHTML(a)}
       <div class="bot-admin-grid">

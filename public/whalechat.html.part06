@@ -878,7 +878,7 @@ function adminVendors() {
       return `<tr><td><div style="font-weight:600">@${esc(v.username)}</div><div class="tiny muted">Since ${dateLabel(v.createdAt)}</div></td>
         <td><div class="row gap6">${owner ? avatarHTML(owner, 'sm') : ''}<div><div class="small">${esc(owner ? owner.fullName : '—')}</div><div class="tiny muted">${esc(owner ? owner.username : '')}</div></div></div></td>
         <td>${prods.length}</td><td>${v.sales || 0}</td><td>${coins(DB.orders.filter(o => o.vendorId === v.id).reduce((s, o) => s + o.totalUsd, 0) / COIN_USD)} WC</td>
-        <td>${v.rating.toFixed(1)} ★</td>
+        <td>${vendorRating(v).toFixed(1)} ★</td>
         <td><div class="row gap6" style="justify-content:flex-end">
           <button class="btn btn-xs btn-ghost" data-act="admin-vendor" data-id="${v.id}">View</button>
           <button class="btn btn-xs btn-ghost" data-act="admin-edit-vendor" data-id="${v.id}">Edit</button>
@@ -894,7 +894,7 @@ App.adminVendor = function (id) {
   const prods = DB.products.filter(p => p.vendorId === id);
   openModal(modalShell('Vendor @' + v.username, `
     <div class="row gap12 mb16">${avatarHTML(owner || {}, 'lg')}<div><div style="font-weight:650">${esc(v.name)}</div>
-      <div class="small muted">${esc(owner ? owner.fullName : '')}</div><div class="row gap6 mt6"><span class="badge badge-accent">${v.rating.toFixed(1)} ★</span><span class="badge">Trust ${v.trustScore}</span><span class="badge">${v.sales || 0} sales</span></div></div></div>
+      <div class="small muted">${esc(owner ? owner.fullName : '')}</div><div class="row gap6 mt6"><span class="badge badge-accent">${vendorRating(v).toFixed(1)} ★</span><span class="badge">Trust ${vendorTrust(v)}</span><span class="badge">${v.sales || 0} sales</span></div></div></div>
     <div class="kv"><span class="k">Wallet balance</span><span class="v">${coins(owner ? owner.balance : 0)} WC</span></div>
     <div class="kv"><span class="k">Products in inventory</span><span class="v">${prods.length}</span></div>
     <div class="kv"><span class="k">Created</span><span class="v">${dateLabel(v.createdAt)}</span></div>

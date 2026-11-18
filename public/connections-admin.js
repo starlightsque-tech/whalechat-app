@@ -33,9 +33,16 @@
     return STATE.status;
   };
 
+  /* Load at most once at a time, and never re-render on failure: an offline
+     device used to load → render → load … until the tab ran out of memory. */
   C.view = function () {
-    if (!STATE.status) {
-      C.load().then(function () { try { if (typeof render === 'function') render(); } catch (e) {} });
+    if (!STATE.status && !STATE.loading && Date.now() > (STATE.retryAfter || 0)) {
+      STATE.loading = true;
+      C.load().then(function (status) {
+        STATE.loading = false;
+        if (status) { try { if (typeof render === 'function') render(); } catch (e) {} }
+        else STATE.retryAfter = Date.now() + 15000;
+      }).catch(function () { STATE.loading = false; STATE.retryAfter = Date.now() + 15000; });
     }
     var s = STATE.status;
     if (!s) {

@@ -1,8 +1,8 @@
 {
-  "version": "3.51.2",
-  "build": "2026-11-19T01:10:00Z",
+  "version": "3.51.3",
+  "build": "2026-11-19T01:35:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.51.2 - Toyota (7203.T) and every asset with a dotted/underscored ticker now render the full trade ticket (capital, Rise/Fall, TP/SL, duration, leverage); B2B-Investing history lists manual buys/sells and every Auto Buy/Sell fill with an AUTO badge.",
-  "releasedAt": "2026-11-19T01:10:00Z",
+  "notes": "WhaleChat 3.51.3 - Full route audit (user + admin, online + offline) and the robustness fixes it found: vendor rating crash, admin bot stats crash, admin Connections infinite render loop offline, and unhandled fetch rejections in market/shares admin panels.",
+  "releasedAt": "2026-11-19T01:35:00Z",
   "minimum": "3.0.0"
 }

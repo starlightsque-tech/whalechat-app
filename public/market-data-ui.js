@@ -87,7 +87,7 @@
           return '<div class="row between" style="padding:10px 0;border-bottom:1px solid var(--line,#2a2a2a);cursor:pointer" data-nav="#/trade/' + esc(q.symbol) + '"><div><b>' + esc(q.symbol) + '</b><div class="tiny muted">' + esc(sourceLabel(q)) + '</div></div><div style="text-align:right"><div>' + fmt(q.price) + '</div><div class="tiny" style="color:' + (up ? '#16a34a' : '#dc2626') + '">' + (isFinite(+q.changePct) ? (up ? '+' : '') + (+q.changePct).toFixed(2) + '%' : '') + '</div></div></div>';
         }).join('') || '<div class="tiny muted">No data.</div>';
         box.querySelectorAll('[data-nav]').forEach(function (n) { n.onclick = function () { location.hash = n.getAttribute('data-nav'); }; });
-      });
+      }).catch(function () { /* offline: keep the last rows on screen */ });
     }
     load(); mTimer = setInterval(load, 3000);
   }

@@ -77,6 +77,9 @@
       if (!r[0] || !r[0].ok || !r[0].settings) { wrap.innerHTML = '<div class="card" style="margin-top:12px"><div class="tiny muted">Unlock your admin session to manage share settings.</div><button class="btn btn-sm btn-primary mt6" data-shx="retry">Retry</button></div>'; bind(wrap); return; }
       wrap.innerHTML = settingsHtml(r[0].settings) + invHtml(r[1]);
       bind(wrap);
+    }).catch(function () {
+      wrap.innerHTML = '<div class="card" style="margin-top:12px"><div class="tiny muted">Could not load share settings — check your connection and retry.</div><button class="btn btn-sm btn-primary mt6" data-shx="retry">Retry</button></div>';
+      bind(wrap);
     });
   }
   function bind(wrap) {

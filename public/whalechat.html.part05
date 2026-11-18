@@ -538,7 +538,7 @@ function viewVendorDash(u, v, tab) {
   const pendingOrders = DB.orders.filter(o => o.vendorId === v.id && o.status !== 'delivered').length;
   return `<div class="page-head"><div>
       <span class="badge badge-accent mb10">${ic('store', 12)} Vendor</span>
-      <h1>${esc(v.name)}</h1><p>@${esc(v.username)} · ${v.rating.toFixed(1)} ★ · Trust ${v.trustScore}/100</p></div>
+      <h1>${esc(v.name)}</h1><p>@${esc(v.username)} · ${vendorRating(v).toFixed(1)} ★ · Trust ${vendorTrust(v)}/100</p></div>
       <div class="row gap8"><a href="#/market" class="btn btn-ghost btn-sm">${ic('bag', 15)} View store</a>
       <a href="#/vendor/renew" class="btn btn-ghost btn-sm">${ic('refresh', 15)} Renew</a>
       <a href="#/vendor/company" class="btn btn-primary btn-sm">${ic('plus', 15)} Buy stock</a></div></div>

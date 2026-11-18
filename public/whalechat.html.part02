@@ -167,6 +167,10 @@ function vendorExpiryText(v) {
   return new Date(Number(v.expiresAt)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 function vendorById(id) { return DB.vendors.find(v => v.id === id) || null; }
+/* A vendor row can exist without a rating/trust score (legacy imports, a store
+   created before those fields were added). Never let that break a page. */
+function vendorRating(v) { const r = Number(v && v.rating); return Number.isFinite(r) && r > 0 ? r : 5; }
+function vendorTrust(v) { const t = Number(v && v.trustScore); return Number.isFinite(t) && t > 0 ? t : 100; }
 function isVendor(u) { return !!(u && vendorOf(u.id)); }
 function myContacts(id) {
   return DB.contacts.filter(c => c.ownerId === id).map(c => findUser(c.userId)).filter(Boolean);
