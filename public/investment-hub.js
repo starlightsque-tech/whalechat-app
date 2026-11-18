@@ -42,8 +42,21 @@
   function ledger(u, label, usdDelta, wcDelta, meta) {
     var a = account(u);
     var m = meta || null;
-    a.ledger.unshift({ id: nowId('il_'), label: label, usd: Number(usdDelta) || 0, coins: Number(wcDelta) || 0, scope: (m && m.scope) || scopeOfEntry({ label: label, meta: m }), meta: m, at: Date.now() });
+    var entry = { id: nowId('il_'), label: label, usd: Number(usdDelta) || 0, coins: Number(wcDelta) || 0, scope: (m && m.scope) || scopeOfEntry({ label: label, meta: m }), meta: m, at: Date.now() };
+    a.ledger.unshift(entry);
     if (a.ledger.length > 300) a.ledger.length = 300;
+    return entry;
+  }
+
+  /* Every B2B fill — manual or automatic — is also journalled on the account so
+     the B2B-Investing history can list trades even when the whole-DB sync has
+     overwritten a ledger line written by the server. */
+  function b2bJournal(u, rec) {
+    var a = account(u);
+    if (!Array.isArray(a.b2bTrades)) a.b2bTrades = [];
+    a.b2bTrades.unshift(rec);
+    if (a.b2bTrades.length > 300) a.b2bTrades.length = 300;
+    return rec;
   }
 
   /* Which account does a ledger line belong to? New lines carry `scope`;
@@ -99,6 +112,52 @@
       return '<div class="ih-row"><div class="grow"><b>' + escH(x.label) + '</b><div class="tiny muted">' + new Date(x.at).toLocaleString() + '</div></div><div style="text-align:right"><b class="' + (x.usd >= 0 ? 'up' : 'down') + '">' + (x.usd >= 0 ? '+' : '') + money(x.usd) + '</b>' + (x.coins ? '<div class="tiny muted">' + (x.coins >= 0 ? '+' : '') + wc(x.coins) + ' WC</div>' : '') + '</div></div>';
     }).join('') + '</div></div>';
   }
+  /* B2B-Investing trade history: manual buys/sells + every Auto Buy/Sell fill.
+     Sources are merged and de-duplicated so a sync overwrite of one of them
+     cannot hide a fill from the user. */
+  function b2bTradesBlock(u) {
+    var a = account(u);
+    var rows = [];
+    var seen = {};
+    function add(r) {
+      if (!r || !r.ticker) return;
+      var key = r.ledgerId || r.id || (r.side + '|' + r.ticker + '|' + r.at + '|' + r.units);
+      if (seen[key]) return;
+      seen[key] = 1;
+      rows.push(r);
+    }
+    (a.b2bTrades || []).forEach(function (r) { add(r); });
+    /* fills written by the server-side Auto Buy/Sell tool */
+    var journal = (window.DB && Array.isArray(DB.b2bAutoJournal)) ? DB.b2bAutoJournal : [];
+    journal.forEach(function (e) {
+      if (!e || (e.userId && e.userId !== u.id)) return;
+      add({ id: e.id, side: e.side, ticker: String(e.ticker || '').toUpperCase(), units: Number(e.units) || 0, price: Number(e.price) || 0, amount: Number(e.amount) || Number(e.proceeds) || 0, usd: e.side === 'sell' ? (Number(e.payout) || 0) : -(Number(e.amount) || 0), auto: true, at: Number(e.at) || 0 });
+    });
+    /* ledger lines (covers fills recorded before this journal existed) */
+    var b2bLabels = /\bb2b\b|auto buy\/sell/i;
+    var notTrade = /subscription|unlock|profit →|→ capital|top-?up|transfer/i;
+    a.ledger.forEach(function (x) {
+      if (scopeOfEntry(x) !== 'b2b' || !b2bLabels.test(String(x.label || '')) || notTrade.test(String(x.label || ''))) return;
+      var isBuy = /\bbuy\b/i.test(String(x.label || ''));
+      add({ id: x.id, side: isBuy ? 'buy' : 'sell', ticker: String((x.meta && x.meta.ticker) || (String(x.label).match(/\b[A-Z]{2,10}(?:USDT)?\b/) || [])[0] || '').toUpperCase(), units: Number((x.meta && x.meta.units) || 0), price: Number((x.meta && x.meta.price) || 0), amount: Math.abs(Number(x.usd) || 0), usd: Number(x.usd) || 0, auto: !!(x.meta && x.meta.auto), at: Number(x.at) || 0, ledgerId: x.id });
+    });
+    rows = rows.filter(function (r) { return r.ticker; }).sort(function (x, y) { return (y.at || 0) - (x.at || 0); });
+    if (!rows.length) return '';
+    var buys = rows.filter(function (r) { return r.side === 'buy'; }).length;
+    var sells = rows.length - buys;
+    return '<div class="card"><div class="between"><div class="card-title" style="margin:0">B2B trades</div>' +
+        '<span class="tiny muted">' + buys + ' buy' + (buys === 1 ? '' : 's') + ' · ' + sells + ' sell' + (sells === 1 ? '' : 's') + '</span></div>' +
+        '<div class="ih-list">' + rows.slice(0, 80).map(function (r) {
+          var pos = r.side === 'buy';
+          return '<div class="ih-row"><div class="grow" style="min-width:0">' +
+            '<b>' + (pos ? '▲ Buy' : '▼ Sell') + ' ' + escH(r.ticker) + (r.auto ? ' <span class="badge badge-accent" style="margin-left:4px">AUTO</span>' : '') + '</b>' +
+            '<div class="tiny muted">' + new Date(r.at || Date.now()).toLocaleString() +
+              (r.units ? ' · ' + b2bUnits(r.units) + ' units @ ' + money(r.price) : '') + '</div></div>' +
+            '<div style="text-align:right"><b class="' + ((r.usd || 0) >= 0 ? 'up' : 'down') + '">' + money(Math.abs(Number(r.usd) || 0)) + '</b>' +
+            '<div class="tiny muted">' + (pos ? 'invested' : ((r.usd || 0) >= 0 ? 'payout' : 'at loss')) + '</div></div></div>';
+        }).join('') + '</div></div>';
+  }
+
   function botSessionsBlock(u) {
     var st = (window.WC_BOTS && window.WC_BOTS.state) || {};
     var list = [];
@@ -695,15 +754,17 @@
     }
     var botBlock = scope === 'bot' ? botSessionsBlock(u) : '';
     var wcBlock = scope === 'wc' ? wcPlanHistoryBlock(u) : '';
+    var b2bBlock = (scope === 'all' || scope === 'b2b') ? b2bTradesBlock(u) : '';
     var ledgerBlock = ledgerRowsHTML(u, scope);
     var allScopeRows = a.ledger.filter(function (x) { return scopeOfEntry(x) === scope; });
-    var empty = scope !== 'all' && !ledgerBlock && !trades && !botBlock && !wcBlock;
+    var empty = scope !== 'all' && !ledgerBlock && !trades && !botBlock && !wcBlock && !b2bBlock;
     return head(info.title, info.sub, '#/investment') +
       historyTabs(scope) +
       (scope !== 'all' ? '<div class="card"><div class="tiny muted">Showing <b>' + escH(info.label) + '</b> only — ' + allScopeRows.length + ' transaction' + (allScopeRows.length === 1 ? '' : 's') + ' on this account. Other accounts stay hidden here.</div></div>' : '') +
       trades +
       botBlock +
       wcBlock +
+      b2bBlock +
       ledgerBlock +
       (empty ? '<div class="empty" style="padding:18px"><p>No ' + escH(info.label) + ' transactions yet.</p></div>' : '');
   }
@@ -1055,7 +1116,8 @@
       h.avgPrice = ((Number(h.units) * Number(h.avgPrice)) + amount) / (Number(h.units) + units);
       h.units = Number(h.units) + units;
       a.b2b[t] = h;
-      ledger(u, 'B2B buy ' + t, -amount, 0, { ticker: t, units: units, price: q.price, scope: 'b2b' });
+      var line = ledger(u, 'B2B buy ' + t, -amount, 0, { ticker: t, units: units, price: q.price, scope: 'b2b' });
+      b2bJournal(u, { id: nowId('bt_'), side: 'buy', ticker: t, units: units, price: q.price, amount: amount, usd: -amount, auto: false, at: Date.now(), ledgerId: line && line.id });
       return { units: units, price: q.price, amount: amount };
     }
     App.ihB2bBuy = function (id, ds) {
@@ -1084,7 +1146,8 @@
       h.units = Math.round((Number(h.units) - units) * 1e8) / 1e8;
       if (h.units <= 1e-8) delete a.b2b[t]; else a.b2b[t] = h;
       b2bInventory()[t] = Math.round((b2bAvail(t) + units) * 1e8) / 1e8;
-      ledger(u, 'B2B sell ' + t + (units < Number(h.units) + units ? ' (partial)' : ''), 0, 0, { ticker: t, units: units, price: q.price, proceeds: proceeds, payout: payout, scope: 'b2b' });
+      var line = ledger(u, 'B2B sell ' + t, 0, 0, { ticker: t, units: units, price: q.price, proceeds: proceeds, payout: payout, scope: 'b2b' });
+      b2bJournal(u, { id: nowId('bt_'), side: 'sell', ticker: t, units: units, price: q.price, amount: proceeds, usd: payout, auto: false, at: Date.now(), ledgerId: line && line.id });
       save();
       toastH('Sold ' + b2bUnits(units) + ' ' + t + ' · payout ' + (payout >= 0 ? '+' : '') + money(payout) + ' to profit balance', 'ok');
       render();

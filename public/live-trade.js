@@ -65,6 +65,23 @@ const LT = {
     if (!DB.invest.dividendOverrides || typeof DB.invest.dividendOverrides !== 'object') DB.invest.dividendOverrides = {};
     return DB.invest;
   },
+  /* A page links with the canonical ticker, but a link made before an asset was
+     renamed (or a hand-typed URL) can carry the display ticker — "7203.T" for the
+     internal "7203_T". Resolve every form so the ticket never silently vanishes. */
+  resolveStock(value) {
+    const raw = String(value || '').toUpperCase();
+    if (!raw) return null;
+    let direct = null;
+    try { direct = INV.stock(raw); } catch (e) {}
+    if (direct) return direct;
+    const norm = (v) => String(v == null ? '' : v).toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const key = norm(raw);
+    if (!key) return null;
+    let list = [];
+    try { list = (typeof INV.stocks === 'function' ? INV.stocks() : DB.stocks) || []; } catch (e) { list = (DB && DB.stocks) || []; }
+    return list.find((x) => x && (norm(x.ticker) === key || norm(x.displayTicker) === key || norm(x.finnhubSymbol) === key)) || null;
+  },
+
   leverage() {
     /* payout = capital × price move % × leverage. When a user has not set a
        leverage level the trade runs at the 5× default. */
@@ -220,11 +237,19 @@ const LT = {
     const trailStop = trailPct > 0
       ? Math.round(q.price * (direction === 'FALL' ? (1 + trailPct / 100) : (1 - trailPct / 100)) * 10000) / 10000
       : 0;
+    /* Leverage precedence: the value the caller passed, then the per-trade select
+       on the ticket (#ltLev, installed by wc-market-247), then the account default.
+       Reading the DOM here means every entry point honours the user's choice. */
+    const levField = (typeof document !== 'undefined')
+      ? (document.getElementById('ltLev') || document.getElementById('ltLeverage'))
+      : null;
+    const reqLev = Number(o.leverage != null ? o.leverage : (levField ? levField.value : NaN));
+    const lev = Math.min(20, Math.max(1, Number.isFinite(reqLev) && reqLev >= 1 ? Math.round(reqLev) : this.leverage()));
     const trade = {
       id: uid('lt'), userId: u.id, type: 'live', ticker, name: s.name,
       side: side === 'short' ? 'short' : 'long', direction,
       capitalCoins: capital, stakeAmount: capital, entryPrice: q.price, initialEntryPrice: q.price,
-      leverage: this.leverage(),
+      leverage: lev,
       takeProfitPrice: tpPrice > 0 ? Math.round(tpPrice * 10000) / 10000 : null,
       takeProfitMode: tpWcAmt > 0 ? 'AMOUNT' : (o.tpMode || 'PRICE'),
       takeProfitWc: tpWcAmt > 0 ? Math.round(tpWcAmt * 100) / 100 : null,
@@ -745,7 +770,8 @@ const LT = {
 
   /* the stock-page panel: buy to open, then take profit / take loss */
   ticketHTML(ticker) {
-    const s = INV.stock(ticker); if (!s) return '';
+    const s = this.resolveStock(ticker); if (!s) return '';
+    ticker = s.ticker;
     const lev = this.leverage();
     const pos = this.open().filter(t => t.ticker === ticker)[0];
     const head = `<div class="between"><div class="card-title" style="margin:0">Trade · ${esc(INV.assetTicker ? INV.assetTicker(ticker) : ticker)}</div>
@@ -2164,7 +2190,9 @@ LT.previewTargets = function () {
   const capital = Number(capEl && capEl.value) || 0;
   const sideEl = document.querySelector('.lt-side-btn.on');
   const direction = sideEl && sideEl.getAttribute('data-side') === 'short' ? 'FALL' : 'RISE';
-  const lev = LT.leverage();
+  const levEl = document.getElementById('ltLev') || document.getElementById('ltLeverage');
+  const levReq = Number(levEl && levEl.value);
+  const lev = Math.min(20, Math.max(1, Number.isFinite(levReq) && levReq >= 1 ? Math.round(levReq) : LT.leverage()));
   const tpRaw = Number((document.getElementById('ltTp') || {}).value) || 0;
   const slRaw = Number((document.getElementById('ltSl') || {}).value) || 0;
   const tp = LT.levelPrice(direction, q.price, tpRaw, LT.levels.tp, 'tp', capital, lev);
@@ -2248,11 +2276,10 @@ App.ltStart = function (id, ds) {
   if ((tpRaw || slRaw) && !(capital > 0)) return toast('Enter a capital amount first', 'err');
   if (slAmt > capital + 1e-9) return toast('Stop Loss cannot be more than your ' + usd(capital) + ' capital', 'err');
   const tpPrice = 0, slPrice = 0;
-  void lev;
   const minutes = Number((document.getElementById('ltDuration') || {}).value) || 60;
   const modeName = (m) => m === 'price' ? 'PRICE' : m === 'wc' ? 'WC' : 'PERCENT';
   LT.start(side, ds.t, capital, {
-    tpPrice, slPrice, minutes,
+    tpPrice, slPrice, minutes, leverage: lev,
     tpMode: modeName(LT.levels.tp),
     slMode: trailOn ? 'TRAILING' : modeName(LT.levels.sl),
     tpWc: tpAmt,
@@ -2562,20 +2589,24 @@ function ltMountOrders() {
 
 function ltMountStock() {
   const hash = location.hash || '';
-  const m = hash.match(/^#\/invest\/stock\/([A-Z0-9.]+)/i);
+  /* tickers may contain "_" (7203_T), "." (7203.T) or "-", not just [A-Z0-9.] */
+  const m = hash.match(/^#\/invest\/stock\/([A-Za-z0-9._-]+)/);
   if (!m) return;
-  const ticker = m[1].toUpperCase();
+  const raw = m[1].toUpperCase();
   const content = document.getElementById('content');
   if (!content || document.getElementById('ltTicketMount')) return;
+  const stock = LT.resolveStock(raw);
+  const ticker = stock ? stock.ticker : raw;
   try {
-    const st = INV.stock(ticker);
     const admin = me() && me().role === 'admin';
-    if (st && INV.classEnabled && INV.classOf && !INV.classEnabled(INV.classOf(st)) && !admin) return;
+    if (stock && INV.classEnabled && INV.classOf && !INV.classEnabled(INV.classOf(stock)) && !admin) return;
   } catch (e) {}
 
   const host = document.createElement('div');
   host.id = 'ltTicketMount';
   host.innerHTML = LT.ticketHTML(ticker) + LT.activeBlock() + LT.stockHistory(ticker);
+  /* unknown symbol: leave the page's own panel untouched */
+  if (!host.innerHTML.trim()) return;
 
   /* the old spot panel (Market/Limit + Buy stock/Sell) is replaced entirely:
      a trade starts immediately and is exited with Take profit / Take loss. */

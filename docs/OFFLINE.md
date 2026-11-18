@@ -286,3 +286,37 @@ See **[docs/BACKUP.md](BACKUP.md)** for the full detail. Summary:
   by `.github/workflows/backup.yml`, retained 14 days as a workflow artifact.
 * Restore with `node scripts/restore-state.mjs --file=… --yes`, then restart the
   service. The current row is saved to `*.pre-restore.json` first.
+
+## Asset tickers, trade tickets and B2B history
+
+**Dotted / underscored tickers.** Some listings carry an internal ticker with a
+non-alphanumeric character — Toyota is `7203_T` while the UI shows `7203.T`.
+The stock page mounts its trade ticket from the URL hash, and the old matcher
+(`[A-Z0-9.]+`) truncated `7203_T` to `7203`, so `INV.stock()` returned null and
+the ticket area stayed empty. Now:
+
+* the hash matcher accepts `[A-Za-z0-9._-]`
+* `LT.resolveStock()` resolves a ticker by `ticker`, `displayTicker` or
+  `finnhubSymbol`, normalising punctuation
+* if a symbol still cannot be resolved the page's own panel is left untouched
+  instead of being removed
+
+Every asset page therefore shows the full ticket: capital, Rise/Fall, take
+profit / stop loss, duration and the per-trade leverage select (`#ltLev`, 1×–20×
+effective), and `LT.start()` reads that select so the chosen leverage is stored
+on the trade.
+
+**B2B-Investing history** (`#/investment/history/b2b`) lists every fill:
+
+| Source | Shown as |
+| --- | --- |
+| Manual buys (`App.ihB2bBuy`) | `▲ Buy TICKER` |
+| Manual sells (`App.ihB2bSell`) | `▼ Sell TICKER` |
+| Auto Buy/Sell buys and sells (server watcher) | `▲ Buy` / `▼ Sell` with an **AUTO** badge |
+
+The block merges three sources — the new `investAcct.b2bTrades` journal, the
+server's `b2bAutoJournal`, and qualifying ledger lines — de-duplicated by id, so
+a whole-DB sync overwriting one of them cannot hide a fill.
+
+Verified by `npm run test:ui` (jsdom boots the built bundle, opens Toyota, clicks
+Buy and asserts the stored leverage, then renders the B2B history page).
