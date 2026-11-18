@@ -35,9 +35,22 @@
   var META_STORE = 'meta';
   var OUTBOX_STORE = 'outbox';
   var DB_NAME = 'wc-offline';
-  var DB_VER = 1;
+  var DB_VER = 2;
   var MAX_CACHE_BYTES = 1500000;
   var API_TTL = 7 * 24 * 3600 * 1000;      /* last-known data stays a week */
+
+  /* local-first data layer stores (v2) */
+  var STORES = {
+    api: null,
+    meta: null,
+    outbox: null,
+    messages: null,
+    chats: null,
+    profiles: null,
+    products: null,
+    cart: null,
+    orders: null
+  };
 
   var OF = window.WC_OFFLINE = {
     version: VERSION,
@@ -57,9 +70,33 @@
       var r = indexedDB.open(DB_NAME, DB_VER);
       r.onupgradeneeded = function () {
         var d = r.result;
+        /* v1 */
         if (!d.objectStoreNames.contains(API_STORE)) d.createObjectStore(API_STORE);
         if (!d.objectStoreNames.contains(META_STORE)) d.createObjectStore(META_STORE);
-        if (!d.objectStoreNames.contains(OUTBOX_STORE)) d.createObjectStore(OUTBOX_STORE, { keyPath: 'id', autoIncrement: true });
+        if (!d.objectStoreNames.contains(OUTBOX_STORE)) {
+          var ob = d.createObjectStore(OUTBOX_STORE, { keyPath: 'id', autoIncrement: true });
+          ob.createIndex('status', 'status', { unique: false });
+        }
+        /* v2 — local-first chat / shop data ---------------------------------- */
+        if (!d.objectStoreNames.contains('messages')) {
+          var ms = d.createObjectStore('messages', { keyPath: 'id' });
+          ms.createIndex('chatId', 'chatId', { unique: false });
+          ms.createIndex('createdAt', 'createdAt', { unique: false });
+        }
+        if (!d.objectStoreNames.contains('chats')) {
+          var cs = d.createObjectStore('chats', { keyPath: 'id' });
+          cs.createIndex('updatedAt', 'updatedAt', { unique: false });
+        }
+        if (!d.objectStoreNames.contains('profiles')) d.createObjectStore('profiles', { keyPath: 'id' });
+        if (!d.objectStoreNames.contains('products')) {
+          var ps = d.createObjectStore('products', { keyPath: 'id' });
+          ps.createIndex('updatedAt', 'updatedAt', { unique: false });
+        }
+        if (!d.objectStoreNames.contains('cart')) d.createObjectStore('cart', { keyPath: 'productId' });
+        if (!d.objectStoreNames.contains('orders')) {
+          var os2 = d.createObjectStore('orders', { keyPath: 'id' });
+          os2.createIndex('createdAt', 'createdAt', { unique: false });
+        }
       };
       r.onsuccess = function () { resolve(r.result); };
       r.onerror = function () { reject(r.error || new Error('idb open failed')); };
@@ -88,6 +125,33 @@
   }
   function idbDel(store, key) {
     return idbTx(store, 'readwrite', function (os) { os.delete(key); }).catch(function () {});
+  }
+  /* read every record, optionally through an index */
+  function idbAll(store, indexName, query) {
+    return idbTx(store, 'readonly', function (os) {
+      var src = indexName ? os.index(indexName) : os;
+      return { __req: query === undefined ? src.getAll() : src.getAll(query) };
+    }).catch(function () { return []; });
+  }
+  function idbCount(store) {
+    return idbTx(store, 'readonly', function (os) { return { __req: os.count() }; }).catch(function () { return 0; });
+  }
+  function idbClear(store) {
+    return idbTx(store, 'readwrite', function (os) { os.clear(); }).catch(function () {});
+  }
+  /* one transaction across several puts — used by the mirror */
+  function idbBulk(store, records) {
+    if (!records || !records.length) return Promise.resolve(0);
+    return idb().then(function (d) {
+      return new Promise(function (resolve) {
+        var tx = d.transaction(store, 'readwrite');
+        var os = tx.objectStore(store);
+        try { records.forEach(function (r) { if (r && r.id != null) os.put(r); }); } catch (e) {}
+        tx.oncomplete = function () { resolve(records.length); };
+        tx.onerror = function () { resolve(0); };
+        tx.onabort = function () { resolve(0); };
+      });
+    }).catch(function () { return 0; });
   }
 
   /* ------------------------------------------------------------- helpers */
@@ -269,6 +333,7 @@
 
   /* evaluate the user's B2B alerts against the best price this device has */
   function evaluateAlerts() {
+    OF.lastAlertRun = Date.now();
     var acct = acctSafe();
     if (!acct || !Array.isArray(acct.b2bAlerts) || !acct.b2bAlerts.length) return;
     var changed = false;
@@ -431,6 +496,17 @@
   OF.snapshot = snapshotForWorker;
   OF.notify = notifyDevice;
   OF.quotes = function () { return quoteSnapshot; };
+  /* shared local database handle for the chat/shop/outbox modules */
+  OF.db = idb;
+  OF.get = idbGet;
+  OF.put = idbPut;
+  OF.del = idbDel;
+  OF.all = idbAll;
+  OF.count = idbCount;
+  OF.clear = idbClear;
+  OF.bulk = idbBulk;
+  OF.stores = STORES;
+  OF.apiTtl = API_TTL;
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
   else start();

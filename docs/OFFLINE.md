@@ -106,3 +106,79 @@ secrets into its environment, deploys `main`, follows the deploy and prints the
 If Render answers `402 billing_suspended`, the service cannot be created or
 deployed until the account's billing is settled; that is an account state, not a
 build failure.
+
+## Local-first data (IndexedDB v2)
+
+`public/offline-first.js` owns the schema (`wc-offline`, version 2) and
+`public/offline-data.js` fills it. Chat and shop history stay readable and
+searchable with no network:
+
+| Store | Key | Contents |
+| --- | --- | --- |
+| `messages` | id (+ `chatId`, `createdAt` indexes) | last 3 000 messages |
+| `chats` | chatId | last activity per conversation |
+| `profiles` | id | usernames, names, avatars |
+| `products` | id | catalogue with prices and stock |
+| `cart` | productId | the live cart |
+| `orders` | id | last 300 orders/receipts |
+| `outbox` | auto id (+ `status`) | actions performed offline |
+
+Offline search: `WC_OFFLINE.searchMessages('invoice')` resolves with matching
+stored messages, newest first.
+
+## The outbox
+
+`App.send`, `App.addToCart`, `App.cartQty`, `App.cartRemove` and `App.clearCart`
+are wrapped. While `navigator.onLine` is false each action writes one row to
+`outbox` and marks the local object:
+
+* chat messages get a **“Waiting for network”** badge inside the bubble
+* the cart page gets a “cart changes waiting for network” note
+
+On reconnect the queue is replayed **in creation order** and then deleted, with a
+single state push for the whole batch. Handlers set an *absolute* end state
+(`cart-set` carries the resulting quantity, not a delta), so a double flush can
+never double a cart line.
+
+## Offline checkout
+
+`App.placeOrder` is guarded: offline it returns `false` and shows a calm notice —
+*“Payment needs a connection — your cart is saved on this device”* — and the Pay
+button is disabled with an inline explanation. Nothing is charged and the cart,
+delivery details and invoice stay in IndexedDB. The guard is removed
+automatically when the connection returns.
+
+## Connectivity
+
+`#wcNetPill` sits above the safe area, shows `Offline · N waiting` while
+disconnected, `Syncing N changes…` during a flush, and disappears by itself
+2.6 s after everything is synced. It never blocks taps (`pointer-events:none`).
+
+## Hidden diagnostics
+
+`public/diagnostics.js` — not linked anywhere in the UI. Open it by:
+
+* visiting `#/diagnostics` (or `#/diag`)
+* tapping the WhaleChat logo **5 times quickly**
+* `Ctrl/Cmd + Shift + D`
+* `WC_DIAGNOSTICS.open()` from the console
+
+It reports the service worker state, every cache with its entry count, the total
+number of files cached, IndexedDB API-cache entries with size and newest/oldest
+age, the mirrored message/chat/profile/product/cart/order counts, outbox depth,
+the last alert evaluation, notification permission and push subscription, storage
+usage/quota and the cached build manifest. Buttons: re-check, run an alert check
+now, copy the JSON report, clear the offline API cache.
+
+## Tests
+
+```bash
+npm run build
+npm run test:offline          # static: manifest, SW wiring, schema, bundle, manifest
+npm i -D jsdom fake-indexeddb
+npm run test:offline:runtime  # integration: offline send, outbox, flush, pay guard
+```
+
+The runtime harness boots the real modules in jsdom, sends a message and changes
+a cart with `navigator.onLine === false`, asserts the queue and the badges, then
+reconnects and asserts the queue drains once with the correct cart quantity.

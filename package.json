@@ -1,6 +1,6 @@
 {
   "name": "whalechat",
-  "version": "3.48.0",
+  "version": "3.49.0",
   "private": true,
   "description": "WhaleChat — chat, marketplace and wallet. Web app + sync server + Android/iOS shells.",
   "main": "server.js",
@@ -19,12 +19,17 @@
     "test:wc-invest": "node scripts/test-wc-invest.js",
     "test:offline": "node scripts/test-offline.js",
     "test:brevo": "node scripts/test-brevo.js",
-    "deploy:render": "node scripts/deploy-render.mjs"
+    "deploy:render": "node scripts/deploy-render.mjs",
+    "test:offline:runtime": "node scripts/test-offline-runtime.js"
   },
   "dependencies": {
     "web-push": "^3.6.7",
     "nodemailer": "^6.9.14",
     "pg": "^8.11.5",
     "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "jsdom": "^24.0.0",
+    "fake-indexeddb": "^6.0.0"
   }
 }

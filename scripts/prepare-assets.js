@@ -62,6 +62,8 @@ try { const ps = require('./patch-server'); ps.patchConnections(require('path').
 const MODULES = [
   /* offline-first must run first: it wraps fetch for the modules below */
   { file: 'offline-first.js', marker: 'wc-offline-first' },
+  { file: 'offline-data.js', marker: 'wc-offline-data' },
+  { file: 'diagnostics.js', marker: 'wc-diagnostics' },
   { file: 'admin-auth.js', marker: 'wc-admin-auth' },
   { file: 'subscriptions.js', marker: 'wc-subs' },
   { file: 'tawk-control.js', marker: 'wc-tawk-control' },

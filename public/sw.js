@@ -7,9 +7,28 @@
    network switched off, and the worker can raise buy/sell notifications from
    its periodic background sync when the page is closed.
    ========================================================================= */
-const VERSION = 'wc-v3.48.0-1';
-const API_CACHE = 'wc-api-v3.48.0';
+const VERSION = 'wc-v3.49.0-1';
+const API_CACHE = 'wc-api-v3.49.0';
 const APP_CACHE = VERSION;
+const IMAGE_CACHE = 'wc-img-v3.49.0';
+const PLACEHOLDER = './assets/offline-placeholder.svg';
+const PLACEHOLDER_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240">'
+  + '<rect width="240" height="240" rx="18" fill="#0b2230"/>'
+  + '<path d="M60 150c14-26 34-40 60-40s46 14 60 40" fill="none" stroke="#1d4a5e" stroke-width="8" stroke-linecap="round"/>'
+  + '<circle cx="96" cy="96" r="8" fill="#2ee6c9"/><circle cx="144" cy="96" r="8" fill="#2ee6c9"/>'
+  + '<text x="120" y="196" text-anchor="middle" fill="#5d7a8c" font-family="Inter,sans-serif" font-size="13">Image unavailable offline</text></svg>';
+
+/* lists that should render instantly from cache and refresh in the background */
+const SWR_PATHS = [
+  /^\/api\/market\/quotes$/,
+  /^\/api\/market\/history$/,
+  /^\/api\/market\/status$/,
+  /^\/api\/state$/,
+  /^\/api\/shares\/state$/,
+  /^\/api\/market\/spot\/positions$/,
+  /^\/api\/bots\/state$/,
+  /^\/api\/release$/
+];
 
 const SHELL = [
   './',
@@ -17,6 +36,8 @@ const SHELL = [
   './whalechat.html',
   './manifest.webmanifest',
   './offline-first.js',
+  './offline-data.js',
+  './diagnostics.js',
   './assets/logo.png',
   './assets/logo-192.png',
   './assets/icon-192.png',
@@ -24,6 +45,7 @@ const SHELL = [
   './assets/favicon.png',
   './assets/apple-touch-icon.png',
   './assets/badge-72.png',
+  './assets/offline-placeholder.svg',
   './assets/hero.jpg',
   './assets/whale.jpg'
 ];
@@ -93,7 +115,7 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys()
       .then((keys) => Promise.all(keys
-        .filter((k) => k !== VERSION && k !== API_CACHE)
+        .filter((k) => k !== VERSION && k !== API_CACHE && k !== IMAGE_CACHE)
         .map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
@@ -118,10 +140,51 @@ self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
+
+  /* --- images & media: cache-first with an offline placeholder ---------- */
+  const isImage = req.destination === 'image' || /\.(png|jpe?g|gif|webp|avif|svg|ico)$/i.test(url.pathname);
+  if (isImage) {
+    event.respondWith((async () => {
+      const cache = await caches.open(IMAGE_CACHE);
+      const hit = await cache.match(req, { ignoreSearch: true });
+      if (hit) return hit;
+      try {
+        const res = await fetch(req);
+        if (res && (res.ok || res.type === 'opaque')) cache.put(req, res.clone()).catch(() => {});
+        return res;
+      } catch (err) {
+        const ph = await cache.match(PLACEHOLDER) || await caches.match(PLACEHOLDER);
+        if (ph) return ph;
+        return new Response(PLACEHOLDER_SVG, { headers: { 'content-type': 'image/svg+xml' }, status: 200 });
+      }
+    })());
+    return;
+  }
+
   if (url.origin !== self.location.origin) return;       // fonts, CDN, trackers: straight to network
 
-  /* --- API: network first, device cache as the offline answer ------------ */
+  /* --- API: stale-while-revalidate for lists, network-first otherwise --- */
   if (url.pathname.startsWith('/api/')) {
+    const swr = SWR_PATHS.some((re) => re.test(url.pathname));
+    if (swr) {
+      event.respondWith((async () => {
+        const cache = await caches.open(API_CACHE);
+        const cached = await cache.match(req);
+        const network = fetch(req).then((res) => {
+          if (res && res.ok) cache.put(req, res.clone()).catch(() => {});
+          return res;
+        }).catch(() => null);
+        /* show cached immediately, refresh silently behind it */
+        if (cached) { event.waitUntil(network.catch(() => {})); return cached; }
+        const fresh = await network;
+        if (fresh) return fresh;
+        return new Response(JSON.stringify({ ok: false, offline: true, error: 'offline_no_cache' }), {
+          status: 503, headers: { 'content-type': 'application/json', 'x-wc-offline': '1' }
+        });
+      })());
+      return;
+    }
+
     event.respondWith((async () => {
       const cache = await caches.open(API_CACHE);
       try {
