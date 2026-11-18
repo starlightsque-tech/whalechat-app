@@ -67,6 +67,17 @@ function closeFeeFor(t, db) {
   const pct = Math.max(0, Number(db && db.invest && db.invest.feePct != null ? db.invest.feePct : 0.5) || 0);
   return r2((Number(t.capitalCoins) || 0) * pct / 100);
 }
+/* Price move % = (current price - entry price) / capital (percent units, e.g. 25 / 50 = 0.5 -> +0.5%).
+   Profit per move = capital x move% x leverage; total profit = profit x number of price moves
+   seen since the trade (or its last re-base) started. Loss is capped at the stake by callers. */
+function moveProfit(t, price, lev, dir) {
+  const cap = Number(t.capitalCoins) || 0;
+  const entry = Number(t.entryPrice);
+  if (!(cap > 0) || !(entry > 0) || !(Number(price) > 0)) return 0;
+  const movePct = (Number(price) - entry) / cap;
+  const perMove = cap * (movePct / 100) * lev * dir;
+  return perMove * Math.max(1, Number(t.moveCount) || 0);
+}
 /* Trade totals recorded at close: total profit = final move profit + profit still unclaimed
    from Auto Secure; payout record = capital + total profit - fee. Informational only: the
    credited payout is unchanged so earlier profit is never paid twice. */
@@ -1127,7 +1138,7 @@ class MarketService {
     if (!(entry > 0)) return 0;
     if (t.lastSecureAt && now - Number(t.lastSecureAt) < 1000) return 0;
     const move = (q.price - entry) / entry;
-    const profit = round(Math.max(0, (Number(t.capitalCoins) || 0) * lev * move * dir), 2);
+    const profit = round(Math.max(0, moveProfit(t, q.price, lev, dir)), 2);
     if (!(profit > 0)) return 0;
     if (!t.initialEntryPrice) t.initialEntryPrice = entry;
     t.securedProfits = Array.isArray(t.securedProfits) ? t.securedProfits : [];
@@ -1140,6 +1151,7 @@ class MarketService {
     t.securedProfitCoins = round((Number(t.securedProfitCoins) || 0) + profit, 2);
     t.securedProfitCount = (Number(t.securedProfitCount) || 0) + 1;
     t.entryPrice = round(q.price, 6);
+    t.moveCount = 0; t.lastMovePrice = q.price;
     t.lastSecureAt = now;
     t.lastProfitAt = now;
     t.lastProfitPrice = q.price;
@@ -1182,7 +1194,7 @@ class MarketService {
     const entry = Number(t.entryPrice);
     if (!(entry > 0)) return 0;
     const move = (q.price - entry) / entry;
-    const available = round(Math.max(0, (Number(t.capitalCoins) || 0) * lev * move * dir), 2);
+    const available = round(Math.max(0, moveProfit(t, q.price, lev, dir)), 2);
     /* secure even small profits immediately — 0.01 WC is the bookkeeping floor */
     if (!(available >= 0.01)) return 0;
     const secured = this.secureProfit(t, q, db, now, 'Auto Secure', false);
@@ -1287,12 +1299,13 @@ class MarketService {
     /* a click and a tick must never take the same profit twice */
     if (t.lastProfitAt && now - Number(t.lastProfitAt) < 4000) return 0;
     const move = (q.price - entry) / entry;
-    const profit = round(Math.max(0, (Number(t.capitalCoins) || 0) * lev * move * dir), 2);
+    const profit = round(Math.max(0, moveProfit(t, q.price, lev, dir)), 2);
     if (!(profit > 0)) return 0;
     if (!t.initialEntryPrice) t.initialEntryPrice = entry;
     creditStockProfit(u, profit);
     t.profitTakenCoins = round((Number(t.profitTakenCoins) || 0) + profit, 2);
     t.entryPrice = round(q.price, 6);
+    t.moveCount = 0; t.lastMovePrice = q.price;
     t.lastProfitAt = now;
     t.lastProfitPrice = q.price;
     t.takeProfitPrice = 0;
@@ -1337,7 +1350,7 @@ class MarketService {
     const direction = t.direction || (t.side === 'short' ? 'FALL' : 'RISE');
     const dir = direction === 'FALL' ? -1 : 1;
     const move = (q.price - t.entryPrice) / t.entryPrice;
-    const pnlCoins = round(Math.max(-(Number(t.capitalCoins) || 0), (Number(t.capitalCoins) || 0) * lev * move * dir), 2);
+    const pnlCoins = round(Math.max(-(Number(t.capitalCoins) || 0), moveProfit(t, q.price, lev, dir)), 2);
     const split = settleToStock(u, t.capitalCoins, pnlCoins, closeFeeFor(t, db));
     const payout = split.payout;
     t.settlement = split;
@@ -1401,6 +1414,11 @@ class MarketService {
         const direction = t.direction || (t.side === 'short' ? 'FALL' : 'RISE');
         const dir = direction === 'FALL' ? -1 : 1;
         if (!t.direction) t.direction = direction;
+        /* count each distinct real price change since entry */
+        if (Number(q.price) > 0 && q.price !== t.lastMovePrice) {
+          if (Number(t.lastMovePrice) > 0) t.moveCount = (Number(t.moveCount) || 0) + 1;
+          t.lastMovePrice = q.price;
+        }
         if (t.stakeAmount == null) t.stakeAmount = t.capitalCoins;
         if (!(Number(t.takeProfitPrice) > 0) && Number(t.tpPct) > 0) {
           const m = Number(t.tpPct) / (100 * lev);
@@ -1445,7 +1463,7 @@ class MarketService {
         if (!reason) {
           /* legacy trades created before absolute TP/SL prices existed */
           const move = (q.price - t.entryPrice) / t.entryPrice;
-          pnl = (Number(t.capitalCoins) || 0) * lev * move * dir;
+          pnl = moveProfit(t, q.price, lev, dir);
           pnl = Math.max(-(Number(t.capitalCoins) || 0), pnl);
           pnlCoins = round(pnl, 2);
           pct = (Number(t.capitalCoins) || 0) ? (pnlCoins / t.capitalCoins) * 100 : 0;
@@ -1463,7 +1481,7 @@ class MarketService {
         /* absolute SL exits settle on the tick that triggered them */
         if (reason === 'Stop Loss Hit' || reason === 'Trailing Stop Hit') {
           const move = (q.price - t.entryPrice) / t.entryPrice;
-          pnl = (Number(t.capitalCoins) || 0) * lev * move * dir;
+          pnl = moveProfit(t, q.price, lev, dir);
           pnl = Math.max(-(Number(t.capitalCoins) || 0), pnl);
           pnlCoins = round(pnl, 2);
           pct = (Number(t.capitalCoins) || 0) ? (pnlCoins / t.capitalCoins) * 100 : 0;
