@@ -246,9 +246,20 @@ async function initStorage() {
   if (!DATABASE_URL) return;
   try {
     const { Pool } = require('pg');
-    const needsSsl = /sslmode=require/i.test(DATABASE_URL) || /\.render\.com/i.test(DATABASE_URL);
-    pool = new Pool({ connectionString: DATABASE_URL, max: 4, ssl: needsSsl ? { rejectUnauthorized: false } : undefined });
+    /* Managed Postgres (Supabase, Neon, Render) requires TLS. node-postgres lets
+       an `sslmode=` in the URL win over the ssl options we pass here, which
+       re-enables certificate verification and fails on their CA chain
+       ("self-signed certificate in certificate chain"). Strip the parameter and
+       set the policy explicitly instead. */
+    const needsSsl = /sslmode=require|sslmode=no-verify/i.test(DATABASE_URL)
+      || /\.render\.com/i.test(DATABASE_URL)
+      || /supabase\.(co|com)/i.test(DATABASE_URL);
+    const connStr = needsSsl
+      ? DATABASE_URL.replace(/([?&])sslmode=[^&]*/i, '$1').replace(/[?&]$/, '')
+      : DATABASE_URL;
+    pool = new Pool({ connectionString: connStr, max: 4, ssl: needsSsl ? { rejectUnauthorized: false } : undefined });
     await pool.query('create table if not exists whalechat_state (id int primary key, rev int not null default 0, updated_at timestamptz not null default now(), db jsonb)');
+    console.log('[db] postgres connected · durable storage active');
     const r = await pool.query('select rev, db, updated_at from whalechat_state where id = 1');
     if (r.rows[0] && r.rows[0].db) {
       store.rev = r.rows[0].rev || 0;
