@@ -271,3 +271,18 @@ Verify:
 ```bash
 curl -s https://<host>/api/health | jq .storage   # "postgres"
 ```
+
+## Supabase: pause behaviour, keep-alive, backup
+
+See **[docs/BACKUP.md](BACKUP.md)** for the full detail. Summary:
+
+* A free project pauses after **7 days without project activity**; the app writes
+  a heartbeat every 5 minutes while it is awake and a GitHub Actions job touches
+  the project every 6 hours.
+* Cold or just-resumed connections can fail; the service retries with backoff,
+  keeps serving chat/alerts from memory, and reconciles by `rev` on reconnect
+  (newer side wins — never a blind overwrite).
+* `whalechat_state` is exported daily to `backups/whalechat-state-YYYY-MM-DD.json`
+  by `.github/workflows/backup.yml`, retained 14 days as a workflow artifact.
+* Restore with `node scripts/restore-state.mjs --file=… --yes`, then restart the
+  service. The current row is saved to `*.pre-restore.json` first.

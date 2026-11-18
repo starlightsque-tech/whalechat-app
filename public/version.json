@@ -1,8 +1,8 @@
 {
-  "version": "3.51.0",
-  "build": "2026-11-19T00:20:00Z",
+  "version": "3.51.1",
+  "build": "2026-11-19T00:45:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.51.0 - One device-wide search on the Chats screen: messages, products, orders and wallet history from memory + IndexedDB, grouped by type with counts, deep links into each result. Same behaviour online and offline.",
-  "releasedAt": "2026-11-19T00:20:00Z",
+  "notes": "WhaleChat 3.51.1 - Storage resilience: Postgres reconnect with backoff, rev-based reconciliation on cold start, write-failure recovery, 5-minute heartbeat. Daily whalechat_state backup workflow with 14-day retention, restore script and docs.",
+  "releasedAt": "2026-11-19T00:45:00Z",
   "minimum": "3.0.0"
 }

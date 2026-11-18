@@ -189,8 +189,15 @@ function persistNow() {
 function pgPersist() {
   if (!pool || !store.db) return;
   const payload = JSON.stringify(store.db);
-  pool.query('insert into whalechat_state (id, rev, updated_at, db) values (1,$1,now(),$2::jsonb) on conflict (id) do update set rev=excluded.rev, updated_at=now(), db=excluded.db', [store.rev, payload])
-    .catch(e => console.error('[db] postgres write failed:', e.message));
+  const rev = store.rev;
+  pool.query('insert into whalechat_state (id, rev, updated_at, db) values (1,$1,now(),$2::jsonb) on conflict (id) do update set rev=excluded.rev, updated_at=now(), db=excluded.db', [rev, payload])
+    .then(() => { pgState.lastWriteAt = Date.now(); })
+    .catch(e => {
+      console.error('[db] postgres write failed:', e.message);
+      pgState.lastError = e.message;
+      /* a dead connection must not silently swallow every later write */
+      if (isConnError(e)) { dropPool(); schedulePgRetry(); }
+    });
 }
 function ensureTradingAssets() {
   const db = store.db;
@@ -242,8 +249,94 @@ async function saveMarketConfig(cfg) {
   } catch (e) { console.error('[market] durable config write failed:', e.message); return false; }
 }
 
-async function initStorage() {
-  if (!DATABASE_URL) return;
+/* -------------------------------------------------------------------------
+   Durable storage: Postgres (DATABASE_URL) is the source of truth, the file is
+   a fast cache and an offline copy.
+
+   Supabase free projects are paused after 7 days without activity, and a cold
+   (or just-resumed) project can refuse or time out the first connections. The
+   rules below keep chat sync and price alerts alive through that:
+
+     · connect failures never disable durability permanently — we retry with
+       backoff (5s → 60s) for as long as the process lives
+     · a failed WRITE drops the dead pool and reconnects instead of silently
+       losing writes
+     · on every (re)connect the rev numbers are compared: the newer side wins,
+       so resuming a paused project adopts its state instead of clobbering it,
+       and a reconnect pushes the state built while the database was away
+     · a 5-minute heartbeat write keeps the project from going idle
+   ------------------------------------------------------------------------- */
+let pgRetryTimer = null;
+let pgRetryDelay = 5000;
+const pgState = {
+  connected: false,
+  lastError: '',
+  lastConnectAt: 0,
+  attempts: 0,
+  lastWriteAt: 0,
+  lastAdopt: null
+};
+
+function isConnError(e) {
+  const code = String((e && e.code) || '');
+  if (/^(ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EPIPE|EAI_AGAIN|57P01|57P02|57P03|08000|08001|08003|08004|08006|53300|3D000)$/.test(code)) return true;
+  return /terminat|timeout|timed out|closed|socket|connect|not available/i.test(String((e && e.message) || ''));
+}
+
+function schedulePgRetry() {
+  if (!DATABASE_URL || pgRetryTimer) return;
+  const wait = pgRetryDelay;
+  pgRetryTimer = setTimeout(() => { pgRetryTimer = null; connectPostgres().catch(() => {}); }, wait);
+  if (pgRetryTimer.unref) pgRetryTimer.unref();
+  pgRetryDelay = Math.min(Math.round(pgRetryDelay * 1.8), 60000);
+}
+
+function dropPool() {
+  const p = pool;
+  pool = null;
+  pgState.connected = false;
+  try { if (p) p.end().catch(() => {}); } catch (e) {}
+}
+
+async function reconcileState() {
+  const r = await pool.query('select rev, db, updated_at from whalechat_state where id = 1');
+  const row = r.rows[0];
+  if (!row || !row.db) {
+    if (store.db) { pgState.lastAdopt = 'local-seed'; pgPersist(); console.log('[db] seeded Postgres from device state · rev', store.rev); }
+    return;
+  }
+  const remoteRev = Number(row.rev) || 0;
+  const localRev = Number(store.rev) || 0;
+  if (remoteRev > localRev) {
+    store.rev = remoteRev;
+    store.db = row.db;
+    store.updatedAt = new Date(row.updated_at).getTime() || Date.now();
+    store.loadedFrom = 'postgres';
+    pgState.lastAdopt = 'remote';
+    try { writeJSONAtomic(STATE_FILE, { rev: store.rev, updatedAt: store.updatedAt, db: store.db }); } catch (e) {}
+    try { ensureTradingAssets(); } catch (e) {}
+    try { broadcast('change', { rev: store.rev, source: 'postgres-reconnect', at: store.updatedAt }); } catch (e) {}
+    console.log('[db] adopted newer Postgres state · rev', store.rev);
+    return;
+  }
+  if (store.db && localRev >= remoteRev) {
+    pgState.lastAdopt = 'local';
+    pgPersist();
+    console.log('[db] pushed device state to Postgres · rev', store.rev);
+    return;
+  }
+  if (store.db === null) {
+    store.rev = remoteRev;
+    store.db = row.db;
+    store.loadedFrom = 'postgres';
+    pgState.lastAdopt = 'remote';
+    console.log('[db] loaded from Postgres · rev', store.rev);
+  }
+}
+
+async function connectPostgres() {
+  if (!DATABASE_URL) return false;
+  pgState.attempts++;
   try {
     const { Pool } = require('pg');
     /* Managed Postgres (Supabase, Neon, Render) requires TLS. node-postgres lets
@@ -257,26 +350,52 @@ async function initStorage() {
     const connStr = needsSsl
       ? DATABASE_URL.replace(/([?&])sslmode=[^&]*/i, '$1').replace(/[?&]$/, '')
       : DATABASE_URL;
-    pool = new Pool({ connectionString: connStr, max: 4, ssl: needsSsl ? { rejectUnauthorized: false } : undefined });
-    await pool.query('create table if not exists whalechat_state (id int primary key, rev int not null default 0, updated_at timestamptz not null default now(), db jsonb)');
-    console.log('[db] postgres connected · durable storage active');
-    const r = await pool.query('select rev, db, updated_at from whalechat_state where id = 1');
-    if (r.rows[0] && r.rows[0].db) {
-      store.rev = r.rows[0].rev || 0;
-      store.db = r.rows[0].db;
-      store.updatedAt = new Date(r.rows[0].updated_at).getTime() || Date.now();
-      store.loadedFrom = 'postgres';
-      try { writeJSONAtomic(STATE_FILE, { rev: store.rev, updatedAt: store.updatedAt, db: store.db }); } catch (e) {}
-      console.log('[db] loaded from Postgres · rev', store.rev);
-    } else if (store.db) {
-      pgPersist();
-      console.log('[db] seeded Postgres from local state · rev', store.rev);
+    if (!pool) {
+      pool = new Pool({
+        connectionString: connStr,
+        max: 4,
+        ssl: needsSsl ? { rejectUnauthorized: false } : undefined,
+        connectionTimeoutMillis: 15000,
+        idleTimeoutMillis: 30000,
+        keepAlive: true
+      });
+      pool.on('error', (e) => {
+        console.error('[db] idle client error:', e.message);
+        if (isConnError(e)) { dropPool(); schedulePgRetry(); }
+      });
     }
+    await pool.query('create table if not exists whalechat_state (id int primary key, rev int not null default 0, updated_at timestamptz not null default now(), db jsonb)');
+    await pool.query('create table if not exists whalechat_heartbeat (id int primary key, at timestamptz not null default now(), note text)');
+    await pool.query("insert into whalechat_heartbeat (id, at, note) values (1, now(), 'connect') on conflict (id) do update set at = now(), note = 'connect'");
+    pgState.connected = true;
+    pgState.lastError = '';
+    pgState.lastConnectAt = Date.now();
+    pgRetryDelay = 5000;
+    console.log('[db] postgres connected · durable storage active');
+    await reconcileState();
+    return true;
   } catch (e) {
-    console.error('[db] postgres unavailable:', e.message);
-    pool = null;
+    pgState.connected = false;
+    pgState.lastError = e.message;
+    console.error('[db] postgres unavailable (attempt ' + pgState.attempts + '): ' + e.message + ' — retrying in ' + Math.round(pgRetryDelay / 1000) + 's; chat sync and alerts continue on the device state');
+    dropPool();
+    schedulePgRetry();
+    return false;
   }
 }
+
+async function initStorage() {
+  if (!DATABASE_URL) return;
+  await connectPostgres();
+  /* keep the database warm so a free Supabase project never goes idle */
+  setInterval(() => {
+    if (!pool) return;
+    pool.query("insert into whalechat_heartbeat (id, at, note) values (1, now(), 'beat') on conflict (id) do update set at = now(), note = 'beat'")
+      .then(() => { pgState.lastWriteAt = Date.now(); })
+      .catch((e) => { if (isConnError(e)) { dropPool(); schedulePgRetry(); } });
+  }, 5 * 60 * 1000).unref();
+}
+
 loadState();
 setInterval(() => snapshot('hourly'), 3600000).unref();
 
@@ -775,7 +894,7 @@ async function api(req, res, pathname, query) {
   }
 
   if (pathname === '/api/health' && req.method === 'GET') {
-    return json(res, 200, { ok: true, app: 'whalechat', version: readJSON(path.join(PUBLIC_DIR, 'version.json'), {}).version || null, build: (readJSON(path.join(PUBLIC_DIR, 'version.json'), {}).build) || BUILD, uptimeSec: Math.floor((Date.now() - STARTED) / 1000), rev: store.rev, users: (store.db && store.db.users) ? store.db.users.length : 0, clients: clients.size, push: !!webpush, publicUrl: PUBLIC_URL || null, storage: pool ? 'postgres' : 'file', email: !!(email && email.configured()), market: market.status() });
+    return json(res, 200, { ok: true, app: 'whalechat', version: readJSON(path.join(PUBLIC_DIR, 'version.json'), {}).version || null, build: (readJSON(path.join(PUBLIC_DIR, 'version.json'), {}).build) || BUILD, uptimeSec: Math.floor((Date.now() - STARTED) / 1000), rev: store.rev, users: (store.db && store.db.users) ? store.db.users.length : 0, clients: clients.size, push: !!webpush, publicUrl: PUBLIC_URL || null, storage: pool ? 'postgres' : 'file', storageDetail: { connected: pgState.connected, attempts: pgState.attempts, lastError: pgState.lastError || null, lastConnectAt: pgState.lastConnectAt || null, lastWriteAt: pgState.lastWriteAt || null, lastAdopt: pgState.lastAdopt, retryInMs: pgRetryTimer ? pgRetryDelay : 0 }, email: !!(email && email.configured()), market: market.status() });
   }
   if (pathname === '/api/state' && req.method === 'GET') return json(res, 200, { rev: store.rev, db: store.db, updatedAt: store.updatedAt });
   if (pathname === '/api/state/init' && req.method === 'POST') {
