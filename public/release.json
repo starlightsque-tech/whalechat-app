@@ -1,8 +1,8 @@
 {
-  "version": "3.49.0",
-  "build": "2026-11-18T23:40:00Z",
+  "version": "3.50.0",
+  "build": "2026-11-18T23:58:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.49.0 - Local-first data + hidden diagnostics: full app-shell precache, cache-first media with offline placeholder, stale-while-revalidate lists, IndexedDB chat/shop/orders mirror, offline outbox with pending badges and ordered flush, offline checkout guard, connectivity pill, and a hidden diagnostics panel.",
-  "releasedAt": "2026-11-18T23:40:00Z",
+  "notes": "WhaleChat 3.50.0 - Offline message search from the Chat screen (memory + IndexedDB mirror, highlighted snippets, tap to open) and device mode for money: deposits, withdrawals, transfers and invest trades recorded on the device and synced on reconnect, with an explicit explanation for server-only spot tickets, shares and bots.",
+  "releasedAt": "2026-11-18T23:58:00Z",
   "minimum": "3.0.0"
 }

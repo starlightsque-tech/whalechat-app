@@ -64,6 +64,8 @@ const MODULES = [
   { file: 'offline-first.js', marker: 'wc-offline-first' },
   { file: 'offline-data.js', marker: 'wc-offline-data' },
   { file: 'diagnostics.js', marker: 'wc-diagnostics' },
+  { file: 'message-search.js', marker: 'wc-message-search' },
+  { file: 'offline-actions.js', marker: 'wc-offline-actions' },
   { file: 'admin-auth.js', marker: 'wc-admin-auth' },
   { file: 'subscriptions.js', marker: 'wc-subs' },
   { file: 'tawk-control.js', marker: 'wc-tawk-control' },

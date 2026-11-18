@@ -78,6 +78,24 @@ else {
   if (!/wc-net-pill/.test(s)) fail.push('offline-data.js has no connectivity pill');
   ok.push('offline data: outbox flush, pending badges, checkout guard, connectivity pill');
 }
+const msFile = path.join(PUB, 'message-search.js');
+if (!fs.existsSync(msFile)) fail.push('public/message-search.js missing');
+else {
+  const s = read(msFile);
+  if (!/WC_MSG_SEARCH/.test(s)) fail.push('message-search.js does not expose WC_MSG_SEARCH');
+  if (!/searchMessages/.test(s)) fail.push('message-search.js does not use the offline mirror');
+  if (!/wc-ms-row/.test(s)) fail.push('message-search.js has no result rows');
+  ok.push('message search: memory + IndexedDB mirror, highlighted results');
+}
+const oaFile = path.join(PUB, 'offline-actions.js');
+if (!fs.existsSync(oaFile)) fail.push('public/offline-actions.js missing');
+else {
+  const s = read(oaFile);
+  ['submitDeposit', 'submitWithdraw', 'spotBuy', 'wcDeviceMode', 'registerHandler'].forEach((n) => {
+    if (!s.includes(n)) fail.push('offline-actions.js missing: ' + n);
+  });
+  ok.push('device mode: deposit/withdraw/transfer queueing + spot guard');
+}
 const dgFile = path.join(PUB, 'diagnostics.js');
 if (!fs.existsSync(dgFile)) fail.push('public/diagnostics.js missing');
 else {

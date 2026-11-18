@@ -182,3 +182,41 @@ npm run test:offline:runtime  # integration: offline send, outbox, flush, pay gu
 The runtime harness boots the real modules in jsdom, sends a message and changes
 a cart with `navigator.onLine === false`, asserts the queue and the badges, then
 reconnects and asserts the queue drains once with the correct cart quantity.
+
+## Offline message search
+
+`public/message-search.js` (`WC_MSG_SEARCH`) searches chat history with no
+network. Two sources are merged and de-duplicated:
+
+1. `window.DB.messages` — the live conversation store, instant
+2. the IndexedDB mirror through `WC_OFFLINE.searchMessages()` — survives a
+   reload and covers history no longer in memory
+
+Results show the conversation, a highlighted snippet, the sender, the time and
+an **“on device”** marker when the hit came from cached storage. Tapping a result
+opens that conversation.
+
+Entry points: the magnifier in the **Chats header** (next to people search), the
+magnifier in a **chat room header**, `Ctrl/Cmd + F` inside a chat, or
+`WC_MSG_SEARCH.open('invoice')`.
+
+## Device mode — money, investing, trading
+
+`public/offline-actions.js` keeps the money surfaces working offline and is
+explicit about what a device cannot do alone.
+
+| Works offline (recorded on device, synced on reconnect) | Needs the server (calm explanation, no dead button) |
+| --- | --- |
+| Stock / market investing trades (local engine settles, reconciles later) | Spot order tickets (`/api/market/spot/*`) |
+| Deposit requests (reviewed requests, not instant charges) | WhaleChat Shares plans |
+| Withdrawal requests + balance hold | Bot marketplace |
+| Transfers to another WhaleChat account | Live Finnhub symbol search |
+| Cart, delivery details, chat, alerts, wallet history, statement | Payment capture at checkout |
+
+Each queued money action also writes an outbox row (`money`), so the state push
+is retried on reconnect even if the tab was closed. Spot tickets show an inline
+notice and point to Invest, which does work offline.
+
+A **Device mode** notice appears at the top of wallet / deposit / withdraw /
+transfer / checkout / invest pages while offline, naming exactly what is saved
+locally and what happens on reconnect.

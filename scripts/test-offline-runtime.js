@@ -81,6 +81,11 @@ window.App = {
     window.document.getElementById('content').appendChild(el);
     return m;
   },
+  submitDeposit(mode) {
+    const u = window.me();
+    (DB.deposits = DB.deposits || []).unshift({ id: 'dep1', userId: u.id, usd: 25, status: 'pending' });
+    return true;
+  },
   addToCart(id, qty) {
     const u = window.me();
     const line = u.cart.find((c) => c.productId === id);
@@ -97,8 +102,10 @@ const check = (name, cond, extra) => { results.push({ name, ok: !!cond, extra })
   window.eval(src('offline-first.js'));
   window.eval(src('offline-data.js'));
   window.eval(src('diagnostics.js'));
+  window.eval(src('message-search.js'));
+  window.eval(src('offline-actions.js'));
 
-  await new Promise((r) => setTimeout(r, 1800));   // let their boot timers run
+  await new Promise((r) => setTimeout(r, 2600));   // let their boot timers + first mirror run
 
   const OD = window.WC_OFFLINE_DATA;
   const OF = window.WC_OFFLINE;
@@ -123,6 +130,30 @@ const check = (name, cond, extra) => { results.push({ name, ok: !!cond, extra })
   check('cart change queued', q2.some((q) => q.kind === 'cart-set'), JSON.stringify(q2.map((q) => q.kind)));
   const cartRec = q2.find((q) => q.kind === 'cart-set');
   check('cart payload is absolute qty', cartRec && cartRec.payload.qty === 2, JSON.stringify(cartRec && cartRec.payload));
+
+  /* ---- 2b. offline message search finds the cached message ------------- */
+  const hits = await window.WC_MSG_SEARCH.search('hello offline');
+  check('message search finds cached text', hits.length >= 1, String(hits.length));
+  window.WC_MSG_SEARCH.open('hello offline');
+  await new Promise((r) => setTimeout(r, 400));
+  const rows = window.document.querySelectorAll('.wc-ms-row');
+  check('search overlay rendered results', rows.length >= 1, String(rows.length));
+  check('search result highlights the match', !!window.document.querySelector('.wc-ms-snip mark'));
+  check('search result says the data is on device', /on device/i.test(window.document.getElementById('wcMsMeta').textContent + (rows[0] ? rows[0].textContent : '')));
+  window.WC_MSG_SEARCH.close();
+
+  /* ---- 2c. money action queued offline (deposit request) --------------- */
+  window.App.submitDeposit('crypto');
+  await new Promise((r) => setTimeout(r, 300));
+  const q3 = await OF.all('outbox');
+  check('offline deposit queued for sync', q3.some((q) => q.kind === 'money'), JSON.stringify(q3.map((q) => q.kind)));
+  check('deposit recorded on the device', (DB.deposits || []).length === 1);
+
+  /* ---- 2d. device-mode notice on money routes -------------------------- */
+  window.document.body.dataset.route = 'wallet';
+  await new Promise((r) => setTimeout(r, 1400));
+  const dm = window.document.getElementById('wcDeviceMode');
+  check('device mode notice shown on wallet while offline', !!dm && /Device mode/i.test(dm.textContent));
 
   /* ---- 3. connectivity pill shows offline ------------------------------ */
   const pill = window.document.getElementById('wcNetPill');

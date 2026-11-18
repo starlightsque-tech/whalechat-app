@@ -99,6 +99,11 @@
     }
   };
 
+  /* modules can contribute their own idempotent replay step */
+  OD.registerHandler = function (kind, fn) {
+    if (kind && typeof fn === 'function') HANDLERS[kind] = fn;
+  };
+
   function flushOutbox(manual) {
     if (OD.flushing) return Promise.resolve(0);
     if (!navigator.onLine) return Promise.resolve(0);
