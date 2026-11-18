@@ -222,7 +222,7 @@
         '<code>price move % = (current price − entry price) ÷ entry price × 100</code><br>' +
         'Example: you open at <b>$100</b> and the price reaches <b>$125</b> → <code>(125 − 100) ÷ 100 = 0.25 = ' + pct(priceMove(100,125)) + '</code>. ' +
         'Profit on a $100 trade at 1x: <code>' + money(closeSplit(100, priceMove(100,125), 1, 0).grossPnl) + '</code>. A Fall trade earns when the price drops instead.</p></div>' +
-        '<div class="tg-formula">profit = capital × price move % × leverage<br>' +
+        '<div class="tg-formula">price move % = (new price − old price) ÷ capital<br>profit per move = capital × move % × leverage; total profit = profit × number of moves<br>Take Profit / Stop Loss % are % of your capital: price level = entry ± capital × % ÷ leverage<br>' +
         'payout = capital + profit − (capital × ' + fee + '%)</div>' +
         '<table class="tg-table"><thead><tr><th>Capital</th><th>Leverage</th><th>Move</th><th>Profit</th></tr></thead><tbody>' +
         '<tr><td>$20</td><td>3x</td><td>+2%</td><td class="up">+' + money(closeSplit(20,2,3,0).grossPnl) + '</td></tr>' +
