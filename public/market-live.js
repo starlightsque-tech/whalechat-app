@@ -1160,9 +1160,9 @@
     patchTick();
     poll();
     startStream();
-    setInterval(poll, 2500);
+    setInterval(poll, 1000);
     setInterval(() => { try { paintNotice(); paintAdminStatus(); } catch (e) {} }, 3000);
-    setInterval(() => { try { if (MK.chart && !document.hidden) updateChart(); } catch (e) {} }, 1000);
+    setInterval(() => { try { if (MK.chart && !document.hidden) updateChart(); } catch (e) {} }, 250);
     setInterval(() => { try { checkSettledToasts(); } catch (e) {} }, 2000);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
