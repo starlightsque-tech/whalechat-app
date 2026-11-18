@@ -235,6 +235,24 @@ const LT = {
       expiresAt: Date.now() + minutes * 60000,
       status: 'Open', createdAt: Date.now(), feeCoins: fee, feeAtClose: false, closeFeeCoins: 0, feePaidAtOpen: fee
     };
+    /* frozen snapshot of the stock and the user's settings at the exact moment the trade opened,
+       shown on the History page; later TP/SL edits or settlement never change it */
+    const openedAt = trade.createdAt;
+    trade.openedAt = openedAt;
+    trade.openSnapshot = {
+      at: openedAt,
+      ticker, displayTicker: this.label(ticker), name: s.name || ticker,
+      price: q.price, entryPrice: q.price,
+      quoteAt: Number(q.at || q.ts || q.time || q.updatedAt) || openedAt,
+      changePct: Number(q.changePct) || 0, prevClose: Number(q.prevClose) || 0,
+      open: Number(q.open) || 0, dayHigh: Number(q.dayHigh) || 0, dayLow: Number(q.dayLow) || 0,
+      direction, side: trade.side, leverage: trade.leverage, capitalCoins: capital, feeCoins: fee,
+      tpPct: trade.tpPct, slPct: trade.slPct,
+      takeProfitPrice: trade.takeProfitPrice, takeProfitWc: trade.takeProfitWc,
+      stopLossPrice: trade.stopLossPrice, stopLossWc: trade.stopLossWc,
+      trailingStopPct: trade.trailingStopPct,
+      durationMinutes: minutes, durationLabel: durationText, expiresAt: trade.expiresAt
+    };
     /* the trade fee is taken from Trade capital immediately when the trade opens, so at close
        the full capital goes back to Trade capital and the full profit goes to Profit balance */
     const capAfterFee = Math.round((capBal - fee) * 100) / 100;
@@ -469,6 +487,67 @@ const LT = {
       <div class="tiny muted center" style="margin-top:6px">${Number(t.profitTakenCoins) > 0 ? `Profit already taken: <b class="up">+${usd(t.profitTakenCoins)} USD</b> · ` : ''}Returns ${usd(p.payoutCoins)} USD if stopped now</div>
       ${Number(t.dividendBonus) > 0 ? `<div class="tiny center lt-div-line">+${usd(t.dividendBonus)} USD dividend at timer</div>` : ''}
     </div>`;
+  },
+
+  /* the trade as it was when the user opened it (History page). Older trades without a
+     snapshot fall back to the fields stored on the trade itself. */
+  openDetailsHTML(t) {
+    const s = t.openSnapshot || {};
+    const pick = (k) => (s[k] !== undefined && s[k] !== null ? s[k] : t[k]);
+    const at = Number(s.at || t.openedAt || t.createdAt) || 0;
+    const entry = Number(pick('entryPrice')) || 0;
+    const dir = (pick('direction') || (t.side === 'short' ? 'FALL' : 'RISE')) === 'FALL' ? 'FALL' : 'RISE';
+    const lev = pick('leverage');
+    const mins = Number(pick('durationMinutes')) || 0;
+    const dur = pick('durationLabel') || (this.DURATIONS.find(d => d.m === mins) || {}).label || (mins ? mins + ' min' : '—');
+    const pctFromPrice = (px) => {
+      px = Number(px) || 0; if (!(px > 0) || !(entry > 0)) return 0;
+      const raw = (px - entry) / entry * 100;
+      return Math.abs(dir === 'FALL' ? -raw : raw);
+    };
+    const tpPct = Number(pick('tpPct')) || 0, slPct = Number(pick('slPct')) || 0;
+    const tpPx = Number(pick('takeProfitPrice')) || 0, slPx = Number(pick('stopLossPrice')) || 0;
+    const trail = Number(pick('trailingStopPct')) || 0;
+    const tpText = tpPct > 0 ? tpPct + '%' + (tpPx > 0 ? ' · ' + this.px(t.ticker, tpPx) : '')
+      : tpPx > 0 ? pctFromPrice(tpPx).toFixed(2) + '% · ' + this.px(t.ticker, tpPx) : 'Not set';
+    const slText = trail > 0 ? 'Trailing ' + trail + '%' + (slPx > 0 ? ' · ' + this.px(t.ticker, slPx) : '')
+      : slPct > 0 ? slPct + '%' + (slPx > 0 ? ' · ' + this.px(t.ticker, slPx) : '')
+      : slPx > 0 ? pctFromPrice(slPx).toFixed(2) + '% · ' + this.px(t.ticker, slPx) : 'Not set';
+    const when = at ? new Date(at).toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
+    const qAt = Number(s.quoteAt) || 0;
+    const row = (k, v, cls) => `<div class="lt-od-row"><span>${k}</span><b${cls ? ' class="' + cls + '"' : ''}>${v}</b></div>`;
+    const live = t.status === 'Open';
+    const pnl = Number(t.pnlCoins) || 0;
+    return `<div class="lt-od">
+      <div class="between" style="align-items:flex-start;gap:8px">
+        <div style="min-width:0"><b>${esc(s.displayTicker || this.label(t.ticker))}</b>
+          <div class="tiny muted">${esc(s.name || t.name || '')}</div></div>
+        <span class="badge ${live ? 'badge-accent' : pnl > 0 ? 'badge-success' : t.result === 'loss' || pnl < 0 ? 'badge-danger' : 'badge-warn'}">${live ? 'Open' : esc(t.closeReason || 'Closed')}</span>
+      </div>
+      <div class="tiny muted" style="margin:6px 0 2px">Stock details at the moment the trade was opened</div>
+      ${row('Opened', esc(when))}
+      ${row('Entry price', this.px(t.ticker, entry))}
+      ${row('Stock price at open', this.px(t.ticker, Number(s.price) || entry) + (qAt && qAt !== at ? ' <small class="muted">(quote ' + esc(new Date(qAt).toLocaleTimeString()) + ')</small>' : ''))}
+      ${Number(s.changePct) ? row('Day change at open', (s.changePct >= 0 ? '+' : '') + Number(s.changePct).toFixed(2) + '%', s.changePct >= 0 ? 'up' : 'down') : ''}
+      ${Number(s.dayHigh) > 0 && Number(s.dayLow) > 0 ? row('Day low / high at open', this.px(t.ticker, s.dayLow) + ' / ' + this.px(t.ticker, s.dayHigh)) : ''}
+      ${row('Direction', dir === 'FALL' ? '▼ Fall' : '▲ Rise', dir === 'FALL' ? 'down' : 'up')}
+      ${row('Leverage', esc(String(lev)) + '×')}
+      ${row('Take profit', esc(tpText), tpPx > 0 || tpPct > 0 ? 'up' : '')}
+      ${row('Take loss', esc(slText), slPx > 0 || slPct > 0 || trail > 0 ? 'down' : '')}
+      ${row('Trade duration', esc(dur))}
+      ${row('Capital', usd(Number(pick('capitalCoins')) || 0) + ' USD')}
+      ${live ? '' : `<div class="tiny ${pnl > 0 ? 'up' : pnl < 0 ? 'down' : 'muted'}" style="margin-top:6px">Closed ${t.closedAt ? esc(new Date(t.closedAt).toLocaleString()) : ''} at ${this.px(t.ticker, t.exitPrice || 0)} · ${pnl >= 0 ? '+' : '−'}${usd(Math.abs(pnl))} USD P/L</div>`}
+    </div>`;
+  },
+
+  /* History page block: every live trade the user opened, newest first */
+  tradeHistoryBlock(userId) {
+    const list = (DB.trades || []).filter(t => t && t.userId === userId && t.type === 'live')
+      .sort((a, b) => (Number(b.openedAt || b.createdAt) || 0) - (Number(a.openedAt || a.createdAt) || 0));
+    if (!list.length) return '';
+    return `<div class="card" id="ltTradeHistory"><div class="between"><div class="card-title" style="margin:0">Trade history</div>
+      <span class="badge">${list.length}</span></div>
+      <div class="lt-od-list">${list.slice(0, 50).map(t => this.openDetailsHTML(t)).join('')}</div></div>`;
   },
 
   closedRow(t) {
@@ -829,6 +908,10 @@ const LT = {
   .lt-trail-row input[type="checkbox"]{width:15px;height:15px;accent-color:var(--accent)}
   .lt-trail-dist{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;color:var(--muted);margin-left:auto}
   .lt-trail-dist .input{width:58px;padding:5px 7px;font-size:11px;height:auto}
+  .lt-od-list{display:flex;flex-direction:column;gap:10px;margin-top:10px}
+  .lt-od{border:1px solid var(--border);border-radius:12px;padding:10px 12px;background:var(--surface-2)}
+  .lt-od-row{display:flex;justify-content:space-between;gap:10px;font-size:12px;padding:3px 0;border-top:1px dashed var(--border)}
+  .lt-od-row span{color:var(--muted)} .lt-od-row b{text-align:right;font-variant-numeric:tabular-nums}
   .lt-hist-levels{display:flex;gap:8px;flex-wrap:wrap;margin-top:3px;font-size:9.5px;color:var(--muted)}
   .lt-hist-levels span{background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:1px 5px}
   .lt-hist-levels .tp{color:#22c55e} .lt-hist-levels .sl{color:#ef4444}
