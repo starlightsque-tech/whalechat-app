@@ -155,7 +155,10 @@ const LT = {
     const dir = this.dirOf(t) === 'FALL' ? -1 : 1;
     /* price move % = (current price - entry price) / entry price x 100, from the live feed quote */
     const move = LT.priceMovePct(t.entryPrice, q.price) / 100;
-    let pnlCoins = t.capitalCoins * (t.leverage || 1) * move * dir;
+    /* price move % = (current price - entry price) / capital; profit = capital x move% x leverage x number of price moves */
+    const cap = Number(t.capitalCoins) || 0;
+    const movePctCap = cap > 0 ? (Number(q.price) - Number(t.entryPrice)) / cap : 0;
+    let pnlCoins = cap * (movePctCap / 100) * (t.leverage || 1) * dir * Math.max(1, Number(t.moveCount) || 0);
     pnlCoins = Math.max(-t.capitalCoins, pnlCoins);          /* never lose more than the stake */
     /* payout = capital + profit − (capital × trade fee %); the fee is taken at close */
     const fee = Math.min(LT.closeFee(t), Math.max(0, t.capitalCoins + pnlCoins));
@@ -164,7 +167,7 @@ const LT = {
       feeCoins: Math.round(fee * 100) / 100,
       price: q.price,
       prev: q.prevClose,
-      movePct: move * 100 * dir,
+      movePct: movePctCap * dir,
       pnlCoins: Math.round(pnlCoins * 100) / 100,
       pnlUsd: coinsToUsd(pnlCoins),
       pnlPct: t.capitalCoins ? (pnlCoins / t.capitalCoins) * 100 : 0,
@@ -325,6 +328,7 @@ const LT = {
     ia.stockProfit = Math.round(((Number(ia.stockProfit) || 0) + profit) * 100) / 100;
     /* re-base the position so the remaining trade starts from the current price */
     t.entryPrice = Math.round((Number(p.price) || 0) * 10000) / 10000;
+    t.moveCount = 0;
     t.profitTakenCoins = Math.round(((Number(t.profitTakenCoins) || 0) + profit) * 100) / 100;
     t.lastProfitAt = Date.now();
     t.lastProfitPrice = p.price;
@@ -1034,7 +1038,7 @@ LT.seriesWithTrades = function (tf, userId) {
       if (msAgo > started) { v += p.capital; return; }           /* before entry: flat capital */
       const dir = t.side === 'short' ? -1 : 1;
       const move = LT.priceMovePct(t.entryPrice, price) / 100;
-      const pnl = Math.max(-p.capital, p.capital * (t.leverage || 1) * move * dir);
+      const pnl = Math.max(-p.capital, p.capital * (((price - t.entryPrice) / (p.capital || 1)) / 100) * (t.leverage || 1) * dir * Math.max(1, Number(t.moveCount) || 0));
       v += Math.max(0, p.capital + pnl);
     });
     out.push(v);
@@ -2623,6 +2627,7 @@ LT.secureLocal = function (t, reason) {
   t.securedProfitCoins = Math.round(((Number(t.securedProfitCoins) || 0) + profit) * 100) / 100;
   t.securedProfitCount = (Number(t.securedProfitCount) || 0) + 1;
   t.entryPrice = Math.round(p.price * 1e6) / 1e6;
+  t.moveCount = 0;
   t.lastSecureAt = now; t.lastProfitAt = now; t.lastProfitPrice = p.price;
   if (reason === 'Take Profit Hit') { t.takeProfitPrice = null; t.takeProfitWc = null; t.takeProfitMode = 'PRICE'; t.tpPct = 0; }
   if (t.trailingActive && Number(t.trailingStopPct) > 0) {
