@@ -118,6 +118,29 @@ function favorableMoveProfit(t, price, lev, dir) {
   return Math.max(0, cap * (movePctOf(t, px) / 100) * lev * dir);
 }
 /* Take-profit level (USD amount of the trade capital; a % TP is stored as its USD amount). */
+/* Trade move log: one entry per profit take (manual, automatic Take Profit, or the Auto Secure
+   tool) with the stock price at that moment, so the trade history card can list every move
+   from open to close and the user can work out the payout themselves. */
+function logTradeMove(t, rec) {
+  if (!t || !rec) return null;
+  t.moveLog = Array.isArray(t.moveLog) ? t.moveLog : [];
+  const levels = Math.max(1, Math.floor(Number(rec.levels) || 1));
+  const from = (Number(t.moveLogCount) || 0) + 1;
+  const to = from + levels - 1;
+  t.moveLogCount = to;
+  const entry = {
+    id: id('mv_'), from, to, levels,
+    at: Number(rec.at) || Date.now(),
+    price: round(Number(rec.price) || 0, 6),
+    entryBefore: round(Number(rec.entryBefore) || 0, 6),
+    amount: round(Number(rec.amount) || 0, 2),
+    by: rec.by || 'manual',
+    kind: rec.kind || 'taken'
+  };
+  t.moveLog.push(entry);
+  if (t.moveLog.length > 300) t.moveLog.splice(0, t.moveLog.length - 300);
+  return entry;
+}
 function tpLevelOf(t) {
   const n = Number(t && t.takeProfitWc);
   return n > 0 ? n : 0;
@@ -359,6 +382,12 @@ class MarketService {
     this.seedBase = {};
     this.lastSimAt = 0;
     this.simTicks = 0;
+    this.quoteListeners = [];
+  }
+
+  /* Called on every price update (B2B Auto Buy/Sell watches each tick so a target is never missed). */
+  onQuote(fn) {
+    if (typeof fn === 'function' && this.quoteListeners.indexOf(fn) < 0) this.quoteListeners.push(fn);
   }
 
   /* ------------------------------- config ------------------------------- */
@@ -633,6 +662,9 @@ class MarketService {
     if (meta && meta.real) this.seedBase[ticker] = q.price;
     this.lastTickAt = now;
     this.recordHistory(ticker, q.price, now, q.source, q.real);
+    if (this.quoteListeners && this.quoteListeners.length) {
+      for (const fn of this.quoteListeners) { try { fn(ticker, q.price, now); } catch (e) { console.error('[market] quote listener:', e.message); } }
+    }
     if (q.real) { this.lastReal[ticker] = q.price; this.lastRealTime[ticker] = now; this.lastRealAt = now; }
     if (q.real && !(meta && meta.mirror)) {
       try {
@@ -1226,6 +1258,8 @@ class MarketService {
     };
     t.securedProfits.unshift(rec);
     if (t.securedProfits.length > 100) t.securedProfits.length = 100;
+    const mv = logTradeMove(t, { at: now, price: q.price, entryBefore: entry, amount: profit, levels: levels || 1, by: 'auto-secure', kind: 'secured' });
+    if (mv) rec.moveFrom = mv.from, rec.moveTo = mv.to;
     t.securedProfitCoins = round((Number(t.securedProfitCoins) || 0) + profit, 2);
     t.securedProfitCount = (Number(t.securedProfitCount) || 0) + 1;
     t.entryPrice = tpLvl > 0 ? rebaseAfterTake(t, q.price, profit, lev, dir) : round(q.price, 6);
@@ -1393,6 +1427,7 @@ class MarketService {
     if (!(profit > 0)) return 0;
     if (!t.initialEntryPrice) t.initialEntryPrice = entry;
     creditStockProfit(u, profit);
+    logTradeMove(t, { at: now, price: q.price, entryBefore: entry, amount: profit, levels: levels || 1, by: forceCredit ? 'manual' : 'auto-tp', kind: 'taken' });
     t.profitTakenCoins = round((Number(t.profitTakenCoins) || 0) + profit, 2);
     t.entryPrice = tpLvl > 0 ? rebaseAfterTake(t, q.price, profit, lev, dir) : round(q.price, 6);
     if (tpLvl > 0) t.tpMovesTaken = (Number(t.tpMovesTaken) || 0) + levels;
