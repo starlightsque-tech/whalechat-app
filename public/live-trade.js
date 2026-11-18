@@ -152,7 +152,7 @@ const LT = {
   },
 
   /* live numbers for a position */
-  calc(t) {
+  calc(t, atEnd) {
     const q = INV.quote(t.ticker) || { price: t.entryPrice };
     /* direction is authoritative: FALL profits when price falls, RISE when it rises */
     const dir = this.dirOf(t) === 'FALL' ? -1 : 1;
@@ -161,7 +161,7 @@ const LT = {
     /* price move % = (current price - entry price) / capital; profit = capital x move% x leverage x number of price moves */
     const cap = Number(t.capitalCoins) || 0;
     const movePctCap = cap > 0 ? (Number(q.price) - Number(t.entryPrice)) / cap : 0;
-    let pnlCoins = cap * (movePctCap / 100) * (t.leverage || 1) * dir * LT.movesOf(t, q.price);
+    let pnlCoins = cap * (movePctCap / 100) * (t.leverage || 1) * dir * (atEnd ? 1 : LT.movesOf(t, q.price));
     pnlCoins = Math.max(-t.capitalCoins, pnlCoins);          /* never lose more than the stake */
     /* payout = capital + profit − (capital × trade fee %); the fee is taken at close */
     const fee = Math.min(LT.closeFee(t), Math.max(0, t.capitalCoins + pnlCoins));
@@ -253,7 +253,8 @@ const LT = {
     if (!t || t.status !== 'Open') return false;
     const u = findUser(t.userId);
     if (!u) return false;
-    const p = this.calc(t);
+    /* trade ended by timer with no manual / auto Take Profit: final move % from the last price at end time, no moves multiplier */
+    const p = this.calc(t, reason === 'Time limit reached');
     const ia = INV.investAcct(u);
     const split = LT.bookClose(ia, t.capitalCoins, p.pnlCoins, LT.closeFee(t));
     const payout = split.payout;
