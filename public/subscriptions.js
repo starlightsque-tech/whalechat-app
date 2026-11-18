@@ -40,6 +40,11 @@
       id: 'signals', name: 'Pro Chart Signals', price: 4.99, bot: null,
       desc: 'Live structure and momentum signals on the 24/7 chart.',
       surfaces: ['tools', 'stock']
+    },
+    {
+      id: 'autobuysell', name: 'Auto Buy / Sell (B2B)', price: 14.99, bot: null,
+      desc: 'On the B2B-Investing desk: buys an asset at your estimated buy price and sells it at your estimated sell price, automatically, for every asset where you select "Use Auto Buy/Sell".',
+      surfaces: ['tools', 'b2b']
     }
   ];
 
@@ -69,6 +74,11 @@
         if (!Array.isArray(DB.settings.toolCatalog) || !DB.settings.toolCatalog.length) {
           DB.settings.toolCatalog = CATALOG.map(function (t) { return Object.assign({}, t); });
         }
+        /* tools added in a later release (e.g. Auto Buy / Sell) join the saved catalogue,
+           keeping every price the admin already set */
+        CATALOG.forEach(function (t) {
+          if (!DB.settings.toolCatalog.some(function (x) { return x && x.id === t.id; })) DB.settings.toolCatalog.push(Object.assign({}, t));
+        });
         return DB.settings.toolCatalog;
       }
     } catch (e) {}
@@ -303,6 +313,93 @@
     });
     if (changed) save();
     return changed;
+  };
+
+  /* ---- Auto Buy / Sell (B2B desk) -------------------------------------------
+     The tool trades an asset only when: the tool is subscribed, it is switched on,
+     the asset's price alert has "Use Auto Buy/Sell" selected, and a buy and/or sell
+     price is set. The server watches every price tick and fills at exactly the
+     price the user set. These helpers are shared by every alert form. */
+  var AUTO_ID = 'autobuysell';
+  S.AUTO_ID = AUTO_ID;
+  S.autoSubscribed = function (u) { return S.status(AUTO_ID, u) === 'active'; };
+  S.autoOn = function (u) { var a = acct(u); return !!(a && S.autoSubscribed(u) && a.autoBuySellOn !== false); };
+  function unitsTxt(n) { return Number(Number(n) || 0).toLocaleString(undefined, { maximumFractionDigits: 6 }); }
+  function sfxId(k, sfx) { return 'wcAuto' + k + '_' + String(sfx || '').replace(/[^A-Za-z0-9_-]/g, '_'); }
+
+  S.autoStatusText = function (al) {
+    if (!al || !al.auto) return '';
+    var tag = S.autoOn() ? '<b class="up">Auto Buy/Sell ON</b>' : '<b class="warn">Auto Buy/Sell selected · tool off</b>';
+    if (al.autoError) return tag + ' · <span class="down">' + escS(al.autoError) + '</span>';
+    var st = al.autoState;
+    if (st === 'buy') return tag + ' · waiting to buy ' + money(al.autoAmount) + ' at ' + money(al.buy) + (Number(al.sell) > 0 ? ', then sell at ' + money(al.sell) : '');
+    if (st === 'sell') return tag + ' · ' + (Number(al.autoUnits) > 0 ? 'holding ' + unitsTxt(al.autoUnits) + ' units bought at ' + money(al.autoBuyPrice || al.buy) + ', ' : 'will sell your holding ') + 'selling at ' + money(al.sell);
+    if (st === 'held') return tag + ' · bought ' + unitsTxt(al.autoUnits) + ' units at ' + money(al.autoBuyPrice || al.buy) + ' · no sell price set';
+    if (st === 'done') return '<b>Auto Buy/Sell finished</b>' + (Number(al.autoSellPrice) > 0 ? ' · sold at ' + money(al.autoSellPrice) : '') + ' · save the alert again to start a new round';
+    return tag;
+  };
+  S.autoLogHTML = function (al) {
+    var log = (al && Array.isArray(al.autoLog)) ? al.autoLog : [];
+    if (!log.length) return '';
+    return '<div class="tiny muted" style="margin-top:4px">' + log.slice(0, 5).map(function (x) {
+      var when = new Date(Number(x.at) || Date.now()).toLocaleString();
+      return x.side === 'buy'
+        ? 'Auto bought ' + unitsTxt(x.units) + ' at ' + money(x.price) + ' for ' + money(x.amount) + ' · ' + escS(when)
+        : 'Auto sold ' + unitsTxt(x.units) + ' at ' + money(x.price) + ' · payout ' + (Number(x.payout) >= 0 ? '+' : '') + money(x.payout) + ' · ' + escS(when);
+    }).join('<br/>') + '</div>';
+  };
+  /* the "Use Auto Buy/Sell" fields for one asset's alert form */
+  S.autoFields = function (ticker, al, sfx) {
+    al = al || {};
+    var sub = S.autoSubscribed();
+    var dis = sub ? '' : ' disabled';
+    return '<div class="wc-auto-box" style="margin-top:8px;padding:8px;border:1px dashed var(--border);border-radius:10px">' +
+      '<label class="row" style="gap:8px;align-items:center;font-size:12px"><input type="checkbox" id="' + sfxId('On', sfx) + '"' + (al.auto ? ' checked' : '') + dis + '/> <b>Use Auto Buy/Sell</b> to buy and sell ' + escS(ticker) + ' at these prices</label>' +
+      '<div class="field" style="margin:6px 0 0"><label class="label">Auto-buy amount (USD from B2B capital)</label>' +
+        '<input class="input" id="' + sfxId('Amt', sfx) + '" type="number" step="0.01" min="0" placeholder="0.00" value="' + (Number(al.autoAmount) > 0 ? Number(al.autoAmount) : '') + '"' + dis + '/></div>' +
+      '<label class="row" style="gap:8px;align-items:center;font-size:11px;margin-top:6px"><input type="checkbox" id="' + sfxId('Rep', sfx) + '"' + (al.autoRepeat ? ' checked' : '') + dis + '/> Buy again at the buy price after each auto sell</label>' +
+      (sub
+        ? (S.autoOn() ? '' : '<div class="tiny warn" style="margin-top:4px">Auto Buy/Sell is switched off — turn it on from the B2B desk.</div>')
+        : '<div class="tiny muted" style="margin-top:4px">Subscribe to <a href="#/investment/tools">Auto Buy / Sell</a> (' + money(priceOf(AUTO_ID)) + ' / month) to let it trade for you. Without it you get the alert by email and buy or sell yourself.</div>') +
+      (al.auto ? '<div class="tiny" style="margin-top:4px">' + S.autoStatusText(al) + '</div>' + S.autoLogHTML(al) : '') +
+      '</div>';
+  };
+  S.readAuto = function (sfx) {
+    var on = document.getElementById(sfxId('On', sfx));
+    if (!on) return null;
+    var amt = document.getElementById(sfxId('Amt', sfx));
+    var rep = document.getElementById(sfxId('Rep', sfx));
+    return { auto: !!on.checked && !on.disabled, amount: Math.round((Number(amt && amt.value) || 0) * 100) / 100, repeat: !!(rep && rep.checked) };
+  };
+  /* returns an error message, or '' when the settings can be saved */
+  S.checkAuto = function (ticker, buy, sell, opts) {
+    if (!opts || !opts.auto) return '';
+    if (!S.autoSubscribed()) return 'Subscribe to the Auto Buy/Sell tool first';
+    if (!(buy > 0) && !(sell > 0)) return 'Set a buy or sell price for ' + ticker + ' so Auto Buy/Sell knows when to trade';
+    if (buy > 0 && !(opts.amount > 0)) return 'Enter the amount Auto Buy/Sell should buy ' + ticker + ' with';
+    if (buy > 0 && sell > 0 && sell <= buy) return 'The sell price must be above the buy price for ' + ticker;
+    return '';
+  };
+  /* write the settings onto the alert (call after buy/sell are set on it) */
+  S.applyAuto = function (al, opts) {
+    if (!al || !opts) return al;
+    var buy = Number(al.buy) || 0, sell = Number(al.sell) || 0;
+    var holding = Number(al.autoUnits) > 0 && al.autoState !== 'buy' && al.autoState !== 'done';
+    al.auto = !!opts.auto;
+    al.autoAmount = opts.amount > 0 ? opts.amount : 0;
+    al.autoRepeat = !!opts.repeat;
+    al.autoArmedAt = Date.now();
+    al.autoError = '';
+    if (!al.auto) al.autoState = holding ? al.autoState : '';
+    else if (holding) al.autoState = sell > 0 ? 'sell' : 'held';
+    else { al.autoState = buy > 0 ? 'buy' : 'sell'; al.autoUnits = 0; }
+    return al;
+  };
+  S.autoToggle = function () {
+    var a = acct(); if (!a) return false;
+    a.autoBuySellOn = a.autoBuySellOn === false;
+    save(); notify(); repaint();
+    return a.autoBuySellOn;
   };
 
   /* Small, consistent status badge usable by any page. */
