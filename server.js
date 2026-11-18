@@ -111,7 +111,7 @@ setInterval(() => {
     }
     if (frame) for (const r of marketClients) { try { r.write(frame); } catch (e) {} }
   } catch (e) {}
-}, 400).unref();
+}, 100).unref();
 
 const readJSON = (f, d) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch (e) { return d; } };
 function writeJSONAtomic(file, value) {
