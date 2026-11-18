@@ -1,8 +1,8 @@
 {
-  "version": "3.45.0",
-  "build": "2026-11-18T17:35:00Z",
+  "version": "3.45.1",
+  "build": "2026-11-18T17:55:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.45.0 - Admin Markets: Binance and Alpaca key panels, Alpaca live US stock prices; new server URL card in Admin Servers; admin Trade Guide updates; background device notifications; share the app file as Whalechat.apk.",
-  "releasedAt": "2026-11-18T17:35:00Z",
+  "notes": "WhaleChat 3.45.1 - Market list now shows all listed assets as soon as Finnhub, Binance or Alpaca is connected; all three can run at the same time.",
+  "releasedAt": "2026-11-18T17:55:00Z",
   "minimum": "3.0.0"
 }
