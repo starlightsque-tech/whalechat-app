@@ -362,6 +362,7 @@ const LT = {
     if (!(profit > 0)) { toast(tpLvl > 0 ? 'Profit has not reached your ' + usd(tpLvl) + ' take-profit level yet' : 'No profit to take yet — wait for the chart to move in your favour', 'err'); return false; }
     if (reason === 'Take Profit Hit' && LT.autoSecureOn(t.userId)) return LT.secureLocal(t, 'Take Profit Hit');
     if (!t.initialEntryPrice) t.initialEntryPrice = t.entryPrice;
+    const entryBeforeTake = t.entryPrice;
     const ia = INV.investAcct(u);
     ia.stockProfit = Math.round(((Number(ia.stockProfit) || 0) + profit) * 100) / 100;
     /* re-base the position so the remaining trade starts from the current price */
@@ -369,6 +370,7 @@ const LT = {
     if (tpLvl > 0) t.tpMovesTaken = (Number(t.tpMovesTaken) || 0) + levels;
     t.moveCount = 0;
     t.profitTakenCoins = Math.round(((Number(t.profitTakenCoins) || 0) + profit) * 100) / 100;
+    LT.logMove(t, { price: p.price, entryBefore: entryBeforeTake, amount: profit, levels: levels || 1, by: reason === 'Take Profit Hit' ? 'auto-tp' : 'manual', kind: 'taken' });
     t.lastProfitAt = Date.now();
     t.lastProfitPrice = p.price;
     /* an amount TP level repeats; older price levels are consumed */
@@ -553,6 +555,7 @@ const LT = {
       ${row('Trade duration', esc(dur))}
       ${row('Capital', usd(Number(pick('capitalCoins')) || 0) + ' USD')}
       ${row(live ? 'Trade moves so far' : 'Trade moves (open → close)', esc(String(LT.totalMovesOf(t))) + (live ? ' <small class="muted">(live)</small>' : ''))}
+      ${LT.movesHTML(t)}
       ${live ? '' : `<div class="tiny ${pnl > 0 ? 'up' : pnl < 0 ? 'down' : 'muted'}" style="margin-top:6px">Closed ${t.closedAt ? esc(new Date(t.closedAt).toLocaleString()) : ''} at ${this.px(t.ticker, t.exitPrice || 0)} · ${pnl >= 0 ? '+' : '−'}${usd(Math.abs(pnl))} USD P/L</div>`}
     </div>`;
   },
@@ -576,6 +579,7 @@ const LT = {
           <span class="tiny muted">· ${t.leverage}× · ${esc(t.closeReason || 'closed')}</span></div>
         <div class="tiny muted">${usd(t.capitalCoins)} USD @ ${this.px(t.ticker, t.entryPrice)} → ${this.px(t.ticker, t.exitPrice || 0)} · ${dateLabel(t.closedAt)} ${clockTime(t.closedAt)}</div>
         <div class="tiny muted">${LT.totalMovesOf(t)} trade move${LT.totalMovesOf(t) === 1 ? '' : 's'} from open to close</div>
+        ${LT.movesSummaryLine(t)}
         <div class="lt-hist-levels">${Number(t.takeProfitPrice) > 0 ? `<span class="tp">TP ${usd(t.takeProfitPrice)}</span>` : '<span>TP —</span>'}
           ${Number(t.stopLossPrice) > 0 ? `<span class="sl">${t.trailingActive ? 'TSL' : 'SL'} ${usd(t.stopLossPrice)}</span>` : '<span>SL —</span>'}
           ${t.trailingActive ? `<span class="trail">trail ${Number(t.trailingStopPct).toFixed(1)}%</span>` : ''}</div>
@@ -933,6 +937,15 @@ const LT = {
   .lt-hist-levels span{background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:1px 5px}
   .lt-hist-levels .tp{color:#22c55e} .lt-hist-levels .sl{color:#ef4444}
   .lt-hist-levels .trail{color:var(--warn)}
+  .lt-mv{margin-top:6px;border-top:1px dashed var(--border);padding-top:4px}
+  .lt-mv-head,.lt-mv-row{display:grid;grid-template-columns:64px 1.2fr 1fr 70px 1.5fr;gap:6px;align-items:center;font-size:10.5px;padding:3px 0}
+  .lt-mv-head{color:var(--muted);font-size:9.5px;text-transform:uppercase;letter-spacing:.03em;border-bottom:1px solid var(--border)}
+  .lt-mv-row{border-bottom:1px solid rgba(127,127,127,.14)}
+  .lt-mv-n{font-weight:650} .lt-mv-p{font-variant-numeric:tabular-nums}
+  .lt-mv-by.man{color:#38bdf8} .lt-mv-by.auto{color:#22c55e}
+  .lt-mv-open .lt-mv-n,.lt-mv-close .lt-mv-n{color:var(--muted)}
+  .lt-mv-sum{margin-top:6px}
+  @media (max-width:560px){.lt-mv-head{display:none}.lt-mv-row{grid-template-columns:1fr 1fr 1fr}.lt-mv-by{grid-column:1/-1;font-size:10px}}
   .lt-lvl.trail{color:var(--warn);font-size:9.5px}
   @media(max-width:420px){.lt-tpsl-grid{grid-template-columns:1fr}}
   `;
@@ -2732,6 +2745,121 @@ LT.totalMovesOf = function (t) {
   return Math.max(Number(t.totalMoveCount) || 0, Number(t.clientMoveTotal) || 0, Number(t.moveCount) || 0, t._cMoves || 0);
 };
 /* admin profit rate (%) for a stock: its own rate, else the market-type rate (Admin -> Stocks) */
+/* ---- trade move log: stock price and profit at every move, and who took it ---- */
+LT.logMove = function (t, rec) {
+  if (!t || !rec) return null;
+  t.moveLog = Array.isArray(t.moveLog) ? t.moveLog : [];
+  const levels = Math.max(1, Math.floor(Number(rec.levels) || 1));
+  const from = (Number(t.moveLogCount) || 0) + 1;
+  const to = from + levels - 1;
+  t.moveLogCount = to;
+  const e = {
+    id: uid('mv'), from, to, levels, at: Date.now(),
+    price: Math.round((Number(rec.price) || 0) * 1e6) / 1e6,
+    entryBefore: Number(rec.entryBefore) || 0,
+    amount: Math.round((Number(rec.amount) || 0) * 100) / 100,
+    by: rec.by || 'manual', kind: rec.kind || 'taken', local: true
+  };
+  t.moveLog.push(e);
+  if (t.moveLog.length > 300) t.moveLog.splice(0, t.moveLog.length - 300);
+  return e;
+};
+LT.MOVE_BY = { 'manual': 'Manual · taken by you', 'auto-secure': 'Auto · Auto Secure Profit tool', 'auto-tp': 'Auto · Take Profit level' };
+LT.moveList = function (t) {
+  if (!t) return [];
+  if (Array.isArray(t.moveLog) && t.moveLog.length) return t.moveLog.slice().sort((a, b) => (Number(a.at) || 0) - (Number(b.at) || 0));
+  /* older trades: rebuild the moves from secured profits and profit transactions */
+  const out = [];
+  (t.securedProfits || []).forEach((x) => {
+    if (x && Number(x.coins) > 0) out.push({ at: Number(x.at) || 0, price: Number(x.price) || 0, amount: Number(x.coins) || 0, by: 'auto-secure', kind: 'secured', levels: 1 });
+  });
+  (DB.txs || []).forEach((x) => {
+    if (!x || x.type !== 'trade-profit' || !x.meta || x.meta.tradeId !== t.id) return;
+    const lbl = String(x.label || '');
+    const lv = lbl.match(/\((\d+) moves? of/);
+    out.push({
+      at: Number(x.createdAt) || 0, price: Number(x.meta.price) || 0,
+      amount: Number(x.coins) || Number(x.meta.pnlCoins) || 0,
+      by: /Auto Secure/i.test(lbl) ? 'auto-secure' : /Hit/i.test(lbl) ? 'auto-tp' : 'manual',
+      kind: 'taken', levels: lv ? Number(lv[1]) : 1
+    });
+  });
+  out.sort((a, b) => a.at - b.at);
+  let n = 0;
+  out.forEach((m) => { m.from = n + 1; n += Math.max(1, m.levels || 1); m.to = n; m.rebuilt = true; });
+  return out;
+};
+LT.moveTotals = function (t) {
+  const list = LT.moveList(t);
+  const tot = { manual: 0, autoSecure: 0, autoTp: 0, all: 0, n: 0 };
+  list.forEach((m) => {
+    const a = Number(m.amount) || 0;
+    tot.all += a; tot.n = Math.max(tot.n, Number(m.to) || 0);
+    if (m.by === 'auto-secure') tot.autoSecure += a; else if (m.by === 'auto-tp') tot.autoTp += a; else tot.manual += a;
+  });
+  ['manual', 'autoSecure', 'autoTp', 'all'].forEach((k) => { tot[k] = Math.round(tot[k] * 100) / 100; });
+  return { list, tot };
+};
+LT.movesHTML = function (t) {
+  if (!t) return '';
+  const mt = LT.moveTotals(t);
+  const list = mt.list, tot = mt.tot;
+  const live = t.status === 'Open';
+  const s = t.openSnapshot || {};
+  const openPx = Number(t.initialEntryPrice) || Number(s.entryPrice) || Number(t.entryPrice) || 0;
+  const openAt = Number(s.at || t.openedAt || t.createdAt) || 0;
+  const cap = Number(t.capitalCoins) || 0;
+  const tm = (ts) => ts ? esc(new Date(Number(ts)).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })) : '—';
+  const px = (v) => LT.px(t.ticker, v);
+  const rows = [];
+  rows.push('<div class="lt-mv-row lt-mv-open"><span class="lt-mv-n">Open</span><span class="lt-mv-t">' + tm(openAt) + '</span><span class="lt-mv-p">' + px(openPx) + '</span><span class="lt-mv-a">' + usd(cap) + ' in</span><span class="lt-mv-by">Trade opened</span></div>');
+  list.forEach((m) => {
+    const lbl = m.to > m.from ? 'Moves ' + m.from + '–' + m.to : 'Move ' + m.from;
+    let by = LT.MOVE_BY[m.by] || LT.MOVE_BY.manual;
+    if (m.by === 'auto-secure') {
+      const sp = (t.securedProfits || []).find((x) => x && ((x.moveFrom && x.moveFrom === m.from) || Number(x.at) === Number(m.at)));
+      if (sp) by += sp.claimed ? ' · claimed' : ' · awaiting claim';
+    }
+    rows.push('<div class="lt-mv-row"><span class="lt-mv-n">' + lbl + '</span><span class="lt-mv-t">' + tm(m.at) + '</span><span class="lt-mv-p">' + px(m.price) + '</span><span class="lt-mv-a up">+' + usd(m.amount) + '</span><span class="lt-mv-by ' + (m.by === 'manual' ? 'man' : 'auto') + '">' + esc(by) + '</span></div>');
+  });
+  const pnl = Number(t.pnlCoins) || 0;
+  const back = Number(t.payoutCoins) || 0;
+  if (!live) {
+    rows.push('<div class="lt-mv-row lt-mv-close"><span class="lt-mv-n">Close</span><span class="lt-mv-t">' + tm(t.closedAt) + '</span><span class="lt-mv-p">' + px(Number(t.exitPrice) || 0) + '</span><span class="lt-mv-a ' + (pnl >= 0 ? 'up' : 'down') + '">' + (pnl >= 0 ? '+' : '−') + usd(Math.abs(pnl)) + '</span><span class="lt-mv-by">' + esc(t.closeReason || 'Closed') + ' · returned ' + usd(back) + '</span></div>');
+  }
+  const received = Math.round((tot.all + (live ? 0 : back)) * 100) / 100;
+  const net = Math.round((received - cap) * 100) / 100;
+  const r = (k, v, cls) => '<div class="lt-od-row"><span>' + k + '</span><b' + (cls ? ' class="' + cls + '"' : '') + '>' + v + '</b></div>';
+  const sum = [];
+  sum.push(r('Profit taken manually by you', '+' + usd(tot.manual), 'up'));
+  sum.push(r('Profit taken by Auto Secure tool', '+' + usd(tot.autoSecure), 'up'));
+  if (tot.autoTp > 0) sum.push(r('Profit taken automatically at TP level', '+' + usd(tot.autoTp), 'up'));
+  if (live) {
+    sum.push(r('Total profit taken so far', '+' + usd(tot.all), 'up'));
+  } else {
+    sum.push(r('P/L at close', (pnl >= 0 ? '+' : '−') + usd(Math.abs(pnl)), pnl >= 0 ? 'up' : 'down'));
+    if (Number(t.closeFeeCoins) > 0) sum.push(r('Close fee', '−' + usd(t.closeFeeCoins), 'down'));
+    sum.push(r('Returned at close', usd(back)));
+    sum.push(r('Total received (moves + returned)', usd(received)));
+    sum.push(r('Net result on ' + usd(cap) + ' capital', (net >= 0 ? '+' : '−') + usd(Math.abs(net)), net >= 0 ? 'up' : 'down'));
+  }
+  return '<div class="lt-mv">' +
+    '<div class="tiny muted" style="margin:8px 0 4px">Stock price and profit at every trade move, ' + (live ? 'from open until now' : 'from open to close') + '</div>' +
+    '<div class="lt-mv-head"><span>Move</span><span>Time</span><span>Stock price</span><span>Profit</span><span>Taken by</span></div>' +
+    rows.join('') +
+    (list.length ? '' : '<div class="tiny muted" style="padding:4px 0">No profit was taken on this trade' + (live ? ' yet' : '') + '.</div>') +
+    '<div class="lt-mv-sum">' + sum.join('') + '</div></div>';
+};
+LT.movesSummaryLine = function (t) {
+  const mt = LT.moveTotals(t);
+  if (!mt.list.length) return '';
+  const man = mt.list.filter((m) => m.by === 'manual').length;
+  const auto = mt.list.length - man;
+  const parts = [];
+  if (man) parts.push(man + ' manual (' + usd(mt.tot.manual) + ')');
+  if (auto) parts.push(auto + ' auto (' + usd(Math.round((mt.tot.autoSecure + mt.tot.autoTp) * 100) / 100) + ')');
+  return '<div class="tiny muted">Profit taken ' + mt.list.length + ' time' + (mt.list.length === 1 ? '' : 's') + ': ' + parts.join(' · ') + ' — open History for the price at each move</div>';
+};
 LT.adminRate = function (ticker) {
   try { if (typeof INV.effectiveProfitPct === 'function') return Math.max(0, Number(INV.effectiveProfitPct(ticker)) || 0); } catch (e) {}
   const s = INV.stock && INV.stock(ticker);
@@ -2824,6 +2952,8 @@ LT.secureLocal = function (t, reason) {
   if (t.securedProfits.length > 100) t.securedProfits.length = 100;
   t.securedProfitCoins = Math.round(((Number(t.securedProfitCoins) || 0) + profit) * 100) / 100;
   t.securedProfitCount = (Number(t.securedProfitCount) || 0) + 1;
+  { const mv = LT.logMove(t, { price: p.price, entryBefore: t.entryPrice, amount: profit, levels: levels || 1, by: 'auto-secure', kind: 'secured' });
+    if (mv && t.securedProfits[0]) { t.securedProfits[0].moveFrom = mv.from; t.securedProfits[0].moveTo = mv.to; } }
   t.entryPrice = tpLvl > 0 ? LT.rebaseAfterTake(t, p.price, profit) : Math.round(p.price * 1e6) / 1e6;
   if (tpLvl > 0) t.tpMovesTaken = (Number(t.tpMovesTaken) || 0) + levels;
   t.moveCount = 0;
