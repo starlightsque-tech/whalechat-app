@@ -77,3 +77,32 @@ npm start
 
 Then in the browser: DevTools → Application → Service Workers → Offline, reload.
 The app must open, show the last portfolio/chat/prices, and still evaluate alerts.
+
+## Verifying Brevo for real
+
+`scripts/test-brevo.js` sends one actual B2B alert email through the same code
+path the alert watcher uses (`email.js` → `b2bAlert` template → Brevo).
+
+```bash
+BREVO_API_KEY=xkeysib-... npm run test:brevo -- --to=you@example.com
+```
+
+Expected output ends with `{ queued: 0, sent: 1, failed: 0 }`. The verified
+sender on this Brevo account is `whalechat1@gmail.com` (active); `MAIL_FROM`
+must be that address or `email.js` falls back to it.
+
+## Deploying
+
+The repo is the source of truth; `main` is what a host builds.
+
+```bash
+RENDER_API_KEY=rnd_... BREVO_API_KEY=xkeysib-... npm run deploy:render
+```
+
+The script finds (or creates) the `whalechat` web service, writes the runtime
+secrets into its environment, deploys `main`, follows the deploy and prints the
+`/api/health` summary — `email: true` confirms Brevo is live.
+
+If Render answers `402 billing_suspended`, the service cannot be created or
+deployed until the account's billing is settled; that is an account state, not a
+build failure.

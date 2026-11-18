@@ -17,7 +17,9 @@
     "test:b2b": "node scripts/test-b2b-desk.js",
     "verify:b2b": "node scripts/verify-b2b-links.mjs",
     "test:wc-invest": "node scripts/test-wc-invest.js",
-    "test:offline": "node scripts/test-offline.js"
+    "test:offline": "node scripts/test-offline.js",
+    "test:brevo": "node scripts/test-brevo.js",
+    "deploy:render": "node scripts/deploy-render.mjs"
   },
   "dependencies": {
     "web-push": "^3.6.7",
