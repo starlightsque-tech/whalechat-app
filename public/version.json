@@ -1,8 +1,8 @@
 {
-  "version": "3.47.3",
-  "build": "2026-11-18T22:32:00Z",
+  "version": "3.48.0",
+  "build": "2026-11-18T23:10:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.47.3 - Auto Buy/Sell final hardening: keeps registered push devices and the VAPID identity when a device re-seeds a freshly deployed server.",
-  "releasedAt": "2026-11-18T22:32:00Z",
+  "notes": "WhaleChat 3.48.0 - Offline-first device mode: full app pre-cache, on-device API cache, device-side buy/sell alerts with home/lock-screen notifications while offline, periodic background alert checks, and Brevo B2B alert email wired through Render env.",
+  "releasedAt": "2026-11-18T23:10:00Z",
   "minimum": "3.0.0"
 }

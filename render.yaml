@@ -6,6 +6,7 @@ services:
     buildCommand: node scripts/prepare-assets.js && npm install --omit=dev
     startCommand: node server.js
     healthCheckPath: /api/health
+    autoDeploy: true
     disk:
       name: whalechat-data
       mountPath: /var/data
@@ -15,8 +16,26 @@ services:
         value: /var/data
       - key: VAPID_EMAIL
         value: support@whalechat.app
+      - key: PUBLIC_URL
+        fromService:
+          type: web
+          name: whalechat
+          property: host
       # 3.46: admin sessions + encrypted provider keys (Render generates them once)
       - key: ADMIN_SESSION_SECRET
         generateValue: true
       - key: WC_ENCRYPTION_KEY
         generateValue: true
+      # 3.48: B2B auto buy/sell price-alert email (Brevo transactional API).
+      # Set the value in the Render dashboard — never commit the key.
+      - key: BREVO_API_KEY
+        sync: false
+      - key: MAIL_FROM
+        value: whalechat1@gmail.com
+      - key: MAIL_FROM_NAME
+        value: WhaleChat
+      # live quotes (optional — alerts still work on the last known price without it)
+      - key: FINNHUB_API_KEY
+        sync: false
+      - key: FINNHUB_MODE
+        value: live

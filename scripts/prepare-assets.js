@@ -60,6 +60,8 @@ try { const ps = require('./patch-server'); ps.patchConnections(require('path').
 
 /* 3. app modules owned by the repo ------------------------------------------- */
 const MODULES = [
+  /* offline-first must run first: it wraps fetch for the modules below */
+  { file: 'offline-first.js', marker: 'wc-offline-first' },
   { file: 'admin-auth.js', marker: 'wc-admin-auth' },
   { file: 'subscriptions.js', marker: 'wc-subs' },
   { file: 'tawk-control.js', marker: 'wc-tawk-control' },
@@ -121,6 +123,36 @@ try {
     }
   }
 } catch (e) { console.error('[app] module injection failed:', e.message); }
+
+/* 3b. offline manifest — every file the installed app needs with no network.
+   Built from what is actually on disk, so a new module is picked up without
+   anyone remembering to edit a list. --------------------------------------- */
+try {
+  const EXTRA = ['offline-manifest.json'];
+  const SKIP = /\.(b64|part\d+)$|\.apk$|^whalechat\.html\.part|^offline-manifest\.json$/i;
+  const walk = (dir, prefix, out) => {
+    for (const name of fs.readdirSync(dir)) {
+      const full = path.join(dir, name);
+      const rel = prefix ? prefix + '/' + name : name;
+      if (SKIP.test(name)) continue;
+      let st;
+      try { st = fs.statSync(full); } catch (e) { continue; }
+      if (st.isDirectory()) { walk(full, rel, out); continue; }
+      if (!st.size) continue;
+      if (!/\.(html|js|css|json|webmanifest|png|jpg|jpeg|svg|webp|ico|woff2?)$/i.test(name)) continue;
+      out.push('./' + rel);
+    }
+    return out;
+  };
+  const assets = walk(PUB, '', []);
+  const manifest = {
+    version: (() => { try { return JSON.parse(fs.readFileSync(path.join(PUB, 'release.json'), 'utf8')).version; } catch (e) { return null; } })(),
+    builtAt: new Date().toISOString(),
+    assets: assets.concat(EXTRA)
+  };
+  fs.writeFileSync(path.join(PUB, 'offline-manifest.json'), JSON.stringify(manifest) + '\n');
+  console.log('[offline] manifest lists ' + manifest.assets.length + ' file(s) for the installed app');
+} catch (e) { console.error('[offline] manifest failed:', e.message); }
 
 /* 4. single release lever ---------------------------------------------------- */
 try {
