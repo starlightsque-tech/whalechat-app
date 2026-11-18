@@ -162,7 +162,7 @@
         '<div class="tg-calc-row"><label>Price move (%)</label><input type="number" id="tgMove" value="2" step="0.1"/></div>' +
         '<div class="tg-calc-row"><label>Direction</label><select id="tgDir"><option value="1">LONG / Rise</option><option value="-1">SHORT / Fall</option></select></div>' +
         '<div class="tg-calc-out" id="tgStockOut"></div></div>' +
-        '<p class="tg-note">You own the position and trade the price movement; WhaleChat calculates and distributes every payout automatically. A trade fee of <b>' + feePct() + '%</b> is deducted when a stock trade is activated. Withdrawals carry their own fee; deposits are free. No hidden charges.</p>' +
+        '<p class="tg-note">You own the position and trade the price movement; WhaleChat calculates and distributes every payout automatically. A trade fee of <b>' + feePct() + '%</b> is taken out of the profit when a stock trade closes. Withdrawals carry their own fee; deposits are free. No hidden charges.</p>' +
         (g.s2 ? '<div class="tg-admin-note"><b>Admin note:</b> ' + esc(g.s2) + '</div>' : ''),
     };
   }
@@ -218,12 +218,12 @@
       id: 'payout', icon: 'wallet', title: '4. How Stock Trading And Payouts Work',
       body:
         '<p><b>Payout = Capital + Profit − WhaleChat trade fee.</b> Profit uses the leverage you selected for that trade; if you did not select one, the app uses the default <b>' + lev + 'x</b>.</p>' +
-        '<div class="tg-example"><b>How the price move % is calculated</b><p>WhaleChat tracks the real market price of every stock (Finnhub feed) and measures how far it has moved from your entry price:<br>' +
-        '<code>price move % = (current price − entry price) ÷ entry price × 100</code><br>' +
-        'Example: you open at <b>$100</b> and the price reaches <b>$125</b> → <code>(125 − 100) ÷ 100 = 0.25 = ' + pct(priceMove(100,125)) + '</code>. ' +
-        'Profit on a $100 trade at 1x: <code>' + money(closeSplit(100, priceMove(100,125), 1, 0).grossPnl) + '</code>. A Fall trade earns when the price drops instead.</p></div>' +
-        '<div class="tg-formula">price move % = (new price − old price) ÷ capital<br>profit per move = capital × move % × leverage; total profit = profit × number of moves<br>Take Profit / Stop Loss % are % of your capital: price level = entry ± capital × % ÷ leverage<br>' +
-        'payout = capital + profit − (capital × ' + fee + '%)</div>' +
+        '<div class="tg-example"><b>How the price move % is calculated</b><p>WhaleChat tracks the real market price of every stock live (Finnhub feed) and recalculates your trade on every price change:<br>' +
+        '<code>price move % = (new price − price when the trade started) × capital × stock profit rate %</code><br>' +
+        'The stock profit rate is set by the admin for each stock. Example (rate 1.5%): $50 capital, you open at <b>$100</b> and the price moves to <b>$125</b> → <code>(125 − 100) × 50 × 1.5% = +18.75%</code>. A Fall trade earns when the price drops instead.</p></div>' +
+        '<div class="tg-formula">price move % = (new price − entry price) × capital × stock profit rate %<br>profit per move = capital × move % × leverage; total profit = profit × number of moves<br>A trade that ends on its timer pays a single move (no moves multiplier)<br>' +
+        'payout = capital + total profit − (capital × ' + fee + '%)</div>' +
+        (function(){var per=50*0.1875*5,tot=per*5,x=closeSplit(50,18.75*5,5,fee);return '<div class="tg-formula"><b>Gain trade</b> · capital $50, price move +18.75%, 5x leverage, 5 moves<br>profit per move = 50 × (+18.75%) × 5 = $' + per.toFixed(3) + '<br>total profit = $' + per.toFixed(3) + ' × 5 = $' + tot.toFixed(3) + '<br>fee = $50 × ' + fee + '% = ' + money(x.fee) + '<br>payout = $50 + $' + tot.toFixed(3) + ' − ' + money(x.fee) + ' = <b>$' + (50 + tot - x.fee).toFixed(3) + '</b><br>→ ' + money(x.capital) + ' back to Trade capital, $' + (tot - x.fee).toFixed(3) + ' to Profit balance</div>';})() +
         '<table class="tg-table"><thead><tr><th>Capital</th><th>Leverage</th><th>Move</th><th>Profit</th></tr></thead><tbody>' +
         '<tr><td>$20</td><td>3x</td><td>+2%</td><td class="up">+' + money(closeSplit(20,2,3,0).grossPnl) + '</td></tr>' +
         '<tr><td>$20</td><td>' + lev + 'x (default)</td><td>+2%</td><td class="up">+' + money(closeSplit(20,2,lev,0).grossPnl) + '</td></tr>' +
@@ -232,13 +232,12 @@
         '<tr><td>$500</td><td>3x</td><td>+2%</td><td class="up">+' + money(closeSplit(500,2,3,0).grossPnl) + '</td></tr>' +
         '<tr><td>$500</td><td>' + lev + 'x (default)</td><td>+2%</td><td class="up">+' + money(500 * 0.02 * lev) + '</td></tr>' +
         '</tbody></table>' +
-        (function(){var x=closeSplit(20,5,lev,fee);return '<div class="tg-formula"><b>Gain trade</b> · capital $20, move +5%, ' + lev + 'x<br>profit = 20 × (+5%) × ' + lev + ' = ' + money(x.grossPnl) + '<br>fee = $20 × ' + fee + '% = ' + money(x.fee) + '<br>payout = $20 + ' + money(x.grossPnl) + ' − ' + money(x.fee) + ' = <b>' + money(x.payout) + '</b><br>→ ' + money(x.capital) + ' back to Trade capital, ' + money(x.profit) + ' to Profit balance</div>';})() +
         (function(){var x=closeSplit(20,-5,lev,fee);return '<div class="tg-formula"><b>Loss trade</b> · capital $20, move −5%, ' + lev + 'x<br>loss = 20 × (−5%) × ' + lev + ' = −' + money(x.loss) + '<br>fee = $20 × ' + fee + '% = ' + money(x.fee) + '<br>payout = $20 − ' + money(x.loss) + ' − ' + money(x.fee) + ' = <b>' + money(x.payout) + '</b><br>→ ' + money(x.leftover) + ' to Leftover capital</div>';})() +
         '<p><b>Buying stocks:</b> a purchase is paid from your Trade capital balance first, then from your Leftover capital if the capital balance is not enough. All balances and payouts are shown in USD.</p>' +
         '<p>On a gain the capital returns to your Trade capital balance and the profit minus the fee goes to your Profit balance. On a loss the remaining payout goes to your Leftover capital. Bot trading uses the same formula.</p>' +
         '<p>Loss is capped only when <b>Take Loss</b> is set. Once the loss reaches the limit, the trade stops automatically and the remaining capital is returned. If no Take Loss is set, price can move against the trade until the capital is exhausted and the trade closes with zero returned. Take Loss limits the loss to the percentage or amount you chose — for example, a −10% Take Loss on $100 stops at about −$10.</p>' +
         '<p><b>Auto Secure / Take Profit bot:</b> a subscribed bot watches your active trades in real time, locks in profit when a trade is in the green and keeps it available for you to claim. You do not need to watch the screen to secure a profit.</p>' +
-        '<p class="tg-note">Payout timing is instant, in dollars, to the portfolio where the trade happened (capital to Trade capital, profit to Profit balance, remainder after a loss to Leftover capital). The stock trade fee is <b>' + fee + '%</b> of the capital and is deducted from your Trade capital balance immediately when the trade opens. Withdrawal fees apply only to withdrawals; deposits are free. No hidden fees.</p>' +
+        '<p class="tg-note">Payout timing is instant, in dollars, to the portfolio where the trade happened (capital to Trade capital, profit to Profit balance, remainder after a loss to Leftover capital). The stock trade fee is <b>' + fee + '%</b> of the capital and is taken out of the profit when the trade closes (your full capital goes back to Trade capital). Withdrawal fees apply only to withdrawals; deposits are free. No hidden fees.</p>' +
         '<p class="tg-note"><b>Risk levels:</b> low-risk leverage 1x–5x. High-risk leverage 10x–100x (higher potential profit and higher potential loss). You choose per trade; the default is ' + lev + 'x.</p>' +
         '<div class="tg-live-assets"><b>Active 24/7 assets (' + assets().length + '):</b><div>' + assets().map(function (a) { return '<span>' + esc(a) + '</span>'; }).join('') + '</div></div>' +
         (g.s4 ? '<div class="tg-admin-note"><b>Admin note:</b> ' + esc(g.s4) + '</div>' : ''),
