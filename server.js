@@ -75,7 +75,9 @@ const b2bAlerts = createB2BAlertWatcher ? createB2BAlertWatcher({
   quotes: () => market.quotes || {},
   email,
   appUrl: () => PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || ('http://localhost:' + PORT),
-  everyMs: Number(process.env.B2B_ALERT_MS || 15000)
+  everyMs: Number(process.env.B2B_ALERT_MS || 15000),
+  /* Auto Buy/Sell checks every live price tick so a buy/sell target is never skipped */
+  onQuote: (fn) => { try { if (market && typeof market.onQuote === 'function') market.onQuote(fn); } catch (e) {} }
 }) : null;
 
 let pool = null;
