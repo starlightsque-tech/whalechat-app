@@ -60,6 +60,7 @@ try { const ps = require('./patch-server'); ps.patchConnections(require('path').
 
 /* 3. app modules owned by the repo ------------------------------------------- */
 const MODULES = [
+  { file: 'admin-auth.js', marker: 'wc-admin-auth' },
   { file: 'subscriptions.js', marker: 'wc-subs' },
   { file: 'tawk-control.js', marker: 'wc-tawk-control' },
   { file: 'live-trade.js', marker: 'wc-live-trade' },
@@ -90,7 +91,9 @@ const MODULES = [
   { file: 'typography.js', marker: 'wc-typography' },
   { file: 'session-guard.js', marker: 'wc-session-guard' },
   { file: 'scroll-stability.js', marker: 'wc-scroll-stability' },
-  { file: 'apk-download.js', marker: 'wc-apk-download' }
+  { file: 'apk-download.js', marker: 'wc-apk-download' },
+  { file: 'market-admin-ui.js', marker: 'wc-market-admin-ui' },
+  { file: 'shares-admin-extra.js', marker: 'wc-shares-admin-extra' }
 ];
 try {
   let page = fs.readFileSync(APP, 'utf8');

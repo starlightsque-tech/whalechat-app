@@ -15,3 +15,8 @@ services:
         value: /var/data
       - key: VAPID_EMAIL
         value: support@whalechat.app
+      # 3.46: admin sessions + encrypted provider keys (Render generates them once)
+      - key: ADMIN_SESSION_SECRET
+        generateValue: true
+      - key: WC_ENCRYPTION_KEY
+        generateValue: true

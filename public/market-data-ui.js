@@ -20,7 +20,6 @@
   function sourceLabel(q) {
     if (!q) return '';
     if (q.delayed) return 'Delayed Data';
-    if (q.source === 'demo') return 'Demo data';
     return 'Live · ' + ({ binance: 'Binance', finnhub: 'Finnhub', twelvedata: 'Twelve Data' }[q.source] || q.source);
   }
   function $id(i) { return document.getElementById(i); }
@@ -168,22 +167,10 @@
   function adminOnly() { return '<div class="card empty"><h3>Admin access only</h3></div>'; }
   function wire() {
     if (typeof VIEWS === 'undefined') return false;
-    var prevAdmin = VIEWS.admin;
-    VIEWS.admin = function (parts, params) {
-      if ((parts[1] || '') === 'market-data') {
-        var u = me(); if (!u || u.role !== 'admin') return adminOnly();
-        setTimeout(mountAdmin, 0);
-        return '<div id="mdAdminWrap"><div class="card"><div class="tiny muted">Loading…</div></div></div>';
-      }
-      return prevAdmin ? prevAdmin(parts, params) : '';
-    };
+    /* 3.46: the admin provider page moved to Admin -> Market Controls
+       (market-admin-ui.js), which stores keys encrypted and logs changes */
     VIEWS.markets = function () { setTimeout(mountMarkets, 0); return marketsHtml(); };
     VIEWS.trade = function (parts) { var s = decodeURIComponent(parts[1] || 'BTCUSDT').toUpperCase().replace(/[^A-Z0-9.]/g, ''); setTimeout(mountTrade, 0); return tradeHtml(s); };
-    try {
-      if (typeof ADMIN_NAV !== 'undefined' && !ADMIN_NAV.some(function (n) { return n.key === 'admin-market-data'; })) {
-        ADMIN_NAV.push({ key: 'admin-market-data', label: 'Market Data', icon: 'shield', href: '#/admin/market-data' });
-      }
-    } catch (e) {}
     return true;
   }
   if (!wire()) { var n = 0, t = setInterval(function () { if (wire() || ++n > 40) clearInterval(t); }, 250); }
