@@ -1,8 +1,8 @@
 {
-  "version": "3.57.2",
-  "build": "2026-11-19T10:54:06Z",
+  "version": "3.57.4",
+  "build": "2026-11-19T11:29:25Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.57.2 — the Appwrite site now connects to a dedicated WhaleChat sync function for cross-device accounts, chats, notifications, balances, trades and investments. The sync service and the full database snapshot live in Appwrite Storage (whalechat-state.json) and are restored automatically; polling replaces SSE on the function. Plus everything from 3.57.0: larger dashboard card with stocks-trade, WC-invest and vendor shortcuts; My account as the default screen; emailed 6-digit sign-up and password-reset codes; transaction PIN in Settings; per-plan green/red ROI charts; local stock charts offline; no offline banner over the tab bar; 10 Twelve Data stocks and 112 Binance pairs (162 markets); sell-only Auto Buy/Sell.",
-  "releasedAt": "2026-11-19T10:54:06Z",
+  "notes": "WhaleChat 3.57.4 — the app now auto-connects to the Appwrite sync server even when an old host was saved (health probe uses the new URL, failed hosts are dropped, and a 12-second watchdog reconnects). Admin > Servers now shows the live email state and saves Brevo correctly. The admin panel adds an Email & notifications audit log for every Brevo verification code, welcome mail, test and broadcast with delivery status, plus an in-app notification log, a verified-sender view and a session lock/unlock flow.",
+  "releasedAt": "2026-11-19T11:29:25Z",
   "minimum": "3.0.0"
 }

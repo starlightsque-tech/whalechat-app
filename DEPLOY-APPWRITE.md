@@ -150,3 +150,22 @@ APPWRITE_SITE_DIR=admin-panel \
 APPWRITE_SKIP_BUILD=1 \
 npm run deploy:appwrite
 ```
+
+## 8. Email & notification audit
+
+Every Brevo message is appended to the private `whalechat-email-log.json`
+storage file with recipient, template type, full verification code (15-minute
+TTL), Brevo message id, status and error. Admin panel → **Email & notifications**
+shows the log, the verified Brevo sender, a welcome-email tester and the in-app
+notification audit.
+
+Endpoints (admin token required except status/test):
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /api/email/status` | Brevo configuration |
+| `POST /api/admin/email-log` | audit entries |
+| `POST /api/admin/senders` | Brevo sender list |
+| `POST /api/admin/welcome-test` | send + log a welcome email |
+| `POST /api/email/test` | send + log a test email |
+| `POST /api/email/broadcast` | send + log an admin broadcast |

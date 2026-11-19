@@ -24,7 +24,9 @@ const BUCKET = process.env.WC_BUCKET || 'whalechat';
 const STATE_FILE = 'whalechat-state';
 const CODES_FILE = 'whalechat-codes';
 const MAIL_FILE = 'whalechat-mail';
-const VERSION = '3.57.3';
+const MAIL_LOG_FILE = 'whalechat-email-log';
+const NOTIF_LOG_LIMIT = 400;
+const VERSION = '3.57.4';
 const crypto = require('crypto');
 
 const CORS = {
@@ -147,7 +149,18 @@ async function readMailConfig() {
   };
 }
 
+async function appendMailLog(entry) {
+  try {
+    const cur = await readJsonFile(MAIL_LOG_FILE, { entries: [] });
+    const list = Array.isArray(cur.entries) ? cur.entries : [];
+    list.unshift(Object.assign({ id: 'em_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), at: Date.now() }, entry || {}));
+    if (list.length > NOTIF_LOG_LIMIT) list.length = NOTIF_LOG_LIMIT;
+    await writeJsonFile(MAIL_LOG_FILE, 'whalechat-email-log.json', { entries: list, updatedAt: Date.now() });
+  } catch (e) { /* logging must never break sending */ }
+}
+
 async function sendMail(cfg, to, subject, html, text) {
+  const out = { ok: false, provider: cfg.brevoKey ? 'brevo' : cfg.resendKey ? 'resend' : 'none', messageId: '', error: '' };
   if (cfg.brevoKey) {
     const r = await apiRaw('https://api.brevo.com/v3/smtp/email', {
       method: 'POST', headers: { 'api-key': cfg.brevoKey, 'content-type': 'application/json' },
@@ -156,18 +169,38 @@ async function sendMail(cfg, to, subject, html, text) {
         to: [{ email: to }], subject, htmlContent: html, textContent: text || undefined
       })
     });
-    return r.ok;
+    out.ok = r.ok;
+    if (r.json && r.json.messageId) out.messageId = r.json.messageId;
+    if (!r.ok) out.error = (r.json && (r.json.message || r.json.error)) || 'Brevo rejected the message';
+    return out;
   }
   if (cfg.resendKey) {
     const r = await apiRaw('https://api.resend.com/emails', {
       method: 'POST', headers: { authorization: 'Bearer ' + cfg.resendKey, 'content-type': 'application/json' },
       body: JSON.stringify({ from: cfg.fromName + ' <' + cfg.from + '>', to: [to], subject, html, text })
     });
-    return r.ok;
+    out.ok = r.ok;
+    if (r.json && r.json.id) out.messageId = r.json.id;
+    if (!r.ok) out.error = (r.json && r.json.message) || 'Resend rejected the message';
+    return out;
   }
-  return false;
+  out.error = 'Email server is not configured';
+  return out;
 }
 
+async function sendCodeEmail(to, code, purposeLabel) {
+  const cfg = await readMailConfig();
+  const subject = 'Your WhaleChat verification code: ' + code;
+  const html = '<div style="font-family:system-ui,sans-serif;background:#04101a;color:#e9f4f9;padding:28px;border-radius:14px">' +
+    '<h2 style="margin:0 0 8px">WhaleChat verification</h2>' +
+    '<p style="color:#8ba4b6">Use this code to verify ' + purposeLabel + '. It expires in 15 minutes.</p>' +
+    '<div style="font-size:32px;letter-spacing:10px;font-weight:800;color:#2ee6c9;background:#0b1d29;border:1px dashed #2ee6c9;border-radius:12px;padding:16px;text-align:center;margin:18px 0">' + code + '</div>' +
+    '<p style="color:#8ba4b6;font-size:12px">If you did not request this, ignore this email and never share the code.</p></div>';
+  const text = 'Your WhaleChat verification code is ' + code + ' (valid 15 minutes).';
+  const res = await sendMail(cfg, to, subject, html, text);
+  await appendMailLog({ type: 'verification', to, subject, code, purpose: purposeLabel, status: res.ok ? 'sent' : 'failed', provider: res.provider, messageId: res.messageId, error: res.error, from: cfg.from });
+  return res.ok;
+}
 async function sendCodeEmail(to, code, purposeLabel) {
   const cfg = await readMailConfig();
   const subject = 'Your WhaleChat verification code: ' + code;
@@ -180,7 +213,12 @@ async function sendCodeEmail(to, code, purposeLabel) {
   return sendMail(cfg, to, subject, html, text);
 }
 async function apiRaw(url, opts) {
-  try { const r = await fetch(url, opts); return { ok: r.ok, status: r.status }; } catch (e) { return { ok: false, status: 0 }; }
+  try {
+    const r = await fetch(url, opts);
+    const text = await r.text();
+    let json = null; try { json = text ? JSON.parse(text) : null; } catch (e) {}
+    return { ok: r.ok, status: r.status, json, text };
+  } catch (e) { return { ok: false, status: 0, json: null, text: '', error: e.message }; }
 }
 
 module.exports = async ({ req, res, log, error }) => {
@@ -308,7 +346,9 @@ module.exports = async ({ req, res, log, error }) => {
 
     if (path === '/api/health' || path === '/') {
       const st = await readState();
-      return res.json({ ok: true, app: 'whalechat', version: VERSION, provider: 'appwrite-function', stream: false, rev: st.rev || 0, users: (st.db && st.db.users) ? st.db.users.length : 0, storage: 'appwrite', email: !!(process.env.RESEND_API_KEY || process.env.BREVO_API_KEY) }, 200, CORS);
+      let mailOk = false;
+      try { const mc = await readMailConfig(); mailOk = !!(mc.brevoKey || mc.resendKey); } catch (e) {}
+      return res.json({ ok: true, app: 'whalechat', version: VERSION, provider: 'appwrite-function', stream: false, rev: st.rev || 0, users: (st.db && st.db.users) ? st.db.users.length : 0, storage: 'appwrite', email: mailOk }, 200, CORS);
     }
 
     if (path === '/api/state' && method === 'GET') {
@@ -381,6 +421,44 @@ module.exports = async ({ req, res, log, error }) => {
       return res.json({ ok: true, verifiedAt: Date.now() }, 200, CORS);
     }
 
+    if (path === '/api/admin/email-log' && method === 'POST') {
+      const payload = verifyToken(body.token);
+      if (!payload) return res.json({ ok: false, error: 'unauthorised' }, 401, CORS);
+      const cur = await readJsonFile(MAIL_LOG_FILE, { entries: [] });
+      const entries = Array.isArray(cur.entries) ? cur.entries : [];
+      return res.json({ ok: true, entries: entries.slice(0, Math.max(1, Math.min(400, Number(body.limit) || 200))) }, 200, CORS);
+    }
+
+    if (path === '/api/admin/senders' && method === 'POST') {
+      const payload = verifyToken(body.token);
+      if (!payload) return res.json({ ok: false, error: 'unauthorised' }, 401, CORS);
+      const cfg = await readMailConfig();
+      if (!cfg.brevoKey) return res.json({ ok: true, configured: false, senders: [], provider: '' }, 200, CORS);
+      const r = await apiRaw('https://api.brevo.com/v3/senders', { method: 'GET', headers: { 'api-key': cfg.brevoKey, accept: 'application/json' } });
+      const senders = (r.json && r.json.senders) || [];
+      return res.json({ ok: r.ok, configured: true, provider: 'brevo', senders: senders.map(function (x) { return { id: x.id, name: x.name, email: x.email, active: !!x.active }; }), error: r.ok ? '' : (r.json && r.json.message) || '' }, 200, CORS);
+    }
+
+    if (path === '/api/admin/welcome-test' && method === 'POST') {
+      const payload = verifyToken(body.token);
+      if (!payload) return res.json({ ok: false, error: 'unauthorised' }, 401, CORS);
+      const to =String(body.to || '').trim();
+      if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(to)) return res.json({ ok: false, error: 'invalid_email', message: 'Enter a valid recipient' }, 400, CORS);
+      const cfg = await readMailConfig();
+      if (!cfg.brevoKey && !cfg.resendKey) return res.json({ ok: false, error: 'not_configured', message: 'Connect Brevo first' }, 400, CORS);
+      const name = String(body.name || 'there').slice(0, 60);
+      const subject = 'Welcome to WhaleChat 🐋';
+      const html = '<div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#04101a;color:#e9f4f9;padding:32px;border-radius:16px;max-width:560px;margin:auto">' +
+        '<div style="font-size:28px;font-weight:900;color:#2ee6c9">WhaleChat</div>' +
+        '<h2 style="margin:14px 0 8px">Welcome aboard, ' + name + ' 🐋</h2>' +
+        '<p style="color:#8ba4b6;line-height:1.7">Your WhaleChat account is ready. Chat, shop, trade and invest — all in one place. This message also confirms that the WhaleChat email server (Brevo) is delivering mail correctly.</p>' +
+        '<a href="https://whalechat.appwrite.network/whalechat.html" style="display:inline-block;margin-top:16px;background:#2ee6c9;color:#03221d;text-decoration:none;font-weight:800;padding:12px 20px;border-radius:10px">Open WhaleChat</a>' +
+        '<p style="color:#63798a;font-size:11px;margin-top:22px">Sent by WhaleChat · whalechat1@gmail.com via Brevo</p></div>';
+      const out = await sendMail(cfg, to, subject, html, 'Welcome to WhaleChat, ' + name + '! Your account is ready.');
+      await appendMailLog({ type: 'welcome', to, subject, status: out.ok ? 'sent' : 'failed', provider: out.provider, messageId: out.messageId, error: out.error, from: cfg.from });
+      return res.json(out.ok ? { ok: true, messageId: out.messageId, to, provider: out.provider } : { ok: false, error: 'send_failed', message: out.error || 'Brevo refused the message' }, out.ok ? 200 : 502, CORS);
+    }
+
     if (path === '/api/email/status' && method === 'GET') {
       const cfg = await readMailConfig();
       return res.json({ ok: true, configured: !!(cfg.brevoKey || cfg.resendKey), provider: cfg.brevoKey ? 'brevo' : cfg.resendKey ? 'resend' : '', from: cfg.from, fromName: cfg.fromName, queued: 0, sent: 0, host: '', port: '' }, 200, CORS);
@@ -413,10 +491,11 @@ module.exports = async ({ req, res, log, error }) => {
       if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(to)) return res.json({ ok: false, error: 'invalid_email' }, 400, CORS);
       const cfg = await readMailConfig();
       if (!cfg.brevoKey && !cfg.resendKey) return res.json({ ok: false, error: 'not_configured', message: 'Connect Brevo first' }, 400, CORS);
-      const ok = await sendMail(cfg, to, 'WhaleChat email server is working',
+      const out = await sendMail(cfg, to, 'WhaleChat email server is working',
         '<div style="font-family:system-ui,sans-serif"><h2>WhaleChat email is connected</h2><p>This test confirms mail delivery from <b>' + cfg.from + '</b> via ' + (cfg.brevoKey ? 'Brevo' : 'Resend') + '.</p></div>',
         'WhaleChat email is connected.');
-      return res.json(ok ? { ok: true } : { ok: false, error: 'send_failed', message: 'Brevo refused the message' }, ok ? 200 : 502, CORS);
+      await appendMailLog({ type: 'test', to, subject: 'WhaleChat email server is working', status: out.ok ? 'sent' : 'failed', provider: out.provider, messageId: out.messageId, error: out.error, from: cfg.from });
+      return res.json(out.ok ? { ok: true, messageId: out.messageId } : { ok: false, error: 'send_failed', message: out.error || 'Brevo refused the message' }, out.ok ? 200 : 502, CORS);
     }
 
     if (path === '/api/email/broadcast' && method === 'POST') {
@@ -430,7 +509,11 @@ module.exports = async ({ req, res, log, error }) => {
       const html = String(body.html || '');
       const users = (st.db && st.db.users || []).filter((u) => u && u.email && !u.banned).slice(0, 20);
       let sent = 0;
-      for (const u of users) { if (await sendMail(cfg, u.email, subject, html, String(body.text || ''))) sent++; }
+      for (const u of users) {
+        const res = await sendMail(cfg, u.email, subject, html, String(body.text || ''));
+        await appendMailLog({ type: 'broadcast', to: u.email, subject, status: res.ok ? 'sent' : 'failed', provider: res.provider, messageId: res.messageId, error: res.error, from: cfg.from, userId: u.id });
+        if (res.ok) sent++;
+      }
       return res.json({ ok: true, sent, queued: users.length - sent }, 200, CORS);
     }
 

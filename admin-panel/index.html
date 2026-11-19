@@ -130,6 +130,7 @@
       <button data-view="users"><span class="dot"></span> Users</button>
       <button data-view="money"><span class="dot"></span> Money &amp; orders</button>
       <button data-view="trading"><span class="dot"></span> Trading</button>
+      <button data-view="email"><span class="dot"></span> Email &amp; notifications</button>
       <button data-view="security"><span class="dot"></span> Account security</button>
     </nav>
     <div class="sidefoot">WhaleChat Admin<br/>v3.57 · Appwrite sync<br/><a href="https://whalechat.appwrite.network" target="_blank" rel="noopener">Open the app ↗</a></div>
@@ -139,6 +140,7 @@
       <div><h1 id="pageTitle">Overview</h1><p id="pageSub">Live snapshot from the WhaleChat sync service.</p></div>
       <div class="who"><b id="whoEmail">—</b><br/><span id="whoRole">Administrator</span><br/>
         <button class="btn ghost sm" id="refreshBtn" style="margin-top:8px">Refresh</button>
+        <button class="btn ghost sm" id="lockBtn" style="margin-top:8px">Lock session</button>
         <button class="btn danger sm" id="logoutBtn" style="margin-top:8px">Sign out</button>
       </div>
     </div>
@@ -170,6 +172,25 @@
       <div class="cards" id="tradeCards"></div>
       <div class="panel"><h2>Open positions</h2><p class="hint">Stock and bot trading positions across all users.</p><div class="scroll"><table><thead><tr><th>User</th><th>Ticker</th><th>Shares</th><th>Avg price</th><th>Value</th></tr></thead><tbody id="holdingRows"></tbody></table></div></div>
       <div class="panel"><h2>Active investment plans</h2><p class="hint">WC-Investing plans currently counting.</p><div class="scroll"><table><thead><tr><th>User</th><th>Plan</th><th>Capital</th><th>Progress</th><th>Projected ROI</th></tr></thead><tbody id="planRows"></tbody></table></div></div>
+    </section>
+
+    <section id="view-email" class="hidden">
+      <div class="cards" id="emailCards"></div>
+      <div class="panel">
+        <div class="between"><div><h2>Brevo sender</h2><p class="hint">The verified sender used for every verification code, welcome mail and broadcast.</p></div><span class="pill" id="senderPill">—</span></div>
+        <div id="senderList" class="note">Checking Brevo senders…</div>
+        <div class="grid2" style="margin-top:14px">
+          <div><form id="welcomeForm"><label>Send a welcome email to</label><input class="inp" id="welcomeTo" type="email" placeholder="you@email.com"/><button class="btn sm" type="submit" style="margin-top:10px">Send welcome email</button></form></div>
+          <div><label>Test the connection</label><input class="inp" id="mailTestTo" type="email" placeholder="you@email.com"/><button class="btn ghost sm" id="mailTestBtn" style="margin-top:10px">Send test email</button></div>
+        </div>
+        <div id="mailMsg" class="note" style="margin-top:10px"></div>
+      </div>
+      <div class="panel"><div class="between"><div><h2>Email audit log</h2><p class="hint">Every message sent through Brevo, including verification codes and broadcasts, with delivery status.</p></div><button class="btn ghost sm" id="reloadEmailLog">Refresh log</button></div>
+        <div class="scroll"><table><thead><tr><th>Time</th><th>Type</th><th>Recipient</th><th>Subject / code</th><th>Status</th><th>Brevo ID</th></tr></thead><tbody id="emailLogRows"></tbody></table></div>
+      </div>
+      <div class="panel"><div class="between"><div><h2>In-app notification audit</h2><p class="hint">Notifications created for users by the app and by admin actions.</p></div><button class="btn ghost sm" id="reloadNotifs">Refresh</button></div>
+        <div class="scroll"><table><thead><tr><th>Time</th><th>User</th><th>Title</th><th>Message</th><th>Read</th></tr></thead><tbody id="notifRows"></tbody></table></div>
+      </div>
     </section>
 
     <section id="view-security" class="hidden">
@@ -242,6 +263,7 @@
     btn.disabled = false; btn.textContent = 'Sign in to admin';
     if (!res.ok) { err.textContent = res.message || 'Sign in failed'; err.style.display = 'block'; return; }
     saveSession(res.token, res.admin);
+    try { sessionStorage.setItem('wc.admin.lastEmail', res.admin.email || ''); } catch (e) {}
     enterApp();
   });
   $('toForgot').onclick = function () { show('forgot'); $('loginErr').style.display = 'none'; };
@@ -265,6 +287,9 @@
   function enterApp() {
     if (!state.token) return show('login');
     show('app');
+    $('loginTitle').textContent = 'Administrator sign in';
+    $('loginSub').textContent = 'Use your WhaleChat admin email or username and password.';
+    if (typeof resetIdle === 'function') resetIdle();
     if (state.admin) {
       $('whoEmail').textContent = state.admin.email || '';
       $('secEmail').textContent = state.admin.email || '—';
@@ -397,12 +422,13 @@
     if (!b) return;
     if (b.hasAttribute('data-view')) {
       state.view = b.getAttribute('data-view');
-      ['dash', 'users', 'money', 'trading', 'security'].forEach(function (v) {
+      ['dash', 'users', 'money', 'trading', 'email', 'security'].forEach(function (v) {
         $('view-' + v).classList.toggle('hidden', v !== state.view);
       });
       Array.prototype.forEach.call(document.querySelectorAll('.nav button'), function (x) { x.classList.toggle('on', x === b); });
-      var titles = { dash: ['Overview', 'Live snapshot from the WhaleChat sync service.'], users: ['Users', 'Accounts, verification and moderation.'], money: ['Money & orders', 'Deposits, withdrawals and marketplace orders.'], trading: ['Trading', 'Positions and active investment plans.'], security: ['Account security', 'Change the admin email, password and recovery key.'] };
+      var titles = { dash: ['Overview', 'Live snapshot from the WhaleChat sync service.'], users: ['Users', 'Accounts, verification and moderation.'], money: ['Money & orders', 'Deposits, withdrawals and marketplace orders.'], trading: ['Trading', 'Positions and active investment plans.'], email: ['Email & notifications', 'Brevo delivery audit and in-app notification log.'], security: ['Account security', 'Change the admin email, password and recovery key.'] };
       $('pageTitle').textContent = titles[state.view][0]; $('pageSub').textContent = titles[state.view][1];
+      if (state.view === 'email') loadEmailAudit();
       return;
     }
     if (b.hasAttribute('data-verify')) {
@@ -429,6 +455,69 @@
     var u = userById(id); if (u) Object.assign(u, flags);
     renderAll(); toast('Saved', 'ok'); return true;
   }
+
+  /* --------------------------- email audit ---------------------------- */
+  function renderNotifications() {
+    var db = state.db || {};
+    var list = (db.notifications || []).slice().sort(function (a, b) { return n(b.createdAt) - n(a.createdAt); });
+    $('notifRows').innerHTML = list.slice(0, 150).map(function (x) {
+      return '<tr><td>' + when(x.createdAt) + '</td><td>' + esc(displayUser(x.userId)) + '</td><td><b>' + esc(x.title || '') + '</b></td><td class="note">' + esc(x.body || '') + '</td><td>' + (x.read ? pill('Read', 'ok') : pill('Unread', 'warn')) + '</td></tr>';
+    }).join('') || '<tr><td colspan="5" class="note">No in-app notifications yet.</td></tr>';
+  }
+
+  async function loadEmailAudit() {
+    renderNotifications();
+    var log = await post('/api/admin/email-log', { token: state.token, limit: 250 });
+    if (!log.ok) { $('emailLogRows').innerHTML = '<tr><td colspan="6" class="note">Could not load the audit log.</td></tr>'; return; }
+    var entries = log.entries || [];
+    var sent = entries.filter(function (e) { return e.status === 'sent'; }).length;
+    var failed = entries.filter(function (e) { return e.status === 'failed'; }).length;
+    $('emailCards').innerHTML = [
+      ['Email provider', 'Brevo', 'transactional API'],
+      ['Messages logged', entries.length, 'audit entries'],
+      ['Delivered', sent, 'accepted by Brevo'],
+      ['Failed', failed, 'needs attention']
+    ].map(function (c, i) { return '<div class="card ' + (i === 3 && failed ? 'warn' : i === 2 ? 'ok' : '') + '"><div class="k">' + esc(c[0]) + '</div><div class="v">' + esc(c[1]) + '</div><div class="d">' + esc(c[2]) + '</div></div>'; }).join('');
+    $('emailLogRows').innerHTML = entries.map(function (e) {
+      var detail = e.code ? 'Code ' + e.code + ' · ' + (e.purpose || 'verification') : (e.subject || '—');
+      var st = e.status === 'sent' ? pill('Delivered', 'ok') : pill('Failed', 'bad');
+      return '<tr><td>' + when(e.at) + '</td><td>' + pill(e.type || 'email', e.type === 'broadcast' ? 'admin' : '') + '</td><td>' + esc(e.to || '—') + '</td><td>' + esc(detail) + (e.error ? '<div class="note" style="color:#ff9aaa">' + esc(e.error) + '</div>' : '') + '</td><td>' + st + '</td><td class="note">' + esc(e.messageId || '—') + '</td></tr>';
+    }).join('') || '<tr><td colspan="6" class="note">No email has been sent yet.</td></tr>';
+
+    var snd = await post('/api/admin/senders', { token: state.token });
+    if (snd.ok && snd.senders && snd.senders.length) {
+      var active = snd.senders.filter(function (x) { return x.active; });
+      $('senderPill').textContent = active.length + ' active';
+      $('senderPill').className = 'pill ok';
+      $('senderList').innerHTML = snd.senders.map(function (x) { return '<div class="sec-item" style="padding:8px 0"><div><b>' + esc(x.name || 'WhaleChat') + '</b><p>' + esc(x.email) + '</p></div>' + (x.active ? pill('Active · verified', 'ok') : pill('Inactive', 'warn')) + '</div>'; }).join('');
+    } else {
+      $('senderPill').textContent = snd.configured ? 'No sender' : 'Not connected';
+      $('senderPill').className = 'pill warn';
+      $('senderList').textContent = snd.error || 'Connect Brevo and add a sender in the Brevo dashboard.';
+    }
+  }
+
+  document.getElementById('reloadEmailLog').onclick = loadEmailAudit;
+  document.getElementById('reloadNotifs').onclick = renderNotifications;
+  document.getElementById('welcomeForm').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    var to = $('welcomeTo').value.trim();
+    if (!to) return toast('Enter a recipient', 'err');
+    $('mailMsg').textContent = 'Sending welcome email…';
+    var r = await post('/api/admin/welcome-test', { token: state.token, to: to, name: to.split('@')[0] });
+    $('mailMsg').textContent = r.ok ? 'Welcome email accepted by Brevo · ID ' + (r.messageId || '—') : 'Failed: ' + (r.message || r.error || 'unknown');
+    toast(r.ok ? 'Welcome email sent' : 'Could not send', r.ok ? 'ok' : 'err');
+    loadEmailAudit();
+  });
+  document.getElementById('mailTestBtn').onclick = async function () {
+    var to = $('mailTestTo').value.trim();
+    if (!to) return toast('Enter a recipient', 'err');
+    $('mailMsg').textContent = 'Sending test email…';
+    var r = await post('/api/email/test', { to: to });
+    $('mailMsg').textContent = r.ok ? 'Test email accepted by Brevo' : 'Failed: ' + (r.message || r.error || 'unknown');
+    toast(r.ok ? 'Test email sent' : 'Could not send', r.ok ? 'ok' : 'err');
+    loadEmailAudit();
+  };
 
   /* ----------------------------- security ----------------------------- */
   function editField(which) {
@@ -487,7 +576,28 @@
 
   $('refreshBtn').onclick = loadData;
   function logout() { clearSession(); state.db = null; show('login'); }
+  function lockSession() {
+    var email = (state.admin && state.admin.email) || '';
+    if (!email) { try { email = sessionStorage.getItem('wc.admin.lastEmail') || ''; } catch (e) {} }
+    clearSession(); state.db = null;
+    $('loginTitle').textContent = 'Session locked';
+    $('loginSub').textContent = 'Sign in again to unlock your admin session.';
+    if (email) $('loginId').value = email;
+    $('loginPass').value = '';
+    show('login');
+  }
   $('logoutBtn').onclick = logout; $('logout2').onclick = logout;
+  $('lockBtn').onclick = lockSession;
+
+  /* auto-lock after 20 minutes without activity */
+  var idleTimer = null;
+  function resetIdle() {
+    clearTimeout(idleTimer);
+    if (!state.token) return;
+    idleTimer = setTimeout(lockSession, 20 * 60000);
+  }
+  ['pointerdown', 'keydown', 'mousemove', 'touchstart'].forEach(function (ev) { document.addEventListener(ev, resetIdle, { passive: true }); });
+  resetIdle();
 
   /* ------------------------------- boot ------------------------------- */
   (async function boot() {

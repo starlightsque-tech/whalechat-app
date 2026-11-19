@@ -805,10 +805,19 @@ const Remote = {
         return await this.connect(url.replace(/\/+$/, ''), { silent: true, initFromLocal: true });
       }
       const stored = this.storedBase();
-      if (stored) return await this.connect(stored, { silent: true, initFromLocal: true });
+      if (stored) {
+        const ok = await this.connect(stored, { silent: true, initFromLocal: true });
+        if (ok) return true;
+        /* the saved host moved or died — drop it and fall through to the
+           current Appwrite sync server instead of staying offline */
+        this.setStoredBase('');
+      }
       // An explicit sync server always wins (the Appwrite site is static)
       if (DEFAULT_SYNC_SERVER) {
-        return await this.connect(DEFAULT_SYNC_SERVER, { silent: true, initFromLocal: true });
+        const ok = await this.connect(DEFAULT_SYNC_SERVER, { silent: true, initFromLocal: true });
+        if (ok) return true;
+        this.status = 'offline';
+        return false;
       }
       // Only a server that served this page injects the marker — avoids failed probes on static hosts
       if (window.__WC_SERVER__) {
@@ -823,8 +832,17 @@ const Remote = {
     base = String(base || '').replace(/\/+$/, '');
     this.status = 'connecting';
     try {
-      const health = await this.fetchJSON(base + '/api/health', {}, 5000);
-      if (!health.res.ok || !health.data || health.data.app !== 'whalechat') throw new Error('Not a WhaleChat server');
+      /* the health probe must use the CANDIDATE base, not this.base: a new
+         server URL was previously probed against the old/empty base and always
+         failed with “Not a WhaleChat server” / “Failed to fetch” */
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 6000);
+      let health = null;
+      try {
+        const res = await fetch(base + '/api/health', { signal: ctrl.signal, cache: 'no-store' });
+        health = await res.json().catch(() => null);
+        if (!res.ok || !health || health.app !== 'whalechat') throw new Error('Not a WhaleChat server');
+      } finally { clearTimeout(timer); }
       this.base = base;
       this.setStoredBase(base);
       this.enabled = true;
@@ -832,7 +850,7 @@ const Remote = {
       this.retry = 0;
       /* Appwrite Functions cannot hold SSE open: the health payload says so
          and the client polls instead of reconnecting forever */
-      this.stream = !health.data || health.data.stream !== false;
+      this.stream = !health || health.stream !== false;
 
       const st = await this.fetchJSON('/api/state');
       if (!st.res.ok || !st.data) throw new Error('Could not read server state');
@@ -1047,6 +1065,18 @@ function startEventStream() {
     };
   } catch (e) {}
 }
+/* Keep the connection alive 24/7: when the server wakes up, the app reconnects
+   on its own instead of waiting for a manual “Connect”. */
+setInterval(function () {
+  try {
+    if (!Remote) return;
+    if (Remote.status === 'online' || Remote.status === 'syncing') return;
+    const target = Remote.base || DEFAULT_SYNC_SERVER;
+    if (!target) return;
+    Remote.connect(target, { silent: true, initFromLocal: true });
+  } catch (e) {}
+}, 12000);
+
 /* Batch incoming changes: at most one state download per ~0.9 s, never while
    the user is tapping, scrolling or typing, and not while the tab is hidden. */
 let WC_LAST_INPUT_AT = 0;
