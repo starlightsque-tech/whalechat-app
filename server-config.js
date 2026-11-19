@@ -8,6 +8,7 @@
 
    Configured servers
      · Appwrite   https://nyc.cloud.appwrite.io/v1  project 6aff3eda000983f5a975
+                  database 6aff488e0006a3fe39e0 · bucket 6aff48620020a44c714f
      · Appwrite   sync function + storage bucket (database + files)
      · Telesign   REST Verify (SMS OTP) + SMS notifications
      · Brevo      transactional email (order receipts, verification, alerts)
@@ -32,8 +33,8 @@ const DEFAULTS = {
   appwrite: {
     endpoint: APPWRITE_ENDPOINT,
     projectId: APPWRITE_PROJECT_ID,
-    databaseId: String(process.env.APPWRITE_DATABASE_ID || 'whalechat').trim(),
-    bucketId: String(process.env.APPWRITE_BUCKET_ID || 'whalechat').trim(),
+    databaseId: String(process.env.APPWRITE_DATABASE_ID || '6aff488e0006a3fe39e0').trim(),
+    bucketId: String(process.env.APPWRITE_BUCKET_ID || '6aff48620020a44c714f').trim(),
     /* collections created by scripts/deploy-appwrite-collections.mjs */
     collections: {
       orders: 'orders',

@@ -71,6 +71,10 @@ async function ensureFunction() {
     })
   });
   if (made.ok) { console.log('[fn] created', FN_ID); return made.json; }
+  if (made.status === 403 || made.status === 401) {
+    throw new Error('function create refused (' + made.status + '): ' + made.text.slice(0, 200) +
+      '\n  → the API key needs the functions.write scope, and the project must have a free function slot.');
+  }
   throw new Error('function create failed: ' + made.status + ' ' + made.text.slice(0, 300));
 }
 
@@ -120,13 +124,23 @@ async function syncVars() {
   const values = { WC_APPWRITE_KEY: process.env.WC_APPWRITE_KEY || KEY, APPWRITE_DATABASE_ID: process.env.APPWRITE_DATABASE_ID || 'whalechat' };
   for (const k of VARS) if (process.env[k]) values[k] = process.env[k];
   for (const [key, value] of Object.entries(values)) {
-    const made = await req('/functions/' + FN_ID + '/variables', { method: 'POST', body: JSON.stringify({ key, value }) });
+    /* Appwrite >=1.6 requires a variableId; creating it twice is a 409 we then update. */
+    const made = await req('/functions/' + FN_ID + '/variables', { method: 'POST', body: JSON.stringify({ variableId: key, key, value, secret: true }) });
     if (made.ok) console.log('   var', key);
     else if (made.status === 409) {
-      await req('/functions/' + FN_ID + '/variables/' + key, { method: 'PUT', body: JSON.stringify({ key, value }) });
+      await req('/functions/' + FN_ID + '/variables/' + key, { method: 'PUT', body: JSON.stringify({ key, value, secret: true } ) });
       console.log('   var updated', key);
-    } else console.log('   !var', key, made.status);
+    } else console.log('   !var', key, made.status, (made.text || '').slice(0, 160));
   }
+
+  /* the function's own runtime key needs storage + database scopes */
+  const scopes = ['files.read', 'files.write', 'users.read', 'databases.read', 'databases.write', 'collections.read', 'collections.write', 'documents.read', 'documents.write'];
+  const current = await req('/functions/' + FN_ID);
+  const name = (current.json && current.json.name) || FN_NAME;
+  const runtime = (current.json && current.json.runtime) || RUNTIME;
+  const upd = await req('/functions/' + FN_ID, { method: 'PUT', body: JSON.stringify({ name, runtime, scopes, execute: ['any'], entrypoint: 'index.js', timeout: 60, logging: true, enabled: true }) });
+  if (upd.ok) console.log('   scopes set');
+  else console.log('   !scopes', upd.status, (upd.text || '').slice(0, 160));
 }
 
 try {

@@ -73,3 +73,21 @@ See `.env.example`. Nothing in this repository contains a key; the Appwrite
 project id is public by design. Telesign credentials are server-only, and the
 app talks to `/api/telesign/*` which signs the Telesign request with HTTP Basic
 auth.
+
+## Deployment status (Appwrite NYC project `6aff3eda000983f5a975`)
+
+| Piece | Id / URL |
+|---|---|
+| Sync function | `whalechat-sync` (node-18.0) |
+| Function transport | `POST https://nyc.cloud.appwrite.io/v1/functions/whalechat-sync/executions` with `{ path, method, body }` |
+| Site | `whalechat` (static, active deployment ready) |
+| Storage bucket | `6aff48620020a44c714f` (holds `whalechat-state`, 15 user records) |
+| Database | `6aff488e0006a3fe39e0` (“Production TablesDB”) |
+
+`public/wc-server-config.js` wraps `fetch` so every `/api/*` call made by the
+existing app is shipped as an Appwrite execution parameter set. The function
+reconstructs the path/method/body, so one function serves the whole API.
+
+The generated site domain is assigned by Appwrite and is visible in
+Console → Sites → whalechat → Domains; attach a custom domain there if a
+branded hostname is required.

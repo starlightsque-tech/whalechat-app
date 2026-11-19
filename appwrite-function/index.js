@@ -20,7 +20,7 @@
 const ENDPOINT = (process.env.APPWRITE_FUNCTION_API_ENDPOINT || process.env.APPWRITE_ENDPOINT || 'https://cloud.appwrite.io/v1').replace(/\/+$/, '');
 const PROJECT = process.env.APPWRITE_FUNCTION_PROJECT_ID || process.env.APPWRITE_PROJECT_ID || '';
 const KEY = process.env.WC_APPWRITE_KEY || process.env.APPWRITE_FUNCTION_API_KEY || '';
-const BUCKET = process.env.WC_BUCKET || 'whalechat';
+const BUCKET = process.env.WC_BUCKET || '6aff48620020a44c714f';
 const STATE_FILE = 'whalechat-state';
 const CODES_FILE = 'whalechat-codes';
 const MAIL_FILE = 'whalechat-mail';
@@ -841,11 +841,34 @@ function wcStatePayload(db, userId) {
 }
 
 module.exports = async ({ req, res, log, error }) => {
-  const method = (req.method || 'GET').toUpperCase();
-  const path = String(req.path || '/').replace(/\/+$/, '') || '/';
+  let method = (req.method || 'GET').toUpperCase();
+  let path = String(req.path || '/').replace(/\/+$/, '') || '/';
   if (method === 'OPTIONS') return res.send('', 204, CORS);
   let body = {};
-  try { body = req.body ? (typeof req.body === 'string' ? JSON.parse(req.body) : req.body) : {}; } catch (e) { body = {}; }
+  /* Appwrite forwards the execution payload as req.bodyRaw for /executions
+     calls, and as a parsed req.body for function-domain HTTP calls. */
+  try {
+    const rawBody = (req.bodyRaw !== undefined && req.bodyRaw !== null && req.bodyRaw !== '') ? req.bodyRaw : req.body;
+    body = rawBody ? (typeof rawBody === 'string' ? JSON.parse(rawBody) : rawBody) : {};
+  } catch (e) { body = {}; }
+
+  /* ---- call envelope (3.64) ---------------------------------------------
+     Appwrite's /executions endpoint always delivers path "/", so the web app
+     posts { __wcPath, __wcMethod, __wcQuery, __wcPayload } instead. This keeps
+     one function serving the full /api/* surface unchanged. */
+  if (body && typeof body === 'object' && body.__wcPath) {
+    path = String(body.__wcPath).replace(/\/+$/, '') || '/';
+    method = String(body.__wcMethod || 'POST').toUpperCase();
+    const payload = body.__wcPayload && typeof body.__wcPayload === 'object' ? body.__wcPayload : {};
+    body = payload;
+    if (body === null || typeof body !== 'object') body = {};
+    /* re-expose the query string to the routes that read req.query */
+    try {
+      const qs = body.__wcQuery && typeof body.__wcQuery === 'object' ? body.__wcQuery : {};
+      const merged = Object.assign({}, req.query || {}, qs);
+      req = Object.assign(Object.create(Object.getPrototypeOf(req)), req, { query: merged, path, method });
+    } catch (e) {}
+  }
 
   try {
     /* Appwrite cron invocation: settle every server-side engine even when no
@@ -1195,7 +1218,7 @@ module.exports = async ({ req, res, log, error }) => {
         appwrite: {
           endpoint: ENDPOINT,
           projectId: PROJECT,
-          databaseId: process.env.APPWRITE_DATABASE_ID || 'whalechat',
+          databaseId: process.env.APPWRITE_DATABASE_ID || '6aff488e0006a3fe39e0',
           bucketId: BUCKET,
           collections: { orders: 'orders', offlineOrders: process.env.WC_OFFLINE_COLLECTION || 'offline_orders', portfolios: 'portfolios' }
         },
@@ -1263,7 +1286,7 @@ module.exports = async ({ req, res, log, error }) => {
       try {
         const st = await readState();
         if (!st.db) return res.json({ ok: false, error: 'not_initialised', results: [] }, 409, CORS);
-        const dbId = process.env.APPWRITE_DATABASE_ID || 'whalechat';
+        const dbId = process.env.APPWRITE_DATABASE_ID || '6aff488e0006a3fe39e0';
         const colId = process.env.WC_OFFLINE_COLLECTION || 'offline_orders';
         const deps = {
           collections: [colId],

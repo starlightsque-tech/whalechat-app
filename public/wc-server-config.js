@@ -20,8 +20,8 @@
     appwrite: {
       endpoint: 'https://nyc.cloud.appwrite.io/v1',
       projectId: '6aff3eda000983f5a975',
-      databaseId: 'whalechat',
-      bucketId: 'whalechat',
+      databaseId: '6aff488e0006a3fe39e0',
+      bucketId: '6aff48620020a44c714f',
       collections: { orders: 'orders', offlineOrders: 'offline_orders', portfolios: 'portfolios' }
     },
     binanceWs: 'wss://stream.binance.com:9443/stream',
@@ -74,6 +74,66 @@
       if (cached.features) S.features = Object.assign({}, S.features, cached.features);
     }
   } catch (e) {}
+
+  /* ------------------------------------------------------------------
+     Appwrite Functions transport. Appwrite only exposes one endpoint,
+     /v1/functions/<id>/executions, and it always delivers path "/". Every
+     /api/* call is therefore wrapped in a JSON envelope that the function
+     unwraps, so the whole existing app keeps working unchanged.
+     ------------------------------------------------------------------ */
+  var EXEC_BASE = 'https://nyc.cloud.appwrite.io/v1/functions/whalechat-sync';
+  var EXEC_URL = EXEC_BASE + '/executions';
+  S.execBase = EXEC_BASE;
+  S.execUrl = EXEC_URL;
+
+  var nativeFetch = (typeof window.fetch === 'function') ? window.fetch.bind(window) : null;
+  if (nativeFetch && !window.__wcExecFetch) {
+    window.__wcExecFetch = true;
+    window.fetch = function (input, init) {
+      try {
+        var raw = typeof input === 'string' ? input : (input && input.url) || '';
+        var abs = new URL(raw, location.href).href;
+        if (abs.indexOf(EXEC_BASE) === 0 && abs.indexOf('/executions') !== 0) {
+          var u = new URL(abs);
+          var sub = u.href.slice(EXEC_BASE.length).split('?')[0];
+          if (sub.indexOf('/api/') === 0) {
+            /* Appwrite /executions takes execution parameters:
+               { path, method, headers, body } — not the payload itself. */
+            var params = {
+              path: sub,
+              method: String((init && init.method) || 'GET').toUpperCase(),
+              headers: { accept: 'application/json' }
+            };
+            var qs = u.searchParams.toString();
+            if (qs) params.path += '?' + qs;
+            if (init && init.body) params.body = String(init.body);
+            return nativeFetch(EXEC_URL, {
+              method: 'POST',
+              headers: { 'x-appwrite-project': S.appwrite.projectId, 'content-type': 'application/json' },
+              body: JSON.stringify(params),
+              cache: 'no-store'
+            }).then(function (r) {
+              return r.text().then(function (text) {
+                var j = null;
+                try { j = text ? JSON.parse(text) : null; } catch (e) {}
+                if (j && j.responseBody !== undefined) {
+                  if (j.responseStatusCode && j.responseStatusCode >= 500 && !j.responseBody) {
+                    return new Response(JSON.stringify({ ok: false, error: 'function_failed' }), { status: j.responseStatusCode, headers: { 'content-type': 'application/json' } });
+                  }
+                  return new Response(j.responseBody, {
+                    status: j.responseStatusCode || 200,
+                    headers: { 'content-type': 'application/json', 'x-wc-exec': '1' }
+                  });
+                }
+                return new Response(text, { status: r.status, headers: { 'content-type': 'application/json' } });
+              });
+            });
+          }
+        }
+      } catch (e) {}
+      return nativeFetch(input, init);
+    };
+  }
 
   window.WC_SERVERS = S;
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { S.refresh(); });

@@ -24,7 +24,7 @@ const DEFAULTS = cfgMod ? cfgMod.DEFAULTS : null;
 const ENDPOINT = String(process.env.APPWRITE_ENDPOINT || 'https://nyc.cloud.appwrite.io/v1').replace(/\/+$/, '');
 const PROJECT = String(process.env.APPWRITE_PROJECT_ID || '6aff3eda000983f5a975').trim();
 const KEY = String(process.env.APPWRITE_API_KEY || '').trim();
-const DB = String(process.env.APPWRITE_DATABASE_ID || 'whalechat').trim();
+let DB = String(process.env.APPWRITE_DATABASE_ID || '').trim();
 
 if (!KEY) {
   console.error('Missing APPWRITE_API_KEY (databases.* scope).');
@@ -106,11 +106,28 @@ const COLLECTIONS = [
 ];
 
 async function ensureDatabase() {
-  const got = await req('/databases/' + DB);
-  if (got.ok) { console.log('[db] exists', DB); return; }
-  const made = await req('/databases', { method: 'POST', body: JSON.stringify({ databaseId: DB, name: 'WhaleChat' }) });
-  if (made.ok || made.status === 409) console.log('[db] ready', DB);
-  else console.log('[db] failed', made.status, made.text.slice(0, 200));
+  /* Reuse the project's existing database: the free plan allows a single
+     database, so creating another one is refused by the platform. */
+  if (DB) {
+    const got = await req('/databases/' + DB);
+    if (got.ok) { console.log('[db] exists', DB); return; }
+  }
+  const list = await req('/databases');
+  const all = (list.ok && list.json && list.json.databases) || [];
+  if (all.length) {
+    DB = all[0].$id;
+    console.log('[db] reusing project database', DB, '(' + all[0].name + ')');
+  } else {
+    const made = await req('/databases', { method: 'POST', body: JSON.stringify({ databaseId: 'whalechat', name: 'WhaleChat' }) });
+    if (made.ok || made.status === 409) { DB = 'whalechat'; console.log('[db] created', DB); }
+    else throw new Error('database create failed: ' + made.status + ' ' + made.text.slice(0, 240));
+  }
+}
+
+async function existingCollections() {
+  const list = await req('/databases/' + DB + '/collections?limit=100');
+  if (!list.ok) return new Set();
+  return new Set(((list.json && list.json.collections) || []).map((c) => c.$id));
 }
 
 async function ensureCollection(c) {
@@ -147,8 +164,13 @@ async function ensureCollection(c) {
   }
 }
 
-console.log('[appwrite]', ENDPOINT, 'project', PROJECT, 'database', DB);
+console.log('[appwrite]', ENDPOINT, 'project', PROJECT);
 await ensureDatabase();
-for (const c of COLLECTIONS) await ensureCollection(c);
+console.log('[appwrite] database', DB);
+const have = await existingCollections();
+for (const c of COLLECTIONS) {
+  if (have.has(c.id)) { console.log('[col] exists', c.id); continue; }
+  await ensureCollection(c);
+}
 const health = await req('/databases/' + DB + '/collections/offline_orders/documents?limit=1');
 console.log('[appwrite] offline_orders readable:', health.ok ? 'yes' : 'no (' + health.status + ')');
