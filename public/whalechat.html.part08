@@ -1193,10 +1193,10 @@ function urlB64ToUint8Array(base64String) {
 function syncBadge() {
   const map = {
     local: ['Local device only', 'var(--muted)'],
-    connecting: ['Connecting…', 'var(--warn)'],
+    connecting: ['Loading', 'var(--muted)'],
     online: ['Connected · realtime', 'var(--success)'],
     syncing: ['Syncing…', 'var(--accent)'],
-    offline: ['Reconnecting…', 'var(--warn)'],
+    offline: ['Offline · cached data', 'var(--muted)'],
     error: ['Connection error', 'var(--danger)']
   };
   const m = map[Remote.status] || map.local;

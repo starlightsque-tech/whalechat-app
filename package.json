@@ -1,6 +1,6 @@
 {
   "name": "whalechat",
-  "version": "3.59.0",
+  "version": "3.60.0",
   "private": true,
   "description": "WhaleChat \u2014 chat, marketplace and wallet. Web app + sync server + Android/iOS shells.",
   "main": "server.js",
@@ -11,7 +11,7 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "build:mobile": "node scripts/build-mobile.mjs",
-    "build": "node scripts/prepare-assets.js",
+    "build": "node scripts/verify-connections.js && node scripts/prepare-assets.js",
     "demo:catalog": "node scripts/generate-demo-catalog.mjs",
     "verify:finnhub": "node scripts/verify-finnhub.js",
     "test:b2b": "node scripts/test-b2b-desk.js",
@@ -27,7 +27,8 @@
     "audit:routes": "node scripts/audit-routes.js --all",
     "verify:twelvedata": "node scripts/verify-twelvedata.js",
     "deploy:appwrite": "node scripts/deploy-appwrite.mjs",
-    "test:v357": "node scripts/test-v357.mjs"
+    "test:v357": "node scripts/test-v357.mjs",
+    "verify:connections": "node scripts/verify-connections.js"
   },
   "dependencies": {
     "web-push": "^3.6.7",

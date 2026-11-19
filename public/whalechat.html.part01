@@ -10,7 +10,7 @@
 /* WhaleChat view mode — default desktop, remembered per device */
 (function () {
   try {
-    var pref = localStorage.getItem('wc.viewMode') || 'auto';
+    var pref = localStorage.getItem('wc.viewMode') || 'desktop';
     var w = window.innerWidth || (window.screen && window.screen.width) || 0;
     var handheld = /Mobi|Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
     var mode = (pref === 'mobile' || pref === 'desktop') ? pref : ((handheld || w < 1024) ? 'mobile' : 'desktop');

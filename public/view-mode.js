@@ -16,8 +16,8 @@
     try {
       const v = localStorage.getItem(KEY);
       if (v === 'mobile' || v === 'desktop' || v === 'auto') return v;
-      return 'auto';
-    } catch (e) { return 'auto'; }
+      return 'desktop';
+    } catch (e) { return 'desktop'; }
   }
   function resolved(mode) {
     if (mode === 'mobile' || mode === 'desktop') return mode;
@@ -67,6 +67,11 @@
     document.documentElement.setAttribute('data-wc-view-pref', mode);
     const meta = viewport();
     if (meta) meta.setAttribute('content', content());
+    /* the reference look: phone layout on a dark canvas, desktop on white */
+    try {
+      document.documentElement.setAttribute('data-theme', effective === 'mobile' ? 'dark' : 'light');
+      document.documentElement.setAttribute('data-wc-view-theme', effective === 'mobile' ? 'dark' : 'light');
+    } catch (e) {}
     updateButtons();
     if (!opts || !opts.silent) {
       /* no reload needed — the viewport is the device width in every mode */
@@ -98,13 +103,22 @@
         let html = base.apply(this, arguments);
         const mode = V.mode;
         const block = `<div class="divider"></div>
-        <div class="between"><div><div class="small" style="font-weight:600">View mode</div>
-          <div class="tiny muted mt6">Currently <b data-view-mode-label>${mode}</b> · desktop uses the wide layout, mobile uses the phone layout</div></div>
-          <div class="row" style="gap:6px">
-            <button class="btn btn-xs ${mode === 'auto' ? 'btn-primary' : 'btn-ghost'}" data-act="view-mode-auto">Auto</button>
-            <button class="btn btn-xs ${mode === 'desktop' ? 'btn-primary' : 'btn-ghost'}" data-act="view-mode-desktop">Desktop</button>
-            <button class="btn btn-xs ${mode === 'mobile' ? 'btn-primary' : 'btn-ghost'}" data-act="view-mode-mobile">Mobile</button>
-          </div></div>`;
+        <div><div class="small" style="font-weight:700">View mode</div>
+          <div class="tiny muted mt6">Currently <b data-view-mode-label>${mode}</b> · your choice is remembered on this device</div></div>
+        <div class="wc-view-picks">
+          <button type="button" class="wc-view-pick ${mode === 'mobile' ? 'on' : ''}" data-act="view-mode-mobile">
+            <span class="wc-vp-ic">${typeof ic === 'function' ? ic('smartphone', 16) : ''}</span>
+            <span class="wc-vp-t"><b>Mobile view</b><small>Phone layout · dark screen</small></span>
+            <span class="wc-vp-check">${mode === 'mobile' ? '✓' : ''}</span></button>
+          <button type="button" class="wc-view-pick ${mode === 'auto' ? 'on' : ''}" data-act="view-mode-auto">
+            <span class="wc-vp-ic">${typeof ic === 'function' ? ic('refresh', 16) : ''}</span>
+            <span class="wc-vp-t"><b>Auto</b><small>Match this device automatically</small></span>
+            <span class="wc-vp-check">${mode === 'auto' ? '✓' : ''}</span></button>
+          <button type="button" class="wc-view-pick ${mode === 'desktop' ? 'on' : ''}" data-act="view-mode-desktop">
+            <span class="wc-vp-ic">${typeof ic === 'function' ? ic('monitor', 16) : ''}</span>
+            <span class="wc-vp-t"><b>Desktop view</b><small>Wide layout · white screen</small></span>
+            <span class="wc-vp-check">${mode === 'desktop' ? '✓' : ''}</span></button>
+        </div>`;
         const anchor = '<div class="divider"></div>\n        <div class="between"><div><div class="small" style="font-weight:600">Enable device alerts</div>';
         return html.indexOf(anchor) >= 0 ? html.replace(anchor, block + anchor) : html;
       };
@@ -117,6 +131,16 @@
     const st = document.createElement('style');
     st.id = 'wc-view-style';
     st.textContent = `
+    .wc-view-picks{display:flex;flex-direction:column;gap:8px;margin-top:12px}
+    .wc-view-pick{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:11px 12px;border-radius:14px;
+      border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;min-height:52px}
+    .wc-view-pick.on{border-color:rgba(46,230,201,.65);background:rgba(46,230,201,.10);box-shadow:0 0 0 1px rgba(46,230,201,.25) inset}
+    .wc-vp-ic{width:32px;height:32px;border-radius:10px;display:flex;align-items:center;justify-content:center;
+      background:rgba(46,230,201,.12);color:var(--accent);flex:0 0 auto}
+    .wc-vp-t{display:flex;flex-direction:column;min-width:0;flex:1}
+    .wc-vp-t b{font-size:12.5px;font-weight:800;line-height:1.25}
+    .wc-vp-t small{font-size:10.5px;font-weight:600;color:var(--muted);line-height:1.3}
+    .wc-vp-check{font-size:14px;font-weight:800;color:var(--accent);width:16px;text-align:center}
     /* desktop layout on a small screen: keep it responsive, never 1180px wide */
     @media(max-width:1023px){
       html[data-wc-view="desktop"] body{min-width:0!important;width:100%!important;overflow-x:hidden}

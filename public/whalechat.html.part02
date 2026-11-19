@@ -458,6 +458,12 @@ function initTheme() {
   const u = me();
   if (u && u.settings && u.settings.theme) t = u.settings.theme;
   if (!t) t = (window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+  /* the view mode owns the canvas colour: phone layout is dark, desktop white */
+  try {
+    var v = document.documentElement.getAttribute('data-wc-view');
+    if (v === 'desktop') t = 'light';
+    else if (v === 'mobile') t = 'dark';
+  } catch (e) {}
   document.documentElement.setAttribute('data-theme', t);
 }
 function toggleTheme() {

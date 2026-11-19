@@ -338,22 +338,19 @@ VIEWS.settings = function () {
       </div>
       <div class="tiny muted mt10">Preview — “WhaleChat: chat, shop and get paid.” Your choice is remembered per account and per device.</div>
     </div>
-    <div class="card mt16">
+    <div class="card mt16 wc-conn-card">
       <div class="between wrap gap10">
-        <div><h3 style="font-size:15px">Cross-device sync & push</h3>
-          <p class="tiny muted mt6">Share chats, orders and wallet across every device, with alerts when the app is closed.</p></div>
-        ${typeof syncBadge === 'function' ? syncBadge() : ''}
+        <div><h3 style="font-size:15px">Always connected</h3>
+          <p class="tiny muted mt6">Your account, chats, portfolio and live prices stay connected on this device. No server setup, no sync button, no reconnect.</p></div>
+        <span class="badge" id="wcConnBadge" style="color:var(--success);border-color:rgba(34,197,94,.35)">
+          <span class="dot" style="background:var(--success)"></span> <span data-wc-conn-label>Connected</span></span>
       </div>
       <div class="row gap8 mt14 wrap">
-        <button class="btn btn-primary btn-sm" data-act="server-dialog">${ic('refresh', 14)} ${Remote.enabled ? 'Manage sync server' : 'Connect sync server'}</button>
-        <button class="btn btn-ghost btn-sm" data-act="server-details">${ic('shield', 14)} Server details</button>
         <button class="btn btn-ghost btn-sm" data-act="push-enable">${ic('bell', 14)} Enable push alerts</button>
-        <button class="btn btn-ghost btn-sm" data-act="push-test">${ic('send', 14)} Send test</button>
         <button class="btn btn-ghost btn-sm" data-act="install-app">${ic('download', 14)} Install app</button>
         <button class="btn btn-ghost btn-sm" data-act="live-chat">${ic('chat', 14)} Live support</button>
       </div>
-      ${Remote.enabled ? `<div class="tiny muted mt10">Connected to <b>${esc(Remote.base || location.origin)}</b> · revision ${Remote.rev}</div>` : `<div class="tiny muted mt10">Running in local mode — data stays on this device until you connect a server.</div>`}
-      <div class="tiny muted mt8" id="pushDeviceCount">${typeof Notification !== 'undefined' && Notification.permission === 'granted' ? 'Checking registered alert devices…' : 'Alerts are off — turn them on to receive messages when the app is closed.'}</div>
+      <div class="tiny muted mt10" id="pushDeviceCount">${typeof Notification !== 'undefined' && Notification.permission === 'granted' ? 'Checking registered alert devices…' : 'Alerts are off — turn them on to receive messages when the app is closed.'}</div>
     </div>
     <div class="card mt16">
       <h3 style="font-size:15px">Account</h3>

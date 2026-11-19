@@ -60,6 +60,8 @@ try { const ps = require('./patch-server'); ps.patchConnections(require('path').
 
 /* 3. app modules owned by the repo ------------------------------------------- */
 const MODULES = [
+  /* build-time endpoints — loaded before anything opens a connection */
+  { file: 'wc-build-config.js', marker: 'wc-build-config' },
   /* offline-first must run first: it wraps fetch for the modules below */
   { file: 'offline-first.js', marker: 'wc-offline-first' },
   { file: 'offline-data.js', marker: 'wc-offline-data' },
@@ -95,7 +97,8 @@ const MODULES = [
   { file: 'portfolio-share.js', marker: 'wc-portfolio-share' },
   { file: 'pro-chart.js', marker: 'wc-pro-chart' },
   { file: 'readability.js', marker: 'wc-readability' },
-  { file: 'tv-widget.js', marker: 'wc-tv-widget' },
+  /* native green/red price chart replaces every TradingView surface */
+  { file: 'wc-chart.js', marker: 'wc-chart' },
   { file: 'b2b-market.js', marker: 'wc-b2b-market' },
   { file: 'b2b-performance.js', marker: 'wc-b2b-performance' },
   { file: 'connections-admin.js', marker: 'wc-connections-admin' },
@@ -114,6 +117,8 @@ const MODULES = [
   { file: 'wc-responsive.js', marker: 'wc-responsive' },
   { file: 'wc-dashboard-chat.js', marker: 'wc-dashboard-chat' },
   { file: 'wc-feed-health.js', marker: 'wc-feed-health' },
+  /* singleton heartbeat: one connection for the whole app lifetime */
+  { file: 'wc-connection.js', marker: 'wc-connection' },
   /* 3.57: account dashboard, email verification, PIN reset and offline charts.
      Must stay last so its VIEWS/App patches win over earlier modules. */
   { file: 'wc-build-357.js', marker: 'wc-build-357' }

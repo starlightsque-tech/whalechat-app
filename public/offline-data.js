@@ -406,14 +406,14 @@
     }
     if (justSynced) {
       pill.className = 'wc-net-pill ok';
-      pill.innerHTML = '<i></i>All changes synced';
+      pill.innerHTML = '<i></i>'; pill.title = 'All changes synced';
       pill.style.display = 'flex';
       pillTimer = setTimeout(function () { pill.style.display = 'none'; }, 2600);
       return;
     }
     if (pending) {
       pill.className = 'wc-net-pill wait';
-      pill.innerHTML = '<i></i>Syncing ' + pending + ' change' + (pending === 1 ? '' : 's') + '…';
+      pill.innerHTML = '<i></i>'; pill.title = 'Saving changes in the background';
       pill.style.display = 'flex';
       return;
     }

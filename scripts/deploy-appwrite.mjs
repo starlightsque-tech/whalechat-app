@@ -87,6 +87,13 @@ function packagePublic() {
 
 (async () => {
   console.log('[appwrite] endpoint', ENDPOINT, '· project', PROJECT);
+  /* connection gate: never publish a build whose servers are unreachable */
+  try {
+    execFileSync('node', [path.join(ROOT, 'scripts', 'verify-connections.js')], { stdio: 'inherit' });
+  } catch (e) {
+    console.error('[appwrite] connection verification failed — deployment aborted');
+    process.exit(1);
+  }
   if (SITE_DIR === PUB && process.env.APPWRITE_SKIP_BUILD !== '1') {
     try {
       execFileSync('node', [path.join(ROOT, 'scripts', 'prepare-assets.js')], { stdio: 'inherit' });

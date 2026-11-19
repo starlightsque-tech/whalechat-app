@@ -16,6 +16,12 @@ WhaleChat uses Appwrite for **two** things:
    `sites.*`, `storage.*`, `databases.*`, `files.*`.
 3. Keep the key outside the repo (Render env var or your shell).
 
+## Build gate (connection verification)
+
+`npm run build` first runs `node scripts/verify-connections.js`. The build is
+BLOCKED unless the sync function, market providers, quote proxy, shares engine
+and published site all answer. `WC_SKIP_VERIFY=1` is for local work only.
+
 ## 2. Deploy the client to Appwrite Sites
 
 ```bash

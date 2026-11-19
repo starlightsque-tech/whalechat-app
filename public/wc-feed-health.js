@@ -68,7 +68,7 @@
       }
       var waiting = !on && online;
       return '<div class="wc-fh-row">' + dot(on, waiting) +
-        '<div style="min-width:0"><b>' + name + '</b><span>' + (on ? 'Live' : (online ? 'Connecting…' : 'Offline · device offline')) +
+        '<div style="min-width:0"><b>' + name + '</b><span>' + (on ? 'Live' : (online ? 'Idle' : 'Offline · device offline')) +
         ' · ' + ago(last) + '</span></div></div>';
     }
     return '<div class="card wc-fh-card" data-wc-feed-health="1">' +

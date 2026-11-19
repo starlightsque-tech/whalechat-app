@@ -35,7 +35,8 @@
 
   function apiUrl(p) {
     try { if (typeof Remote !== 'undefined' && Remote && Remote.enabled && Remote.base && Remote.url) return Remote.url(p); } catch (e) {}
-    /* the static site has no same-origin API: always call the sync function */
+    /* the static site has no same-origin API: use the build-time server */
+    try { if (window.WC_BUILD_CONFIG && WC_BUILD_CONFIG.syncServer) return String(WC_BUILD_CONFIG.syncServer).replace(/\/+$/, '') + p; } catch (e) {}
     try { if (typeof DEFAULT_SYNC_SERVER !== 'undefined' && DEFAULT_SYNC_SERVER) return DEFAULT_SYNC_SERVER + p; } catch (e) {}
     return p;
   }
@@ -117,6 +118,7 @@
     if (pc > 0) s.prevClose = pc;
     LAST_REAL[t] = now;
     touch(q.source, now);
+    try { if (window.WC_CHART && window.WC_CHART.record) window.WC_CHART.record(t, q.price, now); } catch (e) {}
     try {
       var key = t + '::1D';
       var series = INV.seriesCache && INV.seriesCache[key];
@@ -329,41 +331,18 @@
   }
   window.WC_MARKET_PROXY = { poll: pollProxy, available: function () { return serverKeys; }, debug: function () { return proxyDbg; } };
 
-  /* --------------------------------------------------- offline continuity */
-  /* When no provider has ticked for a while (offline / blocked), walk the last
-     known price by a small step so the board, charts and P/L keep moving. */
+  /* --------------------------------------------------- offline behaviour */
+  /* Real data only: when no provider has ticked we FREEZE the last real price
+     and repaint the cached quotes. Nothing is invented while offline. */
   function continuity() {
     if (document.hidden) return;
     var now = Date.now();
     stocks().forEach(function (s) {
       var t = up(s.ticker);
-      if (!t) return;
       var real = LAST_REAL[t] || 0;
       if (real && now - real < 20000) return;
       var q = INV.live[t];
-      if (!q || !(Number(q.price) > 0)) {
-        var base = Number(s.price) || 0;
-        if (!(base > 0)) return;
-        q = INV.live[t] = { price: base, prevClose: Number(s.prevClose) || base, open: base, dayHigh: base, dayLow: base, changePct: 0, changeUsd: 0, vol: 0, dir: 0, updatedAt: now };
-      }
-      var vol = isCrypto(s) ? 0.0016 : (String(s.assetClass) === 'forex' ? 0.0004 : 0.0009);
-      var step = (Math.random() - 0.5) * 2 * vol;
-      var next = Math.max(0.000001, q.price * (1 + step));
-      var digits = next >= 100 ? 2 : next >= 1 ? 3 : next >= 0.01 ? 5 : 8;
-      next = Number(next.toFixed(digits));
-      q.dir = next > q.price ? 1 : next < q.price ? -1 : 0;
-      q.price = next;
-      q.updatedAt = now;
-      q.changeUsd = next - (q.prevClose || next);
-      q.changePct = q.prevClose ? (q.changeUsd / q.prevClose) * 100 : 0;
-      q.dayHigh = Math.max(q.dayHigh || next, next);
-      q.dayLow = Math.min(q.dayLow || next, next);
-      s.price = next;
-      try {
-        var key = t + '::1D';
-        var series = INV.seriesCache && INV.seriesCache[key];
-        if (series && series.length) series[series.length - 1] = next;
-      } catch (e) {}
+      if (q) q.cached = true;
     });
     paint();
     if (now - lastPersist > 20000) writeCache();
@@ -492,12 +471,13 @@
   }
   window.WCMarketFeed = {
     restart: function () { openBinance(); openFinnhub(); pollTwelve(true); pollProxy(true); },
-    reconnect: function () {
+    reconnect: function () { WCMarketFeed.reconnectSilent(); },
+    /* silent, idempotent, no toast: used by the connection heartbeat */
+    reconnectSilent: function () {
       BINANCE.forEach(function (ws) { try { ws.onclose = null; ws.close(); } catch (e) {} });
       BINANCE = [];
       try { if (finnhubWS) { finnhubWS.onclose = null; finnhubWS.close(); } } catch (e) {}
       openBinance(); openFinnhub(); pollTwelve(true); pollProxy(true);
-      try { if (typeof toast === 'function') toast('Reconnecting Binance, Finnhub and Twelve Data…', 'ok'); } catch (e) {}
     },
     status: function () {
       return {
