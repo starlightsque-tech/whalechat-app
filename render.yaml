@@ -46,9 +46,9 @@ services:
         sync: false
       # 3.57: durable Appwrite mirror (database + storage). Set these in Render.
       - key: APPWRITE_ENDPOINT
-        value: https://cloud.appwrite.io/v1
+        value: https://nyc.cloud.appwrite.io/v1
       - key: APPWRITE_PROJECT_ID
-        sync: false
+        value: 6afec9ae002d0af5e0c6
       - key: APPWRITE_API_KEY
         sync: false
       - key: APPWRITE_BUCKET_ID
