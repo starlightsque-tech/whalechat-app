@@ -670,7 +670,11 @@ class MarketService {
          the chart always tallies with the real market. Only symbols with no
          live source (synthetic 24/7 products, or no API key) are simulated. */
       const liveFeed = this.config.mode === 'hybrid' || (this.extRealAt && now - this.extRealAt < 60000);
-      if (lastReal && liveFeed && now - lastReal < 15 * 60 * 1000) return;
+      /* A symbol that has ever printed a real price from a real provider must
+         never be replaced by a synthetic walk — hold the last real print until
+         the provider refreshes it (overnight/weekend included). */
+      const realProvider = a.provider === 'binance' || a.provider === 'finnhub' || a.provider === 'twelvedata';
+      if (lastReal && (realProvider || (liveFeed && now - lastReal < 15 * 60 * 1000))) return;
       if (is247Asset(a) && now - lastReal < 4000) return;
       let q = this.quotes[a.ticker];
       /* repair a quote left at a wildly wrong level by an older build */

@@ -1,8 +1,8 @@
 {
-  "version": "3.55.3",
-  "build": "2026-11-19T07:55:00Z",
+  "version": "3.55.4",
+  "build": "2026-11-19T08:15:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.55.3 - a restart restores the last real print from durable history as a real quote, so Twelve Data/Finnhub/Binance symbols stay real on the board while provider polling catches up instead of dropping to simulated.",
-  "releasedAt": "2026-11-19T07:55:00Z",
+  "notes": "WhaleChat 3.55.4 - symbols that have printed a real Binance/Finnhub/Twelve Data price are no longer replaced by the synthetic walk when the provider is between polls; the last real print is held until the provider refreshes it.",
+  "releasedAt": "2026-11-19T08:15:00Z",
   "minimum": "3.0.0"
 }
