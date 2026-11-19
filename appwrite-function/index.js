@@ -368,23 +368,63 @@ function normQuote(price, prevClose, extra) {
   };
 }
 
-async function finnhubQuotes(symbols) {
+const FH_CACHE = new Map();
+/* Finnhub free plan = 60 calls/min. Keep a per-instance budget so several
+   devices polling at once cannot burn the key; callers get cached values. */
+let FH_WINDOW = { at: 0, n: 0 };
+let LAST_FH = { returned: 0, budget: 0, chunk: 0, todo: 0 };
+function fhBudget() {
+  const now = Date.now();
+  if (now - FH_WINDOW.at > 60000) FH_WINDOW = { at: now, n: 0 };
+  return Math.max(0, 45 - FH_WINDOW.n);
+}
+const GLOBAL_ADR = {
+  'VOD.L': 'VOD', 'SHEL.L': 'SHEL', 'AZN.L': 'AZN', 'HSBA.L': 'HSBC', 'ULVR.L': 'UL',
+  'BP.L': 'BP', 'GSK.L': 'GSK', 'RIO.L': 'RIO', 'BARC.L': 'BCS', 'LLOY.L': 'LYG',
+  'SAP.DE': 'SAP', 'SIE.DE': 'SIEGY', 'ALV.DE': 'ALIZY', 'BMW.DE': 'BMWYY', 'MBG.DE': 'MBGAF',
+  'BAS.DE': 'BASFY', 'AIR.DE': 'EADSY', 'MC.PA': 'LVMUY', 'OR.PA': 'LRLCY', 'TTE.PA': 'TTE',
+  'SAN.PA': 'SNY', 'NESN.SW': 'NSRGY', 'ROG.SW': 'RHHBY', 'NOVN.SW': 'NVS', '7203.T': 'TM',
+  '6758.T': 'SONY', '9984.T': 'SFTBY', '005930.KS': 'SSNLF', '0700.HK': 'TCEHY', '9988.HK': 'BABA',
+  'SHOP.TO': 'SHOP', 'RY.TO': 'RY', 'TD.TO': 'TD', 'ENB.TO': 'ENB', 'CNR.TO': 'CNI', 'NIO': 'NIO'
+};
+/* indices/commodities use CNBC + gold-api below, so Finnhub never proxies them */
+function finnhubSymbolFor(sym) {
+  const s = String(sym || '').toUpperCase();
+  if (GLOBAL_ADR[s]) return GLOBAL_ADR[s];
+  if (FX.has(s)) return 'OANDA:' + s.slice(0, 3) + '_' + s.slice(3);
+  return s;
+}
+async function finnhubQuotes(symbols, limit) {
   if (!FINNHUB_KEY) return {};
   const out = {};
-  const chunk = symbols.slice(0, 60);
+  const now = Date.now();
+  const todo = [];
+  for (const sym of symbols) {
+    const hit = FH_CACHE.get(sym);
+    if (hit && now - hit.at < 55000) { out[sym] = hit.q; continue; }
+    todo.push(sym);
+  }
+  /* Finnhub's free plan is 60 calls/min — cap fresh lookups per request and
+     let the rotating client batches cover the whole list. */
+  const budget = fhBudget();
+  const chunk = todo.slice(0, Math.min(limit || 10, budget));
+  LAST_FH = { returned: 0, budget, chunk: chunk.length, todo: todo.length };
+  if (!chunk.length) return out;
   let cursor = 0;
   async function worker() {
     while (cursor < chunk.length) {
       const sym = chunk[cursor++];
-      const started = Date.now();
-      const r = await apiRaw('https://finnhub.io/api/v1/quote?symbol=' + encodeURIComponent(sym) + '&token=' + encodeURIComponent(FINNHUB_KEY));
-      if (Date.now() - started > 6000) continue;
+      FH_WINDOW.n++;
+      const r = await apiRaw('https://finnhub.io/api/v1/quote?symbol=' + encodeURIComponent(finnhubSymbolFor(sym)) + '&token=' + encodeURIComponent(FINNHUB_KEY));
       if (r.ok && r.json && Number(r.json.c) > 0) {
-        out[sym] = normQuote(r.json.c, r.json.pc, { open: r.json.o, high: r.json.h, low: r.json.l, at: (Number(r.json.t) || 0) * 1000, source: 'finnhub' });
+        const q = normQuote(r.json.c, r.json.pc, { open: r.json.o, high: r.json.h, low: r.json.l, at: (Number(r.json.t) || 0) * 1000, source: 'finnhub' });
+        if (q) { out[sym] = q; FH_CACHE.set(sym, { at: Date.now(), q }); }
       }
     }
   }
-  await Promise.all([worker(), worker(), worker(), worker(), worker(), worker()].map((p) => p.catch(() => {})));
+  await Promise.all([worker(), worker(), worker()].map((p) => p.catch(() => {})));
+  LAST_FH.returned = Object.keys(out).length;
+  if (FH_CACHE.size > 1200) FH_CACHE.clear();
   return out;
 }
 
@@ -408,6 +448,157 @@ async function twelvedataQuotes(symbols) {
   return out;
 }
 
+
+/* Yahoo Finance spark is a key-free breadth source: one request resolves many
+   symbols (US, global listings, forex =X pairs, indices) and returns the last
+   trade plus the previous close. Used to fill anything the keyed providers
+   could not resolve, and as the whole feed when no keys are configured. */
+const YAHOO_INDEX = {
+  US30: '^DJI', US100: '^NDX', US500: '^GSPC', UK100: '^FTSE', DE40: '^GDAXI',
+  JP225: '^N225', HK50: '^HSI', GOLD: 'GC=F', SILVER: 'SI=F', OIL: 'CL=F'
+};
+const FX = new Set(['EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'USDCAD', 'AUDUSD', 'NZDUSD', 'EURGBP', 'EURJPY', 'GBPJPY', 'AUDJPY', 'CADJPY', 'CHFJPY', 'EURCHF', 'EURCAD', 'GBPCAD', 'GBPCHF', 'GBPAUD', 'AUDCAD', 'AUDCHF', 'AUDNZD', 'NZDJPY', 'NZDCAD', 'USDSEK', 'USDNOK', 'USDMXN', 'USDZAR', 'USDTRY', 'USDINR']);
+function yahooSymbol(sym) {
+  const s = String(sym || '').toUpperCase();
+  if (YAHOO_INDEX[s]) return YAHOO_INDEX[s];
+  if (FX.has(s)) return s.slice(0, 3) + s.slice(3) + '=X';
+  return s;
+}
+let LAST_YAHOO = { status: 0, fetched: 0, at: 0 };
+async function yahooSpark(chunk) {
+  const hosts = ['https://query1.finance.yahoo.com', 'https://query2.finance.yahoo.com'];
+  let last = { ok: false, status: 0 };
+  for (const host of hosts) {
+    const r = await apiRaw(host + '/v8/finance/spark?symbols=' + encodeURIComponent(chunk.join(',')) + '&range=1d&interval=5m', {
+      headers: { 'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36', accept: 'application/json' }
+    });
+    last = r;
+    if (r.ok && r.json) return r;
+    if (r.status !== 429 && r.status !== 0) return r;
+  }
+  return last;
+}
+async function yahooQuotes(symbols) {
+  const list = symbols.slice(0, 60);
+  const out = {};
+  const map = {};
+  list.forEach((s) => { map[yahooSymbol(s)] = s; });
+  const wanted = Object.keys(map);
+  LAST_YAHOO = { status: 0, fetched: 0, at: Date.now() };
+  for (let i = 0; i < wanted.length; i += 30) {
+    const chunk = wanted.slice(i, i + 30);
+    const r = await yahooSpark(chunk);
+    LAST_YAHOO.status = r.status || 0;
+    if (!r.ok || !r.json) continue;
+    LAST_YAHOO.fetched += 1;
+    Object.keys(r.json).forEach((key) => {
+      const d = r.json[key];
+      if (!d || !Array.isArray(d.close) || !d.close.length) return;
+      const closes = d.close.filter((x) => Number(x) > 0);
+      if (!closes.length) return;
+      const last = Number(closes[closes.length - 1]);
+      const prev = Number(d.previousClose) || Number(d.chartPreviousClose) || last;
+      const original = map[key] || map[key.toUpperCase()] || d.symbol || key;
+      const q = normQuote(last, prev, { open: Number(closes[0]), vol: 0, at: (Number(d.end) || 0) * 1000, source: 'yahoo' });
+      if (q) out[original] = q;
+    });
+  }
+  return out;
+}
+
+
+/* Key-free FX breadth: ECB reference rates via Frankfurter. Real rates, cached
+   for ten minutes — used only for forex pairs the keyed providers miss. */
+let FX_CACHE = { at: 0, rates: null };
+async function frankfurterRates() {
+  if (FX_CACHE.rates && Date.now() - FX_CACHE.at < 600000) return FX_CACHE.rates;
+  const r = await apiRaw('https://api.frankfurter.dev/v1/latest?base=USD');
+  if (!r.ok || !r.json || !r.json.rates) return null;
+  const rates = Object.assign({ USD: 1 }, r.json.rates);
+  FX_CACHE = { at: Date.now(), rates };
+  return rates;
+}
+async function fxQuotes(symbols) {
+  const pairs = symbols.filter((s) => FX.has(String(s).toUpperCase()));
+  if (!pairs.length) return {};
+  const rates = await frankfurterRates();
+  if (!rates) return {};
+  const out = {};
+  pairs.forEach((sym) => {
+    const s = String(sym).toUpperCase();
+    const base = s.slice(0, 3), quote = s.slice(3);
+    const rb = Number(rates[base]), rq = Number(rates[quote]);
+    if (!(rb > 0) || !(rq > 0)) return;
+    const price = rq / rb;
+    const q = normQuote(price, price, { source: 'frankfurter', at: Date.now() });
+    if (q) out[s] = q;
+  });
+  return out;
+}
+
+
+/* Real index levels + spot metals without a key.
+   CNBC publishes the official index quote service; gold-api publishes spot
+   XAU/XAG. Both are cached so a burst of devices cannot hammer them. */
+const CNBC_MAP = { US30: '.DJI', US100: '.NDX', US500: '.SPX', UK100: '.FTSE', DE40: '.DAX', JP225: '.N225', HK50: '.HSI', OIL: '@CL.1' };
+const SPOT_MAP = { GOLD: 'XAU', SILVER: 'XAG' };
+let INDEX_CACHE = { at: 0, quotes: null };
+let LAST_CNBC = { status: 0, count: 0, at: 0 };
+let SPOT_CACHE = { at: 0, quotes: null };
+function cnbcNum(v) { return Number(String(v == null ? '' : v).replace(/[^0-9.\-]/g, '')) || 0; }
+async function cnbcIndexQuotes(symbols) {
+  const wanted = symbols.filter((s) => CNBC_MAP[s]);
+  if (!wanted.length) return {};
+  if (INDEX_CACHE.quotes && Date.now() - INDEX_CACHE.at < 15000) {
+    const cached = {};
+    wanted.forEach((s) => { if (INDEX_CACHE.quotes[s]) cached[s] = INDEX_CACHE.quotes[s]; });
+    if (Object.keys(cached).length) return cached;
+  }
+  const list = Object.values(CNBC_MAP);
+  const r = await apiRaw('https://quote.cnbc.com/quote-html-webservice/quote.htm?symbols=' + encodeURIComponent(list.join('|')) + '&requestMethod=itv&noform=1&partnerId=2&fund=1&exthrs=1&output=json', {
+    headers: { 'user-agent': 'Mozilla/5.0', accept: 'application/json' }
+  });
+  if (!r.ok || !r.json) return {};
+  LAST_CNBC = { status: r.status || 0, count: 0, at: Date.now() };
+  const arr = (r.json.ITVQuoteResult && r.json.ITVQuoteResult.ITVQuote) || [];
+  LAST_CNBC.count = Array.isArray(arr) ? arr.length : 0;
+  if (!Array.isArray(arr)) return {};
+  const bySymbol = {};
+  arr.forEach((q) => { if (q && q.symbol) bySymbol[String(q.symbol).toUpperCase()] = q; });
+  const out = {};
+  Object.keys(CNBC_MAP).forEach((s) => {
+    const q = bySymbol[CNBC_MAP[s].toUpperCase()];
+    if (!q) return;
+    const last = cnbcNum(q.last);
+    if (!(last > 0)) return;
+    const change = cnbcNum(q.change);
+    const prev = change ? last - change : last;
+    const nq = normQuote(last, prev, { open: cnbcNum(q.open), high: cnbcNum(q.high), low: cnbcNum(q.low), source: 'cnbc' });
+    if (nq) out[s] = nq;
+  });
+  INDEX_CACHE = { at: Date.now(), quotes: out };
+  const picked = {};
+  wanted.forEach((s) => { if (out[s]) picked[s] = out[s]; });
+  return picked;
+}
+async function spotQuotes(symbols) {
+  const wanted = symbols.filter((s) => SPOT_MAP[s]);
+  if (!wanted.length) return {};
+  const out = {};
+  const prevMap = (SPOT_CACHE.quotes || {});
+  for (const sym of wanted) {
+    const code = SPOT_MAP[sym];
+    const r = await apiRaw('https://api.gold-api.com/price/' + code);
+    if (!r.ok || !r.json || !(Number(r.json.price) > 0)) continue;
+    const price = Number(r.json.price);
+    const prev = prevMap[sym] && Number(prevMap[sym].price) > 0 ? Number(prevMap[sym].price) : price;
+    const q = normQuote(price, prev, { source: 'gold-api', at: Date.now() });
+    if (q) out[sym] = q;
+  }
+  SPOT_CACHE = { at: Date.now(), quotes: Object.assign({}, prevMap, out) };
+  return out;
+}
+
 async function proxyQuotes(provider, symbols) {
   const list = Array.from(new Set((symbols || []).map((x) => String(x || '').trim()).filter(Boolean))).slice(0, 60);
   if (!list.length) return { ok: false, error: 'symbols_required' };
@@ -416,19 +607,57 @@ async function proxyQuotes(provider, symbols) {
   if (cached) return { ok: true, cached: true, provider, quotes: cached, at: Date.now() };
   let quotes = {};
   let used = provider;
-  if (provider === 'twelvedata') quotes = await twelvedataQuotes(list);
-  else if (provider === 'finnhub') quotes = await finnhubQuotes(list);
-  else {
-    if (FINNHUB_KEY) { quotes = await finnhubQuotes(list); used = 'finnhub'; }
-    const missing = list.filter((x) => !quotes[x]);
-    if (missing.length && TWELVE_KEY) {
-      const more = await twelvedataQuotes(missing);
-      Object.assign(quotes, more);
-      used = quotes && Object.keys(quotes).length ? (used === 'finnhub' ? 'hybrid' : 'twelvedata') : used;
+  if (provider === 'twelvedata') {
+    quotes = await twelvedataQuotes(list);
+    used = 'twelvedata';
+  } else if (provider === 'finnhub') {
+    quotes = await finnhubQuotes(list, 30);
+    used = 'finnhub';
+  } else if (provider === 'yahoo') {
+    quotes = await yahooQuotes(list);
+    used = 'yahoo';
+  } else {
+    /* 1 · Finnhub (mapped to OANDA for FX and to index/commodity ETFs), 2 ·
+       Twelve Data, 3 · Yahoo only if it is not currently rate-limiting us */
+    if (FINNHUB_KEY) {
+      /* indices/metals have their own sources — never let a same-named stock
+         (e.g. Barrick's GOLD) stand in for spot gold */
+      const fhList = list.filter((x) => !CNBC_MAP[x] && !SPOT_MAP[x]);
+      const fresh = await finnhubQuotes(fhList, 12);
+      if (Object.keys(fresh).length) { Object.assign(quotes, fresh); used = 'finnhub'; }
+    }
+    if (TWELVE_KEY) {
+      /* Twelve Data's free plan allows 8 credits/min (1 per symbol): spend
+         only a couple per call and let the rotation cover the long tail */
+      const missing = list.filter((x) => !quotes[x]).slice(0, 2);
+      if (missing.length) {
+        const more = await twelvedataQuotes(missing);
+        if (Object.keys(more).length) { Object.assign(quotes, more); used = 'hybrid'; }
+      }
+    }
+    const fxMissing = list.filter((x) => !quotes[x]);
+    if (fxMissing.length) {
+      const fx = await fxQuotes(fxMissing);
+      if (Object.keys(fx).length) { Object.assign(quotes, fx); used = used === 'finnhub' ? 'hybrid' : used; }
+    }
+    const idxMissing = list.filter((x) => !quotes[x]);
+    if (idxMissing.length) {
+      const ix = await cnbcIndexQuotes(idxMissing);
+      if (Object.keys(ix).length) { Object.assign(quotes, ix); used = used === 'finnhub' ? 'hybrid' : used; }
+      const sp = await spotQuotes(idxMissing.filter((x) => !quotes[x]));
+      if (Object.keys(sp).length) { Object.assign(quotes, sp); used = used === 'finnhub' ? 'hybrid' : used; }
+    }
+    const yahooCooling = LAST_YAHOO.status === 429 && Date.now() - (LAST_YAHOO.at || 0) < 300000;
+    if (!yahooCooling) {
+      const missing = list.filter((x) => !quotes[x]);
+      if (missing.length) {
+        const more = await yahooQuotes(missing);
+        if (Object.keys(more).length) { Object.assign(quotes, more); used = used === 'finnhub' ? 'hybrid' : 'yahoo'; }
+      }
     }
   }
   cacheSet(key, quotes);
-  return { ok: true, provider: used, quotes, at: Date.now(), configured: { finnhub: !!FINNHUB_KEY, twelvedata: !!TWELVE_KEY } };
+  return { ok: true, provider: used, quotes, at: Date.now(), configured: { finnhub: !!FINNHUB_KEY, twelvedata: !!TWELVE_KEY }, debug: Object.assign({}, LAST_YAHOO, { cnbc: LAST_CNBC, fh: LAST_FH }) };
 }
 
 module.exports = async ({ req, res, log, error }) => {
@@ -625,7 +854,12 @@ module.exports = async ({ req, res, log, error }) => {
     if (path === '/api/market/proxy' && method === 'GET') {
       const query = req.query || {};
       const provider = String(query.provider || 'auto').toLowerCase();
-      const symbols = String(query.symbols || '').split(',').map((x) => x.trim()).filter(Boolean);
+      /* Appwrite hands query values over still URL-encoded: decode before
+         splitting or a 50-symbol batch arrives as one long symbol name. */
+      let rawSymbols = String(query.symbols || '');
+      try { rawSymbols = decodeURIComponent(rawSymbols); } catch (e) {}
+      rawSymbols = rawSymbols.replace(/\+/g, ' ');
+      const symbols = rawSymbols.split(',').map((x) => x.trim()).filter(Boolean);
       if (!symbols.length) return res.json({ ok: false, error: 'symbols_required' }, 400, CORS);
       try {
         const out = await proxyQuotes(provider, symbols);

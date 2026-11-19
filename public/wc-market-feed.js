@@ -34,7 +34,9 @@
   var lastYahoo = 0;
 
   function apiUrl(p) {
-    try { if (typeof Remote !== 'undefined' && Remote && Remote.enabled && Remote.url) return Remote.url(p); } catch (e) {}
+    try { if (typeof Remote !== 'undefined' && Remote && Remote.enabled && Remote.base && Remote.url) return Remote.url(p); } catch (e) {}
+    /* the static site has no same-origin API: always call the sync function */
+    try { if (typeof DEFAULT_SYNC_SERVER !== 'undefined' && DEFAULT_SYNC_SERVER) return DEFAULT_SYNC_SERVER + p; } catch (e) {}
     return p;
   }
   function stocks() {
@@ -173,7 +175,7 @@
     var watchdog = setInterval(function () {
       if (stopped) return clearInterval(watchdog);
       if (ws.readyState !== 1) { clearInterval(watchdog); try { ws.close(); } catch (e) {} return; }
-    }, 15000);
+    }, 25000);
     function retry() {
       if (stopped) return;
       attempt++;
@@ -277,6 +279,7 @@
      Twelve Data keys in its environment. Works on every device with no key. */
   var proxyCursor = 0;
   var proxyBusy = false;
+  var proxyDbg = { calls: 0, applied: 0, errors: 0, lastError: '', lastBatch: 0 };
   function proxySymbols() {
     var list = [];
     stocks().forEach(function (s) {
@@ -299,23 +302,32 @@
     }
     proxyCursor = (proxyCursor + batch.length) % all.length;
     proxyBusy = true;
-    fetch(apiUrl('/api/market/proxy?provider=auto&symbols=' + encodeURIComponent(batch.join(','))), { cache: 'no-store', headers: { accept: 'application/json' } })
+    proxyDbg.calls++; proxyDbg.lastBatch = batch.length;
+    var req;
+    try {
+      req = fetch(apiUrl('/api/market/proxy?provider=auto&symbols=' + encodeURIComponent(batch.join(','))), { cache: 'no-store', headers: { accept: 'application/json' } });
+    } catch (e) { proxyBusy = false; return; }
+    Promise.resolve(req)
       .then(function (r) { return r.json(); })
       .then(function (d) {
         proxyBusy = false;
-        if (!d || !d.ok || !d.quotes) return;
+        if (!d || !d.ok || !d.quotes) { proxyDbg.errors++; proxyDbg.lastError = 'bad_response'; return; }
         var n = 0;
         Object.keys(d.quotes).forEach(function (sym) {
           var q = d.quotes[sym];
           if (!q || !(Number(q.price) > 0)) return;
-          apply(sym, Number(q.price), Number(q.prevClose), { open: Number(q.open), vol: Number(q.vol), source: q.source === 'twelvedata' ? 'twelvedata' : 'finnhub' });
-          n++;
+          try {
+            var src = q.source === 'twelvedata' ? 'twelvedata' : q.source === 'yahoo' ? 'yahoo' : 'finnhub';
+            apply(sym, Number(q.price), Number(q.prevClose), { open: Number(q.open), vol: Number(q.vol), source: src });
+            n++;
+          } catch (e) { proxyDbg.errors++; proxyDbg.lastError = e && e.message; }
         });
-        if (n) { touch(d.provider === 'twelvedata' ? 'twelvedata' : 'finnhub', Date.now()); paint(); }
+        proxyDbg.applied += n;
+        if (n) paint();
       })
-      .catch(function () { proxyBusy = false; });
+      .catch(function (e) { proxyBusy = false; proxyDbg.errors++; proxyDbg.lastError = e && e.message; });
   }
-  window.WC_MARKET_PROXY = { poll: pollProxy, available: function () { return serverKeys; } };
+  window.WC_MARKET_PROXY = { poll: pollProxy, available: function () { return serverKeys; }, debug: function () { return proxyDbg; } };
 
   /* --------------------------------------------------- offline continuity */
   /* When no provider has ticked for a while (offline / blocked), walk the last
@@ -397,13 +409,13 @@
       var syms = binanceSymbols();
       var sig = syms.length + ':' + syms.slice(0, 3).join(',');
       if (sig !== lastCryptoSig) { lastCryptoSig = sig; openBinance(); }
-    }, 12000);
+    }, 25000);
     setInterval(function () { if (document.hidden) return; openBinance(); }, 90000);
     setInterval(function () { if (document.hidden) return; openFinnhub(); }, 60000);
     setInterval(function () { collectTwelve(); pollTwelve(); pollYahoo(); }, 60000);
-    setInterval(function () { if (!document.hidden) pollProxy(); }, 10000);
+    setInterval(function () { if (!document.hidden) pollProxy(); }, 25000);
     setInterval(continuity, 2200);
-    setInterval(function () { writeCache(); }, 15000);
+    setInterval(function () { writeCache(); }, 25000);
     window.addEventListener('beforeunload', writeCache);
     console.log('[feed] always-on market feed started · ' + stocks().length + ' instruments');
   }
@@ -493,8 +505,13 @@
         finnhub: !!((finnhubWS && finnhubWS.readyState === 1) || serverKeys.finnhub),
         twelvedata: !!(keys.twelvedata || serverKeys.twelvedata),
         proxy: !!(serverKeys.finnhub || serverKeys.twelvedata),
+        configured: {
+          binance: true,
+          finnhub: !!(keys.finnhub || serverKeys.finnhub),
+          twelvedata: !!(keys.twelvedata || serverKeys.twelvedata)
+        },
         localKeys: !!keys.finnhub,
-        last: { binance: LAST_BY.binance, finnhub: LAST_BY.finnhub || LAST_BY.proxy, twelvedata: LAST_BY.twelvedata },
+        last: { binance: LAST_BY.binance, finnhub: LAST_BY.finnhub, twelvedata: LAST_BY.twelvedata, proxy: LAST_BY.proxy },
         lastTickAt: Math.max(LAST_BY.binance, LAST_BY.finnhub, LAST_BY.twelvedata, LAST_BY.proxy, LAST_BY.yahoo),
         liveInstruments: liveInstruments(),
         listed: stocks().length,

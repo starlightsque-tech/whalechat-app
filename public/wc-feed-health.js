@@ -57,15 +57,18 @@
 
   function html(st) {
     var online = navigator.onLine !== false;
-    function row(name, key, sub) {
-      var last = st.last[key] || (key === 'finnhub' ? st.last.proxy : 0);
-      var on = false;
-      if (key === 'binance') on = st.binance > 0;
-      else if (key === 'finnhub') on = !!st.finnhub && (Date.now() - (st.last.finnhub || 0) < 180000 || !st.last.finnhub);
-      else on = !!st.twelvedata && (Date.now() - (st.last.twelvedata || 0) < 180000 || !st.last.twelvedata);
-      var waiting = !on && (online && (st.proxy || key === 'binance'));
+    function row(name, key) {
+      var last = st.last[key] || 0;
+      var recent = last && (Date.now() - last < 180000);
+      var on = key === 'binance' ? st.binance > 0 : (!!st[key] && recent);
+      var configured = !st.configured || st.configured[key] !== false;
+      if (!configured) {
+        return '<div class="wc-fh-row">' + dot(false, false) +
+          '<div style="min-width:0"><b>' + name + '</b><span>Standby · add a provider key</span></div></div>';
+      }
+      var waiting = !on && online;
       return '<div class="wc-fh-row">' + dot(on, waiting) +
-        '<div style="min-width:0"><b>' + name + '</b><span>' + (on ? 'Live' : (online ? (waiting ? 'Connecting…' : 'Offline') : 'Offline · device offline')) +
+        '<div style="min-width:0"><b>' + name + '</b><span>' + (on ? 'Live' : (online ? 'Connecting…' : 'Offline · device offline')) +
         ' · ' + ago(last) + '</span></div></div>';
     }
     return '<div class="card wc-fh-card" data-wc-feed-health="1">' +
