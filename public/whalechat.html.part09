@@ -222,7 +222,10 @@ INV.classes = function () {
 };
 INV.classEnabled = function (key) { return INV.classes()[key] !== false; };
 INV.visibleStocks = function () {
-  return INV.stocks().filter((s) => INV.classEnabled(INV.classOf(s)));
+  const all = INV.stocks();
+  const list = all.filter((s) => INV.classEnabled(INV.classOf(s)));
+  /* never render an empty board because one class flag was switched off */
+  return list.length ? list : all;
 };
 INV.visibleCats = function () {
   return ['All'].concat(INV.CLASS_LIST.filter((c) => INV.classEnabled(c.key)).map((c) => c.label));
@@ -260,7 +263,10 @@ INV.marketFiltered = function () {
     else if (cat === 'Crypto') list = list.filter(s => s.crypto);
     else if (cat === 'Dividend') list = list.filter(s => (s.div || 0) > 0).sort((a, b) => b.div - a.div);
     else if (cat === 'New') list = list.filter(s => s.isNew || s.custom).slice().reverse();
-    else list = list.filter(s => s.sector === cat);
+    else if (cat && cat !== 'All' && cat !== 'All Live') {
+      const bySector = list.filter(s => s.sector === cat);
+      if (bySector.length) list = bySector;
+    }
   }
   return list;
 };

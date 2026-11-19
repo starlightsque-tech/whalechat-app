@@ -52,7 +52,7 @@
   async function load(force) {
     if (S.loading && S.pending) return S.pending;
     if (!force && S.state && Date.now() - S.loadedAt < 4000) return S.state;
-    if (typeof Remote === 'undefined' || !Remote.enabled) return S.state;
+    /* offline / static hosting: the admin-open fallback answers from device state */
     S.loading = true;
     S.pending = (async () => {
       try {
@@ -67,7 +67,6 @@
 
   async function loadAdmin(force) {
     if (!isAdmin()) return null;
-    if (typeof Remote === 'undefined' || !Remote.enabled) return null;
     if (S.adminLoading && S.adminPending) return S.adminPending;
     if (!force && S.admin && Date.now() - S.adminLoadedAt < 5000) return S.admin;
     S.adminLoading = true;
@@ -572,7 +571,6 @@
     App.sharesOpen = function (id) { investModal(id); };
 
     App.sharesInvest = async function (id) {
-      if (typeof Remote === 'undefined' || !Remote.enabled) return tmsg('Connect the sync server to invest', 'err');
       const amt = Number((document.getElementById('sharesUsd') || {}).value) || 0;
       if (!(amt > 0)) return tmsg('Enter a USD amount', 'err');
       try {

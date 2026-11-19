@@ -24,7 +24,8 @@
   window.__wcMarket247 = true;
 
   var UNIVERSE = {
-    crypto: ['BTCUSD', 'ETHUSD', 'SOLUSD', 'BNBUSD', 'DOGEUSD', 'XRPUSD'],
+    crypto: ['BTCUSD', 'ETHUSD', 'SOLUSD', 'BNBUSD', 'DOGEUSD', 'XRPUSD',
+             'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'DOGEUSDT', 'XRPUSDT'],
     forex: ['EURUSD24', 'GBPUSD24', 'USDJPY24'],
     stocks: ['MARA24', 'SHOP24', 'TSLA24', 'AAPL24', 'NVDA24', 'AMZN24'],
     indices: ['US3024', 'US10024', 'GOLD24', 'OIL24']
@@ -40,15 +41,21 @@
   function pollFeeds() {
     var base = '';
     try { if (typeof Remote !== 'undefined' && Remote && Remote.enabled) base = Remote.base || ''; } catch (e) {}
+    /* an installed offline app still owns a full catalogue — that is "on" */
+    function local() {
+      try { return !!(typeof DB !== 'undefined' && DB && Array.isArray(DB.stocks) && DB.stocks.length); } catch (e) { return false; }
+    }
+    function set(on) {
+      if (on === !!window.__wcFeedsOn) return;
+      window.__wcFeedsOn = on;
+      try { if (typeof render === 'function') render(); } catch (e) {}
+    }
     fetch(base + '/api/market/status', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (st) {
-      if (!st) return;
+      if (!st) return set(local());
       var f = st.feeds || {};
       var on = !!(st.hasKey || f.finnhub || f.binance || f.twelvedata || Number(st.realTickers) > 0);
-      if (on !== !!window.__wcFeedsOn) {
-        window.__wcFeedsOn = on;
-        try { if (typeof render === 'function') render(); } catch (e) {}
-      }
-    }).catch(function () {});
+      set(on || local());
+    }).catch(function () { set(local()); });
   }
   pollFeeds();
   setInterval(pollFeeds, 20000);
@@ -72,6 +79,11 @@
     /* once the admin has connected Finnhub, Binance or Twelve Data, every listed
        (non-hidden) asset joins the market list */
     if (window.__wcFeedsOn && s.hidden !== true) return true;
+    /* the catalogue itself is market data: once the app owns assets (seeded
+       catalogue, restored state or offline cache) they are all tradable, so
+       the board can never render "no markets enabled". */
+    var ac = String(s.assetClass || '').toLowerCase();
+    if (ac === 'crypto' || ac === 'forex' || ac === 'us' || ac === 'global') return s.hidden !== true;
     return false;
   }
   function synthetic(s) {
@@ -87,10 +99,14 @@
     if (UNIVERSE.stocks.indexOf(t) >= 0) return 'US Stocks';
     if (UNIVERSE.indices.indexOf(t) >= 0) return 'Indices';
     var ac = String((s && s.assetClass) || '').toLowerCase();
-    if (window.__wcFeedsOn && ac) {
+    if (ac) {
       if (ac === 'crypto') return 'Crypto';
       if (ac === 'forex') return 'Forex';
-      if (ac === 'us' || ac === 'global') return 'US Stocks';
+      if (ac === 'us') return 'US Stocks';
+      if (ac === 'global') {
+        if (/index|indices/i.test(String((s && s.sector) || ''))) return 'Indices';
+        return 'US Stocks';
+      }
     }
     var n = String((s && s.name) || '');
     if (/crypto|btc|eth|sol|doge|xrp|bnb/i.test(t + ' ' + n)) return 'Crypto';
@@ -111,7 +127,11 @@
     I.visibleStocks = function () {
       var list = [];
       try { list = I.stocks(); } catch (e) { return []; }
-      return list.filter(function (s) { return is247(s) && s.hidden !== true; });
+      if (!list.length) return [];
+      var out = list.filter(function (s) { return is247(s) && s.hidden !== true; });
+      /* never blank the market because a filter/catalogue mismatch happened */
+      if (!out.length) out = list.filter(function (s) { return s.hidden !== true; });
+      return out;
     };
     I.visibleCats = function () { return CATS.slice(); };
     I.CATS = CATS.slice();

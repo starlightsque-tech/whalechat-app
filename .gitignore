@@ -31,3 +31,6 @@ backups/
 
 # local test state
 data-admin/
+
+# local verification harness
+work/

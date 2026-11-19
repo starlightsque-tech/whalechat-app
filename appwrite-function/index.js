@@ -78,8 +78,68 @@ let localBusy = false;
 
 async function readState() {
   const s = await readJsonFile(STATE_FILE, null);
-  if (s && s.db) return s;
-  return { rev: 0, at: 0, db: null };
+  if (s && s.db) { ensureMarketCatalogue(s.db); return s; }
+  return { rev: 0, at: 0, db: ensureMarketCatalogue(null) };
+}
+
+/* -------------------------------------------------------------------------
+   Market catalogue seed. A Function instance is stateless, so a first read of
+   an empty state used to leave the app with zero assets ("no markets enabled").
+   Every state read/write now guarantees the 300+ instrument catalogue plus the
+   WhaleCoin company stock. Existing admin edits are never overwritten.
+   ------------------------------------------------------------------------- */
+const UNIVERSE = (() => { try { return require('./market-universe.json'); } catch (e) { return []; } })();
+const UNIVERSE_SEEDED = { done: false };
+function ensureMarketCatalogue(db) {
+  if (!db) {
+    db = { users: [], stocks: [], products: [], orders: [], messages: [], txs: [], vendors: [], deposits: [], withdrawals: [], contacts: [], notifications: [], statuses: [], chatsMeta: {}, alerts: [], blocks: [], settings: {}, trades: [], holdings: [], watchlist: [], meta: {} };
+  }
+  if (!Array.isArray(db.stocks)) db.stocks = [];
+  const have = new Set(db.stocks.filter((s) => s && s.ticker).map((s) => String(s.ticker).toUpperCase()));
+  const before = db.stocks.length;
+  UNIVERSE.forEach((r) => {
+    const t = String(r.ticker || '').toUpperCase();
+    if (!t || have.has(t)) return;
+    have.add(t);
+    const crypto = r.assetClass === 'crypto';
+    db.stocks.push({
+      id: 'st_' + t.toLowerCase().replace(/[^a-z0-9]/g, ''),
+      ticker: t,
+      displayTicker: crypto ? t.replace(/USDT$/, '/USDT') : (r.displayTicker || t),
+      finnhubSymbol: crypto ? 'BINANCE:' + t : (r.displayTicker || t),
+      assetClass: r.assetClass || 'us',
+      name: r.name || t,
+      exchange: r.exchange || (crypto ? 'Binance' : 'US'),
+      currency: crypto ? 'USDT' : 'USD',
+      color: '#2ee6c9',
+      sector: r.sector || (crypto ? 'Crypto' : 'Stock'),
+      provider: r.provider || (crypto ? 'binance' : 'finnhub'),
+      price: Number(r.price) || 0,
+      prevClose: Number(r.price) || 0,
+      pe: 0, mcap: 0, div: 0, vol: 10,
+      crypto, synthetic: false, paused: false, custom: false,
+      twentyFourSeven: crypto || r.sector === 'Indices',
+      createdAt: Date.now()
+    });
+  });
+  if (!have.has('WC')) {
+    db.stocks.push({
+      id: 'st_wc', ticker: 'WC', displayTicker: 'WC', finnhubSymbol: 'WC',
+      assetClass: 'us', name: 'WhaleChat (WC)', exchange: 'WhaleChat', currency: 'USD',
+      color: '#2ee6c9', sector: 'Company', price: 12.5, prevClose: 12.5, div: 0, vol: 5,
+      pe: 0, mcap: 0, paused: false, custom: false, synthetic: true, twentyFourSeven: true,
+      createdAt: Date.now()
+    });
+  }
+  if (!db.invest || typeof db.invest !== 'object') db.invest = { feePct: 0.5, paused: {} };
+  if (!db.invest.classes || typeof db.invest.classes !== 'object') {
+    db.invest.classes = { us: true, global: true, forex: true, crypto: true };
+  } else {
+    const keys = ['us', 'global', 'forex', 'crypto'];
+    if (keys.every((k) => db.invest.classes[k] === false)) db.invest.classes = { us: true, global: true, forex: true, crypto: true };
+  }
+  if (db.stocks.length !== before) UNIVERSE_SEEDED.done = true;
+  return db;
 }
 
 function applyOps(db, ops) {
@@ -99,7 +159,7 @@ function applyOps(db, ops) {
       else if (o.patch) out[col].push(o.patch);
     } else if (o.op === 'remove') { out[col] = out[col].filter((x) => !x || x.id !== o.id); }
   });
-  return out;
+  return ensureMarketCatalogue(out);
 }
 
 /* ------------------------------- admin panel ----------------------------- */

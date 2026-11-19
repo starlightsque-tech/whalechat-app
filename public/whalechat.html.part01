@@ -10,12 +10,15 @@
 /* WhaleChat view mode — default desktop, remembered per device */
 (function () {
   try {
-    var mode = localStorage.getItem('wc.viewMode') || 'desktop';
+    var pref = localStorage.getItem('wc.viewMode') || 'auto';
+    var w = window.innerWidth || (window.screen && window.screen.width) || 0;
+    var handheld = /Mobi|Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
+    var mode = (pref === 'mobile' || pref === 'desktop') ? pref : ((handheld || w < 1024) ? 'mobile' : 'desktop');
     document.documentElement.setAttribute('data-wc-view', mode);
-    if (mode === 'desktop' && ((window.screen && window.screen.width) || window.innerWidth) < 1024) {
-      var m = document.querySelector('meta[name="viewport"]');
-      if (m) m.setAttribute('content', 'width=1280, user-scalable=yes, viewport-fit=cover');
-    }
+    document.documentElement.setAttribute('data-wc-view-pref', pref);
+    /* always the real device width — never a forced 1280px canvas */
+    var m = document.querySelector('meta[name="viewport"]');
+    if (m) m.setAttribute('content', 'width=device-width, initial-scale=1, viewport-fit=cover');
     var pf = (location.hash || '').match(/^#\/portfolio\/([A-Za-z0-9_-]+)/i);
     if (!pf) { try { var qt = new URLSearchParams(location.search).get('portfolio'); if (qt) pf = [0, qt]; } catch (e) {} }
     if (pf && pf[1]) sessionStorage.setItem('wc.pfToken', pf[1]);

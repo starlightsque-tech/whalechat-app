@@ -331,6 +331,33 @@ const rows = []
   .concat(FINNHUB.map((r) => stockRow(r[0], r[1], r[2], r[3], r[4], 'finnhub')))
   .concat(TWELVE.map((r) => stockRow(r[0], r[1], r[2], r[3], r[4], 'twelvedata')));
 
+/* Extended universe (300+ instruments): the same catalogue the client loads,
+   so a server redeploy seeds a full market too. Existing tickers keep their
+   original provider — an instrument is never listed twice. */
+try {
+  const EXTRA = require('./market-universe.json');
+  const have = new Set(rows.map((r) => r.ticker));
+  EXTRA.forEach((r) => {
+    const t = String(r.ticker || '').toUpperCase();
+    if (!t || have.has(t)) return;
+    have.add(t);
+    const disp = r.displayTicker || t;
+    if (r.assetClass === 'crypto') {
+      rows.push(cryptoRow(t, r.name, '#f3ba2f', r.sector || 'Crypto'));
+    } else if (r.assetClass === 'forex') {
+      rows.push(Object.assign(stockRow(t, r.name, 'Forex', '#3aa0ff', 'OANDA', 'finnhub'), {
+        assetClass: 'forex', displayTicker: disp, finnhubSymbol: 'OANDA:' + disp.slice(0, 3) + '_' + disp.slice(3),
+        twentyFourSeven: false, price: Number(r.price) || 0, prevClose: Number(r.price) || 0
+      }));
+    } else {
+      rows.push(Object.assign(stockRow(t, r.name, r.sector || 'Stock', '#3aa0ff', r.exchange || 'US', 'finnhub'), {
+        assetClass: r.assetClass === 'global' ? 'global' : 'us', displayTicker: disp, finnhubSymbol: disp,
+        price: Number(r.price) || 0, prevClose: Number(r.price) || 0
+      }));
+    }
+  });
+} catch (e) { console.warn('[market-catalog] extended universe skipped:', e.message); }
+
 /* hard guarantee: one ticker = one provider */
 const seen = new Set();
 const duplicates = [];

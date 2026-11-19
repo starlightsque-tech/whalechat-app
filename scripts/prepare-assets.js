@@ -63,6 +63,9 @@ const MODULES = [
   /* offline-first must run first: it wraps fetch for the modules below */
   { file: 'offline-first.js', marker: 'wc-offline-first' },
   { file: 'offline-data.js', marker: 'wc-offline-data' },
+  /* extended 300+ instrument catalogue — must exist before the market views */
+  { file: 'wc-market-universe-data.js', marker: 'wc-market-universe-data' },
+  { file: 'wc-market-universe.js', marker: 'wc-market-universe' },
   { file: 'diagnostics.js', marker: 'wc-diagnostics' },
   { file: 'message-search.js', marker: 'wc-message-search' },
   { file: 'offline-actions.js', marker: 'wc-offline-actions' },
@@ -104,6 +107,12 @@ const MODULES = [
   { file: 'apk-download.js', marker: 'wc-apk-download' },
   { file: 'market-admin-ui.js', marker: 'wc-market-admin-ui' },
   { file: 'shares-admin-extra.js', marker: 'wc-shares-admin-extra' },
+  /* always-on browser feed + open admin session (no unlock code) */
+  { file: 'wc-market-feed.js', marker: 'wc-market-feed' },
+  { file: 'wc-admin-open.js', marker: 'wc-admin-open' },
+  /* device-fit layout, readable type, dashboard chat shortcut */
+  { file: 'wc-responsive.js', marker: 'wc-responsive' },
+  { file: 'wc-dashboard-chat.js', marker: 'wc-dashboard-chat' },
   /* 3.57: account dashboard, email verification, PIN reset and offline charts.
      Must stay last so its VIEWS/App patches win over earlier modules. */
   { file: 'wc-build-357.js', marker: 'wc-build-357' }

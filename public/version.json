@@ -1,8 +1,8 @@
 {
-  "version": "3.57.6",
-  "build": "2026-11-19T11:56:58Z",
+  "version": "3.58.0",
+  "build": "2026-11-19T12:43:16Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.57.6 — sign-up now opens a full-screen email verification card immediately after Create account, sends the 6-digit code, verifies it, shows the success notice “Congratulations your account is now verified successfully. Welcome to Whalechat🤝”, sends the welcome email and redirects to My account; wrong codes show a failure notice with a Try again button that sends a new code. Deposit approvals, withdrawal approvals and price alert targets now send Brevo email automatically. Release/email pages keep cached status offline.",
-  "releasedAt": "2026-11-19T11:56:58Z",
+  "notes": "WhaleChat 3.58.0 — 340+ live instruments (US, global, forex, crypto, indices and WhaleCoin WC) seeded on every device and server; market pages no longer blank out when a provider or the sync server is unavailable; always-on Binance WebSocket + Finnhub/Twelve Data browser feed with automatic reconnect, offline continuity and quote cache; admin session opens without an unlock code and market/share controls fall back to device state; share plans and bot settings load on the static Appwrite build; new Chat button on the account dashboard card; page now fits the device width in mobile and desktop mode with safe-area padding and larger bold text.",
+  "releasedAt": "2026-11-19T12:43:16Z",
   "minimum": "3.0.0"
 }

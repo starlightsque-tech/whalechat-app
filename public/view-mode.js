@@ -10,24 +10,35 @@
   if (typeof window === 'undefined') return;
   const V = window.WC_VIEW = window.WC_VIEW || {};
   const KEY = 'wc.viewMode';
-  V.mode = 'desktop';
+  V.mode = 'mobile';
 
   function stored() {
-    try { return localStorage.getItem(KEY) === 'mobile' ? 'mobile' : 'desktop'; }
-    catch (e) { return 'desktop'; }
+    try {
+      const v = localStorage.getItem(KEY);
+      if (v === 'mobile' || v === 'desktop' || v === 'auto') return v;
+      return 'auto';
+    } catch (e) { return 'auto'; }
+  }
+  function resolved(mode) {
+    if (mode === 'mobile' || mode === 'desktop') return mode;
+    /* auto: match the device — phones and small tablets get the phone layout,
+       desktops get the wide layout. Nothing is scaled off the screen edge. */
+    try {
+      const w = window.innerWidth || (window.screen && window.screen.width) || 0;
+      return (isHandheld() || w < 1024) ? 'mobile' : 'desktop';
+    } catch (e) { return 'mobile'; }
   }
   function viewport() { return document.querySelector('meta[name="viewport"]'); }
-  function content(mode) {
-    const screenW = (window.screen && Number(window.screen.width)) || window.innerWidth;
-    if (mode === 'desktop' && (isHandheld() || screenW < 1024)) {
-      return 'width=1280, user-scalable=yes, viewport-fit=cover';
-    }
-    return 'width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover';
+  function content() {
+    /* always the real device width: text and buttons can never sit under the
+       screen edge, in mobile or desktop mode, online or offline */
+    return 'width=device-width, initial-scale=1, viewport-fit=cover';
   }
 
   function updateButtons() {
-    const target = V.mode === 'desktop' ? 'mobile' : 'desktop';
-    const icon = V.mode === 'desktop' ? 'smartphone' : 'monitor';
+    const effective = resolved(V.mode);
+    const target = V.mode === 'auto' ? 'desktop' : (effective === 'desktop' ? 'mobile' : 'desktop');
+    const icon = effective === 'desktop' ? 'smartphone' : 'monitor';
     document.querySelectorAll('[data-view-toggle]').forEach((btn) => {
       const label = btn.querySelector('[data-view-label]');
       const iconEl = btn.querySelector('[data-view-icon]');
@@ -39,7 +50,7 @@
       btn.setAttribute('title', 'Switch to ' + target + ' view');
       btn.setAttribute('aria-label', 'Switch to ' + target + ' view');
     });
-    document.querySelectorAll('[data-view-mode-label]').forEach((el) => { el.textContent = V.mode; });
+    document.querySelectorAll('[data-view-mode-label]').forEach((el) => { el.textContent = V.mode === 'auto' ? ('auto · ' + effective) : V.mode; });
   }
 
   function isHandheld() {
@@ -48,17 +59,19 @@
   }
 
   function apply(mode, opts) {
-    mode = mode === 'mobile' ? 'mobile' : 'desktop';
+    mode = (mode === 'mobile' || mode === 'desktop' || mode === 'auto') ? mode : 'auto';
     V.mode = mode;
+    const effective = resolved(mode);
     try { localStorage.setItem(KEY, mode); } catch (e) {}
-    document.documentElement.setAttribute('data-wc-view', mode);
+    document.documentElement.setAttribute('data-wc-view', effective);
+    document.documentElement.setAttribute('data-wc-view-pref', mode);
     const meta = viewport();
-    if (meta) meta.setAttribute('content', content(mode));
+    if (meta) meta.setAttribute('content', content());
     updateButtons();
     if (!opts || !opts.silent) {
-      /* phones need a reload for the viewport width switch to fully apply */
+      /* no reload needed — the viewport is the device width in every mode */
       if (isHandheld()) {
-        setTimeout(function () { try { location.reload(); } catch (e) {} }, 60);
+        setTimeout(function () { try { window.dispatchEvent(new Event('resize')); } catch (e) {} }, 80);
         return;
       }
       /* let the viewport/layout settle, then make charts recalculate widths */
@@ -69,7 +82,7 @@
 
   V.apply = apply;
   V.set = function (mode) { apply(mode); };
-  V.toggle = function () { apply(V.mode === 'desktop' ? 'mobile' : 'desktop'); };
+  V.toggle = function () { apply(resolved(V.mode) === 'desktop' ? 'mobile' : 'desktop'); };
 
   if (typeof App !== 'undefined') {
     App.viewToggle = function () { V.toggle(); };
@@ -88,6 +101,7 @@
         <div class="between"><div><div class="small" style="font-weight:600">View mode</div>
           <div class="tiny muted mt6">Currently <b data-view-mode-label>${mode}</b> · desktop uses the wide layout, mobile uses the phone layout</div></div>
           <div class="row" style="gap:6px">
+            <button class="btn btn-xs ${mode === 'auto' ? 'btn-primary' : 'btn-ghost'}" data-act="view-mode-auto">Auto</button>
             <button class="btn btn-xs ${mode === 'desktop' ? 'btn-primary' : 'btn-ghost'}" data-act="view-mode-desktop">Desktop</button>
             <button class="btn btn-xs ${mode === 'mobile' ? 'btn-primary' : 'btn-ghost'}" data-act="view-mode-mobile">Mobile</button>
           </div></div>`;
@@ -103,10 +117,10 @@
     const st = document.createElement('style');
     st.id = 'wc-view-style';
     st.textContent = `
-    /* fallback desktop layout when a phone ignores the width=1280 viewport */
+    /* desktop layout on a small screen: keep it responsive, never 1180px wide */
     @media(max-width:1023px){
-      html[data-wc-view="desktop"] body{min-width:1180px}
-      html[data-wc-view="desktop"] .sidebar{display:flex!important}
+      html[data-wc-view="desktop"] body{min-width:0!important;width:100%!important;overflow-x:hidden}
+      html[data-wc-view="desktop"] .sidebar{display:none!important}
       html[data-wc-view="desktop"] .bottomnav{display:none!important}
       html[data-wc-view="desktop"] .content{padding:22px 24px 60px!important}
       html[data-wc-view="desktop"] .topbar .brand{display:flex!important}
@@ -137,6 +151,7 @@
 
   /* keep dynamically re-rendered topbars/sidebars in sync */
   setInterval(updateButtons, 1200);
+  if (typeof App !== 'undefined') App.viewModeAuto = function () { apply('auto'); if (typeof render === 'function') { try { render(); } catch (e) {} } };
   apply(stored(), { silent: true });
   setTimeout(updateButtons, 300);
 })();
