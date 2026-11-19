@@ -1,0 +1,505 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+<title>WhaleChat Admin</title>
+<meta name="theme-color" content="#04101a"/>
+<style>
+  :root{--bg:#04101a;--panel:#091c28;--panel2:#0d2636;--line:rgba(255,255,255,.08);--text:#e9f4f9;--muted:#8ba4b6;--accent:#2ee6c9;--blue:#3aa0ff;--danger:#ff5c72;--warn:#ffc400;--ok:#22c55e}
+  *{box-sizing:border-box}html,body{margin:0;min-height:100%;background:radial-gradient(1000px 600px at 85% -10%,rgba(58,160,255,.12),transparent 60%),radial-gradient(800px 500px at 0% 100%,rgba(46,230,201,.08),transparent 55%),var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Inter,sans-serif}
+  a{color:var(--accent);text-decoration:none}
+  button,input,select{font:inherit}
+  .hidden{display:none!important}
+  /* login */
+  .login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+  .login-card{width:100%;max-width:430px;background:linear-gradient(180deg,rgba(20,48,66,.92),rgba(8,26,38,.96));border:1px solid var(--line);border-radius:22px;padding:30px;box-shadow:0 30px 90px rgba(0,0,0,.45)}
+  .brand{display:flex;align-items:center;gap:12px;margin-bottom:22px}
+  .brand .mark{width:46px;height:46px;border-radius:14px;background:linear-gradient(135deg,var(--accent),var(--blue));display:flex;align-items:center;justify-content:center;font-weight:900;color:#03221d;font-size:20px}
+  .brand b{font-size:19px;letter-spacing:-.02em}.brand small{display:block;color:var(--muted);font-size:11px;letter-spacing:.14em;font-weight:700}
+  h1{font-size:22px;margin:0 0 6px;letter-spacing:-.02em}
+  .sub{color:var(--muted);font-size:13px;line-height:1.6;margin:0 0 20px}
+  label{display:block;font-size:11px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin:14px 0 6px}
+  .inp{width:100%;height:46px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--text);padding:0 13px;outline:none;transition:.15s}
+  .inp:focus{border-color:rgba(46,230,201,.6);box-shadow:0 0 0 3px rgba(46,230,201,.1)}
+  .btn{height:46px;border:0;border-radius:12px;background:linear-gradient(135deg,var(--accent),var(--blue));color:#03221d;font-weight:800;cursor:pointer;padding:0 18px;display:inline-flex;align-items:center;justify-content:center;gap:8px}
+  .btn:hover{filter:brightness(1.05)}.btn:disabled{opacity:.55;cursor:not-allowed}
+  .btn.block{width:100%}.btn.ghost{background:rgba(255,255,255,.05);color:var(--text);border:1px solid var(--line)}
+  .btn.danger{background:rgba(255,92,114,.14);color:#ff8a9b;border:1px solid rgba(255,92,114,.35)}
+  .btn.sm{height:34px;border-radius:9px;font-size:12px;padding:0 12px}
+  .note{font-size:12px;color:var(--muted);line-height:1.6}.err{color:#ff8a9b;font-size:12.5px;margin-top:10px;display:none}
+  .okmsg{color:#7ff0c2;font-size:12.5px;margin-top:10px;display:none}
+  .row{display:flex;gap:10px;align-items:center}.between{display:flex;justify-content:space-between;align-items:center;gap:12px}
+  .linkbtn{background:none;border:0;color:var(--accent);font-size:12.5px;cursor:pointer;padding:0}
+  /* shell */
+  .shell{display:grid;grid-template-columns:250px 1fr;min-height:100vh}
+  aside{background:rgba(6,20,30,.85);border-right:1px solid var(--line);padding:22px 16px;position:sticky;top:0;height:100vh}
+  aside .brand{margin-bottom:26px}
+  .nav{display:flex;flex-direction:column;gap:4px}
+  .nav button{display:flex;align-items:center;gap:10px;height:44px;border:1px solid transparent;background:none;color:var(--muted);border-radius:11px;padding:0 12px;font-size:13.5px;font-weight:650;cursor:pointer;text-align:left;width:100%}
+  .nav button.on{background:rgba(46,230,201,.1);border-color:rgba(46,230,201,.25);color:var(--text)}
+  .nav button .dot{width:7px;height:7px;border-radius:50%;background:currentColor;opacity:.5}
+  .sidefoot{margin-top:auto;padding-top:18px;border-top:1px solid var(--line);font-size:11px;color:var(--muted);line-height:1.6}
+  main{padding:26px 28px 60px;min-width:0}
+  .top{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:20px}
+  .top h1{font-size:25px}.top p{margin:4px 0 0;color:var(--muted);font-size:13px}
+  .who{font-size:12px;color:var(--muted);text-align:right;line-height:1.6}.who b{color:var(--text)}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:18px}
+  .card{background:linear-gradient(180deg,rgba(18,45,62,.72),rgba(9,28,40,.82));border:1px solid var(--line);border-radius:15px;padding:16px}
+  .card .k{font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);font-weight:800}
+  .card .v{font-size:26px;font-weight:800;margin-top:7px;letter-spacing:-.02em}
+  .card .d{font-size:11.5px;color:var(--muted);margin-top:3px}
+  .card.accent .v{color:var(--accent)}.card.warn .v{color:var(--warn)}.card.ok .v{color:var(--ok)}
+  .panel{background:rgba(9,28,40,.72);border:1px solid var(--line);border-radius:16px;padding:18px;margin-bottom:16px}
+  .panel h2{font-size:15px;margin:0 0 4px}.panel .hint{font-size:12px;color:var(--muted);margin:0 0 12px;line-height:1.6}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th{text-align:left;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+  td{padding:10px;border-bottom:1px solid rgba(255,255,255,.05);vertical-align:middle}
+  tr:hover td{background:rgba(255,255,255,.02)}
+  .pill{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:800;padding:3px 8px;border-radius:999px;border:1px solid var(--line);white-space:nowrap}
+  .pill.ok{color:#7ff0c2;border-color:rgba(34,197,94,.35);background:rgba(34,197,94,.1)}
+  .pill.warn{color:#ffd76a;border-color:rgba(255,196,0,.35);background:rgba(255,196,0,.08)}
+  .pill.bad{color:#ff9aaa;border-color:rgba(255,92,114,.35);background:rgba(255,92,114,.08)}
+  .pill.admin{color:#8fc3ff;border-color:rgba(58,160,255,.35);background:rgba(58,160,255,.1)}
+  .search{height:40px;border-radius:10px;border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--text);padding:0 12px;outline:none;min-width:240px}
+  .scroll{overflow:auto;max-height:60vh}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .sec-item{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;padding:14px 0;border-bottom:1px solid var(--line)}
+  .sec-item:last-child{border-bottom:0}
+  .sec-item b{font-size:13px}.sec-item p{margin:4px 0 0;color:var(--muted);font-size:12px;line-height:1.55}
+  .editing{background:rgba(46,230,201,.05);border:1px solid rgba(46,230,201,.2);border-radius:12px;padding:14px;margin-top:10px}
+  .recovery-key{font-family:Menlo,Consolas,monospace;background:#04101a;border:1px dashed rgba(46,230,201,.5);border-radius:10px;padding:12px;word-break:break-all;font-size:13px;color:var(--accent);user-select:all;margin-top:8px}
+  .toast{position:fixed;right:18px;bottom:18px;background:#0b2636;border:1px solid var(--line);border-radius:12px;padding:12px 16px;font-size:12.5px;box-shadow:0 12px 40px rgba(0,0,0,.4);opacity:0;transform:translateY(8px);transition:.2s;z-index:99}
+  .toast.show{opacity:1;transform:none}.toast.ok{border-color:rgba(34,197,94,.4)}.toast.err{border-color:rgba(255,92,114,.45)}
+  @media(max-width:900px){.shell{grid-template-columns:1fr}aside{position:relative;height:auto;border-right:0;border-bottom:1px solid var(--line)}aside .brand{margin-bottom:14px}.nav{flex-direction:row;overflow:auto}.nav button{white-space:nowrap;width:auto}main{padding:20px}.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<!-- login -->
+<div id="loginView" class="login-wrap">
+  <div class="login-card">
+    <div class="brand"><div class="mark">W</div><div><b>WhaleChat</b><small>ADMIN PANEL</small></div></div>
+    <h1 id="loginTitle">Administrator sign in</h1>
+    <p class="sub" id="loginSub">Use your WhaleChat admin email or username and password.</p>
+
+    <form id="loginForm">
+      <label>Admin email or username</label>
+      <input class="inp" id="loginId" autocomplete="username" placeholder="admin@whalechat.app"/>
+      <label>Password</label>
+      <input class="inp" id="loginPass" type="password" autocomplete="current-password" placeholder="Your admin password"/>
+      <div id="loginErr" class="err"></div>
+      <button class="btn block" type="submit" id="loginBtn" style="margin-top:18px">Sign in to admin</button>
+    </form>
+    <div class="between" style="margin-top:14px">
+      <button class="linkbtn" id="toForgot">Forgot password?</button>
+      <span class="note">Protected area · 8-hour session</span>
+    </div>
+  </div>
+</div>
+
+<!-- forgot -->
+<div id="forgotView" class="login-wrap hidden">
+  <div class="login-card">
+    <div class="brand"><div class="mark">W</div><div><b>WhaleChat</b><small>ADMIN RECOVERY</small></div></div>
+    <h1>Reset admin password</h1>
+    <p class="sub">Enter your admin email and the recovery key you saved from Security, then choose a new password.</p>
+    <form id="forgotForm">
+      <label>Admin email</label>
+      <input class="inp" id="fgEmail" type="email" placeholder="admin@whalechat.app"/>
+      <label>Recovery key</label>
+      <input class="inp" id="fgKey" placeholder="The recovery key from Security"/>
+      <label>New password</label>
+      <input class="inp" id="fgPass" type="password" placeholder="At least 8 characters"/>
+      <label>Confirm new password</label>
+      <input class="inp" id="fgPass2" type="password" placeholder="Repeat password"/>
+      <div id="fgErr" class="err"></div>
+      <div id="fgOk" class="okmsg"></div>
+      <button class="btn block" type="submit" style="margin-top:18px">Reset password</button>
+    </form>
+    <div class="between" style="margin-top:14px"><button class="linkbtn" id="toLogin">← Back to sign in</button><span class="note">Recovery key required</span></div>
+  </div>
+</div>
+
+<!-- app -->
+<div id="appView" class="shell hidden">
+  <aside>
+    <div class="brand"><div class="mark">W</div><div><b>WhaleChat</b><small>ADMIN CONSOLE</small></div></div>
+    <nav class="nav">
+      <button data-view="dash" class="on"><span class="dot"></span> Overview</button>
+      <button data-view="users"><span class="dot"></span> Users</button>
+      <button data-view="money"><span class="dot"></span> Money &amp; orders</button>
+      <button data-view="trading"><span class="dot"></span> Trading</button>
+      <button data-view="security"><span class="dot"></span> Account security</button>
+    </nav>
+    <div class="sidefoot">WhaleChat Admin<br/>v3.57 · Appwrite sync<br/><a href="https://whalechat.appwrite.network" target="_blank" rel="noopener">Open the app ↗</a></div>
+  </aside>
+  <main>
+    <div class="top">
+      <div><h1 id="pageTitle">Overview</h1><p id="pageSub">Live snapshot from the WhaleChat sync service.</p></div>
+      <div class="who"><b id="whoEmail">—</b><br/><span id="whoRole">Administrator</span><br/>
+        <button class="btn ghost sm" id="refreshBtn" style="margin-top:8px">Refresh</button>
+        <button class="btn danger sm" id="logoutBtn" style="margin-top:8px">Sign out</button>
+      </div>
+    </div>
+
+    <section id="view-dash">
+      <div class="cards" id="statCards"></div>
+      <div class="panel"><div class="between"><div><h2>Newest accounts</h2><p class="hint">Latest users stored on the sync service.</p></div></div>
+        <div class="scroll"><table><thead><tr><th>User</th><th>Email</th><th>Balance</th><th>Joined</th><th>Status</th></tr></thead><tbody id="recentUsers"></tbody></table></div>
+      </div>
+      <div class="panel"><div class="between"><div><h2>Recent money activity</h2><p class="hint">Deposits, withdrawals and orders.</p></div></div>
+        <div class="scroll"><table><thead><tr><th>Type</th><th>User</th><th>Amount</th><th>Status</th><th>When</th></tr></thead><tbody id="recentMoney"></tbody></table></div>
+      </div>
+    </section>
+
+    <section id="view-users" class="hidden">
+      <div class="panel"><div class="between" style="margin-bottom:10px"><div><h2>All users</h2><p class="hint" id="userCount">—</p></div><input class="search" id="userSearch" placeholder="Search name, email or username"/></div>
+        <div class="scroll"><table><thead><tr><th>User</th><th>Email</th><th>Role</th><th>WC balance</th><th>Status</th><th>Actions</th></tr></thead><tbody id="userRows"></tbody></table></div>
+      </div>
+    </section>
+
+    <section id="view-money" class="hidden">
+      <div class="cards" id="moneyCards"></div>
+      <div class="panel"><h2>Deposits</h2><p class="hint">Pending and recent deposits.</p><div class="scroll"><table><thead><tr><th>User</th><th>Amount</th><th>Coin</th><th>Method</th><th>Status</th><th>When</th></tr></thead><tbody id="depositRows"></tbody></table></div></div>
+      <div class="panel"><h2>Withdrawals</h2><p class="hint">Pending and recent withdrawals.</p><div class="scroll"><table><thead><tr><th>User</th><th>WC</th><th>Network</th><th>Status</th><th>When</th></tr></thead><tbody id="withdrawRows"></tbody></table></div></div>
+      <div class="panel"><h2>Orders</h2><p class="hint">Marketplace orders.</p><div class="scroll"><table><thead><tr><th>Buyer</th><th>Items</th><th>Total</th><th>Status</th><th>When</th></tr></thead><tbody id="orderRows"></tbody></table></div></div>
+    </section>
+
+    <section id="view-trading" class="hidden">
+      <div class="cards" id="tradeCards"></div>
+      <div class="panel"><h2>Open positions</h2><p class="hint">Stock and bot trading positions across all users.</p><div class="scroll"><table><thead><tr><th>User</th><th>Ticker</th><th>Shares</th><th>Avg price</th><th>Value</th></tr></thead><tbody id="holdingRows"></tbody></table></div></div>
+      <div class="panel"><h2>Active investment plans</h2><p class="hint">WC-Investing plans currently counting.</p><div class="scroll"><table><thead><tr><th>User</th><th>Plan</th><th>Capital</th><th>Progress</th><th>Projected ROI</th></tr></thead><tbody id="planRows"></tbody></table></div></div>
+    </section>
+
+    <section id="view-security" class="hidden">
+      <div class="panel"><div class="between"><div><h2>Admin identity</h2><p class="hint">These are the credentials used on this admin panel and in the app's admin console.</p></div><span class="pill admin">ADMIN</span></div>
+        <div class="sec-item"><div><b>Email</b><p id="secEmail">—</p></div><button class="btn ghost sm" data-edit="email">Change email</button></div>
+        <div class="sec-item"><div><b>Username</b><p id="secUser">—</p></div><button class="btn ghost sm" data-edit="username">Change username</button></div>
+        <div class="sec-item"><div><b>Password</b><p>Changing it signs out every other admin session.</p></div><button class="btn ghost sm" data-edit="password">Change password</button></div>
+        <div id="editBox" class="editing hidden"></div>
+      </div>
+
+      <div class="panel"><div class="between"><div><h2>Recovery key</h2><p class="hint">Use a recovery key to reset your password if you forget it. It is stored only as a hash and is never shown again.</p></div><span class="pill" id="recoveryPill">—</span></div>
+        <div id="recoverySetup">
+          <p class="note">Create a recovery key of at least 12 characters and keep it somewhere safe. Without it, a forgotten password cannot be reset.</p>
+          <div class="row" style="margin-top:10px"><input class="inp" id="recKey" placeholder="Create a recovery key"/><button class="btn sm" id="saveRecovery">Save key</button></div>
+        </div>
+        <div id="recoveryDone" class="hidden"><p class="note">A recovery key is set. If you forget your password, open <b>Forgot password?</b> on the sign-in screen.</p><button class="btn ghost sm" id="replaceRecovery" style="margin-top:8px">Replace recovery key</button></div>
+      </div>
+
+      <div class="panel"><h2>Session</h2><p class="hint">Sessions expire after 8 hours. Changing the password issues a new token and invalidates older ones.</p><button class="btn danger" id="logout2">Sign out of this device</button></div>
+    </section>
+  </main>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+(function () {
+  'use strict';
+  var API = 'https://whalechat-api.appwrite.network';
+  var TOKEN_KEY = 'wc.admin.token';
+  var ADMIN_KEY = 'wc.admin.profile';
+  var state = { token: '', admin: null, db: null, view: 'dash', filter: '' };
+
+  function $(id) { return document.getElementById(id); }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c]; }); }
+  function n(v) { return Number(v) || 0; }
+  function wc(v) { return (Math.round(n(v) * 100) / 100).toLocaleString('en-US', { maximumFractionDigits: 2 }); }
+  function usd(v) { return '$' + n(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function when(ts) { if (!ts) return '—'; var d = new Date(Number(ts)); return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
+  function pill(t, cls) { return '<span class="pill ' + (cls || '') + '">' + esc(t) + '</span>'; }
+  function toast(msg, kind) {
+    var el = $('toast'); el.textContent = msg; el.className = 'toast show ' + (kind || '');
+    clearTimeout(el.__t); el.__t = setTimeout(function () { el.className = 'toast'; }, 3200);
+  }
+  function post(path, body) {
+    return fetch(API + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body || {}) })
+      .then(function (r) { return r.json().catch(function () { return {}; }); });
+  }
+  function show(view) {
+    $('loginView').classList.toggle('hidden', view !== 'login');
+    $('forgotView').classList.toggle('hidden', view !== 'forgot');
+    $('appView').classList.toggle('hidden', view !== 'app');
+  }
+  function saveSession(token, admin) {
+    state.token = token; state.admin = admin;
+    try { sessionStorage.setItem(TOKEN_KEY, token); sessionStorage.setItem(ADMIN_KEY, JSON.stringify(admin)); } catch (e) {}
+  }
+  function clearSession() {
+    state.token = ''; state.admin = null;
+    try { sessionStorage.removeItem(TOKEN_KEY); sessionStorage.removeItem(ADMIN_KEY); } catch (e) {}
+  }
+
+  /* ------------------------------- login ------------------------------- */
+  $('loginForm').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    var btn = $('loginBtn'), err = $('loginErr');
+    err.style.display = 'none';
+    btn.disabled = true; btn.textContent = 'Signing in…';
+    var res = await post('/api/admin/login', { login: $('loginId').value.trim(), password: $('loginPass').value });
+    btn.disabled = false; btn.textContent = 'Sign in to admin';
+    if (!res.ok) { err.textContent = res.message || 'Sign in failed'; err.style.display = 'block'; return; }
+    saveSession(res.token, res.admin);
+    enterApp();
+  });
+  $('toForgot').onclick = function () { show('forgot'); $('loginErr').style.display = 'none'; };
+  $('toLogin').onclick = function () { show('login'); };
+
+  $('forgotForm').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    var err = $('fgErr'), ok = $('fgOk');
+    err.style.display = 'none'; ok.style.display = 'none';
+    if ($('fgPass').value !== $('fgPass2').value) { err.textContent = 'Passwords do not match'; err.style.display = 'block'; return; }
+    var res = await post('/api/admin/recovery', {
+      email: $('fgEmail').value.trim(), recoveryKey: $('fgKey').value.trim(), newPassword: $('fgPass').value
+    });
+    if (!res.ok) { err.textContent = res.message || 'Reset failed'; err.style.display = 'block'; return; }
+    ok.textContent = res.message || 'Password reset. You can sign in now.';
+    ok.style.display = 'block';
+    setTimeout(function () { show('login'); $('loginPass').value = ''; }, 1400);
+  });
+
+  /* ------------------------------- app -------------------------------- */
+  function enterApp() {
+    if (!state.token) return show('login');
+    show('app');
+    if (state.admin) {
+      $('whoEmail').textContent = state.admin.email || '';
+      $('secEmail').textContent = state.admin.email || '—';
+      $('secUser').textContent = '@' + (state.admin.username || '') ;
+      $('recoveryPill').textContent = state.admin.hasRecovery ? 'Set' : 'Not set';
+      $('recoveryPill').className = 'pill ' + (state.admin.hasRecovery ? 'ok' : 'warn');
+      $('recoverySetup').classList.toggle('hidden', !!state.admin.hasRecovery);
+      $('recoveryDone').classList.toggle('hidden', !state.admin.hasRecovery);
+    }
+    loadData();
+  }
+
+  async function loadData() {
+    var r = await fetch(API + '/api/state', { cache: 'no-store' });
+    var d = await r.json().catch(function () { return {}; });
+    state.db = d.db || {};
+    renderAll();
+  }
+
+  function users() { return (state.db && state.db.users) || []; }
+  function userById(id) { return users().find(function (u) { return u && u.id === id; }) || null; }
+  function displayUser(id) { var u = userById(id); return u ? (u.fullName || u.username || u.email || id) : (id || '—'); }
+
+  function renderAll() {
+    var db = state.db || {};
+    var us = users();
+    var dep = db.deposits || [], wd = db.withdrawals || [], orders = db.orders || [];
+    var trades = db.trades || [], holdings = db.holdings || [];
+    var activePlans = [];
+    us.forEach(function (u) {
+      var plans = u && u.investAcct && u.investAcct.wcInvest && u.investAcct.wcInvest.plans;
+      if (Array.isArray(plans)) plans.forEach(function (p) { if (p && p.status === 'active') activePlans.push({ u: u, p: p }); });
+    });
+
+    var pendingDep = dep.filter(function (x) { return x && x.status === 'pending'; });
+    var pendingWd = wd.filter(function (x) { return x && x.status === 'pending'; });
+    var openTrades = trades.filter(function (t) { return t && (t.status === 'Open' || t.status === 'open' || t.status === 'Pending'); });
+    var totalBalance = us.reduce(function (s, u) { return s + n(u.balance); }, 0);
+    var totalHoldings = holdings.reduce(function (s, h) { return s + n(h.shares) * (n((userById(h.userId) || {}).id) ? 1 : 1); }, 0);
+
+    $('statCards').innerHTML = [
+      ['Users', us.length, us.filter(function (u) { return u.verified; }).length + ' verified', 'accent'],
+      ['Pending deposits', pendingDep.length, usd(pendingDep.reduce(function (s, d) { return s + n(d.usd); }, 0)), 'warn'],
+      ['Pending withdrawals', pendingWd.length, wc(pendingWd.reduce(function (s, w) { return s + n(w.coins); }, 0)) + ' WC', 'warn'],
+      ['Wallet balance', wc(totalBalance) + ' WC', usd(totalBalance * 0.5), ''],
+      ['Orders', orders.length, orders.filter(function (o) { return o.status === 'pending'; }).length + ' pending', ''],
+      ['Open trades', openTrades.length, trades.length + ' total', ''],
+      ['Investment plans', activePlans.length, 'active now', 'ok'],
+      ['Banned', us.filter(function (u) { return u.banned; }).length, 'accounts', 'bad']
+    ].map(function (c) {
+      return '<div class="card ' + c[3] + '"><div class="k">' + esc(c[0]) + '</div><div class="v">' + esc(c[1]) + '</div><div class="d">' + esc(c[2]) + '</div></div>';
+    }).join('');
+
+    var recent = us.slice().sort(function (a, b) { return n(b.createdAt) - n(a.createdAt); }).slice(0, 8);
+    $('recentUsers').innerHTML = recent.map(function (u) {
+      return '<tr><td><b>' + esc(u.fullName || u.username) + '</b><div class="note">@' + esc(u.username || '') + '</div></td>' +
+        '<td>' + esc(u.email || '—') + '</td><td>' + wc(u.balance) + ' WC</td><td>' + when(u.createdAt) + '</td>' +
+        '<td>' + (u.banned ? pill('Banned', 'bad') : u.verified ? pill('Verified', 'ok') : pill('Active', '')) + '</td></tr>';
+    }).join('') || '<tr><td colspan="5" class="note">No users yet.</td></tr>';
+
+    var money = [];
+    dep.forEach(function (d) { money.push({ at: d.createdAt, type: 'Deposit', who: d.userId, amt: usd(d.usd), status: d.status }); });
+    wd.forEach(function (w) { money.push({ at: w.createdAt, type: 'Withdrawal', who: w.userId, amt: wc(w.coins) + ' WC', status: w.status }); });
+    orders.forEach(function (o) { money.push({ at: o.createdAt, type: 'Order', who: o.buyerId, amt: wc(o.totalCoins) + ' WC', status: o.status }); });
+    money.sort(function (a, b) { return n(b.at) - n(a.at); });
+    $('recentMoney').innerHTML = money.slice(0, 10).map(function (m) {
+      return '<tr><td>' + esc(m.type) + '</td><td>' + esc(displayUser(m.who)) + '</td><td>' + esc(m.amt) + '</td><td>' + pill(m.status || '—', m.status === 'approved' || m.status === 'delivered' ? 'ok' : m.status === 'rejected' ? 'bad' : 'warn') + '</td><td>' + when(m.at) + '</td></tr>';
+    }).join('') || '<tr><td colspan="5" class="note">No activity yet.</td></tr>';
+
+    /* users */
+    $('userCount').textContent = us.length + ' accounts on the sync service';
+    renderUsers();
+
+    /* money page */
+    $('moneyCards').innerHTML = [
+      ['Deposits', dep.length, usd(dep.filter(function (d) { return d.status === 'approved'; }).reduce(function (s, d) { return s + n(d.usd); }, 0)) + ' approved'],
+      ['Withdrawals', wd.length, wc(wd.filter(function (w) { return w.status === 'approved'; }).reduce(function (s, w) { return s + n(w.coins); }, 0)) + ' WC approved'],
+      ['Orders', orders.length, usd(orders.reduce(function (s, o) { return s + n(o.totalCoins) * 0.5; }, 0)) + ' GMV'],
+      ['Pending review', pendingDep.length + pendingWd.length, 'requests waiting']
+    ].map(function (c) { return '<div class="card"><div class="k">' + esc(c[0]) + '</div><div class="v">' + esc(c[1]) + '</div><div class="d">' + esc(c[2]) + '</div></div>'; }).join('');
+    $('depositRows').innerHTML = dep.slice().sort(function (a, b) { return n(b.createdAt) - n(a.createdAt); }).slice(0, 30).map(function (d) {
+      return '<tr><td>' + esc(displayUser(d.userId)) + '</td><td>' + usd(d.usd) + '</td><td>' + esc(d.coin || '—') + '</td><td>' + esc(d.methodName || d.method || '—') + '</td><td>' + pill(d.status || '—', d.status === 'approved' ? 'ok' : d.status === 'rejected' ? 'bad' : 'warn') + '</td><td>' + when(d.createdAt) + '</td></tr>';
+    }).join('') || '<tr><td colspan="6" class="note">No deposits.</td></tr>';
+    $('withdrawRows').innerHTML = wd.slice().sort(function (a, b) { return n(b.createdAt) - n(a.createdAt); }).slice(0, 30).map(function (w) {
+      return '<tr><td>' + esc(displayUser(w.userId)) + '</td><td>' + wc(w.coins) + ' WC</td><td>' + esc(w.network || '—') + '</td><td>' + pill(w.status || '—', w.status === 'approved' ? 'ok' : w.status === 'rejected' ? 'bad' : 'warn') + '</td><td>' + when(w.createdAt) + '</td></tr>';
+    }).join('') || '<tr><td colspan="5" class="note">No withdrawals.</td></tr>';
+    $('orderRows').innerHTML = orders.slice().sort(function (a, b) { return n(b.createdAt) - n(a.createdAt); }).slice(0, 30).map(function (o) {
+      return '<tr><td>' + esc(displayUser(o.buyerId)) + '</td><td>' + esc((o.items || []).length || (o.items ? 1 : 0)) + '</td><td>' + wc(o.totalCoins) + ' WC</td><td>' + pill(o.status || '—', o.status === 'delivered' ? 'ok' : o.status === 'rejected' ? 'bad' : 'warn') + '</td><td>' + when(o.createdAt) + '</td></tr>';
+    }).join('') || '<tr><td colspan="5" class="note">No orders.</td></tr>';
+
+    /* trading */
+    $('tradeCards').innerHTML = [
+      ['Open trades', openTrades.length, trades.length + ' lifetime'],
+      ['Holdings', holdings.length, 'positions'],
+      ['Active plans', activePlans.length, 'WC-Investing'],
+      ['Invested', usd(activePlans.reduce(function (s, x) { return s + n(x.p.capitalUsd); }, 0)), 'plan capital']
+    ].map(function (c) { return '<div class="card"><div class="k">' + esc(c[0]) + '</div><div class="v">' + esc(c[1]) + '</div><div class="d">' + esc(c[2]) + '</div></div>'; }).join('');
+    $('holdingRows').innerHTML = holdings.slice(0, 40).map(function (h) {
+      var stock = (state.db.stocks || []).find(function (s) { return s.ticker === h.ticker; }) || {};
+      var px = n(stock.price) || n(h.avgPrice);
+      return '<tr><td>' + esc(displayUser(h.userId)) + '</td><td><b>' + esc(h.ticker) + '</b></td><td>' + wc(h.shares) + '</td><td>' + usd(h.avgPrice) + '</td><td>' + usd(n(h.shares) * px) + '</td></tr>';
+    }).join('') || '<tr><td colspan="5" class="note">No positions.</td></tr>';
+    $('planRows').innerHTML = activePlans.slice(0, 40).map(function (x) {
+      var p = x.p, start = n(p.startedAt), end = n(p.endsAt), pct = end > start ? Math.min(100, Math.max(0, ((Date.now() - start) / (end - start)) * 100)) : 0;
+      return '<tr><td>' + esc(displayUser(x.u.id)) + '</td><td>' + esc(p.planName) + '</td><td>' + usd(p.capitalUsd) + '</td><td>' + pct.toFixed(1) + '%</td><td>' + usd(p.projectedRoiUsd) + '</td></tr>';
+    }).join('') || '<tr><td colspan="5" class="note">No active plans.</td></tr>';
+  }
+
+  function renderUsers() {
+    var q = state.filter.toLowerCase();
+    var list = users().filter(function (u) {
+      if (!q) return true;
+      return [u.fullName, u.username, u.email, u.id].some(function (v) { return String(v || '').toLowerCase().indexOf(q) >= 0; });
+    });
+    $('userRows').innerHTML = list.slice(0, 300).map(function (u) {
+      return '<tr><td><b>' + esc(u.fullName || u.username) + '</b><div class="note">' + esc(u.id) + '</div></td>' +
+        '<td>' + esc(u.email || '—') + '</td>' +
+        '<td>' + (u.role === 'admin' ? pill('Admin', 'admin') : pill('User', '')) + '</td>' +
+        '<td>' + wc(u.balance) + ' WC</td>' +
+        '<td>' + (u.banned ? pill('Banned', 'bad') : u.verified ? pill('Verified', 'ok') : pill('Active', '')) + '</td>' +
+        '<td><button class="btn ghost sm" data-verify="' + esc(u.id) + '">' + (u.verified ? 'Unverify' : 'Verify') + '</button> ' +
+        '<button class="btn danger sm" data-ban="' + esc(u.id) + '">' + (u.banned ? 'Unban' : 'Ban') + '</button></td></tr>';
+    }).join('') || '<tr><td colspan="6" class="note">No matching users.</td></tr>';
+  }
+
+  $('userSearch').addEventListener('input', function (e) { state.filter = e.target.value; renderUsers(); });
+
+  document.addEventListener('click', async function (e) {
+    var b = e.target.closest ? e.target.closest('[data-verify],[data-ban],[data-view],[data-edit]') : null;
+    if (!b) return;
+    if (b.hasAttribute('data-view')) {
+      state.view = b.getAttribute('data-view');
+      ['dash', 'users', 'money', 'trading', 'security'].forEach(function (v) {
+        $('view-' + v).classList.toggle('hidden', v !== state.view);
+      });
+      Array.prototype.forEach.call(document.querySelectorAll('.nav button'), function (x) { x.classList.toggle('on', x === b); });
+      var titles = { dash: ['Overview', 'Live snapshot from the WhaleChat sync service.'], users: ['Users', 'Accounts, verification and moderation.'], money: ['Money & orders', 'Deposits, withdrawals and marketplace orders.'], trading: ['Trading', 'Positions and active investment plans.'], security: ['Account security', 'Change the admin email, password and recovery key.'] };
+      $('pageTitle').textContent = titles[state.view][0]; $('pageSub').textContent = titles[state.view][1];
+      return;
+    }
+    if (b.hasAttribute('data-verify')) {
+      var id = b.getAttribute('data-verify');
+      var u = userById(id); if (!u) return;
+      var res = await post('/api/admin/user-flag', { token: state.token, userId: id, verified: !u.verified });
+      if (!res.ok) return toast(res.message || 'Update failed', 'err');
+      u.verified = !u.verified; toast('Verification updated', 'ok'); renderAll(); return;
+    }
+    if (b.hasAttribute('data-ban')) {
+      var id2 = b.getAttribute('data-ban');
+      var u2 = userById(id2); if (!u2) return;
+      var res2 = await post('/api/admin/user-flag', { token: state.token, userId: id2, banned: !u2.banned });
+      if (!res2.ok) return toast(res2.message || 'Update failed', 'err');
+      u2.banned = !u2.banned; toast(u2.banned ? 'Account banned' : 'Account reinstated', 'ok'); renderAll(); return;
+    }
+    if (b.hasAttribute('data-edit')) editField(b.getAttribute('data-edit'));
+  });
+
+  /* user-flag endpoint (added below in the function) */
+  async function setUserFlag(id, flags) {
+    var res = await post('/api/admin/user-flag', Object.assign({ token: state.token, userId: id }, flags));
+    if (!res.ok) { toast(res.message || 'Update failed', 'err'); return false; }
+    var u = userById(id); if (u) Object.assign(u, flags);
+    renderAll(); toast('Saved', 'ok'); return true;
+  }
+
+  /* ----------------------------- security ----------------------------- */
+  function editField(which) {
+    var box = $('editBox'); box.classList.remove('hidden');
+    if (which === 'email') {
+      box.innerHTML = '<b>Change admin email</b><p class="note">Use the email you will remember. It becomes the login for this panel and the admin console.</p>' +
+        '<label>New email</label><input class="inp" id="edVal" type="email" value="' + esc(state.admin.email || '') + '"/>' +
+        '<label>Current password</label><input class="inp" id="edCur" type="password"/>' +
+        '<div class="row" style="margin-top:12px"><button class="btn sm" id="edSave">Save email</button><button class="btn ghost sm" id="edCancel">Cancel</button></div>' +
+        '<div class="err" id="edErr"></div>';
+    } else if (which === 'username') {
+      box.innerHTML = '<b>Change admin username</b><p class="note">You can sign in with either the username or the email.</p>' +
+        '<label>New username</label><input class="inp" id="edVal" value="' + esc(state.admin.username || '') + '"/>' +
+        '<label>Current password</label><input class="inp" id="edCur" type="password"/>' +
+        '<div class="row" style="margin-top:12px"><button class="btn sm" id="edSave">Save username</button><button class="btn ghost sm" id="edCancel">Cancel</button></div>' +
+        '<div class="err" id="edErr"></div>';
+    } else {
+      box.innerHTML = '<b>Change admin password</b><p class="note">At least 8 characters. Use something unique to this panel.</p>' +
+        '<label>Current password</label><input class="inp" id="edCur" type="password"/>' +
+        '<label>New password</label><input class="inp" id="edNew" type="password"/>' +
+        '<label>Confirm new password</label><input class="inp" id="edNew2" type="password"/>' +
+        '<div class="row" style="margin-top:12px"><button class="btn sm" id="edSave">Change password</button><button class="btn ghost sm" id="edCancel">Cancel</button></div>' +
+        '<div class="err" id="edErr"></div>';
+    }
+    $('edCancel').onclick = function () { box.classList.add('hidden'); };
+    $('edSave').onclick = async function () {
+      var err = $('edErr'); err.style.display = 'none';
+      var body = { token: state.token, currentPassword: $('edCur').value };
+      if (which === 'email') body.email = $('edVal').value.trim();
+      else if (which === 'username') body.username = $('edVal').value.trim();
+      else {
+        if ($('edNew').value !== $('edNew2').value) { err.textContent = 'Passwords do not match'; err.style.display = 'block'; return; }
+        body.newPassword = $('edNew').value;
+      }
+      var res = await post('/api/admin/update', body);
+      if (!res.ok) { err.textContent = res.message || 'Update failed'; err.style.display = 'block'; return; }
+      saveSession(res.token, res.admin);
+      state.admin = res.admin;
+      $('whoEmail').textContent = res.admin.email; $('secEmail').textContent = res.admin.email; $('secUser').textContent = '@' + res.admin.username;
+      box.classList.add('hidden'); toast('Admin credentials updated', 'ok');
+    };
+  }
+
+  $('saveRecovery').onclick = async function () {
+    var key = $('recKey').value.trim();
+    if (key.length < 12) return toast('Use at least 12 characters', 'err');
+    var res = await post('/api/admin/set-recovery', { token: state.token, recoveryKey: key });
+    if (!res.ok) return toast(res.message || 'Could not save key', 'err');
+    state.admin.hasRecovery = true;
+    $('recoveryPill').textContent = 'Set'; $('recoveryPill').className = 'pill ok';
+    $('recoverySetup').classList.add('hidden'); $('recoveryDone').classList.remove('hidden');
+    $('recKey').value = '';
+    toast('Recovery key saved — store it safely', 'ok');
+  };
+  $('replaceRecovery').onclick = function () { $('recoveryDone').classList.add('hidden'); $('recoverySetup').classList.remove('hidden'); };
+
+  $('refreshBtn').onclick = loadData;
+  function logout() { clearSession(); state.db = null; show('login'); }
+  $('logoutBtn').onclick = logout; $('logout2').onclick = logout;
+
+  /* ------------------------------- boot ------------------------------- */
+  (async function boot() {
+    var token = '';
+    try { token = sessionStorage.getItem(TOKEN_KEY) || ''; } catch (e) {}
+    if (!token) return show('login');
+    var res = await post('/api/admin/me', { token: token });
+    if (!res.ok) { clearSession(); return show('login'); }
+    state.token = token; state.admin = res.admin;
+    enterApp();
+  })();
+})();
+</script>
+</body>
+</html>

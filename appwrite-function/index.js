@@ -23,7 +23,8 @@ const KEY = process.env.WC_APPWRITE_KEY || process.env.APPWRITE_FUNCTION_API_KEY
 const BUCKET = process.env.WC_BUCKET || 'whalechat';
 const STATE_FILE = 'whalechat-state';
 const CODES_FILE = 'whalechat-codes';
-const VERSION = '3.57.1';
+const VERSION = '3.57.3';
+const crypto = require('crypto');
 
 const CORS = {
   'access-control-allow-origin': '*',
@@ -98,6 +99,37 @@ function applyOps(db, ops) {
   return out;
 }
 
+/* ------------------------------- admin panel ----------------------------- */
+const ADMIN_SECRET = process.env.ADMIN_PANEL_SECRET || KEY || 'whalechat-admin';
+const ADMIN_TTL = 8 * 3600 * 1000;
+function b64u(buf) { return Buffer.from(buf).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_'); }
+function signToken(payload) {
+  const data = b64u(JSON.stringify(payload));
+  const sig = b64u(crypto.createHmac('sha256', ADMIN_SECRET).update(data).digest());
+  return data + '.' + sig;
+}
+function verifyToken(token) {
+  if (!token || typeof token !== 'string' || token.indexOf('.') < 0) return null;
+  const [data, sig] = token.split('.');
+  const good = b64u(crypto.createHmac('sha256', ADMIN_SECRET).update(data).digest());
+  if (good.length !== sig.length) return null;
+  try { if (!crypto.timingSafeEqual(Buffer.from(good), Buffer.from(sig))) return null; } catch (e) { return null; }
+  let payload = null;
+  try { payload = JSON.parse(Buffer.from(data.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8')); } catch (e) { return null; }
+  if (!payload || !payload.sub || Date.now() > Number(payload.exp || 0)) return null;
+  return payload;
+}
+const ADMIN_FAILS = new Map();
+function adminFail(key) {
+  const f = ADMIN_FAILS.get(key);
+  if (!f || Date.now() - f.at > 15 * 60000) ADMIN_FAILS.set(key, { n: 1, at: Date.now() });
+  else f.n++;
+}
+function adminBlocked(key) {
+  const f = ADMIN_FAILS.get(key);
+  return !!(f && Date.now() - f.at < 15 * 60000 && f.n >= 6);
+}
+
 async function sha256(text) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
   return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -135,6 +167,121 @@ module.exports = async ({ req, res, log, error }) => {
   try { body = req.body ? (typeof req.body === 'string' ? JSON.parse(req.body) : req.body) : {}; } catch (e) { body = {}; }
 
   try {
+    if (path === '/api/admin/login' && method === 'POST') {
+      const login = String(body.login || '').trim().toLowerCase();
+      const given = String(body.password || '');
+      const ip = String((req.headers && (req.headers['x-forwarded-for'] || req.headers['x-real-ip'])) || 'client');
+      const key = login + '|' + ip;
+      if (adminBlocked(key)) return res.json({ ok: false, error: 'too_many', message: 'Too many attempts. Wait 15 minutes.' }, 429, CORS);
+      const st = await readState();
+      const users = (st.db && st.db.users) || [];
+      const u = users.find((x) => x && x.role === 'admin' && !x.banned &&
+        (String(x.email || '').toLowerCase() === login || String(x.username || '').toLowerCase() === login || String(x.id || '').toLowerCase() === login));
+      const hash = await sha256('whalechat::v1::' + given);
+      if (!u || !u.pass || hash !== u.pass) {
+        adminFail(key);
+        return res.json({ ok: false, error: 'invalid', message: 'Incorrect admin email or password' }, 401, CORS);
+      }
+      ADMIN_FAILS.delete(key);
+      const token = signToken({ sub: u.id, email: u.email || '', role: 'admin', exp: Date.now() + ADMIN_TTL });
+      return res.json({ ok: true, token, admin: { id: u.id, email: u.email || '', username: u.username || '', fullName: u.fullName || 'WhaleChat Admin', hasRecovery: !!u.adminRecoveryHash }, expiresAt: Date.now() + ADMIN_TTL }, 200, CORS);
+    }
+
+    if (path === '/api/admin/me' && method === 'POST') {
+      const payload = verifyToken(body.token);
+      if (!payload) return res.json({ ok: false, error: 'unauthorised' }, 401, CORS);
+      const st = await readState();
+      const u = (st.db && st.db.users || []).find((x) => x && x.id === payload.sub && x.role === 'admin');
+      if (!u) return res.json({ ok: false, error: 'admin_missing' }, 404, CORS);
+      return res.json({ ok: true, admin: { id: u.id, email: u.email || '', username: u.username || '', fullName: u.fullName || '', hasRecovery: !!u.adminRecoveryHash } }, 200, CORS);
+    }
+
+    if (path === '/api/admin/update' && method === 'POST') {
+      const payload = verifyToken(body.token);
+      if (!payload) return res.json({ ok: false, error: 'unauthorised', message: 'Sign in again' }, 401, CORS);
+      const st = await readState();
+      if (!st.db) return res.json({ ok: false, error: 'not_initialised' }, 409, CORS);
+      const u = (st.db.users || []).find((x) => x && x.id === payload.sub && x.role === 'admin');
+      if (!u) return res.json({ ok: false, error: 'admin_missing' }, 404, CORS);
+      const current = String(body.currentPassword || '');
+      if (body.newPassword || body.email || body.username) {
+        const okPw = (await sha256('whalechat::v1::' + current)) === u.pass;
+        if (!okPw) return res.json({ ok: false, error: 'bad_password', message: 'Current password is incorrect' }, 403, CORS);
+      }
+      if (body.email) {
+        const email = String(body.email).trim().toLowerCase();
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/.test(email)) return res.json({ ok: false, error: 'invalid_email', message: 'Enter a valid email' }, 400, CORS);
+        if ((st.db.users || []).some((x) => x && x.id !== u.id && String(x.email || '').toLowerCase() === email)) return res.json({ ok: false, error: 'email_taken', message: 'That email is used by another account' }, 409, CORS);
+        u.email = email;
+      }
+      if (body.username) {
+        const username = String(body.username).trim();
+        if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) return res.json({ ok: false, error: 'invalid_username', message: '3–20 letters, numbers or underscores' }, 400, CORS);
+        if ((st.db.users || []).some((x) => x && x.id !== u.id && String(x.username || '').toLowerCase() === username.toLowerCase())) return res.json({ ok: false, error: 'username_taken', message: 'That username is taken' }, 409, CORS);
+        u.username = username;
+      }
+      if (body.newPassword) {
+        const np = String(body.newPassword);
+        if (np.length < 8) return res.json({ ok: false, error: 'weak_password', message: 'Use at least 8 characters' }, 400, CORS);
+        u.pass = await sha256('whalechat::v1::' + np);
+        u.passChangedAt = Date.now();
+      }
+      u.updatedAt = Date.now();
+      st.rev = Math.max(1, Number(st.rev) || 0) + 1; st.at = Date.now();
+      const ok = await writeJsonFile(STATE_FILE, 'whalechat-state.json', st);
+      if (!ok) return res.json({ ok: false, error: 'storage_write_failed' }, 502, CORS);
+      const token = signToken({ sub: u.id, email: u.email || '', role: 'admin', exp: Date.now() + ADMIN_TTL });
+      return res.json({ ok: true, token, rev: st.rev, admin: { id: u.id, email: u.email || '', username: u.username || '', fullName: u.fullName || '' }, hasRecovery: !!u.adminRecoveryHash }, 200, CORS);
+    }
+
+    if (path === '/api/admin/user-flag' && method === 'POST') {
+      const payload = verifyToken(body.token);
+      if (!payload) return res.json({ ok: false, error: 'unauthorised' }, 401, CORS);
+      const st = await readState();
+      const u = (st.db && st.db.users || []).find((x) => x && x.id === String(body.userId || ''));
+      if (!u) return res.json({ ok: false, error: 'user_missing' }, 404, CORS);
+      if (u.role === 'admin' && (body.banned === true)) return res.json({ ok: false, error: 'cannot_ban_admin', message: 'Admin accounts cannot be banned' }, 400, CORS);
+      if (typeof body.verified === 'boolean') u.verified = body.verified;
+      if (typeof body.banned === 'boolean') u.banned = body.banned;
+      u.updatedAt = Date.now();
+      st.rev = Math.max(1, Number(st.rev) || 0) + 1; st.at = Date.now();
+      const ok = await writeJsonFile(STATE_FILE, 'whalechat-state.json', st);
+      return res.json(ok ? { ok: true, rev: st.rev } : { ok: false, error: 'storage_write_failed' }, ok ? 200 : 502, CORS);
+    }
+
+    if (path === '/api/admin/set-recovery' && method === 'POST') {
+      const payload = verifyToken(body.token);
+      if (!payload) return res.json({ ok: false, error: 'unauthorised' }, 401, CORS);
+      const key = String(body.recoveryKey || '');
+      if (key.length < 12) return res.json({ ok: false, error: 'weak', message: 'Use at least 12 characters' }, 400, CORS);
+      const st = await readState();
+      const u = (st.db && st.db.users || []).find((x) => x && x.id === payload.sub && x.role === 'admin');
+      if (!u) return res.json({ ok: false, error: 'admin_missing' }, 404, CORS);
+      u.adminRecoveryHash = await sha256('recovery::' + key);
+      u.updatedAt = Date.now();
+      st.rev = Math.max(1, Number(st.rev) || 0) + 1; st.at = Date.now();
+      const ok = await writeJsonFile(STATE_FILE, 'whalechat-state.json', st);
+      return res.json(ok ? { ok: true } : { ok: false, error: 'storage_write_failed' }, ok ? 200 : 502, CORS);
+    }
+
+    if (path === '/api/admin/recovery' && method === 'POST') {
+      const email = String(body.email || '').trim().toLowerCase();
+      const key = String(body.recoveryKey || '');
+      const np = String(body.newPassword || '');
+      if (np.length < 8) return res.json({ ok: false, error: 'weak_password', message: 'Use at least 8 characters' }, 400, CORS);
+      const st = await readState();
+      const u = (st.db && st.db.users || []).find((x) => x && x.role === 'admin' && String(x.email || '').toLowerCase() === email);
+      if (!u) return res.json({ ok: false, error: 'not_found', message: 'No admin account with that email' }, 404, CORS);
+      if (!u.adminRecoveryHash) return res.json({ ok: false, error: 'no_recovery', message: 'No recovery key is set. Sign in with your password and create one in Security.' }, 400, CORS);
+      if ((await sha256('recovery::' + key)) !== u.adminRecoveryHash) return res.json({ ok: false, error: 'invalid_key', message: 'Recovery key is incorrect' }, 403, CORS);
+      u.pass = await sha256('whalechat::v1::' + np);
+      u.passChangedAt = Date.now();
+      u.updatedAt = Date.now();
+      st.rev = Math.max(1, Number(st.rev) || 0) + 1; st.at = Date.now();
+      const ok = await writeJsonFile(STATE_FILE, 'whalechat-state.json', st);
+      return res.json(ok ? { ok: true, message: 'Password reset — sign in with the new password' } : { ok: false, error: 'storage_write_failed' }, ok ? 200 : 502, CORS);
+    }
+
     if (path === '/api/health' || path === '/') {
       const st = await readState();
       return res.json({ ok: true, app: 'whalechat', version: VERSION, provider: 'appwrite-function', stream: false, rev: st.rev || 0, users: (st.db && st.db.users) ? st.db.users.length : 0, storage: 'appwrite', email: !!(process.env.RESEND_API_KEY || process.env.BREVO_API_KEY) }, 200, CORS);

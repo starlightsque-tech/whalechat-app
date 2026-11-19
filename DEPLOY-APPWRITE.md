@@ -116,3 +116,37 @@ Health check:
 ```bash
 curl https://whalechat-api.appwrite.network/api/health
 ```
+
+## 7. Admin panel
+
+A separate, standalone admin panel is deployed as its own Appwrite Site:
+
+* **URL:** https://whalechat-admin.appwrite.network
+* **Source:** `admin-panel/index.html`
+* **API:** the same `whalechat-sync` function
+* **Initial account:** the seeded WhaleChat admin (`admin@whalechat.app`) with
+  the app's default admin password. Change it from **Account security** on the
+  first sign-in.
+
+Admin endpoints on the function:
+
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /api/admin/login` | verify email/username + password, issue 8-hour token |
+| `POST /api/admin/me` | validate a token |
+| `POST /api/admin/update` | change email, username or password |
+| `POST /api/admin/set-recovery` | store a hashed recovery key |
+| `POST /api/admin/recovery` | reset password with recovery key |
+| `POST /api/admin/user-flag` | verify / ban a user |
+
+Redeploy the admin site after editing `admin-panel/index.html`:
+
+```bash
+APPWRITE_ENDPOINT=https://nyc.cloud.appwrite.io/v1 \
+APPWRITE_PROJECT_ID=6afec9ae002d0af5e0c6 \
+APPWRITE_SITE_ID=whalechat-admin \
+APPWRITE_SITE_NAME="WhaleChat Admin" \
+APPWRITE_SITE_DIR=admin-panel \
+APPWRITE_SKIP_BUILD=1 \
+npm run deploy:appwrite
+```

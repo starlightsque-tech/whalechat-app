@@ -26,6 +26,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PUB = path.join(ROOT, 'public');
+const SITE_DIR = process.env.APPWRITE_SITE_DIR ? path.resolve(ROOT, process.env.APPWRITE_SITE_DIR) : PUB;
 const ENDPOINT = String(process.env.APPWRITE_ENDPOINT || 'https://cloud.appwrite.io/v1').replace(/\/+$/, '');
 const PROJECT = String(process.env.APPWRITE_PROJECT_ID || '').trim();
 const KEY = String(process.env.APPWRITE_API_KEY || '').trim();
@@ -77,7 +78,7 @@ function packagePublic() {
   execFileSync('tar', [
     '--exclude=node_modules', '--exclude=.git', '--exclude=*.apk',
     '--exclude=*.b64', '--exclude=*.part[0-9]*', '--exclude=*.map',
-    '-czf', out, '-C', PUB, '.'
+    '-czf', out, '-C', SITE_DIR, '.'
   ], { stdio: 'inherit' });
   const size = fs.statSync(out).size;
   console.log('[appwrite] packaged', (size / 1024 / 1024).toFixed(1) + ' MB →', out);
@@ -86,11 +87,13 @@ function packagePublic() {
 
 (async () => {
   console.log('[appwrite] endpoint', ENDPOINT, '· project', PROJECT);
-  try {
-    execFileSync('node', [path.join(ROOT, 'scripts', 'prepare-assets.js')], { stdio: 'inherit' });
-  } catch (e) {
-    console.error('[appwrite] build failed — aborting');
-    process.exit(1);
+  if (SITE_DIR === PUB && process.env.APPWRITE_SKIP_BUILD !== '1') {
+    try {
+      execFileSync('node', [path.join(ROOT, 'scripts', 'prepare-assets.js')], { stdio: 'inherit' });
+    } catch (e) {
+      console.error('[appwrite] build failed — aborting');
+      process.exit(1);
+    }
   }
   await ensureSite();
   const tarPath = packagePublic();
