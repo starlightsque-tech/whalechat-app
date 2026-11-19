@@ -591,23 +591,15 @@
     var price = Number(q.price) || 0;
     var alert = (a.b2bAlerts || []).find(function (x) { return x.ticker === sel.ticker; }) || {};
 
+    /* One chart per page: the native live price-scale chart. The duplicate
+       candle/spark chart that used to sit above the TradingView widget is gone,
+       so the ticket, the chart and the alert form no longer repeat a chart. */
     return b2bHead(u, 'Buy ' + b2bLabel(sel), 'Paid from your B2B capital balance.', '#/investment/b2b') +
+      (window.WC_B2B_MARKET && window.WC_B2B_MARKET.tvCard ? window.WC_B2B_MARKET.tvCard(sel.ticker, b2bCategory(sel)) : '') +
       '<div class="card">' +
         '<div class="field"><label class="label">Asset</label><select class="input" id="ihB2bBuyAsset" data-act="ih-b2b-buy-asset">' +
           assets.map(function (s) { return '<option value="' + escH(s.ticker) + '"' + (s.ticker === sel.ticker ? ' selected' : '') + '>' + escH(b2bLabel(s)) + ' · ' + escH(b2bCategory(s)) + '</option>'; }).join('') +
         '</select></div>' +
-        ((window.WC_B2B_MARKET && window.WC_B2B_MARKET.tvSymbol && window.WC_B2B_MARKET.tvSymbol(sel.ticker, b2bCategory(sel)))
-          ? ''
-          : (window.WC_LIVE_CANDLES
-            ? window.WC_LIVE_CANDLES.embed({
-                ticker: sel.ticker,
-                sub: b2bLabel(sel) + ' · ' + b2bCategory(sel) + ' · real-time candles',
-                height: 420
-              })
-            : '<div class="card b2b-livechart"><div class="between"><span class="tiny muted">Live price movement</span>' +
-              '<span class="tiny ' + ((q.changePct || 0) >= 0 ? 'up' : 'down') + '" data-b2b-chg="' + escH(sel.ticker) + '">' + ((q.changePct || 0) >= 0 ? '+' : '') + (Number(q.changePct) || 0).toFixed(2) + '%</span></div>' +
-              '<svg viewBox="0 0 300 90" class="b2b-bigspark" preserveAspectRatio="none"><polyline data-b2b-bigspark="' + escH(sel.ticker) + '" points="' + b2bPoints(sel.ticker, 300, 90).points + '" fill="none" stroke="' + ((q.changePct || 0) >= 0 ? '#22c55e' : '#ef4444') + '" stroke-width="1.8" stroke-linejoin="round"/></svg>' +
-              '<div class="tiny muted center">Updates every 2 seconds from the live feed</div></div>')) +
         '<div class="b2b-quote"><div><span class="tiny muted">Live price</span><b data-b2b-price="' + escH(sel.ticker) + '" data-b2b-unitprice>' + (price > 0 ? money(price) : '—') + '</b></div>' +
           '<div><span class="tiny muted">Today</span><b class="' + ((q.changePct || 0) >= 0 ? 'up' : 'down') + '">' + ((q.changePct || 0) >= 0 ? '+' : '') + (Number(q.changePct) || 0).toFixed(2) + '%</b></div>' +
           '<div><span class="tiny muted">Capital available</span><b>' + money(b2bCapital(a)) + '</b></div></div>' +
@@ -615,9 +607,8 @@
           '<input class="input" id="ihB2bBuyAmount" type="number" step="0.01" min="0" placeholder="0.00" data-b2b-amount/>' +
           '<div class="tiny muted mt6" id="ihB2bBuyPreview">Units are bought at the live price.</div></div>' +
         '<button class="btn btn-primary" data-act="ih-b2b-buy" data-t="' + escH(sel.ticker) + '" style="width:100%">Buy ' + escH(b2bLabel(sel)) + '</button>' +
-        '<div class="tiny muted mt6">Buys are paid from your capital balance. The assets balance then shows their live market worth.</div>' +
+        '<div class="tiny muted mt6">Buys are paid from your capital balance. The assets balance then shows their live market worth. Your entry is drawn on the chart above after the fill.</div>' +
       '</div>' +
-      (window.WC_B2B_MARKET && window.WC_B2B_MARKET.tvCard ? window.WC_B2B_MARKET.tvCard(sel.ticker, b2bCategory(sel)) : '') +
       '<div class="card"><div class="card-title">Price alerts</div>' +
         '<div class="tiny muted" style="margin-bottom:6px">Chart price <b data-b2b-price="' + escH(sel.ticker) + '">' + (price > 0 ? money(price) : '—') + '</b> · set your targets from this live price.</div>' +
         '<div class="row" style="gap:8px"><div class="field grow"><label class="label">Buy below (USD)</label><input class="input" id="ihB2bBuyAlert" type="number" step="0.0001" value="' + (alert.buy || '') + '" placeholder="' + (price > 0 ? (price * 0.98).toFixed(4) : '') + '"/></div>' +

@@ -224,14 +224,14 @@
     var e = M.entry(t);
     return (e && e.exchange) || '';
   }
-  /* TradingView widget card — the selected stock is re-rendered in place */
+  /* Native live price-scale chart card. The old TradingView iframe was removed:
+     it could not draw the user's entry, sell or admin-buy lines, and it re-loaded
+     on every tap. This host re-renders in place and follows the live feed. */
   function tvCard(t, kind) {
-    if (!window.WC_TV) return '';
-    var sym = window.WC_TV.symbol(t, kind, exchangeOf(t));
-    return '<div class="card" id="b2bmTvCard" style="margin-bottom:10px">' +
-      '<div class="between" style="align-items:flex-start"><div><div class="card-title" style="margin:0" id="b2bmTvTitle">' + esc(String(t).replace('USDT', '/USDT')) + ' · live chart</div>' +
-      '<div class="tiny muted">' + (sym ? 'TradingView · ' + esc(sym) : 'Select a stock to load its live chart') + '</div></div></div>' +
-      '<div class="wc-tv-host" id="b2bmTvHost" data-wc-tv="' + esc(t) + '" data-wc-tv-kind="' + esc(kind || '') + '" data-wc-tv-exchange="' + esc(exchangeOf(t)) + '"></div></div>';
+    if (!window.WC_LIVE_CANDLES) return '';
+    var tt = String(t || '').toUpperCase();
+    return '<div class="card" id="b2bmTvCard" style="margin-bottom:10px;padding:10px">' +
+      '<div class="wc-tv-host" id="b2bmTvHost" data-wc-tv="' + esc(tt) + '" data-wc-tv-kind="' + esc(kind || '') + '" data-wc-tv-exchange="' + esc(exchangeOf(t)) + '"></div></div>';
   }
   M.tvCard = tvCard;
   M.tvSymbol = function (t, kind) {
@@ -245,8 +245,6 @@
     host.setAttribute('data-wc-tv-kind', kind || '');
     host.setAttribute('data-wc-tv-exchange', exchangeOf(t));
     if (window.WC_TV) window.WC_TV.mount(host, t, kind, exchangeOf(t));
-    var title = document.getElementById('b2bmTvTitle');
-    if (title) title.textContent = String(t).replace('USDT', '/USDT') + ' · live chart';
     document.querySelectorAll('[data-b2bm-card]').forEach(function (c) { c.classList.toggle('sel', c.getAttribute('data-b2bm-card') === String(t).toUpperCase()); });
   }
   M.selectForChart = selectForChart;
@@ -330,9 +328,6 @@
           '<div><span>24h low</span><b>' + (q.dayLow ? money(q.dayLow) : '—') + '</b></div>' +
           '<div><span>24h volume</span><b>' + (q.vol ? Number(q.vol).toLocaleString(undefined, { maximumFractionDigits: 0 }) : '—') + '</b></div>' +
         '</div>' +
-        (tvSym ? '' :
-          '<div class="b2bm-bigchart" data-b2bm-chart="' + esc(t) + '"></div>' +
-          '<div class="tiny muted center">WhaleChat fallback chart · TradingView has no listing for ' + esc(t) + '</div>') +
       '</div>' +
       tvCard(t, e.kind) +
       (h ? '<div class="card"><div class="between"><span class="tiny muted">Your holding</span><b>' + Number(h.units).toFixed(6) + ' units</b></div>' +
@@ -647,7 +642,20 @@
     .b2bm-pickhead{display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12.5px}
     .b2bm-pickhead input{width:16px;height:16px;accent-color:var(--accent)}
     .b2bm-pickfields{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px}
-    @media(max-width:520px){.b2bm-pickfields{grid-template-columns:1fr}.b2bm-grid{grid-template-columns:1fr 1fr}}
+    .b2bm-card,.b2bm-card *{min-width:0}
+    .b2bm-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .b2bm-grid > *{min-width:0}
+    #b2bmTvCard{overflow:hidden}
+    #b2bmTvHost,.wc-tv-host{min-width:0;width:100%}
+    .wc-tv-host .wc-lc{min-width:0}
+    @media(max-width:520px){
+      .b2bm-pickfields{grid-template-columns:1fr}
+      .b2bm-grid{grid-template-columns:1fr 1fr}
+      .b2bm-statgrid{grid-template-columns:1fr 1fr}
+      .b2bm-card{padding:9px}
+      .b2bm-big{font-size:24px}
+      #b2bmTvCard{padding:8px!important}
+    }
     `;
     document.head.appendChild(st);
   })();

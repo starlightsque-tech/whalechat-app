@@ -102,7 +102,7 @@
       '.wc-lc-chip[aria-pressed="true"]{background:#06202c;border-color:#06202c;color:#fff}',
       '.wc-lc-src{margin-left:auto;font-size:9.5px;color:#8ba4b6;white-space:nowrap}',
       '.wc-lc-src b{color:#0f9d6b;font-weight:700}',
-      '.wc-lc-body{position:relative;height:var(--lc-h,420px);min-height:220px;background:#fff;',
+      '.wc-lc-body{position:relative;height:var(--lc-h,430px);min-height:220px;background:#fff;',
       '  border:1px solid #E3E9EC;border-radius:12px;overflow:hidden;display:flex;flex-direction:column}',
       '.wc-lc-canvas{flex:1;min-height:0}',
       '.wc-lc-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;',
@@ -116,7 +116,7 @@
       '.wc-lc-note{font-size:9.5px;color:#8ba4b6;line-height:1.5}',
       /* the stock card already shows the big live price above the chart */
       '.inv-pricecard .wc-lc-px{display:none}',
-      '@media(max-width:520px){.wc-lc-body{height:360px}.wc-lc-price{font-size:18px}}'
+      '@media(max-width:520px){.wc-lc-body{height:min(78vw,340px);min-height:230px}.wc-lc-price{font-size:18px}}'
     ].join('\n');
     document.head.appendChild(st);
   }
@@ -145,6 +145,7 @@
         '<span class="wc-lc-src" data-lc-src>Connecting to the live feed…</span>' +
       '</div>' +
       '<div class="wc-lc-body" data-wc-lc-chart="' + esc(t) + '" data-lc-tf="' + tf + '"' +
+        (opts.kind ? ' data-lc-kind="' + esc(opts.kind) + '"' : '') +
         (opts.height ? ' style="--lc-h:' + parseInt(opts.height, 10) + 'px"' : '') + '>' +
         '<div class="wc-lc-empty">Loading real market candles…</div>' +
       '</div>' +
@@ -255,7 +256,7 @@
 
       var state = {
         chart: chart, series: series, LWC: LWC, body: body, ticker: ticker, tf: body.getAttribute('data-lc-tf') || 'auto',
-        last: null, target: 0, shown: 0, timer: 0, dead: false, lines: [], ticks: 0, quote: null
+        last: null, target: 0, shown: 0, timer: 0, dead: false, lines: [], lineKey: '', linesAt: 0, ticks: 0, quote: null
       };
       body.__lcState = state;
       instances.push(state);
@@ -276,29 +277,60 @@
         }
       }
 
-      /* entry / TP / SL from the account's open trade on this ticker */
-      function drawTradeLines() {
-        var pos = null;
+      /* Entry / take-profit / stop, plus the B2B alert rails:
+           blue   = the user's entry price (stock trade or B2B holding)
+           green  = the sell price the user set
+           red    = the buy price the admin set (or the user's buy target) */
+      function tradeLevels() {
+        var out = [];
+        var pos = null, u = null;
         try {
-          var u = (typeof me === 'function') ? me() : null;
+          u = (typeof me === 'function') ? me() : null;
           if (u && typeof LT !== 'undefined' && LT && LT.open) {
             pos = (LT.open(u.id) || []).filter(function (t) { return t.ticker === ticker; })[0] || null;
           }
         } catch (e) {}
-        if (!pos) return;
-        var add = function (price, color, title) {
-          var p = Number(price);
+        if (pos) {
+          out.push({ price: pos.entryPrice, color: '#2f6feb', title: 'Entry' });
+          out.push({ price: pos.takeProfitPrice, color: '#0f9d6b', title: 'TP' });
+          out.push({ price: pos.stopLossPrice, color: '#e11d48', title: 'SL' });
+        }
+        var holding = null, alert = null;
+        try {
+          var a = (u && u.investAcct) || {};
+          holding = (a.b2b || {})[ticker] || null;
+          alert = ((a.b2bAlerts || []).filter(function (x) { return x && String(x.ticker).toUpperCase() === ticker; })[0]) || null;
+        } catch (e) {}
+        if (!pos && holding && Number(holding.units) > 0 && Number(holding.avgPrice) > 0) {
+          out.push({ price: holding.avgPrice, color: '#2f6feb', title: 'Entry' });
+        }
+        if (alert) {
+          if (Number(alert.sell) > 0) out.push({ price: alert.sell, color: '#0f9d6b', title: 'Sell' });
+          var row = null;
+          try { row = ((typeof DB !== 'undefined' && DB && DB.stocks) || []).filter(function (x) { return x && String(x.ticker).toUpperCase() === ticker; })[0] || null; } catch (e) {}
+          var buy = Number(alert.adminBuy) || Number(row && row.adminBuy) || Number(row && row.buy) || Number(alert.buy) || 0;
+          if (buy > 0) out.push({ price: buy, color: '#e11d48', title: 'Admin buy' });
+        }
+        return out;
+      }
+
+      function drawTradeLines(force) {
+        var rows = tradeLevels();
+        var key = rows.map(function (r) { return r.price + '|' + r.title; }).join(',');
+        if (!force && key === state.lineKey) return;
+        state.lineKey = key;
+        state.lines.forEach(function (l) { try { series.removePriceLine(l); } catch (e) {} });
+        state.lines = [];
+        rows.forEach(function (r) {
+          var p = Number(r.price);
           if (!(p > 0)) return;
           try {
             state.lines.push(series.createPriceLine({
-              price: p, color: color, lineWidth: 1, lineStyle: 2,
-              axisLabelVisible: true, title: title
+              price: p, color: r.color, lineWidth: 2, lineStyle: 2,
+              axisLabelVisible: true, title: r.title
             }));
           } catch (e) {}
-        };
-        add(pos.entryPrice, '#2f6feb', 'Entry');
-        add(pos.takeProfitPrice, '#0f9d6b', 'TP');
-        add(pos.stopLossPrice, '#e11d48', 'SL');
+        });
       }
 
       function setEmpty(msg) {
@@ -426,6 +458,8 @@
           push(state.shown);
           paintHeader();
         }
+        var now = Date.now();
+        if (now - state.linesAt > 3000) { state.linesAt = now; drawTradeLines(); }
       }, TICK_MS);
 
       /* timeframe chips + "Go to realtime" */
@@ -460,6 +494,12 @@
       window.addEventListener('pagehide', teardown);
 
       paintHeader();
+      drawTradeLines(true);
+      try {
+        window.addEventListener('wc:trade-opened', function () { if (!state.dead) drawTradeLines(true); });
+        window.addEventListener('wc:trade-closed', function () { if (!state.dead) drawTradeLines(true); });
+        window.addEventListener('wc:b2b-trade', function () { if (!state.dead) drawTradeLines(true); });
+      } catch (e) {}
       load(state.tf, state.tf === 'auto');
     }).catch(function (err) {
       if (!document.body.contains(body)) return;
@@ -470,6 +510,11 @@
   }
 
   /* ------------------------------------------------------------- mounting */
+  LC.teardown = function (root) {
+    instances.slice().forEach(function (st) {
+      if (!root || (st.body && root.contains(st.body))) { try { st.teardown(); } catch (e) {} }
+    });
+  };
   LC.mountAll = function (root) {
     var scope = (root && root.querySelectorAll) ? root : document;
     scope.querySelectorAll('[data-wc-lc-chart]').forEach(function (b) {

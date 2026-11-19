@@ -48,7 +48,7 @@ function createTwelveDataFeed(opts) {
   const batch = Math.max(1, Math.min(8, Number(opts.batch) || 8));
   const state = {
     enabled: true, hasKey: false, lastAt: 0, lastError: '', ticks: 0, source: 'none',
-    symbols: 0, rotating: 0, host: 'api.twelvedata.com', running: false
+    symbols: 0, hot: 0, rotating: 0, host: 'api.twelvedata.com', running: false
   };
   let timer = null;
   let cursor = 0;
@@ -75,6 +75,8 @@ function createTwelveDataFeed(opts) {
     return sym.replace(/^[A-Z]+:/, '');   /* strip BINANCE:/NASDAQ: prefixes */
   }
 
+  function normKey(s) { return String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); }
+
   async function poll() {
     if (busy) return;
     const c = cfg();
@@ -83,15 +85,25 @@ function createTwelveDataFeed(opts) {
     const all = (getTargets() || []).filter((t) => t && t.ticker);
     state.symbols = all.length;
     if (!all.length) return;
-    /* rotate through the catalogue so a free plan can cover every symbol */
-    const take = [];
-    for (let i = 0; i < all.length && take.length < batch; i++) {
-      take.push(all[(cursor + i) % all.length]);
+    /* The B2B marketplace symbols are polled every cycle; the rest of the
+       catalogue rotates so a free plan still covers every symbol over time. */
+    const hot = all.filter((t) => t.hot).slice(0, Math.max(1, Math.min(batch - 3, 5)));
+    const spin = all.filter((t) => !t.hot);
+    const take = hot.slice();
+    for (let i = 0; i < spin.length && take.length < batch; i++) {
+      take.push(spin[(cursor + i) % spin.length]);
     }
-    cursor = (cursor + take.length) % Math.max(1, all.length);
+    cursor = (cursor + Math.max(0, take.length - hot.length)) % Math.max(1, spin.length);
     state.rotating = cursor;
+    state.hot = hot.length;
     const bySym = new Map();
-    take.forEach((t) => bySym.set(providerSymbol(t), t));
+    const byNorm = new Map();
+    take.forEach((t) => {
+      const ps = providerSymbol(t);
+      if (!ps) return;
+      bySym.set(ps, t);
+      byNorm.set(normKey(ps), t);
+    });
     const list = Array.from(bySym.keys()).filter(Boolean);
     if (!list.length) return;
     busy = true;
@@ -106,7 +118,8 @@ function createTwelveDataFeed(opts) {
       rows.forEach((row) => {
         if (!row) return;
         const key = String(row.symbol || '').toUpperCase();
-        const t = bySym.get(key) || bySym.get(key.replace('/', '')) || bySym.get(key.replace('/', '_'));
+        const t = bySym.get(key) || bySym.get(key.replace('/', '')) || bySym.get(key.replace('/', '_'))
+          || byNorm.get(normKey(key));
         const price = Number(row.close != null ? row.close : row.price);
         const ts = Number(row.timestamp);
         if (!t || !(price > 0)) return;
@@ -135,7 +148,7 @@ function createTwelveDataFeed(opts) {
     return {
       configured: !!cfg().apiKey, enabled: true, source: state.source,
       lastAt: state.lastAt, lastError: state.lastError, ticks: state.ticks,
-      symbols: state.symbols, everyMs, batch, host: state.host
+      symbols: state.symbols, hot: state.hot || 0, everyMs, batch, host: state.host
     };
   }
   return { start, stop: () => { state.running = false; if (timer) { clearInterval(timer); timer = null; } }, poll, status };

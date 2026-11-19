@@ -80,12 +80,22 @@ const twelvedata = createTwelveDataFeed ? createTwelveDataFeed({
      too, so either admin card works */
   getApiKey: () => { try { return marketAdmin.keyFor('twelvedata').apiKey; } catch (e) { return ''; } },
   everyMs: Number(process.env.TWELVEDATA_MS || 65000),
-  /* real listings only: synthetic 24/7 products mirror their real symbol */
+  /* Real listed stocks from BOTH stock catalogues. Finnhub keeps its websocket
+     and Twelve Data polls the same symbols as a second real source, so a stock
+     still has a live price when only one of the two providers answers. The B2B
+     marketplace symbols are flagged `hot` and refreshed on every cycle. */
   getTargets: () => {
     try {
+      const HOT = ['TSLA', 'MSFT', 'GOOGL', 'AMZN', 'AAPL', 'SHOP', 'SSNLF', 'NVDA', 'META', 'AMD'];
       return market.assetList()
-        .filter((a) => !a.hidden && !a.synthetic && a.provider === 'twelvedata')
-        .map((a) => ({ ticker: a.ticker, symbol: a.finnhubSymbol || a.ticker, kind: a.assetClass }));
+        .filter((a) => !a.hidden && !a.synthetic && a.assetClass === 'us' && (a.provider === 'twelvedata' || a.provider === 'finnhub'))
+        .map((a) => ({
+          ticker: a.ticker,
+          symbol: a.finnhubSymbol || a.ticker,
+          kind: a.assetClass,
+          hot: HOT.indexOf(String(a.ticker).toUpperCase()) >= 0
+        }))
+        .sort((a, b) => (b.hot ? 1 : 0) - (a.hot ? 1 : 0));
     } catch (e) { return []; }
   },
   onTick: (ticker, price, row) => {
@@ -1195,7 +1205,11 @@ async function api(req, res, pathname, query) {
     });
   }
   if (pathname === '/api/market/status' && req.method === 'GET') {
-    return json(res, 200, Object.assign({ ok: true }, market.status()));
+    const body = Object.assign({ ok: true }, market.status());
+    /* key-free feed telemetry, used to verify the live providers after a deploy */
+    try { if (twelvedata) body.twelvedata = twelvedata.status(); } catch (e) {}
+    try { if (binance) body.binance = binance.status(); } catch (e) {}
+    return json(res, 200, body);
   }
   if (pathname === '/api/market/config' && req.method === 'GET') {
     const adminId = query.get('adminId') || '';
@@ -1714,12 +1728,13 @@ server.headersTimeout = 70000;
   });
 })();
 let stopping = false;
-function shutdown(signal) {
+async function shutdown(signal) {
   if (stopping) return; stopping = true;
   try { market.stop(); } catch (e) {}
   try { if (binance) binance.stop(); } catch (e) {}
   try { if (twelvedata) twelvedata.stop(); } catch (e) {}
-  try { flushMarketTicks(true).catch(() => {}); } catch (e) {}
+  /* let the final batch reach Postgres before the pool closes */
+  try { await flushMarketTicks(true); } catch (e) {}
   try { if (b2bAlerts) b2bAlerts.stop(); } catch (e) {}
   try { spot.stopTimers(); } catch (e) {}
   try { bots.stopTimers(); } catch (e) {}
