@@ -17,11 +17,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, BackHandler, Platform, SafeAreaView, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { WebView } from 'react-native-webview';
-import Constants from 'expo-constants';
 
-const WEB_URL =
-  (Constants.expoConfig && Constants.expoConfig.extra && Constants.expoConfig.extra.webUrl) ||
-  'https://whalechat.appwrite.network/whalechat.html';
+/* EXPO_PUBLIC_* values are inlined at build time; no extra dependency needed */
+const WEB_URL = process.env.EXPO_PUBLIC_WEB_URL || 'https://whalechat.appwrite.network/whalechat.html';
 
 export default function App() {
   const ref = useRef(null);

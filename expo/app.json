@@ -39,6 +39,10 @@
         "projectId": "c114889f-0f49-4647-9be2-92ad1a6cdef1"
       }
     },
-    "owner": "whalechat.com"
+    "owner": "whalechat.com",
+    "sdkVersion": "52.0.0",
+    "plugins": [
+      "expo-asset"
+    ]
   }
 }
