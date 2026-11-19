@@ -39,3 +39,8 @@ services:
         sync: false
       - key: FINNHUB_MODE
         value: live
+      # second real stock/forex source, runs alongside Finnhub and Binance.
+      # Prefer pasting the key in Admin > Markets so it is stored (encrypted) in
+      # the app database; this env var is only a deployment-time fallback.
+      - key: TWELVEDATA_API_KEY
+        sync: false
