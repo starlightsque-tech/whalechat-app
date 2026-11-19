@@ -80,6 +80,9 @@ const twelvedata = createTwelveDataFeed ? createTwelveDataFeed({
      too, so either admin card works */
   getApiKey: () => { try { return marketAdmin.keyFor('twelvedata').apiKey; } catch (e) { return ''; } },
   everyMs: Number(process.env.TWELVEDATA_MS || 65000),
+  /* 6 symbols per 65 s keeps a free key (8 credits/min) clear of 429s even
+     when the admin presses Test Twelve Data in the same minute */
+  batch: Number(process.env.TWELVEDATA_BATCH || 6),
   /* Real listed stocks from BOTH stock catalogues. Finnhub keeps its websocket
      and Twelve Data polls the same symbols as a second real source, so a stock
      still has a live price when only one of the two providers answers. The B2B

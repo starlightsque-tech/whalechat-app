@@ -1,8 +1,8 @@
 {
-  "version": "3.56.0",
-  "build": "2026-11-19T09:30:00Z",
+  "version": "3.56.1",
+  "build": "2026-11-19T10:05:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.56.0 - the B2B marketplace, asset page and buy ticket now use ONE native price-scale candle chart (Lightweight Charts v5) driven by the live feed; the TradingView iframe and the duplicate fallback candle chart are gone. The chart paints the user's entry, the user's sell target and the admin buy price, candles move green/red with price, and it is sized for phones and desktop. Twelve Data now polls the same US stocks as Finnhub (B2B symbols every cycle) as a second real source, the key-free feed telemetry is exposed at /api/market/status, and the Postgres tick ring-buffer flushes before shutdown.",
-  "releasedAt": "2026-11-19T09:30:00Z",
+  "notes": "WhaleChat 3.56.1 - restored the TradingView live chart (the chart in the reference screenshot) on the B2B marketplace, asset page and buy ticket, and removed the circled native candle chart from those pages. A live entry strip above the widget shows the user's buy entry, the real-time price and live P/L; the native candle chart remains only as the fallback for symbols TradingView does not publish (WhaleChat WC, SpaceX). Twelve Data now polls 6 symbols per cycle to stay under the free-plan 8-credit limit, and a provider print is written at its exact price instead of a 50% blend.",
+  "releasedAt": "2026-11-19T10:05:00Z",
   "minimum": "3.0.0"
 }

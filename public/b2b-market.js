@@ -224,13 +224,15 @@
     var e = M.entry(t);
     return (e && e.exchange) || '';
   }
-  /* Native live price-scale chart card. The old TradingView iframe was removed:
-     it could not draw the user's entry, sell or admin-buy lines, and it re-loaded
-     on every tap. This host re-renders in place and follows the live feed. */
+  /* TradingView live chart card (the chart from the reference screenshot).
+     The native candle chart is only used when TradingView has no listing. */
   function tvCard(t, kind) {
-    if (!window.WC_LIVE_CANDLES) return '';
+    if (!window.WC_TV) return '';
     var tt = String(t || '').toUpperCase();
-    return '<div class="card" id="b2bmTvCard" style="margin-bottom:10px;padding:10px">' +
+    var sym = window.WC_TV.symbol(tt, kind, exchangeOf(t));
+    return '<div class="card" id="b2bmTvCard" style="margin-bottom:10px">' +
+      '<div class="between" style="align-items:flex-start"><div><div class="card-title" style="margin:0" id="b2bmTvTitle">' + esc(tt.replace('USDT', '/USDT')) + ' · live chart</div>' +
+      '<div class="tiny muted" id="b2bmTvSub">' + (sym ? 'TradingView · ' + esc(sym) : 'WhaleChat live candle chart') + '</div></div></div>' +
       '<div class="wc-tv-host" id="b2bmTvHost" data-wc-tv="' + esc(tt) + '" data-wc-tv-kind="' + esc(kind || '') + '" data-wc-tv-exchange="' + esc(exchangeOf(t)) + '"></div></div>';
   }
   M.tvCard = tvCard;
@@ -245,6 +247,13 @@
     host.setAttribute('data-wc-tv-kind', kind || '');
     host.setAttribute('data-wc-tv-exchange', exchangeOf(t));
     if (window.WC_TV) window.WC_TV.mount(host, t, kind, exchangeOf(t));
+    var title = document.getElementById('b2bmTvTitle');
+    if (title) title.textContent = String(t).replace('USDT', '/USDT') + ' · live chart';
+    var sub = document.getElementById('b2bmTvSub');
+    if (sub) {
+      var sym = window.WC_TV ? window.WC_TV.symbol(t, kind, exchangeOf(t)) : '';
+      sub.textContent = sym ? 'TradingView · ' + sym : 'WhaleChat live candle chart';
+    }
     document.querySelectorAll('[data-b2bm-card]').forEach(function (c) { c.classList.toggle('sel', c.getAttribute('data-b2bm-card') === String(t).toUpperCase()); });
   }
   M.selectForChart = selectForChart;
@@ -655,6 +664,7 @@
       .b2bm-card{padding:9px}
       .b2bm-big{font-size:24px}
       #b2bmTvCard{padding:8px!important}
+      .wc-tv-box{height:300px!important}
     }
     `;
     document.head.appendChild(st);

@@ -45,7 +45,7 @@ function createTwelveDataFeed(opts) {
   const getManagedKey = typeof opts.getApiKey === 'function' ? opts.getApiKey : null;
   const onTick = typeof opts.onTick === 'function' ? opts.onTick : null;
   const everyMs = Math.max(15000, Number(opts.everyMs) || 65000);
-  const batch = Math.max(1, Math.min(8, Number(opts.batch) || 8));
+  const batch = Math.max(1, Math.min(8, Number(opts.batch) || 6));
   const state = {
     enabled: true, hasKey: false, lastAt: 0, lastError: '', ticks: 0, source: 'none',
     symbols: 0, hot: 0, rotating: 0, host: 'api.twelvedata.com', running: false
@@ -88,7 +88,7 @@ function createTwelveDataFeed(opts) {
     if (!all.length) return;
     /* The B2B marketplace symbols are polled every cycle; the rest of the
        catalogue rotates so a free plan still covers every symbol over time. */
-    const hot = all.filter((t) => t.hot).slice(0, Math.max(1, Math.min(batch - 3, 5)));
+    const hot = all.filter((t) => t.hot).slice(0, Math.max(1, Math.min(batch - 1, 5)));
     const spin = all.filter((t) => !t.hot);
     const take = hot.slice();
     for (let i = 0; i < spin.length && take.length < batch; i++) {

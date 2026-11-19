@@ -827,15 +827,11 @@ class MarketService {
       const old = this.quotes[t];
       if (!old) return;
       if (Math.abs(Number(old.price) - p) < 1e-12 && old.real) { this.lastRealTime[t] = now; return; }
-      /* First switch from a simulated level: one blended step so open trades
-         are not settled by an artificial jump — but the tick is still marked
-         REAL, so the fallback engine can never pull the symbol back to a
-         synthetic base and the next real ticks set the exact market price. */
-      let next = p;
-      /* only blend when there is a real simulated level to move away from; a
-         zero-priced row must take the first real print exactly (a 50% blend
-         used to write half the price as a real tick) */
-      if (!old.real && !this.lastRealTime[t] && Number(old.price) > 0 && Math.abs(p - old.price) / p > 0.02) next = old.price + (p - old.price) * 0.5;
+      /* A provider print is the real market price: write it exactly. Older
+         builds blended the first tick 50/50 from a simulated level, which
+         stored a half-price "real" quote (and a one-candle crash) until the
+         next poll. The board must show the real price immediately. */
+      const next = p;
       /* A real 24h open/high/low from the provider beats a simulated anchor —
          without this, the first blended tick locked prevClose at half price
          and the app displayed a fake +100% change. */
