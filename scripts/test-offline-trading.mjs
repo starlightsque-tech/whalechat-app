@@ -243,7 +243,7 @@ console.log('\nbundle · build output');
 
 await test('the built bundle carries every 3.64 module', () => {
   const html = fs.readFileSync(path.join(ROOT, 'public/whalechat.html'), 'utf8');
-  ['wc-server-config', 'wc-device-store', 'wc-install-mode', 'wc-sim-engine', 'wc-native-chart', 'wc-recon', 'wc-offline-desk']
+  ['wc-server-config', 'wc-device-store', 'wc-install-mode', 'wc-sim-engine', 'wc-native-chart', 'wc-recon', 'wc-offline-desk', 'wc-telesign-auth']
     .forEach((m) => assert.ok(html.includes('/* ' + m + ' */'), 'missing ' + m));
   assert.ok(html.includes('OFFLINE SIMULATED'));
   assert.ok(html.includes('nyc.cloud.appwrite.io'));
@@ -251,9 +251,9 @@ await test('the built bundle carries every 3.64 module', () => {
 
 await test('release metadata and service worker cache are rotated', () => {
   const rel = JSON.parse(fs.readFileSync(path.join(ROOT, 'public/release.json'), 'utf8'));
-  assert.equal(rel.version, '3.64.0');
+  assert.equal(rel.version, '3.65.0');
   const sw = fs.readFileSync(path.join(ROOT, 'public/sw.js'), 'utf8');
-  assert.ok(sw.includes('wc-v3.64.0'));
+  assert.ok(sw.includes('wc-v3.65.0'));
   assert.ok(sw.includes("'sync'"));
   assert.ok(sw.includes('wc-device-store.js'));
 });

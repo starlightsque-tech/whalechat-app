@@ -75,6 +75,8 @@ const MODULES = [
   { file: 'wc-native-chart.js', marker: 'wc-native-chart' },
   { file: 'wc-recon.js', marker: 'wc-recon' },
   { file: 'wc-offline-desk.js', marker: 'wc-offline-desk' },
+  /* 3.65: Telesign SMS OTP on the signup and login screens */
+  { file: 'wc-telesign-auth.js', marker: 'wc-telesign-auth' },
   /* extended 300+ instrument catalogue — must exist before the market views */
   { file: 'wc-market-universe-data.js', marker: 'wc-market-universe-data' },
   { file: 'wc-market-universe.js', marker: 'wc-market-universe' },

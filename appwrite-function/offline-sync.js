@@ -36,9 +36,13 @@ async function quote(symbol) {
   const sym = String(symbol || '').toUpperCase();
   const crypto = /USDT$/.test(sym);
   if (crypto) {
-    const j = await getJSON('https://api.binance.com/api/v3/ticker/price?symbol=' + encodeURIComponent(sym));
-    const p = Number(j && j.price);
-    if (p > 0) return p;
+    /* api.binance.com is geo-blocked (HTTP 451) from many cloud regions —
+       data-api.binance.vision serves the same public market data there. */
+    for (const host of ['https://data-api.binance.vision', 'https://api.binance.com', 'https://api1.binance.com']) {
+      const j = await getJSON(host + '/api/v3/ticker/price?symbol=' + encodeURIComponent(sym));
+      const p = Number(j && j.price);
+      if (p > 0) return p;
+    }
   }
   const fk = process.env.FINNHUB_API_KEY || '';
   if (fk) {

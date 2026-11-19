@@ -78,7 +78,7 @@ auth.
 
 | Piece | Id / URL |
 |---|---|
-| Sync function | `whalechat-sync` (node-18.0) |
+| Sync function | `whalechat-sync` (node-18.0, v3.65.0) |
 | Function transport | `POST https://nyc.cloud.appwrite.io/v1/functions/whalechat-sync/executions` with `{ path, method, body }` |
 | Site | `whalechat` (static, active deployment ready) |
 | Storage bucket | `6aff48620020a44c714f` (holds `whalechat-state`, 15 user records) |
@@ -91,3 +91,36 @@ reconstructs the path/method/body, so one function serves the whole API.
 The generated site domain is assigned by Appwrite and is visible in
 Console → Sites → whalechat → Domains; attach a custom domain there if a
 branded hostname is required.
+
+## Verified on the deployed backend (2026-11-19)
+
+`clientOrderId` idempotency, price adjustment and single-write guarantee, run
+against `https://nyc.cloud.appwrite.io/v1/functions/whalechat-sync/executions`:
+
+```
+push#1  ADJUSTED  executedPrice 62130.01  quantity 0.00096572  diff 3.43%   balance 250 → 190
+push#2  ADJUSTED  duplicate: true                                          balance 190 → 190
+state   {"ADJUSTED":1} · 1 row · 1 trade written
+```
+
+The offline simulated price was 60,000 against a live BTCUSDT quote of 62,130.01
+(3.43% away, above the 2% tolerance), so the engine filled at the live price and
+re-derived the quantity from the committed $60 notional. The retry of the same
+`clientOrderId` was recognised as a duplicate and wrote nothing.
+
+Note: `api.binance.com` answers **HTTP 451** from this region; all Binance REST
+and WebSocket defaults now use `data-api.binance.vision` /
+`data-stream.binance.vision`, which serve the same public market data.
+
+## Telesign
+
+`public/wc-telesign-auth.js` adds the OTP UI to signup and login:
+
+* signup: a "Verify your phone" card under the phone field; `App.signup` is
+  wrapped so the account cannot be created until the number is verified (only
+  when `/api/telesign/status` reports `configured: true`)
+* login: a "Sign in with SMS code" panel that verifies the code and then opens
+  the same session `App.login` opens
+
+The browser never sees a Telesign credential — it calls `/api/telesign/start`
+and `/api/telesign/verify`, which the function signs with HTTP Basic auth.

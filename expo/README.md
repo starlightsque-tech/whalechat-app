@@ -1,0 +1,36 @@
+# WhaleChat · Expo / EAS shell
+
+Expo builds **Expo apps**; WhaleChat is a single-page PWA. This shell loads the
+deployed PWA (`https://whalechat.appwrite.network/whalechat.html`) in a WebView,
+so the service worker, IndexedDB device database, native canvas chart,
+offline simulator and the Appwrite function transport behave exactly as they do
+in the installed PWA — with no duplicated business logic.
+
+## Build
+
+```bash
+export EXPO_TOKEN=...                       # expo.dev → Access tokens
+cd expo && npm install
+npx eas-cli project:init                    # writes expo.extra.eas.projectId
+npx eas-cli build -p android --profile preview   # APK
+npx eas-cli build -p ios --profile production    # App Store build (needs Apple account)
+```
+
+or from the repo root:
+
+```bash
+EXPO_TOKEN=... node scripts/deploy-expo.mjs --platform android --profile preview
+EXPO_TOKEN=... node scripts/deploy-expo.mjs --platform all
+```
+
+## Why a WebView shell
+
+| Requirement | Where it lives |
+|---|---|
+| offline app, IndexedDB, simulator, reconciliation | `public/` (already shipped) |
+| native install (Android/iOS) | this Expo shell → EAS Build |
+| push notifications | the PWA service worker + existing VAPID flow |
+
+If you want the SPA itself hosted by **EAS Hosting** instead of Appwrite Sites,
+that needs an Expo Router web entry that re-exports the bundle; say so and the
+`expo/` folder can be extended with `app/_layout.tsx` + `expo export --platform web`.

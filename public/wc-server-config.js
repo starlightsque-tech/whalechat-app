@@ -16,7 +16,7 @@
   if (window.WC_SERVERS) return;
 
   var S = {
-    release: '3.64.0',
+    release: '3.65.0',
     appwrite: {
       endpoint: 'https://nyc.cloud.appwrite.io/v1',
       projectId: '6aff3eda000983f5a975',
@@ -24,7 +24,7 @@
       bucketId: '6aff48620020a44c714f',
       collections: { orders: 'orders', offlineOrders: 'offline_orders', portfolios: 'portfolios' }
     },
-    binanceWs: 'wss://stream.binance.com:9443/stream',
+    binanceWs: 'wss://data-stream.binance.vision/stream',
     tolerancePct: 2,
     features: { telesign: false, brevo: false, appwriteEmail: true },
     fetchedAt: 0

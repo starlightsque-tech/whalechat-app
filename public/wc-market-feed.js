@@ -149,7 +149,8 @@
     });
   }
   function connectBinanceChunk(chunk, attempt) {
-    var url = 'wss://stream.binance.com:9443/stream?streams=' + chunk.map(function (s) { return s + '@miniTicker'; }).join('/');
+    var wsBase = (window.WC_SERVERS && WC_SERVERS.binanceWs) || 'wss://data-stream.binance.vision/stream';
+    var url = wsBase.replace(/\/+$/, '') + '?streams=' + chunk.map(function (s) { return s + '@miniTicker'; }).join('/');
     var ws;
     try { ws = new WebSocket(url); } catch (e) { return retry(); }
     BINANCE.push(ws);
@@ -206,7 +207,7 @@
     var syms = binanceSymbols();
     if (!syms.length) return;
     var batch = syms.slice(0, 80).map(function (x) { return x.toUpperCase(); });
-    var url = 'https://api.binance.com/api/v3/ticker/24hr?symbols=' + encodeURIComponent(JSON.stringify(batch));
+    var url = 'https://data-api.binance.vision/api/v3/ticker/24hr?symbols=' + encodeURIComponent(JSON.stringify(batch));
     fetch(url, { cache: 'no-store' })
       .then(function (r) { return r.json(); })
       .then(function (list) {

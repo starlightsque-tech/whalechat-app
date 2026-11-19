@@ -24,7 +24,7 @@ const APPWRITE_ENDPOINT = String(process.env.APPWRITE_ENDPOINT || 'https://nyc.c
 const APPWRITE_PROJECT_ID = String(process.env.APPWRITE_PROJECT_ID || '6aff3eda000983f5a975').trim();
 
 const DEFAULTS = {
-  release: '3.64.0',
+  release: '3.65.0',
   appName: 'WhaleChat',
 
   /* where the PWA is served from (used by the service worker + install flow) */
@@ -62,7 +62,7 @@ const DEFAULTS = {
   market: {
     finnhubKey: String(process.env.FINNHUB_API_KEY || '').trim(),
     twelveDataKey: String(process.env.TWELVEDATA_API_KEY || '').trim(),
-    binanceWs: process.env.BINANCE_WS || 'wss://stream.binance.com:9443/stream'
+    binanceWs: process.env.BINANCE_WS || 'wss://data-stream.binance.vision/stream'
   },
 
   reconciliation: {

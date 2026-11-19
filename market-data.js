@@ -55,7 +55,7 @@ function createMarketData(opts) {
       twelvedata: { apiKey: (m.twelvedata || {}).apiKey || '' }
     };
   }
-  const binBase = (c) => c.binance.testnet ? 'https://testnet.binance.vision' : 'https://api.binance.com';
+  const binBase = (c) => c.binance.testnet ? 'https://testnet.binance.vision' : (process.env.BINANCE_REST || 'https://data-api.binance.vision');
 
   function setHealth(p, ok, err) { health[p] = ok ? { state: 'connected', at: Date.now() } : { state: 'error', error: String(err && err.message || err), at: Date.now() }; }
 

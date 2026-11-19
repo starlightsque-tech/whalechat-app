@@ -26,7 +26,7 @@ const CODES_FILE = 'whalechat-codes';
 const MAIL_FILE = 'whalechat-mail';
 const MAIL_LOG_FILE = 'whalechat-email-log';
 const NOTIF_LOG_LIMIT = 400;
-const VERSION = '3.64.0';
+const VERSION = '3.65.0';
 const crypto = require('crypto');
 const offlineSync = require('./offline-sync');
 const { ShareService } = require('./shares');
@@ -1222,7 +1222,7 @@ module.exports = async ({ req, res, log, error }) => {
           bucketId: BUCKET,
           collections: { orders: 'orders', offlineOrders: process.env.WC_OFFLINE_COLLECTION || 'offline_orders', portfolios: 'portfolios' }
         },
-        market: { binanceWs: process.env.BINANCE_WS || 'wss://stream.binance.com:9443/stream' },
+        market: { binanceWs: process.env.BINANCE_WS || 'wss://data-stream.binance.vision/stream' },
         reconciliation: { tolerancePct: offlineSync.TOLERANCE },
         features: {
           telesign: !!(process.env.TELESIGN_CUSTOMER_ID && process.env.TELESIGN_API_KEY),
