@@ -26,7 +26,7 @@ const CODES_FILE = 'whalechat-codes';
 const MAIL_FILE = 'whalechat-mail';
 const MAIL_LOG_FILE = 'whalechat-email-log';
 const NOTIF_LOG_LIMIT = 400;
-const VERSION = '3.57.4';
+const VERSION = '3.57.5';
 const crypto = require('crypto');
 
 const CORS = {
@@ -462,6 +462,38 @@ module.exports = async ({ req, res, log, error }) => {
     }
 
     /* ---------------- Brevo delivery webhook (public, header key) ---------- */
+    if (path === '/api/release' && method === 'GET') {
+      const st = await readState();
+      return res.json({ ok: true, version: VERSION, build: 'appwrite-function-' + VERSION, uptimeSec: Math.round(process.uptime ? process.uptime() : 0), clients: 0, rev: st.rev || 0, devices: 0, publicUrl: 'https://whalechat.appwrite.network', storage: 'appwrite' }, 200, CORS);
+    }
+
+    if (path === '/api/backup' && (method === 'GET' || method === 'POST')) {
+      const st = await readState();
+      if (method === 'POST') {
+        st.at = Date.now();
+        const ok = await writeJsonFile(STATE_FILE, 'whalechat-state.json', st);
+        if (!ok) return res.json({ ok: false, error: 'storage_write_failed' }, 502, CORS);
+      }
+      const users = (st.db && st.db.users) ? st.db.users.length : 0;
+      return res.json({ ok: true, users, count: 1, last: st.at || Date.now(), persistent: true, recoverable: true, storage: 'appwrite' }, 200, CORS);
+    }
+
+    if (path === '/api/backup/latest' && method === 'GET') {
+      const st = await readState();
+      return res.send(JSON.stringify({ at: st.at || Date.now(), rev: st.rev || 0, db: st.db }), 200, Object.assign({ 'content-type': 'application/json', 'content-disposition': 'attachment; filename="whalechat-backup.json"' }, CORS));
+    }
+
+    if (path === '/api/state/restore' && method === 'POST') {
+      if (!body.db || !Array.isArray(body.db.users) || !body.db.users.length) return res.json({ ok: false, error: 'invalid_db', message: 'Backup contains no accounts' }, 400, CORS);
+      const st = await readState();
+      const prev = { at: Date.now(), rev: st.rev || 0, db: st.db };
+      /* keep the previous snapshot as a separate rollback file */
+      if (st.db) await writeJsonFile('whalechat-state-prev', 'whalechat-state-prev.json', prev);
+      const next = { at: Date.now(), rev: Math.max(1, Number(st.rev) || 0) + 1, db: body.db };
+      const ok = await writeJsonFile(STATE_FILE, 'whalechat-state.json', next);
+      return res.json(ok ? { ok: true, rev: next.rev, users: body.db.users.length } : { ok: false, error: 'storage_write_failed' }, ok ? 200 : 502, CORS);
+    }
+
     if (path === '/api/webhook/brevo' && (method === 'POST' || method === 'GET')) {
       const cfg = await readMailConfig();
       const given = String((req.headers && (req.headers['x-whalechat-key'] || req.headers['X-Whalechat-Key'])) || body.key || '').trim();

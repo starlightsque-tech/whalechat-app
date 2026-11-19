@@ -578,13 +578,14 @@ function adminRelease() {
 async function loadReleasePanel() {
   const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
   try {
-    const r = await fetch('/api/release?t=' + Date.now(), { cache: 'no-store' });
+    const r = await fetch((typeof Remote !== 'undefined' ? Remote.url('/api/release') : '/api/release') + '?t=' + Date.now(), { cache: 'no-store' });
     if (!r.ok) throw new Error('no-server');
     const d = await r.json();
-    const same = d.build && d.build === APP_BUILD;
+    try { localStorage.setItem('wc.release.cache', JSON.stringify({ d: d, at: Date.now() })); } catch (e) {}
+    const same = (d.build && d.build === APP_BUILD) || (d.version && d.version === APP_VERSION);
     set('relServerBuild', d.build ? d.build.replace('T', ' ').replace('Z', '') : 'unknown');
     set('relServerBuildRow', d.build || 'unknown');
-    set('relUptime', Math.floor((d.uptimeSec || 0) / 3600) + 'h ' + Math.floor(((d.uptimeSec || 0) % 3600) / 60) + 'm');
+    set('relUptime', d.storage === 'appwrite' ? 'always on' : Math.floor((d.uptimeSec || 0) / 3600) + 'h ' + Math.floor(((d.uptimeSec || 0) % 3600) / 60) + 'm');
     set('relClients', String(d.clients || 0));
     set('relRev', String(d.rev || 0));
     set('relDevices', String(d.devices || 0));
@@ -594,11 +595,11 @@ async function loadReleasePanel() {
       badge.textContent = same ? 'Up to date' : 'Update available';
     }
     try {
-      const bk = await fetch('/api/backup', { cache: 'no-store' }).then(x => x.json());
+      const bk = await fetch((typeof Remote !== 'undefined' ? Remote.url('/api/backup') : '/api/backup'), { cache: 'no-store' }).then(x => x.json());
       const du = document.getElementById('relDataUsers'); if (du) du.textContent = String(bk.users || 0);
       const db = document.getElementById('relDataBackups'); if (db) db.textContent = (bk.count || 0) + ' snapshot' + ((bk.count || 0) === 1 ? '' : 's');
       const dl = document.getElementById('relDataLast'); if (dl) dl.textContent = bk.last ? new Date(bk.last).toLocaleString() : 'none yet';
-      const ds = document.getElementById('relDataStore'); if (ds) ds.textContent = bk.persistent ? 'Persistent disk' : (bk.recoverable ? 'Ephemeral storage + persistent backups' : 'Ephemeral — set DATA_DIR to a disk');
+      const ds = document.getElementById('relDataStore'); if (ds) ds.textContent = bk.storage === 'appwrite' ? 'Appwrite Storage (persistent)' : bk.persistent ? 'Persistent disk' : (bk.recoverable ? 'Ephemeral storage + persistent backups' : 'Ephemeral — set DATA_DIR to a disk');
       const dgb = document.getElementById('relDataBadge');
       if (dgb) {
         if (bk.persistent) { dgb.className = 'badge badge-success'; dgb.textContent = 'Protected'; }
@@ -607,11 +608,30 @@ async function loadReleasePanel() {
       }
     } catch (e2) {}
   } catch (e) {
-    set('relServerBuild', 'local mode');
+    /* offline: show the last known server snapshot instead of claiming there is
+       no server, because the app keeps its revision and build locally */
+    let cached = null;
+    try { cached = JSON.parse(localStorage.getItem('wc.release.cache') || 'null'); } catch (e2) {}
+    if (cached && cached.d) {
+      const d = cached.d;
+      set('relServerBuild', d.build ? d.build.replace('T', ' ').replace('Z', '') : 'cached');
+      set('relServerBuildRow', d.build || 'cached');
+      set('relRev', String(d.rev || 0));
+      set('relDevices', String(d.devices || 0));
+      set('relUptime', 'offline'); set('relClients', String(d.clients || 0));
+      const badge = document.getElementById('relBadge');
+      if (badge) { badge.className = 'badge badge-warn'; badge.textContent = 'Connected · offline cache (' + timeAgo(cached.at) + ' ago)'; }
+      return;
+    }
+    set('relServerBuild', typeof Remote !== 'undefined' && Remote.enabled ? 'connected' : 'local mode');
     set('relServerBuildRow', 'unavailable');
-    set('relRev', '—'); set('relDevices', '—'); set('relUptime', '—'); set('relClients', '—');
+    set('relRev', typeof Remote !== 'undefined' && Remote.rev ? String(Remote.rev) : '—');
+    set('relDevices', '—'); set('relUptime', '—'); set('relClients', '—');
     const badge = document.getElementById('relBadge');
-    if (badge) { badge.className = 'badge badge-warn'; badge.textContent = 'No sync server'; }
+    if (badge) {
+      badge.className = 'badge ' + (typeof Remote !== 'undefined' && Remote.enabled ? 'badge-success' : 'badge-warn');
+      badge.textContent = typeof Remote !== 'undefined' && Remote.enabled ? 'Sync connected' : 'No sync server';
+    }
   }
 }
 
@@ -633,7 +653,7 @@ App.adminReloadAll = async function () {
   if (!Remote.enabled) return toast('Connect the sync server to refresh remote devices', 'err');
   if (!await confirmDialog({ title: 'Force refresh all devices?', body: 'Every app that is open right now will clear its cache and reload the latest build. Users may lose an unsent draft.', ok: 'Refresh everyone', danger: true })) return;
   try {
-    const r = await fetch('/api/reload', {
+    const r = await fetch((typeof Remote !== 'undefined' ? Remote.url('/api/reload') : '/api/reload'), {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ build: APP_BUILD, version: APP_VERSION })
     }).then(x => x.json());

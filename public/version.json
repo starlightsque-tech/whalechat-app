@@ -1,8 +1,8 @@
 {
-  "version": "3.57.4",
-  "build": "2026-11-19T11:29:25Z",
+  "version": "3.57.5",
+  "build": "2026-11-19T11:42:26Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.57.4 — the app now auto-connects to the Appwrite sync server even when an old host was saved (health probe uses the new URL, failed hosts are dropped, and a 12-second watchdog reconnects). Admin > Servers now shows the live email state and saves Brevo correctly. The admin panel adds an Email & notifications audit log for every Brevo verification code, welcome mail, test and broadcast with delivery status, plus an in-app notification log, a verified-sender view and a session lock/unlock flow.",
-  "releasedAt": "2026-11-19T11:29:25Z",
+  "notes": "WhaleChat 3.57.5 — Release page now reads /api/release and /api/backup from the Appwrite sync function instead of the static site origin, so it shows the correct build, revision, uptime, live connections and protected storage instead of “No sync server”. Offline, the page and the email panel show the last known server/email state from a device cache. The sync connection keeps retrying every 12 seconds, Brevo delivery events update the audit log live, and both the function and the email service run 24/7 in Appwrite.",
+  "releasedAt": "2026-11-19T11:42:26Z",
   "minimum": "3.0.0"
 }

@@ -17,7 +17,7 @@ App.refundDel = async function (id) {
 /* ---------------- data backups ---------------- */
 App.adminBackupNow = async function () {
   try {
-    const r = await fetch('/api/backup', { method: 'POST' }).then(x => x.json());
+    const r = await fetch((typeof Remote !== 'undefined' ? Remote.url('/api/backup') : '/api/backup'), { method: 'POST' }).then(x => x.json());
     if (!r.ok) throw new Error(r.error || 'failed');
     toast('Backup created (' + r.count + ' snapshots kept)', 'ok');
     loadReleasePanel();
@@ -26,7 +26,7 @@ App.adminBackupNow = async function () {
 
 App.adminBackupDownload = async function () {
   try {
-    const res = await fetch('/api/backup/latest', { cache: 'no-store' });
+    const res = await fetch((typeof Remote !== 'undefined' ? Remote.url('/api/backup/latest') : '/api/backup/latest'), { cache: 'no-store' });
     if (!res.ok) throw new Error('no backup yet');
     const blob = await res.blob();
     const a = document.createElement('a');
@@ -53,7 +53,7 @@ App.adminBackupRestore = function () {
       danger: true, ok: 'Restore backup'
     })) return;
     try {
-      const r = await fetch('/api/state/restore', {
+      const r = await fetch((typeof Remote !== 'undefined' ? Remote.url('/api/state/restore') : '/api/state/restore'), {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ db })
       }).then(x => x.json());
@@ -258,6 +258,7 @@ async function loadEmailPanel() {
   try {
     const d = await fetch((typeof Remote !== 'undefined' ? Remote.url('/api/email/status') : '/api/email/status'), { cache: 'no-store' }).then(r => r.json());
     if (!d || d.ok === false) throw new Error('unavailable');
+    try { localStorage.setItem('wc.email.status', JSON.stringify({ d: d, at: Date.now() })); } catch (e) {}
     badge.className = 'badge ' + (d.configured ? 'badge-success' : 'badge-warn');
     badge.textContent = d.configured ? 'Connected' : 'Not configured';
     box.innerHTML = `<div class="kv"><span class="k">Mailbox</span><span class="v">${esc(d.from || '—')}</span></div>
@@ -266,6 +267,17 @@ async function loadEmailPanel() {
       <div class="kv"><span class="k">Sent this session</span><span class="v">${d.sent || 0}</span></div>
       ${d.lastError ? `<div class="tiny mt8" style="color:var(--danger)">${esc(d.lastError)}</div>` : ''}`;
   } catch (e) {
+    let cached = null;
+    try { cached = JSON.parse(localStorage.getItem('wc.email.status') || 'null'); } catch (e2) {}
+    if (cached && cached.d) {
+      const d = cached.d;
+      badge.className = 'badge ' + (d.configured ? 'badge-success' : 'badge-warn');
+      badge.textContent = d.configured ? 'Connected · cached' : 'Not configured · cached';
+      box.innerHTML = '<div class="kv"><span class="k">Mailbox</span><span class="v">' + esc(d.from || '—') + '</span></div>' +
+        '<div class="kv"><span class="k">Provider</span><span class="v">' + esc(d.provider || '—') + '</span></div>' +
+        '<div class="tiny muted mt8">Offline — last known state from ' + timeAgo(cached.at) + ' ago. The email server itself runs 24/7 in Appwrite.</div>';
+      return;
+    }
     badge.className = 'badge badge-warn'; badge.textContent = 'No sync server';
     box.innerHTML = '<div class="tiny muted">Email runs on the sync server. Connect this device to a server to see its status.</div>';
   }
