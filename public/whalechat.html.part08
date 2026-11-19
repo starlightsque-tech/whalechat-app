@@ -256,7 +256,7 @@ async function loadEmailPanel() {
   const badge = document.getElementById('emailBadge');
   if (!box || !badge) return;
   try {
-    const d = await fetch('/api/email/status', { cache: 'no-store' }).then(r => r.json());
+    const d = await fetch((typeof Remote !== 'undefined' ? Remote.url('/api/email/status') : '/api/email/status'), { cache: 'no-store' }).then(r => r.json());
     if (!d || d.ok === false) throw new Error('unavailable');
     badge.className = 'badge ' + (d.configured ? 'badge-success' : 'badge-warn');
     badge.textContent = d.configured ? 'Connected' : 'Not configured';
@@ -277,7 +277,7 @@ App.emailTest = async function () {
   toast('Sending test email…');
   let r = null;
   try {
-    r = await fetch('/api/email/test', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ to }) }).then(x => x.json());
+    r = await fetch((typeof Remote !== 'undefined' ? Remote.url('/api/email/test') : '/api/email/test'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ to }) }).then(x => x.json());
   } catch (e) { return toast('Could not reach the server', 'err'); }
   if (r && r.ok) toast('Test email sent to ' + to, 'ok');
   else if (r && r.error === 'smtp_not_configured') toast('Mailbox not connected on the server yet', 'err');

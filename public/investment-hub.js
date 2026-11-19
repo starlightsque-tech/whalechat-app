@@ -817,12 +817,12 @@
         row('App name', 'sdAppName', sd.appName || 'WhaleChat') +
         row('App creation date', 'sdCreatedAt', sd.createdAt || '2026-11-09', 'date') +
         row('Environment', 'sdEnv', sd.environment || 'production') +
-        row('Region / host', 'sdRegion', sd.region || '') +
-        row('Database', 'sdDatabase', sd.database || 'Postgres (whalechat_state)') +
-        row('Storage', 'sdStorage', sd.storage || 'S3 / Render disk') +
-        row('Public URL', 'sdUrl', sd.publicUrl || (typeof location !== 'undefined' ? location.origin : '')) +
+        row('Region / host', 'sdRegion', sd.region || 'nyc.cloud.appwrite.io (New York)') +
+        row('Database', 'sdDatabase', sd.database || 'Appwrite Storage · whalechat-state.json') +
+        row('Storage', 'sdStorage', sd.storage || 'Appwrite Storage · bucket whalechat') +
+        row('Public URL', 'sdUrl', sd.publicUrl || 'https://whalechat.appwrite.network') +
         row('Support email', 'sdSupport', sd.supportEmail || 'support@whalechat.app', 'email') +
-        '<div class="field"><label class="label">Notes</label><textarea class="input" id="sdNotes" rows="3">' + escH(sd.notes || '') + '</textarea></div>' +
+        '<div class="field"><label class="label">Notes</label><textarea class="input" id="sdNotes" rows="3">' + escH(sd.notes || 'Sync server: https://whalechat-api.appwrite.network · Admin panel: https://whalechat-admin.appwrite.network · Database: Appwrite Storage bucket whalechat · Email: Brevo (pending key).') + '</textarea></div>' +
         '<button class="btn btn-primary" data-act="ih-server-save" style="width:100%">Save server details</button>' +
         '<div class="tiny muted mt6">Runtime version: ' + escH(typeof APP_VERSION !== 'undefined' ? APP_VERSION : '3.38.x') + ' · build: ' + escH(typeof APP_BUILD !== 'undefined' ? APP_BUILD : '') + '</div>' +
       '</div>';

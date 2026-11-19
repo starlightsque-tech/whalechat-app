@@ -1999,7 +1999,7 @@ App.admPublish = async function () {
     body: 'Every open app reloads onto ' + APP_VERSION + ' automatically. Users do not need to update anything.',
     ok: 'Publish to all users' })) return;
   try {
-    const r = await fetch('/api/reload', {
+    const r = await fetch((typeof Remote !== 'undefined' ? Remote.url('/api/reload') : '/api/reload'), {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ build: APP_BUILD, version: APP_VERSION })
     }).then(x => x.json());
@@ -2014,7 +2014,7 @@ App.admMailSave = async function () {
   if (key && !/^xkeysib-/i.test(key) && !/^xsmtpsib-/i.test(key)) return toast('That does not look like a Brevo API key', 'err');
   if (from && !/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(from)) return toast('Enter a valid sender email', 'err');
   try {
-    const r = await fetch('/api/admin/mail', {
+    const r = await fetch((typeof Remote !== 'undefined' ? Remote.url('/api/admin/mail') : '/api/admin/mail'), {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ adminId: me().id, brevoKey: key || undefined, from: from || undefined, fromName: name })
     }).then(x => x.json());
@@ -2027,7 +2027,7 @@ App.admMailSave = async function () {
 App.admMailTest = async function () {
   const to = ((document.getElementById('admMailTest') || {}).value || '').trim();
   if (!to) return toast('Enter an address to test', 'err');
-  const r = await fetch('/api/email/test', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ to }) }).then(x => x.json()).catch(() => null);
+  const r = await fetch((typeof Remote !== 'undefined' ? Remote.url('/api/email/test') : '/api/email/test'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ to }) }).then(x => x.json()).catch(() => null);
   if (r && r.ok) toast('Test email sent to ' + to, 'ok');
   else toast('Test failed: ' + ((r && (r.error || r.reason)) || 'unknown'), 'err');
 };
@@ -2064,7 +2064,7 @@ App.admPushDismiss = function () {
 
 async function ltServersPanel() {
   let mail = null;
-  try { mail = await fetch('/api/email/status', { cache: 'no-store' }).then(r => r.json()); } catch (e) {}
+  try { mail = await fetch((typeof Remote !== 'undefined' ? Remote.url('/api/email/status') : '/api/email/status'), { cache: 'no-store' }).then(r => r.json()); } catch (e) {}
   const pushOn = !!(DB.settings && DB.settings.push && DB.settings.push.enabled);
   const tabs = `<div class="admin-nav">${ADMIN_NAV.map(n => {
     const key = n.href.replace('#/admin', '') || '';
