@@ -243,6 +243,42 @@ const templates = {
       text: 'Your WhaleChat verification code is ' + code + ' (valid 15 minutes). Open: ' + copyUrl
     };
   },
+  /* offline → online trade reconciliation receipt (3.64.0) */
+  offlineReceipt(data, ctx) {
+    const d = data || {};
+    const user = d.user || {};
+    const rows = (d.orders || []).filter(function (r) {
+      return r.status === 'RECONCILED' || r.status === 'ADJUSTED';
+    });
+    const badge = function (status) {
+      const color = status === 'ADJUSTED' ? '#f5b544' : '#2ee6c9';
+      return '<span style="display:inline-block;font-size:11px;font-weight:700;letter-spacing:.04em;padding:2px 8px;border-radius:999px;border:1px solid ' + color + '33;color:' + color + '">' + escapeHtml(status) + '</span>';
+    };
+    const lines = rows.map(function (r) {
+      return '<tr>'
+        + '<td style="padding:8px 6px;border-bottom:1px solid rgba(255,255,255,.06);color:#e9f4f9;font-weight:700">' + escapeHtml(r.side || '') + ' ' + escapeHtml(r.ticker || '') + '</td>'
+        + '<td style="padding:8px 6px;border-bottom:1px solid rgba(255,255,255,.06)">' + escapeHtml(String(r.orderType || 'MARKET')) + '</td>'
+        + '<td style="padding:8px 6px;border-bottom:1px solid rgba(255,255,255,.06)">' + escapeHtml(String(r.executedPrice != null ? '$' + Number(r.executedPrice).toFixed(4) : '—')) + '</td>'
+        + '<td style="padding:8px 6px;border-bottom:1px solid rgba(255,255,255,.06)">' + badge(r.status) + '</td>'
+        + '</tr>';
+    }).join('');
+    return {
+      subject: 'WhaleChat — ' + rows.length + ' offline trade' + (rows.length === 1 ? '' : 's') + ' synced',
+      html: layout('Your offline trades are synced',
+        'Hi ' + escapeHtml((user.fullName || user.username || 'there').split(' ')[0]) + ',<br/><br/>'
+        + 'Your device reconnected and WhaleChat settled the trades you placed offline against the live market (tolerance ' + escapeHtml(String(d.tolerance || 2)) + '%).'
+        + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:16px 0;font-size:13px">'
+        + '<tr><th align="left" style="padding:6px;color:#63798a;font-weight:600;font-size:11px;text-transform:uppercase">Trade</th>'
+        + '<th align="left" style="padding:6px;color:#63798a;font-weight:600;font-size:11px;text-transform:uppercase">Type</th>'
+        + '<th align="left" style="padding:6px;color:#63798a;font-weight:600;font-size:11px;text-transform:uppercase">Price</th>'
+        + '<th align="left" style="padding:6px;color:#63798a;font-weight:600;font-size:11px;text-transform:uppercase">Status</th></tr>'
+        + lines + '</table>'
+        + '<b style="color:#e9f4f9">Portfolio cash balance:</b> $' + Number(d.balanceUsd || 0).toFixed(2) + '<br/><br/>'
+        + '<span style="font-size:12px;color:#63798a">Prices adjusted away from your offline execution price are filled at the live market price and flagged ADJUSTED; the committed dollar amount is always preserved.</span>',
+        { label: 'Open your portfolio', url: ctx.appUrl + '/whalechat.html#/investment' }),
+      text: rows.length + ' offline trade(s) synced. Balance: $' + Number(d.balanceUsd || 0).toFixed(2)
+    };
+  },
   test(ctx) {
     return {
       subject: 'WhaleChat email service is working',

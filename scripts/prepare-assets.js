@@ -62,9 +62,19 @@ try { const ps = require('./patch-server'); ps.patchConnections(require('path').
 const MODULES = [
   /* build-time endpoints — loaded before anything opens a connection */
   { file: 'wc-build-config.js', marker: 'wc-build-config' },
+  /* 3.64: public server config (Appwrite nyc, Binance stream, tolerance) */
+  { file: 'wc-server-config.js', marker: 'wc-server-config' },
   /* offline-first must run first: it wraps fetch for the modules below */
   { file: 'offline-first.js', marker: 'wc-offline-first' },
   { file: 'offline-data.js', marker: 'wc-offline-data' },
+  /* installed-app offline mode: device DB → simulator → native chart →
+     reconciliation queue → offline trading desk (order matters) */
+  { file: 'wc-device-store.js', marker: 'wc-device-store' },
+  { file: 'wc-install-mode.js', marker: 'wc-install-mode' },
+  { file: 'wc-sim-engine.js', marker: 'wc-sim-engine' },
+  { file: 'wc-native-chart.js', marker: 'wc-native-chart' },
+  { file: 'wc-recon.js', marker: 'wc-recon' },
+  { file: 'wc-offline-desk.js', marker: 'wc-offline-desk' },
   /* extended 300+ instrument catalogue — must exist before the market views */
   { file: 'wc-market-universe-data.js', marker: 'wc-market-universe-data' },
   { file: 'wc-market-universe.js', marker: 'wc-market-universe' },

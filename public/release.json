@@ -1,8 +1,8 @@
 {
-  "version": "3.63.0",
-  "build": "2026-11-19T15:11:30Z",
+  "version": "3.64.0",
+  "build": "2026-11-19T20:24:37Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.63.0 — WC-Investing now reads /api/wc/state as its source of truth and merges server accruals into the local wallet without double-counting (server profit replaces local, unsynced plans preserved); 7-day offline maturity verified server-side and idempotent; new public /api/engine/tick catches up bots/shares/WC, registered with the service worker periodic sync and called once a minute while any tab is open.",
-  "releasedAt": "2026-11-19T15:11:30Z",
+  "notes": "WhaleChat 3.64.0 — installed-app offline mode (strict standalone detection, browser tabs locked out of offline trading with an install prompt); local-first IndexedDB device database for balances, holdings, watchlists, orders, pending trades and OHLCV candles; native canvas candlestick/line chart replacing third-party widgets with a LIVE MARKET / OFFLINE SIMULATED badge; offline volatility simulator seeded from the last real Finnhub/Twelve Data/Binance close; unified online & offline trading desk (market, limit, stop-loss, watchlists, portfolio analytics, cash⇄wallet transfers) with a deterministic FIFO reconciliation engine (clientOrderId idempotency, 2% slippage tolerance, live-price adjustment, OPEN conversion for untouched limit/stop orders, insufficient-funds protection) that syncs to Appwrite and sends Brevo receipts on reconnect; new server configuration (Appwrite nyc.cloud.appwrite.io, Telesign SMS OTP, Brevo email, Binance WebSocket) with Appwrite-hosted functions for both the site and the sync backend.",
+  "releasedAt": "2026-11-19T20:24:37Z",
   "minimum": "3.0.0"
 }

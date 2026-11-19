@@ -26,8 +26,9 @@ const CODES_FILE = 'whalechat-codes';
 const MAIL_FILE = 'whalechat-mail';
 const MAIL_LOG_FILE = 'whalechat-email-log';
 const NOTIF_LOG_LIMIT = 400;
-const VERSION = '3.59.0';
+const VERSION = '3.64.0';
 const crypto = require('crypto');
+const offlineSync = require('./offline-sync');
 const { ShareService } = require('./shares');
 const { BotService } = require('./bots');
 
@@ -1182,6 +1183,143 @@ module.exports = async ({ req, res, log, error }) => {
       let mailOk = false;
       try { const mc = await readMailConfig(); mailOk = !!(mc.brevoKey || mc.resendKey); } catch (e) {}
       return res.json({ ok: true, app: 'whalechat', version: VERSION, provider: 'appwrite-function', stream: false, rev: st.rev || 0, users: (st.db && st.db.users) ? st.db.users.length : 0, storage: 'appwrite', email: mailOk }, 200, CORS);
+    }
+
+    /* ---------------------------------------------------------------- *
+     * 3.64 config + Telesign + offline trade reconciliation            *
+     * ---------------------------------------------------------------- */
+    if (path === '/api/config/servers' && method === 'GET') {
+      return res.json({
+        ok: true,
+        release: VERSION,
+        appwrite: {
+          endpoint: ENDPOINT,
+          projectId: PROJECT,
+          databaseId: process.env.APPWRITE_DATABASE_ID || 'whalechat',
+          bucketId: BUCKET,
+          collections: { orders: 'orders', offlineOrders: process.env.WC_OFFLINE_COLLECTION || 'offline_orders', portfolios: 'portfolios' }
+        },
+        market: { binanceWs: process.env.BINANCE_WS || 'wss://stream.binance.com:9443/stream' },
+        reconciliation: { tolerancePct: offlineSync.TOLERANCE },
+        features: {
+          telesign: !!(process.env.TELESIGN_CUSTOMER_ID && process.env.TELESIGN_API_KEY),
+          brevo: !!(process.env.BREVO_API_KEY),
+          appwriteEmail: true
+        }
+      }, 200, CORS);
+    }
+
+    if (path === '/api/telesign/status' && method === 'GET') {
+      return res.json({ ok: true, configured: !!(process.env.TELESIGN_CUSTOMER_ID && process.env.TELESIGN_API_KEY) }, 200, CORS);
+    }
+
+    if ((path === '/api/telesign/start' || path === '/api/telesign/verify') && method === 'POST') {
+      const cid = process.env.TELESIGN_CUSTOMER_ID || '';
+      const key = process.env.TELESIGN_API_KEY || '';
+      if (!cid || !key) return res.json({ ok: false, error: 'telesign_not_configured' }, 501, CORS);
+      const phone = '+' + String(body.phone || '').replace(/[^\d]/g, '');
+      if (!/^\+\d{8,15}$/.test(phone)) return res.json({ ok: false, error: 'invalid_phone_number' }, 400, CORS);
+      const auth = 'Basic ' + Buffer.from(cid + ':' + key).toString('base64');
+      const base = (process.env.TELESIGN_BASE_API || 'https://rest-ww.telesign.com/v1').replace(/\/+$/, '');
+      const codes = await readJsonFile('wc-telesign-codes', { codes: {} });
+      codes.codes = codes.codes || {};
+      const now = Date.now();
+
+      if (path === '/api/telesign/start') {
+        const last = Number((codes.codes[phone] || {}).sentAt) || 0;
+        if (now - last < 60000) return res.json({ ok: false, error: 'code_already_sent', retryAfterMs: 60000 - (now - last) }, 429, CORS);
+        const code = String(crypto.randomInt(100000, 1000000));
+        const template = String(body.template || 'Your WhaleChat code is $$CODE$$. It expires in 5 minutes.').replace(/\$\$CODE\$\$/g, code);
+        const r = await apiRaw(base + '/verify/sms', {
+          method: 'POST',
+          headers: { authorization: auth, accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ phone_number: phone, template }).toString()
+        });
+        if (!r.ok) return res.json({ ok: false, error: 'telesign_send_failed', detail: (r.json && r.json.status && r.json.status.description) || r.status }, 502, CORS);
+        codes.codes[phone] = { hash: await sha256('wc::' + phone + '::' + code), referenceId: String((r.json && r.json.reference_id) || ''), sentAt: now, exp: now + 5 * 60000, tries: 0 };
+        for (const k of Object.keys(codes.codes)) if (Number(codes.codes[k].exp) < now) delete codes.codes[k];
+        await writeJsonFile('wc-telesign-codes', 'wc-telesign-codes.json', codes);
+        return res.json({ ok: true, referenceId: codes.codes[phone].referenceId, expiresInMs: 300000, status: 'PENDING' }, 200, CORS);
+      }
+
+      const rec = codes.codes[phone];
+      if (!rec) return res.json({ ok: false, error: 'no_pending_code' }, 404, CORS);
+      if (Number(rec.exp) < now) { delete codes.codes[phone]; await writeJsonFile('wc-telesign-codes', 'wc-telesign-codes.json', codes); return res.json({ ok: false, error: 'code_expired' }, 410, CORS); }
+      const given = await sha256('wc::' + phone + '::' + String(body.code || '').trim());
+      if (given === rec.hash) {
+        delete codes.codes[phone];
+        await writeJsonFile('wc-telesign-codes', 'wc-telesign-codes.json', codes);
+        return res.json({ ok: true, verified: true, status: 'VALID' }, 200, CORS);
+      }
+      rec.tries = (Number(rec.tries) || 0) + 1;
+      if (rec.tries >= 5) { delete codes.codes[phone]; await writeJsonFile('wc-telesign-codes', 'wc-telesign-codes.json', codes); return res.json({ ok: true, verified: false, status: 'TOO_MANY_ATTEMPTS' }, 200, CORS); }
+      await writeJsonFile('wc-telesign-codes', 'wc-telesign-codes.json', codes);
+      return res.json({ ok: true, verified: false, status: 'INVALID', attemptsLeft: 5 - rec.tries }, 200, CORS);
+    }
+
+    if (path === '/api/orders/offline/push' && method === 'POST') {
+      if (localBusy) return res.json({ ok: false, error: 'busy' }, 429, CORS);
+      localBusy = true;
+      try {
+        const st = await readState();
+        if (!st.db) return res.json({ ok: false, error: 'not_initialised', results: [] }, 409, CORS);
+        const dbId = process.env.APPWRITE_DATABASE_ID || 'whalechat';
+        const colId = process.env.WC_OFFLINE_COLLECTION || 'offline_orders';
+        const deps = {
+          collections: [colId],
+          findOrder: async (col, clientOrderId) => {
+            const q = encodeURIComponent('equal("clientOrderId", ["' + String(clientOrderId).replace(/"/g, '') + '"])');
+            const r = await api('/databases/' + dbId + '/collections/' + col + '/documents?queries[]=' + q + '&limit=1');
+            return (r.ok && r.json && (r.json.documents || [])[0]) || null;
+          }
+        };
+        const out = await offlineSync.reconcile(st, body, deps);
+        if (!out.ok) return res.json(out, 400, CORS);
+        st.rev = Math.max(1, Number(st.rev) || 0) + 1;
+        st.at = Date.now();
+        const saved = await writeJsonFile(STATE_FILE, 'whalechat-state.json', st);
+        if (!saved) return res.json({ ok: false, error: 'storage_write_failed', results: out.results }, 502, CORS);
+
+        /* mirror every settled order into the Appwrite collection */
+        for (const o of (out.settled || [])) {
+          const id = String(o.clientOrderId).replace(/[^a-zA-Z0-9._-]/g, '').slice(0, 36);
+          await api('/databases/' + dbId + '/collections/' + colId + '/documents', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ documentId: id, data: {
+              clientOrderId: o.clientOrderId, userId: o.userId, ticker: o.assetSymbol, assetType: o.assetType,
+              side: o.side, orderType: o.orderType, quantity: o.executedQuantity, notionalUsd: o.finalUsd,
+              offlineSimulatedPrice: o.offlineSimulatedPrice, executedLivePrice: o.executedLivePrice,
+              offlineTimestamp: o.offlineTimestamp, syncedAt: Date.now(), syncStatus: o.syncStatus
+            } })
+          });
+        }
+
+        /* one consolidated Brevo receipt per batch */
+        if ((out.settled || []).length) {
+          const u = (st.db.users || []).find((x) => x && x.id === body.userId);
+          if (u && u.email) {
+            try {
+              const mc = await readMailConfig();
+              const html = offlineSync.receiptHtml(u, out.settled, out.balanceUsd);
+              const sent = await sendMail(mc, u.email, 'WhaleChat — ' + out.settled.length + ' offline trade(s) synced', html, 'Your offline trades were synced. Cash balance: $' + Number(out.balanceUsd || 0).toFixed(2));
+              await appendMailLog({ at: Date.now(), to: u.email, subject: 'offline-sync', ok: !!sent.ok, provider: sent.provider, error: sent.error });
+            } catch (e) {}
+          }
+        }
+
+        delete out.settled;
+        return res.json(out, 200, CORS);
+      } finally { localBusy = false; }
+    }
+
+    if (path === '/api/orders/offline/state' && method === 'GET') {
+      const st = await readState();
+      const rows = ((st.db && st.db.offlineOrders) || []);
+      const uid = String((req.query && req.query.userId) || '').toString();
+      const list = rows.filter((r) => !uid || r.userId === uid);
+      const counts = list.reduce((a, r) => { a[r.syncStatus] = (a[r.syncStatus] || 0) + 1; return a; }, {});
+      return res.json({ ok: true, counts, orders: list.slice(-200), tolerance: offlineSync.TOLERANCE }, 200, CORS);
     }
 
     if (path === '/api/state' && method === 'GET') {

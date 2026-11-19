@@ -6,7 +6,7 @@
      APPWRITE_API_KEY      server API key with sites.* + storage.* scopes
      APPWRITE_PROJECT_ID   your Appwrite project id
    Optional:
-     APPWRITE_ENDPOINT     default https://cloud.appwrite.io/v1
+     APPWRITE_ENDPOINT     default https://nyc.cloud.appwrite.io/v1
      APPWRITE_SITE_ID      default whalechat
      APPWRITE_SITE_NAME    default WhaleChat
 
@@ -27,7 +27,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PUB = path.join(ROOT, 'public');
 const SITE_DIR = process.env.APPWRITE_SITE_DIR ? path.resolve(ROOT, process.env.APPWRITE_SITE_DIR) : PUB;
-const ENDPOINT = String(process.env.APPWRITE_ENDPOINT || 'https://cloud.appwrite.io/v1').replace(/\/+$/, '');
+const ENDPOINT = String(process.env.APPWRITE_ENDPOINT || 'https://nyc.cloud.appwrite.io/v1').replace(/\/+$/, '');
 const PROJECT = String(process.env.APPWRITE_PROJECT_ID || '').trim();
 const KEY = String(process.env.APPWRITE_API_KEY || '').trim();
 const SITE_ID = String(process.env.APPWRITE_SITE_ID || 'whalechat').trim().toLowerCase().replace(/[^a-z0-9-]/g, '-');

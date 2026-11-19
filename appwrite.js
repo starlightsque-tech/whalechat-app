@@ -21,7 +21,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const ENDPOINT = String(process.env.APPWRITE_ENDPOINT || 'https://cloud.appwrite.io/v1').replace(/\/+$/, '');
+const ENDPOINT = String(process.env.APPWRITE_ENDPOINT || 'https://nyc.cloud.appwrite.io/v1').replace(/\/+$/, '');
 const PROJECT = String(process.env.APPWRITE_PROJECT_ID || '').trim();
 const KEY = String(process.env.APPWRITE_API_KEY || '').trim();
 const BUCKET = String(process.env.APPWRITE_BUCKET_ID || 'whalechat').trim();

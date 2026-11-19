@@ -60,6 +60,35 @@ const shares = new ShareService({
   persist: () => persist(),
   broadcast: (event, data) => { try { broadcast(event, data); } catch (e) {} }
 });
+
+/* 3.64: configured servers (Appwrite nyc, Telesign, Brevo, market feeds).
+   Secrets stay in the environment; only public ids reach the browser. */
+const serverConfig = require('./server-config');
+let telesign = null;
+try { telesign = require('./telesign'); } catch (e) { console.error('[telesign] module unavailable:', e.message); }
+let appwriteOrders = null;
+try { appwriteOrders = require('./appwrite-orders'); } catch (e) { console.error('[appwrite-orders] module unavailable:', e.message); }
+const { createReconciler } = require('./offline-orders');
+function notifyUser(userId, title, body, icon, link) {
+  try {
+    if (!store.db) return;
+    const now = Date.now();
+    const id = 'nt_' + now.toString(36) + Math.random().toString(36).slice(2, 7);
+    (store.db.notifications = store.db.notifications || []).unshift({ id, userId, title, body, link: link || '#/investment', icon: icon || 'trend', read: false, createdAt: now });
+    store.rev += 1; store.updatedAt = now; persist();
+    broadcast('change', { rev: store.rev, source: 'offline-sync', at: now });
+  } catch (e) {}
+}
+const reconciler = createReconciler({
+  getDb: () => store.db,
+  persist: () => persistNow(),
+  quoteFor: (ticker) => market.quotes[String(ticker || '').toUpperCase()] || null,
+  appwrite: appwriteOrders,
+  mail: email,
+  notify: notifyUser,
+  appUrl: PUBLIC_URL || 'https://whalechat.appwrite.network',
+  tolerancePct: serverConfig.DEFAULTS.reconciliation.tolerancePct
+});
 /* Binance live crypto prices alongside Finnhub (charts stay on Finnhub). */
 const binance = createBinanceFeed ? createBinanceFeed({
   getDb: () => store.db,
@@ -1409,6 +1438,74 @@ async function api(req, res, pathname, query) {
     return json(res, out.ok ? 200 : 502, out);
   }
   // --- email -----------------------------------------------------------
+  /* --- configured servers: public configuration (no secrets) ---------- */
+  if (pathname === '/api/config/servers' && req.method === 'GET') {
+    return json(res, 200, {
+      ok: true,
+      ...serverConfig.publicConfig(),
+      configured: serverConfig.configured(),
+      telesign: telesign ? telesign.status() : { configured: false },
+      appwriteOrders: appwriteOrders ? appwriteOrders.configured() : false
+    });
+  }
+
+  /* --- Telesign: SMS OTP + SMS notifications (server-signed) ---------- */
+  if (pathname === '/api/telesign/status' && req.method === 'GET') {
+    return json(res, 200, { ok: true, ...(telesign ? telesign.status() : { configured: false }) });
+  }
+  if (pathname === '/api/telesign/start' && req.method === 'POST') {
+    if (!telesign) return json(res, 501, { ok: false, error: 'telesign_unavailable' });
+    const body = await readBody(req);
+    try {
+      const out = await telesign.startVerification({ phone: body.phone, purpose: body.purpose });
+      return json(res, 200, out);
+    } catch (e) {
+      return json(res, e.status || 400, { ok: false, error: e.message, retryAfterMs: e.retryAfterMs });
+    }
+  }
+  if (pathname === '/api/telesign/verify' && req.method === 'POST') {
+    if (!telesign) return json(res, 501, { ok: false, error: 'telesign_unavailable' });
+    const body = await readBody(req);
+    try { return json(res, 200, await telesign.checkVerification({ phone: body.phone, code: body.code, referenceId: body.referenceId })); }
+    catch (e) { return json(res, e.status || 400, { ok: false, error: e.message }); }
+  }
+  if (pathname === '/api/telesign/sms' && req.method === 'POST') {
+    if (!telesign) return json(res, 501, { ok: false, error: 'telesign_unavailable' });
+    const body = await readBody(req);
+    if (!isAdmin(store.db, body.adminId)) return json(res, 403, { ok: false, error: 'admin_only' });
+    try { return json(res, 200, await telesign.sendSms({ phone: body.phone, message: body.message })); }
+    catch (e) { return json(res, e.status || 400, { ok: false, error: e.message }); }
+  }
+
+  /* --- offline trade reconciliation ---------------------------------- */
+  if (pathname === '/api/orders/offline/push' && req.method === 'POST') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    const body = await readBody(req);
+    if (!body.userId) return json(res, 400, { ok: false, error: 'user_required' });
+    try {
+      const out = await reconciler.push({
+        userId: String(body.userId),
+        email: body.email,
+        orders: Array.isArray(body.orders) ? body.orders : []
+      });
+      return json(res, 200, out);
+    } catch (e) {
+      return json(res, 400, { ok: false, error: e.message, results: [] });
+    }
+  }
+  if (pathname === '/api/orders/offline/state' && req.method === 'GET') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    return json(res, 200, reconciler.state(query.get('userId') || ''));
+  }
+  if (pathname === '/api/orders/offline/settle' && req.method === 'POST') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    try { return json(res, 200, { ok: true, settled: reconciler.settleOpen(store.db) }); }
+    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
+  }
+  if (pathname === '/api/appwrite/orders/health' && req.method === 'GET') {
+    return json(res, 200, appwriteOrders ? await appwriteOrders.health() : { configured: false });
+  }
+
   if (pathname === '/api/email/status' && req.method === 'GET') {
     return json(res, 200, email ? email.status() : { ok: true, configured: false, queued: 0 });
   }
