@@ -113,6 +113,7 @@ const MODULES = [
   /* device-fit layout, readable type, dashboard chat shortcut */
   { file: 'wc-responsive.js', marker: 'wc-responsive' },
   { file: 'wc-dashboard-chat.js', marker: 'wc-dashboard-chat' },
+  { file: 'wc-feed-health.js', marker: 'wc-feed-health' },
   /* 3.57: account dashboard, email verification, PIN reset and offline charts.
      Must stay last so its VIEWS/App patches win over earlier modules. */
   { file: 'wc-build-357.js', marker: 'wc-build-357' }

@@ -27,6 +27,8 @@
   var finnhubWS = null;
   var stopped = false;
   var keys = { finnhub: '', twelvedata: '', binance: '' };
+  var serverKeys = { finnhub: false, twelvedata: false, proxy: false };
+  var LAST_BY = { binance: 0, finnhub: 0, twelvedata: 0, proxy: 0, yahoo: 0 };
   var tdSymbols = [];
   var lastPersist = 0;
   var lastYahoo = 0;
@@ -83,6 +85,8 @@
     } catch (e) {}
   }
 
+  function touch(source, at) { if (LAST_BY[source] !== undefined) LAST_BY[source] = Number(at) || Date.now(); }
+
   function apply(ticker, price, prevClose, extra) {
     if (!(price > 0)) return;
     var t = up(ticker);
@@ -110,6 +114,7 @@
     s.price = q.price;
     if (pc > 0) s.prevClose = pc;
     LAST_REAL[t] = now;
+    touch(q.source, now);
     try {
       var key = t + '::1D';
       var series = INV.seriesCache && INV.seriesCache[key];
@@ -158,6 +163,7 @@
       var sym = up(d.s);
       /* miniTicker: c close, o open, h high, l low, v base volume */
       apply(sym, Number(d.c), Number(d.o), { open: Number(d.o), vol: Number(d.v), source: 'binance' });
+      touch('binance', Date.now());
     };
     ws.onerror = function () {};
     ws.onclose = function () {
@@ -266,6 +272,51 @@
       .catch(function () {});
   }
 
+  /* ------------------------------------------------------ server proxy feed */
+  /* Stock quotes come through the sync Function, which holds the Finnhub and
+     Twelve Data keys in its environment. Works on every device with no key. */
+  var proxyCursor = 0;
+  var proxyBusy = false;
+  function proxySymbols() {
+    var list = [];
+    stocks().forEach(function (s) {
+      if (isCrypto(s)) return;
+      var disp = up(s.displayTicker || s.ticker);
+      if (!disp || /[^A-Z0-9._\-]/.test(disp)) return;
+      list.push(disp);
+    });
+    return Array.from(new Set(list));
+  }
+  function pollProxy(force) {
+    if (proxyBusy) return;
+    if (!force && !serverKeys.finnhub && !serverKeys.twelvedata) return;
+    var all = proxySymbols();
+    if (!all.length) return;
+    if (force) proxyCursor = 0;
+    var batch = [];
+    for (var i = 0; i < 50 && i < all.length; i++) {
+      batch.push(all[(proxyCursor + i) % all.length]);
+    }
+    proxyCursor = (proxyCursor + batch.length) % all.length;
+    proxyBusy = true;
+    fetch(apiUrl('/api/market/proxy?provider=auto&symbols=' + encodeURIComponent(batch.join(','))), { cache: 'no-store', headers: { accept: 'application/json' } })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        proxyBusy = false;
+        if (!d || !d.ok || !d.quotes) return;
+        var n = 0;
+        Object.keys(d.quotes).forEach(function (sym) {
+          var q = d.quotes[sym];
+          if (!q || !(Number(q.price) > 0)) return;
+          apply(sym, Number(q.price), Number(q.prevClose), { open: Number(q.open), vol: Number(q.vol), source: q.source === 'twelvedata' ? 'twelvedata' : 'finnhub' });
+          n++;
+        });
+        if (n) { touch(d.provider === 'twelvedata' ? 'twelvedata' : 'finnhub', Date.now()); paint(); }
+      })
+      .catch(function () { proxyBusy = false; });
+  }
+  window.WC_MARKET_PROXY = { poll: pollProxy, available: function () { return serverKeys; } };
+
   /* --------------------------------------------------- offline continuity */
   /* When no provider has ticked for a while (offline / blocked), walk the last
      known price by a small step so the board, charts and P/L keep moving. */
@@ -318,8 +369,12 @@
       .then(function (r) { return r.json(); })
       .then(function (d) {
         if (!d) return;
+        if (typeof d.finnhub === 'boolean') serverKeys.finnhub = d.finnhub;
+        if (typeof d.twelvedata === 'boolean') serverKeys.twelvedata = d.twelvedata;
+        if (d.proxy) serverKeys.proxy = true;
         if (d.finnhubKey) keys.finnhub = d.finnhubKey;
         if (d.twelvedataKey) keys.twelvedata = d.twelvedataKey;
+        if (serverKeys.finnhub || serverKeys.twelvedata) pollProxy(true);
       })
       .catch(function () {});
   }
@@ -346,6 +401,7 @@
     setInterval(function () { if (document.hidden) return; openBinance(); }, 90000);
     setInterval(function () { if (document.hidden) return; openFinnhub(); }, 60000);
     setInterval(function () { collectTwelve(); pollTwelve(); pollYahoo(); }, 60000);
+    setInterval(function () { if (!document.hidden) pollProxy(); }, 10000);
     setInterval(continuity, 2200);
     setInterval(function () { writeCache(); }, 15000);
     window.addEventListener('beforeunload', writeCache);
@@ -416,14 +472,35 @@
   }
   setInterval(function () { try { installUI(); } catch (e) {} }, 2500);
 
+  function liveInstruments() {
+    var now = Date.now();
+    var n = 0;
+    Object.keys(LAST_REAL).forEach(function (t) { if (now - LAST_REAL[t] <= 120000) n++; });
+    return n;
+  }
   window.WCMarketFeed = {
-    restart: function () { openBinance(); openFinnhub(); pollTwelve(true); },
+    restart: function () { openBinance(); openFinnhub(); pollTwelve(true); pollProxy(true); },
+    reconnect: function () {
+      BINANCE.forEach(function (ws) { try { ws.onclose = null; ws.close(); } catch (e) {} });
+      BINANCE = [];
+      try { if (finnhubWS) { finnhubWS.onclose = null; finnhubWS.close(); } } catch (e) {}
+      openBinance(); openFinnhub(); pollTwelve(true); pollProxy(true);
+      try { if (typeof toast === 'function') toast('Reconnecting Binance, Finnhub and Twelve Data…', 'ok'); } catch (e) {}
+    },
     status: function () {
       return {
         binance: BINANCE.filter(function (w) { return w.readyState === 1; }).length,
-        finnhub: !!(finnhubWS && finnhubWS.readyState === 1),
+        finnhub: !!((finnhubWS && finnhubWS.readyState === 1) || serverKeys.finnhub),
+        twelvedata: !!(keys.twelvedata || serverKeys.twelvedata),
+        proxy: !!(serverKeys.finnhub || serverKeys.twelvedata),
+        localKeys: !!keys.finnhub,
+        last: { binance: LAST_BY.binance, finnhub: LAST_BY.finnhub || LAST_BY.proxy, twelvedata: LAST_BY.twelvedata },
+        lastTickAt: Math.max(LAST_BY.binance, LAST_BY.finnhub, LAST_BY.twelvedata, LAST_BY.proxy, LAST_BY.yahoo),
+        liveInstruments: liveInstruments(),
+        listed: stocks().length,
         realTickers: Object.keys(LAST_REAL).length,
-        cached: Object.keys(INV.live || {}).length
+        cached: Object.keys(INV.live || {}).length,
+        online: navigator.onLine !== false
       };
     }
   };

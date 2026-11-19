@@ -1,8 +1,8 @@
 {
-  "version": "3.58.0",
-  "build": "2026-11-19T12:43:16Z",
+  "version": "3.59.0",
+  "build": "2026-11-19T12:53:57Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.58.0 — 340+ live instruments (US, global, forex, crypto, indices and WhaleCoin WC) seeded on every device and server; market pages no longer blank out when a provider or the sync server is unavailable; always-on Binance WebSocket + Finnhub/Twelve Data browser feed with automatic reconnect, offline continuity and quote cache; admin session opens without an unlock code and market/share controls fall back to device state; share plans and bot settings load on the static Appwrite build; new Chat button on the account dashboard card; page now fits the device width in mobile and desktop mode with safe-area padding and larger bold text.",
-  "releasedAt": "2026-11-19T12:43:16Z",
+  "notes": "WhaleChat 3.59.0 — live connection health panel on the account dashboard (Binance, Finnhub, Twelve Data, last tick, live instruments, reconnect); the shares payout engine now runs inside the Appwrite sync function, so plans, accruals, maturities and payouts execute on Appwrite storage; Finnhub and Twelve Data keys are read from function environment variables and served to every device through a new /api/market/proxy endpoint.",
+  "releasedAt": "2026-11-19T12:53:57Z",
   "minimum": "3.0.0"
 }

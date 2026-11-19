@@ -26,8 +26,9 @@ const CODES_FILE = 'whalechat-codes';
 const MAIL_FILE = 'whalechat-mail';
 const MAIL_LOG_FILE = 'whalechat-email-log';
 const NOTIF_LOG_LIMIT = 400;
-const VERSION = '3.57.6';
+const VERSION = '3.59.0';
 const crypto = require('crypto');
+const { ShareService } = require('./shares');
 
 const CORS = {
   'access-control-allow-origin': '*',
@@ -272,6 +273,164 @@ async function apiRaw(url, opts) {
   } catch (e) { return { ok: false, status: 0, json: null, text: '', error: e.message }; }
 }
 
+
+/* =========================================================================
+   WhaleChat Shares — payout / profit engine (ported from server.js/shares.js)
+   -------------------------------------------------------------------------
+   The same ShareService class the Render server runs is bundled into this
+   Function, so plans, accruals, maturities and payouts are computed here and
+   stored in Appwrite Storage. There is no long-running timer in a Function:
+   the engine ticks lazily on reads/writes, and because accrual is a pure
+   function of elapsed time, a member sees exactly the same numbers as before.
+   ========================================================================= */
+function shareServiceFor(st) {
+  return new ShareService({ getDb: () => st.db, persist: () => {}, broadcast: () => {} });
+}
+function marketTickDue(st, minAgeMs) {
+  const m = st && st.db && st.db.shareMarket;
+  const last = m ? Number(m.updatedAt) || 0 : 0;
+  return Date.now() - last >= (minAgeMs || 4000);
+}
+async function saveState(st) {
+  st.rev = Math.max(1, Number(st.rev) || 0) + 1;
+  st.at = Date.now();
+  return writeJsonFile(STATE_FILE, 'whalechat-state.json', st);
+}
+async function sharesRoute(req, res, mode, fn) {
+  const st = await readState();
+  if (!st.db) return res.json({ ok: false, error: 'not_initialised' }, 409, CORS);
+  const svc = shareServiceFor(st);
+  try { svc.ensureDefaults(st.db); } catch (e) {}
+  const ticked = marketTickDue(st, 4000);
+  if (ticked) { try { svc.tick(); } catch (e) {} }
+  let out;
+  try { out = fn(svc, st); }
+  catch (e) { return res.json({ ok: false, error: e.message, message: e.message }, 200, CORS); }
+  if (mode === 'write' || ticked) {
+    const ok = await saveState(st);
+    if (!ok) return res.json({ ok: false, error: 'storage_write_failed' }, 502, CORS);
+  }
+  return res.json(out, 200, CORS);
+}
+function isAdminRequest(req, body, st, query) {
+  const headers = req.headers || {};
+  const tok = headers['x-admin-token'] || headers['X-Admin-Token'] || body.token;
+  if (tok) {
+    const payload = verifyToken(String(tok));
+    if (payload && payload.role === 'admin') {
+      const u = (st.db && st.db.users || []).find((x) => x && x.id === payload.sub && x.role === 'admin' && !x.banned);
+      if (u) return u;
+    }
+  }
+  const id = String((body && body.adminId) || (query && query.adminId) || '');
+  if (id) return (st.db && st.db.users || []).find((x) => x && x.role === 'admin' && !x.banned && x.id === id) || null;
+  return null;
+}
+
+/* =========================================================================
+   Market data proxy — provider keys live in Function environment variables
+   -------------------------------------------------------------------------
+   FINNHUB_API_KEY  (or FINNHUB_KEY)   · US / global / forex quotes
+   TWELVE_DATA_API_KEY (or TWELVEDATA_API_KEY) · stocks, forex, indices
+   Keys never reach the browser: devices call /api/market/proxy and this
+   Function talks to the provider.
+   ========================================================================= */
+const FINNHUB_KEY = String(process.env.FINNHUB_API_KEY || process.env.FINNHUB_KEY || process.env.WC_FINNHUB_KEY || '').trim();
+const TWELVE_KEY = String(process.env.TWELVE_DATA_API_KEY || process.env.TWELVEDATA_API_KEY || process.env.TWELVE_DATA_KEY || process.env.WC_TWELVEDATA_KEY || '').trim();
+const PROXY_CACHE = new Map();
+const PROXY_CACHE_MS = 8000;
+
+function cacheGet(key) {
+  const hit = PROXY_CACHE.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.at > PROXY_CACHE_MS) { PROXY_CACHE.delete(key); return null; }
+  return hit.quotes;
+}
+function cacheSet(key, quotes) {
+  if (PROXY_CACHE.size > 200) PROXY_CACHE.clear();
+  PROXY_CACHE.set(key, { at: Date.now(), quotes });
+}
+
+function normQuote(price, prevClose, extra) {
+  const p = Number(price);
+  if (!(p > 0)) return null;
+  const pc = Number(prevClose) > 0 ? Number(prevClose) : p;
+  return {
+    price: p, prevClose: pc,
+    open: Number(extra && extra.open) || pc,
+    dayHigh: Number(extra && extra.high) || p,
+    dayLow: Number(extra && extra.low) || p,
+    vol: Number(extra && extra.vol) || 0,
+    changePct: pc ? ((p - pc) / pc) * 100 : 0,
+    changeUsd: p - pc,
+    updatedAt: Number(extra && extra.at) || Date.now(),
+    source: (extra && extra.source) || 'provider'
+  };
+}
+
+async function finnhubQuotes(symbols) {
+  if (!FINNHUB_KEY) return {};
+  const out = {};
+  const chunk = symbols.slice(0, 60);
+  let cursor = 0;
+  async function worker() {
+    while (cursor < chunk.length) {
+      const sym = chunk[cursor++];
+      const started = Date.now();
+      const r = await apiRaw('https://finnhub.io/api/v1/quote?symbol=' + encodeURIComponent(sym) + '&token=' + encodeURIComponent(FINNHUB_KEY));
+      if (Date.now() - started > 6000) continue;
+      if (r.ok && r.json && Number(r.json.c) > 0) {
+        out[sym] = normQuote(r.json.c, r.json.pc, { open: r.json.o, high: r.json.h, low: r.json.l, at: (Number(r.json.t) || 0) * 1000, source: 'finnhub' });
+      }
+    }
+  }
+  await Promise.all([worker(), worker(), worker(), worker(), worker(), worker()].map((p) => p.catch(() => {})));
+  return out;
+}
+
+async function twelvedataQuotes(symbols) {
+  if (!TWELVE_KEY) return {};
+  const list = symbols.slice(0, 60);
+  const out = {};
+  for (let i = 0; i < list.length; i += 20) {
+    const chunk = list.slice(i, i + 20);
+    const r = await apiRaw('https://api.twelvedata.com/quote?symbol=' + encodeURIComponent(chunk.join(',')) + '&apikey=' + encodeURIComponent(TWELVE_KEY));
+    if (!r.ok || !r.json) continue;
+    const data = r.json;
+    if (data.status === 'error' || data.code) continue;
+    const map = data.symbol ? (function () { const o = {}; o[data.symbol] = data; return o; })() : data;
+    Object.keys(map).forEach((k) => {
+      const q = map[k];
+      if (!q || q.code || !q.symbol) return;
+      out[q.symbol] = normQuote(q.close, q.previous_close, { open: q.open, high: q.high, low: q.low, vol: q.volume, source: 'twelvedata' });
+    });
+  }
+  return out;
+}
+
+async function proxyQuotes(provider, symbols) {
+  const list = Array.from(new Set((symbols || []).map((x) => String(x || '').trim()).filter(Boolean))).slice(0, 60);
+  if (!list.length) return { ok: false, error: 'symbols_required' };
+  const key = provider + '|' + list.join(',');
+  const cached = cacheGet(key);
+  if (cached) return { ok: true, cached: true, provider, quotes: cached, at: Date.now() };
+  let quotes = {};
+  let used = provider;
+  if (provider === 'twelvedata') quotes = await twelvedataQuotes(list);
+  else if (provider === 'finnhub') quotes = await finnhubQuotes(list);
+  else {
+    if (FINNHUB_KEY) { quotes = await finnhubQuotes(list); used = 'finnhub'; }
+    const missing = list.filter((x) => !quotes[x]);
+    if (missing.length && TWELVE_KEY) {
+      const more = await twelvedataQuotes(missing);
+      Object.assign(quotes, more);
+      used = quotes && Object.keys(quotes).length ? (used === 'finnhub' ? 'hybrid' : 'twelvedata') : used;
+    }
+  }
+  cacheSet(key, quotes);
+  return { ok: true, provider: used, quotes, at: Date.now(), configured: { finnhub: !!FINNHUB_KEY, twelvedata: !!TWELVE_KEY } };
+}
+
 module.exports = async ({ req, res, log, error }) => {
   const method = (req.method || 'GET').toUpperCase();
   const path = String(req.path || '/').replace(/\/+$/, '') || '/';
@@ -395,6 +554,108 @@ module.exports = async ({ req, res, log, error }) => {
       return res.json(ok ? { ok: true, message: 'Password reset — sign in with the new password' } : { ok: false, error: 'storage_write_failed' }, ok ? 200 : 502, CORS);
     }
 
+
+    /* ---------------- admin session (auto, no unlock code) ---------------- */
+    if (path === '/api/admin/session/auto' && method === 'POST') {
+      const st = await readState();
+      const id = String(body.userId || '');
+      const u = (st.db && st.db.users || []).find((x) => x && x.id === id && x.role === 'admin' && !x.banned);
+      if (!u) return res.json({ ok: false, error: 'admin_only' }, 403, CORS);
+      const now = Date.now();
+      return res.json({ ok: true, token: signToken({ sub: u.id, email: u.email || '', role: 'admin', exp: now + ADMIN_TTL }), adminId: u.id, expiresAt: now + ADMIN_TTL }, 200, CORS);
+    }
+
+    /* ------------------------- WhaleChat shares --------------------------- */
+    if (path === '/api/shares/state' && method === 'GET') {
+      const query = req.query || {};
+      const userId = String(query.userId || '');
+      return sharesRoute(req, res, 'read', (svc) => svc.publicState(userId));
+    }
+
+    if (path === '/api/shares/invest' && method === 'POST') {
+      return sharesRoute(req, res, 'write', (svc) => svc.invest(body));
+    }
+
+    if (path === '/api/shares/admin' && method === 'GET') {
+      const st = await readState();
+      const admin = isAdminRequest(req, body, st, req.query || {});
+      if (!admin) return res.json({ ok: false, error: 'admin_only' }, 403, CORS);
+      return sharesRoute(req, res, 'read', (svc) => svc.adminState());
+    }
+
+    if (path === '/api/shares/admin/plans' && method === 'POST') {
+      const st0 = await readState();
+      if (!isAdminRequest(req, body, st0, req.query || {})) return res.json({ ok: false, error: 'admin_only' }, 403, CORS);
+      return sharesRoute(req, res, 'write', (svc) => svc.savePlans(body));
+    }
+
+    if (path === '/api/shares/admin/settings' && method === 'POST') {
+      const st0 = await readState();
+      if (!isAdminRequest(req, body, st0, req.query || {})) return res.json({ ok: false, error: 'admin_only' }, 403, CORS);
+      return sharesRoute(req, res, 'write', (svc) => {
+        const r = svc.saveSettings(body);
+        return { ok: true, settings: r.after, before: r.before, state: r.state };
+      });
+    }
+
+    if (path === '/api/shares/admin/settings' && method === 'GET') {
+      const st0 = await readState();
+      if (!isAdminRequest(req, body, st0, req.query || {})) return res.json({ ok: false, error: 'admin_only' }, 403, CORS);
+      return sharesRoute(req, res, 'read', (svc) => ({ ok: true, settings: svc.settingsView() }));
+    }
+
+    if (path === '/api/shares/admin/investments' && method === 'GET') {
+      const st0 = await readState();
+      const query = req.query || {};
+      if (!isAdminRequest(req, body, st0, query)) return res.json({ ok: false, error: 'admin_only' }, 403, CORS);
+      return sharesRoute(req, res, 'read', (svc) => svc.adminInvestments({ status: query.status, q: query.q }));
+    }
+
+    if (path === '/api/shares/admin/investment' && method === 'POST') {
+      const st0 = await readState();
+      if (!isAdminRequest(req, body, st0, req.query || {})) return res.json({ ok: false, error: 'admin_only' }, 403, CORS);
+      return sharesRoute(req, res, 'write', (svc) => Object.assign({ ok: true }, svc.adminUpdateInvestment(body)));
+    }
+
+    /* --------------------------- market data ------------------------------ */
+    if (path === '/api/market/keys') {
+      return res.json({ ok: true, proxy: true, finnhub: !!FINNHUB_KEY, twelvedata: !!TWELVE_KEY, binance: true }, 200, CORS);
+    }
+
+    if (path === '/api/market/proxy' && method === 'GET') {
+      const query = req.query || {};
+      const provider = String(query.provider || 'auto').toLowerCase();
+      const symbols = String(query.symbols || '').split(',').map((x) => x.trim()).filter(Boolean);
+      if (!symbols.length) return res.json({ ok: false, error: 'symbols_required' }, 400, CORS);
+      try {
+        const out = await proxyQuotes(provider, symbols);
+        return res.json(out, 200, CORS);
+      } catch (e) {
+        return res.json({ ok: false, error: 'proxy_failed', message: e.message }, 502, CORS);
+      }
+    }
+
+    if (path === '/api/market/status') {
+      const st = await readState();
+      const stocks = (st.db && st.db.stocks) || [];
+      const counts = { binance: 0, finnhub: 0, twelvedata: 0 };
+      stocks.forEach((row) => {
+        const p = row.provider || (row.assetClass === 'crypto' ? 'binance' : 'finnhub');
+        if (counts[p] !== undefined) counts[p]++;
+      });
+      return res.json({
+        ok: true,
+        hasKey: !!(FINNHUB_KEY || TWELVE_KEY),
+        feeds: { binance: true, finnhub: !!FINNHUB_KEY, twelvedata: !!TWELVE_KEY },
+        counts, listed: stocks.length, realTickers: 0,
+        source: 'appwrite', marketOpen: true, alwaysOpen: true
+      }, 200, CORS);
+    }
+
+    if (path === '/api/market/trading-status') {
+      return res.json({ ok: true, open: true, alwaysOpen: true }, 200, CORS);
+    }
+
     if (path === '/api/health' || path === '/') {
       const st = await readState();
       let mailOk = false;
@@ -404,6 +665,16 @@ module.exports = async ({ req, res, log, error }) => {
 
     if (path === '/api/state' && method === 'GET') {
       const st = await readState();
+      /* shares keep moving while the app is closed: one lazy tick per minute
+         accrues profit and settles matured plans into the payout balance */
+      if (st.db && marketTickDue(st, 60000)) {
+        try {
+          const svc = shareServiceFor(st);
+          svc.ensureDefaults(st.db);
+          svc.tick();
+          await saveState(st);
+        } catch (e) { try { error('shares tick: ' + e.message); } catch (x) {} }
+      }
       return res.json({ rev: st.rev || 0, db: st.db, updatedAt: st.at || 0 }, 200, CORS);
     }
 

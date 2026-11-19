@@ -101,6 +101,34 @@ by an Appwrite **Function** named `whalechat-sync`:
 
 Redeploy the function after changing `appwrite-function/index.js`:
 
+### Function environment variables
+
+| Variable | Purpose |
+| --- | --- |
+| `FINNHUB_API_KEY` (or `FINNHUB_KEY`) | Server-side Finnhub quotes. Never sent to the browser. |
+| `TWELVE_DATA_API_KEY` (or `TWELVEDATA_API_KEY`, `TWELVE_DATA_KEY`) | Server-side Twelve Data quotes / fallback. |
+| `WC_APPWRITE_KEY` | Storage key the function already uses for the state file. |
+| `BREVO_API_KEY` | Verification and transactional email. |
+
+With a provider key set, every device gets real stock quotes through
+`GET /api/market/proxy?provider=auto&symbols=AAPL,MSFT,…` — no key is ever
+pasted into a browser. The function also runs the WhaleChat shares engine
+(plans, accruals, maturities, payouts) so those calculations happen on
+Appwrite storage even when the Render server is asleep.
+
+Function endpoints added in 3.59.0:
+
+```
+GET  /api/market/keys                 → { finnhub, twelvedata, binance } availability only
+GET  /api/market/proxy?symbols=…      → normalised quotes from the env-var keys
+GET  /api/market/status               → feed + catalogue counts
+GET  /api/shares/state?userId=…       → plans, live accruals, completed payouts
+POST /api/shares/invest               → buy shares (accrual + maturity handled here)
+GET  /api/shares/admin                → admin plans / market / settings
+POST /api/shares/admin/plans|settings|investment
+POST /api/admin/session/auto          → signed admin token (no unlock code)
+```
+
 ```bash
 export APPWRITE_ENDPOINT=https://nyc.cloud.appwrite.io/v1
 export APPWRITE_PROJECT_ID=6afec9ae002d0af5e0c6
