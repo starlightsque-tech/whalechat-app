@@ -116,7 +116,7 @@
       '.wc-lc-note{font-size:9.5px;color:#8ba4b6;line-height:1.5}',
       /* the stock card already shows the big live price above the chart */
       '.inv-pricecard .wc-lc-px{display:none}',
-      '@media(max-width:520px){.wc-lc-body{height:min(78vw,340px);min-height:230px}.wc-lc-price{font-size:18px}}'
+      '@media(max-width:520px){.wc-lc-body{height:min(68vw,320px);min-height:220px}.wc-lc-price{font-size:18px}}'
     ].join('\n');
     document.head.appendChild(st);
   }

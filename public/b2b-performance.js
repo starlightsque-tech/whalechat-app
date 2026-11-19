@@ -231,7 +231,7 @@
       '.b2b-perf-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-top:10px}',
       '.b2b-perf-stats span{display:block;font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted-2);font-weight:700}',
       '.b2b-perf-stats b{font-size:12.5px;font-variant-numeric:tabular-nums}',
-      '@media(max-width:520px){#b2bPerfChart{height:min(78vw,340px);min-height:230px}}'
+      '@media(max-width:520px){#b2bPerfChart{height:min(68vw,320px);min-height:220px}}'
     ].join('\n');
     document.head.appendChild(st);
   }
