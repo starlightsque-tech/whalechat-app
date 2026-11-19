@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en" data-theme="dark">
 <head>
-<script>window.__WC_SERVER__ = true; window.__WC_PUBLIC_URL__ = "https://whalechat-qkgd.onrender.com";</script>
+<script>window.__WC_SERVER__ = true; window.__WC_PUBLIC_URL__ = "https://whalechat.appwrite.network";</script>
 <script async src="https://www.googletagmanager.com/gtm.js?id=GTM-5WNCBL8N"></script><script>window.dataLayer = window.dataLayer || [];function gtag(){dataLayer.push(arguments);}gtag('js', new Date());</script>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
@@ -634,7 +634,7 @@ html[data-theme="light"] .profile-banner>img{opacity:.10}
 let COIN_USD = 0.5;                 // 1 Whale Coin = $0.50 (admin-editable in Trade Guide settings)
 const APP_VERSION = '3.9.10';
 // Set to your permanent sync server to auto-connect from any static host, e.g. 'https://sync.yourdomain.com'
-const DEFAULT_SYNC_SERVER = '';
+const DEFAULT_SYNC_SERVER = 'https://whalechat-api.appwrite.network';
 const APP_BUILD = '2026-11-12T05:57:54Z';    // replaced at build time
 const LS_DB = 'whalechat.db.v1';
 const LS_SESSION = 'whalechat.session.v1';

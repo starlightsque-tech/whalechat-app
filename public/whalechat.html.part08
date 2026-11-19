@@ -806,12 +806,13 @@ const Remote = {
       }
       const stored = this.storedBase();
       if (stored) return await this.connect(stored, { silent: true, initFromLocal: true });
+      // An explicit sync server always wins (the Appwrite site is static)
+      if (DEFAULT_SYNC_SERVER) {
+        return await this.connect(DEFAULT_SYNC_SERVER, { silent: true, initFromLocal: true });
+      }
       // Only a server that served this page injects the marker — avoids failed probes on static hosts
       if (window.__WC_SERVER__) {
         return await this.connect('', { silent: true, initFromLocal: true });
-      }
-      if (DEFAULT_SYNC_SERVER) {
-        return await this.connect(DEFAULT_SYNC_SERVER, { silent: true, initFromLocal: true });
       }
     } catch (e) {}
     this.status = 'local';
@@ -829,6 +830,9 @@ const Remote = {
       this.enabled = true;
       this.status = 'online';
       this.retry = 0;
+      /* Appwrite Functions cannot hold SSE open: the health payload says so
+         and the client polls instead of reconnecting forever */
+      this.stream = !health.data || health.data.stream !== false;
 
       const st = await this.fetchJSON('/api/state');
       if (!st.res.ok || !st.data) throw new Error('Could not read server state');
@@ -878,6 +882,7 @@ const Remote = {
 
   disconnect() {
     stopEventStream();
+    clearInterval(this.pollTimer); this.pollTimer = null;
     this.enabled = false;
     this.base = '';
     this.status = 'local';
@@ -999,7 +1004,17 @@ function diffDB(prev, next) {
 
 function startEventStream() {
   stopEventStream();
-  if (!Remote.enabled || typeof EventSource === 'undefined') return;
+  if (!Remote.enabled) return;
+  if (Remote.stream === false || typeof EventSource === 'undefined') {
+    /* polling transport (Appwrite Function sync): keeps chats, notifications
+       and balances in step across devices without SSE */
+    clearInterval(Remote.pollTimer);
+    Remote.pollTimer = setInterval(function () {
+      if (!Remote.enabled) return;
+      if (!document.hidden) Remote.refresh();
+    }, 15000);
+    return;
+  }
   try {
     const es = new EventSource(Remote.url('/api/events?client=' + encodeURIComponent(Remote.clientId)));
     Remote.es = es;

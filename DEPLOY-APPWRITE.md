@@ -83,3 +83,36 @@ code delivered to the user's inbox.
 * Never commit `APPWRITE_API_KEY`; rotate it if it is ever pasted in chat.
 * `APPWRITE_*` variables are server/CI only. The browser app has no Appwrite
   key and talks only to the WhaleChat sync server.
+
+## 6. Sync service (live)
+
+The Appwrite site is static, so cross-device sync and email codes are served
+by an Appwrite **Function** named `whalechat-sync`:
+
+* Function URL: **https://whalechat-api.appwrite.network**
+* Client constant: `DEFAULT_SYNC_SERVER` in `public/whalechat.html.part01`
+* State: `whalechat-state.json` in the `whalechat` Storage bucket (delete +
+  recreate on every write, because Appwrite's update-file endpoint only changes
+  metadata)
+* Transport: HTTP polling every 15 s (Functions cannot hold SSE open)
+* Email codes: `whalechat-codes.json` in the same bucket; set `RESEND_API_KEY`
+  or `BREVO_API_KEY` as a function variable to deliver mail, otherwise the code
+  is returned to the app and shown in a labelled fallback panel.
+
+Redeploy the function after changing `appwrite-function/index.js`:
+
+```bash
+export APPWRITE_ENDPOINT=https://nyc.cloud.appwrite.io/v1
+export APPWRITE_PROJECT_ID=6afec9ae002d0af5e0c6
+export APPWRITE_API_KEY=...
+appwrite functions create-deployment \
+  --function-id whalechat-sync \
+  --code appwrite-function --activate \
+  --entrypoint index.js --commands "npm install"
+```
+
+Health check:
+
+```bash
+curl https://whalechat-api.appwrite.network/api/health
+```

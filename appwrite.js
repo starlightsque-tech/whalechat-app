@@ -72,7 +72,7 @@ async function req(pathname, opts) {
 /* ------------------------------------------------------------------ bucket */
 async function ensureBucket() {
   if (!configured()) return false;
-  const got = await req('/storage/buckets/' + encodeURIComponent(BUCKET));
+  const got = await req('/storage/buckets/' + encodeURIComponent(BUCKET), { headers: headers() });
   if (got.ok) return true;
   const made = await req('/storage/buckets', {
     method: 'POST',
@@ -97,7 +97,7 @@ async function ensureBucket() {
 async function ensureDatabase() {
   if (!configured()) return false;
   if (!DATABASE || DATABASE === 'none') return false;
-  let got = await req('/databases/' + encodeURIComponent(DATABASE));
+  let got = await req('/databases/' + encodeURIComponent(DATABASE), { headers: headers() });
   if (!got.ok) {
     await req('/databases', {
       method: 'POST',
@@ -105,7 +105,7 @@ async function ensureDatabase() {
       body: JSON.stringify({ databaseId: DATABASE, name: 'WhaleChat' })
     });
   }
-  got = await req('/databases/' + encodeURIComponent(DATABASE) + '/collections/' + encodeURIComponent(COLLECTION));
+  got = await req('/databases/' + encodeURIComponent(DATABASE) + '/collections/' + encodeURIComponent(COLLECTION), { headers: headers() });
   if (!got.ok) {
     await req('/databases/' + encodeURIComponent(DATABASE) + '/collections', {
       method: 'POST',
@@ -143,17 +143,10 @@ async function uploadSnapshot(db, rev, tag) {
   form.append('fileId', FILE_ID);
   form.append('file', new Blob([bytes], { type: 'application/json' }), STATE_FILENAME);
   const base = '/storage/buckets/' + encodeURIComponent(BUCKET) + '/files';
-  let out = await req(base + '/' + FILE_ID, { method: 'PUT', headers: headers(), body: form });
-  if (!out.ok && (out.status === 404 || out.status === 401)) {
-    /* 404 = no snapshot yet; 401 on PUT can mean the file id is taken, so try
-       list + delete once then create */
-    if (out.status === 404) {
-      const form2 = new FormData();
-      form2.append('fileId', FILE_ID);
-      form2.append('file', new Blob([bytes], { type: 'application/json' }), STATE_FILENAME);
-      out = await req(base, { method: 'POST', headers: headers(), body: form2 });
-    }
-  }
+  /* Appwrite PUT /files/{id} only updates metadata — recreate the snapshot so
+     the bytes really change. */
+  await req(base + '/' + FILE_ID, { method: 'DELETE', headers: headers() });
+  let out = await req(base, { method: 'POST', headers: headers(), body: form });
   if (!out.ok) {
     state.lastError = 'upload ' + (out.status || '') + ' ' + (out.json && out.json.message ? out.json.message : out.error || '');
     return { ok: false, error: state.lastError };
@@ -205,7 +198,7 @@ async function backup(store, tag) {
 async function downloadSnapshot() {
   if (!configured()) return null;
   const urls = [
-    '/storage/buckets/' + encodeURIComponent(BUCKET) + '/files/' + FILE_ID + '/view',
+    '/storage/buckets/' + encodeURIComponent(BUCKET) + '/files/' + FILE_ID + '/view?t=' + Date.now(),
     '/storage/buckets/' + encodeURIComponent(BUCKET) + '/files/' + FILE_ID + '/download'
   ];
   for (const u of urls) {
