@@ -103,7 +103,10 @@ const MODULES = [
   { file: 'scroll-stability.js', marker: 'wc-scroll-stability' },
   { file: 'apk-download.js', marker: 'wc-apk-download' },
   { file: 'market-admin-ui.js', marker: 'wc-market-admin-ui' },
-  { file: 'shares-admin-extra.js', marker: 'wc-shares-admin-extra' }
+  { file: 'shares-admin-extra.js', marker: 'wc-shares-admin-extra' },
+  /* 3.57: account dashboard, email verification, PIN reset and offline charts.
+     Must stay last so its VIEWS/App patches win over earlier modules. */
+  { file: 'wc-build-357.js', marker: 'wc-build-357' }
 ];
 try {
   let page = fs.readFileSync(APP, 'utf8');

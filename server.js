@@ -24,6 +24,9 @@ const { SpotService } = require('./spot');
 const { BotService } = require('./bots');
 const { ShareService } = require('./shares');
 const adminAuth = require('./admin-auth');
+/* 3.57: durable Appwrite mirror for the database + uploaded app files */
+let appwrite = null;
+try { appwrite = require('./appwrite'); } catch (e) { console.error('[appwrite] module unavailable:', e.message); }
 const { createMarketAdmin } = require('./market-admin');
 let createConnections = null;
 try { createConnections = require('./connections').createConnections; } catch (e) { console.error('[connections] module unavailable:', e.message); }
@@ -240,6 +243,8 @@ function persistNow() {
   try { writeJSONAtomic(STATE_FILE, { rev: store.rev, updatedAt: store.updatedAt, db: store.db }); }
   catch (e) { console.error('[db] write failed:', e.message); }
   pgPersist();
+  /* mirror to Appwrite without blocking the request path */
+  try { if (appwrite) appwrite.schedule(store); } catch (e) {}
 }
 /* Durable storage: optional Postgres (DATABASE_URL) so a redeploy can never
    wipe accounts. The file stays as a fast cache and local backup. */
@@ -725,6 +730,13 @@ function lifecycleEmails(pushes, events) {
   }
 }
 const VERIFY_CODES = new Map();
+/* 6-digit codes for sign-up / password reset, keyed by email + purpose */
+const EMAIL_CODES = new Map();
+function emailCodeKey(email, purpose) { return String(email || '').trim().toLowerCase() + ':' + String(purpose || 'signup'); }
+function codeHash(email, purpose, code) {
+  return require('crypto').createHash('sha256')
+    .update('email-code::' + emailCodeKey(email, purpose) + '::' + String(code || '').trim()).digest('hex');
+}
 function broadcast(event, data) {
   const frame = `event: ${event}\ndata: ${JSON.stringify(data || {})}\n\n`;
   for (const res of clients) { try { res.write(frame); } catch (e) {} }
@@ -1334,6 +1346,68 @@ async function api(req, res, pathname, query) {
     VERIFY_CODES.delete(key);
     return json(res, 200, { ok: true, verifiedAt: Date.now() });
   }
+  // --- signup / password-reset codes sent to an email address ---------
+  if (pathname === '/api/verify/email-code' && req.method === 'POST') {
+    const body = await readBody(req);
+    const address = String(body.email || '').trim().toLowerCase();
+    const purpose = String(body.purpose || 'signup').replace(/[^a-z_-]/gi, '').slice(0, 16) || 'signup';
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/.test(address)) {
+      return json(res, 400, { ok: false, error: 'invalid_email', message: 'Enter a valid email address' });
+    }
+    const key = emailCodeKey(address, purpose);
+    const prev = EMAIL_CODES.get(key);
+    if (prev && Date.now() - prev.sentAt < 45000) {
+      return json(res, 429, { ok: false, error: 'too_soon', retryIn: Math.ceil((45000 - (Date.now() - prev.sentAt)) / 1000), message: 'Please wait a few seconds before requesting another code' });
+    }
+    const code = String(require('crypto').randomInt(100000, 1000000));
+    EMAIL_CODES.set(key, { hash: codeHash(address, purpose, code), sentAt: Date.now(), exp: Date.now() + 15 * 60000, tries: 0 });
+    const labels = { signup: 'your WhaleChat account', reset: 'your password reset', pin: 'your transaction PIN reset' };
+    let emailed = false;
+    try {
+      if (email && email.configured()) {
+        emailed = email.enqueue({
+          key: null, to: address, template: 'verifyCode',
+          data: { code, name: String(body.name || '').split(' ')[0] || 'there', purposeLabel: labels[purpose] || 'your request', purposeRoute: purpose === 'signup' ? 'verify' : purpose },
+          appUrl: PUBLIC_URL || ('http://localhost:' + PORT)
+        });
+      }
+    } catch (e) { console.error('[verify] email failed:', e.message); }
+    return json(res, 200, { ok: true, emailed, purpose, to: address.replace(/^(.{2}).*(@.*)$/, '$1***$2'),
+      /* when no mail provider is configured the app shows the code on screen so
+         account creation / reset can never dead-end */
+      code: emailed ? undefined : code });
+  }
+  if (pathname === '/api/verify/email-check' && req.method === 'POST') {
+    const body = await readBody(req);
+    const address = String(body.email || '').trim().toLowerCase();
+    const purpose = String(body.purpose || 'signup').replace(/[^a-z_-]/gi, '').slice(0, 16) || 'signup';
+    const key = emailCodeKey(address, purpose);
+    const rec = EMAIL_CODES.get(key);
+    if (!rec || Date.now() > rec.exp) return json(res, 400, { ok: false, error: 'expired', message: 'Code expired — request a new one' });
+    if (rec.tries >= 6) { EMAIL_CODES.delete(key); return json(res, 429, { ok: false, error: 'locked', message: 'Too many attempts — request a new code' }); }
+    if (codeHash(address, purpose, body.code) !== rec.hash) {
+      rec.tries += 1;
+      return json(res, 400, { ok: false, error: 'invalid', message: 'Incorrect code' });
+    }
+    EMAIL_CODES.delete(key);
+    return json(res, 200, { ok: true, verifiedAt: Date.now() });
+  }
+  // --- Appwrite backup status / manual sync ----------------------------
+  if (pathname === '/api/appwrite/status' && req.method === 'GET') {
+    return json(res, 200, appwrite ? appwrite.status() : { ok: true, configured: false });
+  }
+  if (pathname === '/api/appwrite/sync' && req.method === 'POST') {
+    if (!adminAuth.currentAdmin()) return adminRequired(res);
+    if (!appwrite || !appwrite.configured()) return json(res, 503, { ok: false, error: 'appwrite_not_configured' });
+    const out = await appwrite.backup(store, 'manual');
+    return json(res, out.ok ? 200 : 502, out);
+  }
+  if (pathname === '/api/appwrite/files' && req.method === 'POST') {
+    if (!adminAuth.currentAdmin()) return adminRequired(res);
+    if (!appwrite || !appwrite.configured()) return json(res, 503, { ok: false, error: 'appwrite_not_configured' });
+    const out = await appwrite.uploadFiles(PUBLIC_DIR, { max: 40 });
+    return json(res, out.ok ? 200 : 502, out);
+  }
   // --- email -----------------------------------------------------------
   if (pathname === '/api/email/status' && req.method === 'GET') {
     return json(res, 200, email ? email.status() : { ok: true, configured: false, queued: 0 });
@@ -1705,6 +1779,16 @@ server.headersTimeout = 70000;
   initPush();
   try { await marketAdmin.init(pool); } catch (e) { console.error('[market-admin] init:', e.message); }
   try { if (typeof marketData !== 'undefined' && marketData && marketData.setQuoteSource) marketData.setQuoteSource((sym) => marketAdmin.quote(sym)); } catch (e) { console.error('[market-admin] quote hook:', e.message); }
+  /* 3.57: if this instance woke up with an empty disk, pull the last snapshot
+     back from Appwrite before the feeds start writing. Accounts are merged,
+     never deleted. */
+  try {
+    if (appwrite && appwrite.configured()) {
+      const r = await appwrite.restore({ db: store.db, rev: store.rev, updatedAt: store.updatedAt, persist: persistNow }, (m) => console.log(m));
+      if (r && r.ok) { ensureTradingAssets(); ensureServices(store.db); persistNow(); }
+      else console.log('[appwrite] no snapshot restored:', r && r.error);
+    }
+  } catch (e) { console.error('[appwrite] restore failed:', e.message); }
   ensureTradingAssets();
   /* restore the candle ring buffer before any feed writes a new tick */
   try { await loadMarketTicks(); } catch (e) { console.error('[market] tick restore:', e.message); }
@@ -1720,6 +1804,13 @@ server.headersTimeout = 70000;
   if (connections) { try { connections.boot(); } catch (e) { console.error('[connections] boot:', e.message); } }
   if (b2bAlerts) { b2bAlerts.start(); console.log('[b2b-alerts] watcher started (email + in-app)'); }
   ensureServices(store.db);
+  /* keep a durable Appwrite copy even when nobody is writing */
+  if (appwrite && appwrite.configured()) {
+    setInterval(() => { try { appwrite.backup(store, 'interval').catch(() => {}); } catch (e) {} }, 5 * 60000).unref();
+    appwrite.backup(store, 'boot').catch(() => {});
+    /* mirror uploaded product/app images into Appwrite Storage as well */
+    setTimeout(() => { try { appwrite.uploadFiles(PUBLIC_DIR, { max: 12 }).catch(() => {}); } catch (e) {} }, 20000);
+  }
   spot.startTimers();
   bots.startTimers();
   shares.startTimers();
@@ -1745,6 +1836,7 @@ async function shutdown(signal) {
   console.log(`[whalechat] ${signal} — saving and exiting`);
   try { if (store.db) snapshot('shutdown'); } catch (e) {}
   try { persistNow(); } catch (e) {}
+  try { if (appwrite && appwrite.configured() && store.db) await appwrite.backup(store, 'shutdown'); } catch (e) {}
   try { if (pool) pool.end().catch(() => {}); } catch (e) {}
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 1500).unref();

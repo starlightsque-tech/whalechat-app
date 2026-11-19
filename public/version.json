@@ -1,8 +1,8 @@
 {
-  "version": "3.56.1",
-  "build": "2026-11-19T10:05:00Z",
+  "version": "3.57.0",
+  "build": "2026-11-19T10:31:28Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.56.1 - restored the TradingView live chart (the chart in the reference screenshot) on the B2B marketplace, asset page and buy ticket, and removed the circled native candle chart from those pages. A live entry strip above the widget shows the user's buy entry, the real-time price and live P/L; the native candle chart remains only as the fallback for symbols TradingView does not publish (WhaleChat WC, SpaceX). Twelve Data now polls 6 symbols per cycle to stay under the free-plan 8-credit limit, and a provider print is written at its exact price instead of a 50% blend.",
-  "releasedAt": "2026-11-19T10:05:00Z",
+  "notes": "WhaleChat 3.57.0 — account and investing upgrade: the dashboard card is larger with the renamed stocks-trade button plus WC-invest and vendor shortcuts; My account is the default screen after sign-in/sign-up; sign-up and password reset use a 6-digit code emailed to the user with an in-app fallback; the transaction PIN is now set or reset from Settings (no PIN popup at sign-up); every active WC-Investing plan draws its own green/red ROI chart with 20–100% progress ticks; stock charts render locally in TradingView style when offline; the offline banner no longer covers the tab bar; Twelve Data lists exactly 10 stocks while Binance lists 112 crypto pairs (162 markets total); accounts and balances are mirrored to Appwrite and restored after a redeploy or a sleeping instance.",
+  "releasedAt": "2026-11-19T10:31:28Z",
   "minimum": "3.0.0"
 }

@@ -44,3 +44,14 @@ services:
       # the app database; this env var is only a deployment-time fallback.
       - key: TWELVEDATA_API_KEY
         sync: false
+      # 3.57: durable Appwrite mirror (database + storage). Set these in Render.
+      - key: APPWRITE_ENDPOINT
+        value: https://cloud.appwrite.io/v1
+      - key: APPWRITE_PROJECT_ID
+        sync: false
+      - key: APPWRITE_API_KEY
+        sync: false
+      - key: APPWRITE_BUCKET_ID
+        value: whalechat
+      - key: APPWRITE_DATABASE_ID
+        value: whalechat
