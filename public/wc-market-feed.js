@@ -355,6 +355,67 @@
   else boot();
   setInterval(boot, 800);
 
+
+  /* ------------------------------------------------------------ admin panel */
+  function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function feedStatusHtml() {
+    var st = window.WCMarketFeed.status();
+    function dot(on) { return '<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:' + (on ? '#2ee6c9' : '#ff5f74') + ';margin-right:5px"></span>'; }
+    return '<div class="row" style="gap:14px;flex-wrap:wrap;margin-top:8px;font-size:11px;font-weight:700">' +
+      '<span>' + dot(st.binance > 0) + 'Binance ' + (st.binance > 0 ? 'live' : 'connecting') + '</span>' +
+      '<span>' + dot(st.finnhub) + 'Finnhub ' + (st.finnhub ? 'live' : (keys.finnhub ? 'connecting' : 'no key')) + '</span>' +
+      '<span>' + dot(!!keys.twelvedata) + 'Twelve Data ' + (keys.twelvedata ? 'polling' : 'no key') + '</span>' +
+      '<span>' + dot(st.cached > 0) + st.cached + ' instruments cached</span></div>';
+  }
+  function uiHtml() {
+    return '<div class="card" id="wcFeedKeysCard" style="margin-top:12px">' +
+      '<div class="between" style="align-items:flex-start;gap:10px"><div>' +
+      '<div class="card-title" style="margin:0">Live feed · this device</div>' +
+      '<div class="tiny muted" style="margin-top:3px">Binance crypto streams with no key. Add Finnhub and Twelve Data keys to bring real US, global and forex quotes to this browser. Keys are stored only on this device.</div></div>' +
+      '<span class="badge badge-accent">24/7</span></div>' +
+      '<div data-wcfeed-status>' + feedStatusHtml() + '</div>' +
+      '<div class="row" style="gap:8px;flex-wrap:wrap;margin-top:10px">' +
+      '<input class="input" id="wcFhKey" placeholder="Finnhub API key" value="' + esc(keys.finnhub) + '" style="max-width:240px" autocomplete="off"/>' +
+      '<input class="input" id="wcTdKey" placeholder="Twelve Data API key" value="' + esc(keys.twelvedata) + '" style="max-width:240px" autocomplete="off"/>' +
+      '<button class="btn btn-sm btn-primary" data-wcfeed="save">Connect feeds</button>' +
+      '<button class="btn btn-sm btn-ghost" data-wcfeed="refresh">Retry now</button></div>' +
+      '<div class="tiny muted" style="margin-top:8px">The feed reconnects automatically, keeps prices moving offline from the last real quote, and resumes live ticks the moment the network returns.</div></div>';
+  }
+  function installUI() {
+    if (!/^#\/admin\/stocks/.test(location.hash || '')) return;
+    var host = document.getElementById('mktBinanceCard');
+    if (!host) return;
+    var card = document.getElementById('wcFeedKeysCard');
+    if (card) {
+      var status = card.querySelector('[data-wcfeed-status]');
+      if (status) status.innerHTML = feedStatusHtml();
+      return;
+    }
+    var wrap = document.createElement('div');
+    wrap.innerHTML = uiHtml();
+    var node = wrap.firstChild;
+    host.parentNode.insertBefore(node, host);
+    node.addEventListener('click', function (e) {
+      var b = e.target.closest && e.target.closest('[data-wcfeed]');
+      if (!b) return;
+      var act = b.getAttribute('data-wcfeed');
+      if (act === 'save') {
+        var fh = (document.getElementById('wcFhKey') || {}).value || '';
+        var td = (document.getElementById('wcTdKey') || {}).value || '';
+        keys.finnhub = fh.trim(); keys.twelvedata = td.trim();
+        try {
+          localStorage.setItem('wc.finnhubKey', keys.finnhub);
+          localStorage.setItem('wc.twelvedataKey', keys.twelvedata);
+        } catch (err) {}
+        collectTwelve(); openFinnhub(); pollTwelve(true); openBinance();
+        try { if (typeof toast === 'function') toast('Live feeds reconnecting with your keys', 'ok'); } catch (err) {}
+      } else { openBinance(); openFinnhub(); pollTwelve(true); }
+      var st = node.querySelector('[data-wcfeed-status]');
+      if (st) st.innerHTML = feedStatusHtml();
+    });
+  }
+  setInterval(function () { try { installUI(); } catch (e) {} }, 2500);
+
   window.WCMarketFeed = {
     restart: function () { openBinance(); openFinnhub(); pollTwelve(true); },
     status: function () {
