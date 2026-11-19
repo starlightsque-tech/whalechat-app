@@ -1,8 +1,8 @@
 {
-  "version": "3.55.0",
-  "build": "2026-11-19T06:40:00Z",
+  "version": "3.55.1",
+  "build": "2026-11-19T07:10:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.55.0 - B2B stock pages use the TradingView widget as the only price chart: the duplicate WhaleChat candle chart is removed from the asset and buy pages (kept only as the WC/unsupported-symbol fallback). Buy/sell targets can be filled from the live chart price (+/-2% or +/-5%). Fixed a first-tick blend that could store half the real price for a new symbol.",
-  "releasedAt": "2026-11-19T06:40:00Z",
+  "notes": "WhaleChat 3.55.1 - the TradingView symbol selected by tapping a B2B stock card now survives the app's background sync/re-render instead of snapping back to the default TSLA chart; first-tick price blend no longer records half price.",
+  "releasedAt": "2026-11-19T07:10:00Z",
   "minimum": "3.0.0"
 }

@@ -204,6 +204,17 @@
   }
   function holding(ticker) { var a = acct(); var h = a && a.b2b[ticker]; return h && Number(h.units) > 0 ? h : null; }
 
+  /* Remember the manually selected chart symbol: a background sync/re-render
+     must not snap the TradingView widget back to the default. */
+  var LAST_CHART = { t: '', kind: '' };
+  function defaultChart(kind) {
+    if (LAST_CHART.t && (kind === 'All' || LAST_CHART.kind === kind)) return LAST_CHART;
+    return {
+      t: ({ Crypto: 'BTCUSDT', Meme: 'DOGEUSDT', Company: 'WC', 'Pre-IPO': 'SPACEX' })[kind] || 'TSLA',
+      kind: ({ Crypto: 'Crypto', Meme: 'Meme', Company: 'Company', 'Pre-IPO': 'Pre-IPO' })[kind] || 'Stock'
+    };
+  }
+
   /* the DB listing knows the real exchange, so the widget can use NYSE vs NASDAQ */
   function exchangeOf(t) {
     try {
@@ -227,6 +238,7 @@
     try { return window.WC_TV ? window.WC_TV.symbol(t, kind, exchangeOf(t)) : ''; } catch (e) { return ''; }
   };
   function selectForChart(t, kind) {
+    LAST_CHART = { t: String(t).toUpperCase(), kind: kind || 'Stock' };
     var host = document.getElementById('b2bmTvHost');
     if (!host) return;
     host.setAttribute('data-wc-tv', String(t).toUpperCase());
@@ -264,8 +276,7 @@
         kinds.map(function (k) { return '<a class="chip b2b-cat ' + (k === kind ? 'on' : '') + '" href="#/investment/b2b/market?kind=' + encodeURIComponent(k) + '">' + k + '</a>'; }).join('') +
         '<a class="chip b2b-cat" href="#/investment/b2b/alerts">Price alerts</a>' +
       '</div>' +
-      tvCard(({ Crypto: 'BTCUSDT', Meme: 'DOGEUSDT', Company: 'WC', 'Pre-IPO': 'SPACEX' })[kind] || 'TSLA',
-        ({ Crypto: 'Crypto', Meme: 'Meme', Company: 'Company', 'Pre-IPO': 'Pre-IPO' })[kind] || 'Stock') +
+      (function () { var d = defaultChart(kind); return tvCard(d.t, d.kind); })() +
       '<div class="b2bm-grid">' + list.map(function (x) {
         var q = M.quote(x.t); var sp = spark(x.t, 140, 40); var h = holding(x.t);
         var fav = favs.indexOf(x.t) >= 0;
@@ -297,6 +308,7 @@
     var h = holding(t);
     var bin = BIN.prices[e.sym || ''];
     var tvSym = (window.WC_TV) ? window.WC_TV.symbol(t, e.kind, exchangeOf(t)) : '';
+    if (tvSym) LAST_CHART = { t: t, kind: e.kind };
     var alert = ((a && a.b2bAlerts) || []).filter(function (x) { return x.ticker === t; })[0] || {};
     var fav = ((a && a.b2bFav) || []).indexOf(t) >= 0;
     var series = [];
