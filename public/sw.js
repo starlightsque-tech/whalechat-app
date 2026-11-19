@@ -1,5 +1,5 @@
 /* =========================================================================
-   WhaleChat service worker — offline shell, in-place updates, Web Push
+   WhaleChat service worker — offline shell, in-place updates, Web Push, sync
    -------------------------------------------------------------------------
    3.48.0: the whole app (every module + asset listed in offline-manifest.json)
    is pre-cached after the first load, GET /api/* answers are cached so the
@@ -7,10 +7,10 @@
    network switched off, and the worker can raise buy/sell notifications from
    its periodic background sync when the page is closed.
    ========================================================================= */
-const VERSION = 'wc-v3.58.0-1';
-const API_CACHE = 'wc-api-v3.58.0';
+const VERSION = 'wc-v3.64.0-1';
+const API_CACHE = 'wc-api-v3.64.0';
 const APP_CACHE = VERSION;
-const IMAGE_CACHE = 'wc-img-v3.58.0';
+const IMAGE_CACHE = 'wc-img-v3.64.0';
 const PLACEHOLDER = './assets/offline-placeholder.svg';
 const PLACEHOLDER_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240">'
   + '<rect width="240" height="240" rx="18" fill="#0b2230"/>'
@@ -37,6 +37,15 @@ const SHELL = [
   './manifest.webmanifest',
   './offline-first.js',
   './offline-data.js',
+  /* 3.64: installed-app offline mode, device DB, simulator, native chart,
+     reconciliation engine and the offline trading desk */
+  './wc-server-config.js',
+  './wc-device-store.js',
+  './wc-install-mode.js',
+  './wc-sim-engine.js',
+  './wc-native-chart.js',
+  './wc-recon.js',
+  './wc-offline-desk.js',
   './diagnostics.js',
   './message-search.js',
   './offline-actions.js',
@@ -135,6 +144,26 @@ self.addEventListener('message', (event) => {
       if (port) port.postMessage({ ok: true, count: data.urls.length });
     }));
   }
+});
+
+/* -------------------------------------------------- background sync (3.64) */
+/* The reconciliation engine registers a one-shot sync when trades are queued
+   offline. The browser replays it when connectivity returns, even if the tab
+   was closed, and the page flushes its FIFO queue from IndexedDB. */
+self.addEventListener('sync', (event) => {
+  if (event.tag !== 'wc-offline-trades') return;
+  event.waitUntil((async () => {
+    const all = await self.clients.matchAll({ includeUncontrolled: true, type: 'window' });
+    all.forEach((c) => c.postMessage({ type: 'wc-sync-now' }));
+  })());
+});
+
+self.addEventListener('periodicsync', (event) => {
+  if (event.tag !== 'wc-offline-trades') return;
+  event.waitUntil((async () => {
+    const all = await self.clients.matchAll({ includeUncontrolled: true, type: 'window' });
+    all.forEach((c) => c.postMessage({ type: 'wc-flush-pending' }));
+  })());
 });
 
 /* ----------------------------------------------------------------- fetch */
