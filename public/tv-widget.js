@@ -115,7 +115,7 @@
     var sym = TV.symbol(ticker, kind, exchange);
     host.innerHTML = '';
     if (!sym) {
-      host.innerHTML = '<div class="wc-tv-note">TradingView does not publish this symbol. The WhaleChat live candle chart below is used instead.</div>';
+      host.innerHTML = '<div class="wc-tv-note">TradingView does not publish this symbol. The WhaleChat live candle chart above is used instead.</div>';
       host.setAttribute('data-tv-symbol', '');
       return;
     }

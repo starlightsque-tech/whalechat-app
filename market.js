@@ -787,7 +787,10 @@ class MarketService {
          REAL, so the fallback engine can never pull the symbol back to a
          synthetic base and the next real ticks set the exact market price. */
       let next = p;
-      if (!old.real && !this.lastRealTime[t] && Math.abs(p - old.price) / p > 0.02) next = old.price + (p - old.price) * 0.5;
+      /* only blend when there is a real simulated level to move away from; a
+         zero-priced row must take the first real print exactly (a 50% blend
+         used to write half the price as a real tick) */
+      if (!old.real && !this.lastRealTime[t] && Number(old.price) > 0 && Math.abs(p - old.price) / p > 0.02) next = old.price + (p - old.price) * 0.5;
       /* A real 24h open/high/low from the provider beats a simulated anchor —
          without this, the first blended tick locked prevClose at half price
          and the app displayed a fake +100% change. */

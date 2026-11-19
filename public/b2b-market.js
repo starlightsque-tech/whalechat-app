@@ -223,6 +223,9 @@
       '<div class="wc-tv-host" id="b2bmTvHost" data-wc-tv="' + esc(t) + '" data-wc-tv-kind="' + esc(kind || '') + '" data-wc-tv-exchange="' + esc(exchangeOf(t)) + '"></div></div>';
   }
   M.tvCard = tvCard;
+  M.tvSymbol = function (t, kind) {
+    try { return window.WC_TV ? window.WC_TV.symbol(t, kind, exchangeOf(t)) : ''; } catch (e) { return ''; }
+  };
   function selectForChart(t, kind) {
     var host = document.getElementById('b2bmTvHost');
     if (!host) return;
@@ -293,7 +296,7 @@
     var a = acct();
     var h = holding(t);
     var bin = BIN.prices[e.sym || ''];
-    var sp = spark(t, 300, 110);
+    var tvSym = (window.WC_TV) ? window.WC_TV.symbol(t, e.kind, exchangeOf(t)) : '';
     var alert = ((a && a.b2bAlerts) || []).filter(function (x) { return x.ticker === t; })[0] || {};
     var fav = ((a && a.b2bFav) || []).indexOf(t) >= 0;
     var series = [];
@@ -315,8 +318,9 @@
           '<div><span>24h low</span><b>' + (q.dayLow ? money(q.dayLow) : '—') + '</b></div>' +
           '<div><span>24h volume</span><b>' + (q.vol ? Number(q.vol).toLocaleString(undefined, { maximumFractionDigits: 0 }) : '—') + '</b></div>' +
         '</div>' +
-        '<div class="b2bm-bigchart" data-b2bm-chart="' + esc(t) + '"></div>' +
-        '<div class="tiny muted center">WhaleChat live feed · updates every 2 seconds</div>' +
+        (tvSym ? '' :
+          '<div class="b2bm-bigchart" data-b2bm-chart="' + esc(t) + '"></div>' +
+          '<div class="tiny muted center">WhaleChat fallback chart · TradingView has no listing for ' + esc(t) + '</div>') +
       '</div>' +
       tvCard(t, e.kind) +
       (h ? '<div class="card"><div class="between"><span class="tiny muted">Your holding</span><b>' + Number(h.units).toFixed(6) + ' units</b></div>' +
@@ -329,10 +333,13 @@
         '<div class="tiny muted">Paid from your B2B capital · filled at the live price above.</div>' +
         '<a class="btn btn-primary" href="#/investment/b2b/buy?asset=' + encodeURIComponent(t) + '" style="width:100%;margin-top:8px">Buy ' + esc(e.name) + '</a></div>' +
       '<div class="card"><div class="card-title">Alert me on this asset</div>' +
+        '<div class="tiny muted" style="margin-bottom:6px">Chart price <b data-b2bm-price="' + esc(t) + '">' + (q.price > 0 ? money(q.price) : '—') + '</b> · set your targets from this live price.</div>' +
         '<div class="row" style="gap:8px"><div class="field grow"><label class="label">Buy when price ≤ ($)</label>' +
-          '<input class="input" id="b2bmBuy_' + esc(t) + '" type="number" step="0.0001" value="' + (alert.buy || '') + '"/></div>' +
+          '<input class="input" id="b2bmBuy_' + esc(t) + '" type="number" step="0.0001" value="' + (alert.buy || '') + '" placeholder="' + (q.price > 0 ? (q.price * 0.98).toFixed(4) : '') + '"/></div>' +
         '<div class="field grow"><label class="label">Sell when price ≥ ($)</label>' +
-          '<input class="input" id="b2bmSell_' + esc(t) + '" type="number" step="0.0001" value="' + (alert.sell || '') + '"/></div></div>' +
+          '<input class="input" id="b2bmSell_' + esc(t) + '" type="number" step="0.0001" value="' + (alert.sell || '') + '" placeholder="' + (q.price > 0 ? (q.price * 1.02).toFixed(4) : '') + '"/></div></div>' +
+        '<div class="row" style="gap:6px;margin-top:6px"><button class="btn btn-xs btn-ghost" data-act="wcbm-target-live" data-t="' + esc(t) + '" data-mode="2">Use live ±2%</button>' +
+          '<button class="btn btn-xs btn-ghost" data-act="wcbm-target-live" data-t="' + esc(t) + '" data-mode="5">Use live ±5%</button></div>' +
         (window.WC_SUBS && WC_SUBS.autoFields ? WC_SUBS.autoFields(t, alert, 'one_' + t) : '') +
         '<button class="btn btn-soft" data-act="wcbm-alert-one" data-t="' + esc(t) + '" style="width:100%">Save alert</button>' +
         '<a class="btn btn-ghost btn-sm" href="#/investment/b2b/alerts" style="width:100%;margin-top:6px">Set alerts for several assets</a></div>';
@@ -376,6 +383,18 @@
       var i = a.b2bFav.indexOf(t);
       if (i >= 0) a.b2bFav.splice(i, 1); else a.b2bFav.push(t);
       save(); tmsg(i >= 0 ? 'Unpinned' : 'Pinned to favourites', 'ok'); repaint();
+    };
+
+    App.wcbmTargetLive = function (id, ds) {
+      var t = String((ds && ds.t) || '').toUpperCase();
+      var p = M.price(t);
+      if (!(p > 0)) return tmsg('Live price is not available yet', 'err');
+      var pct = Math.max(0.5, Math.min(25, Number(ds && ds.mode) || 2)) / 100;
+      var buyEl = document.getElementById('b2bmBuy_' + t);
+      var sellEl = document.getElementById('b2bmSell_' + t);
+      if (buyEl) buyEl.value = (p * (1 - pct)).toFixed(4);
+      if (sellEl) sellEl.value = (p * (1 + pct)).toFixed(4);
+      tmsg('Targets set from the live chart price ' + money(p), 'ok');
     };
 
     App.wcbmAlertOne = function (id, ds) {

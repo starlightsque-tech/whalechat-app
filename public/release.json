@@ -1,8 +1,8 @@
 {
-  "version": "3.54.2",
-  "build": "2026-11-19T05:40:00Z",
+  "version": "3.55.0",
+  "build": "2026-11-19T06:40:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.54.2 - TradingView widget resolves each listing's real exchange (NYSE/NASDAQ/OTC) instead of defaulting to NASDAQ (fixes 45 invalid symbols); B2B holdings chart now sizes from its container so the 360 px mobile height is respected.",
-  "releasedAt": "2026-11-19T05:40:00Z",
+  "notes": "WhaleChat 3.55.0 - B2B stock pages use the TradingView widget as the only price chart: the duplicate WhaleChat candle chart is removed from the asset and buy pages (kept only as the WC/unsupported-symbol fallback). Buy/sell targets can be filled from the live chart price (+/-2% or +/-5%). Fixed a first-tick blend that could store half the real price for a new symbol.",
+  "releasedAt": "2026-11-19T06:40:00Z",
   "minimum": "3.0.0"
 }

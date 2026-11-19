@@ -596,16 +596,18 @@
         '<div class="field"><label class="label">Asset</label><select class="input" id="ihB2bBuyAsset" data-act="ih-b2b-buy-asset">' +
           assets.map(function (s) { return '<option value="' + escH(s.ticker) + '"' + (s.ticker === sel.ticker ? ' selected' : '') + '>' + escH(b2bLabel(s)) + ' · ' + escH(b2bCategory(s)) + '</option>'; }).join('') +
         '</select></div>' +
-        (window.WC_LIVE_CANDLES
-          ? window.WC_LIVE_CANDLES.embed({
-              ticker: sel.ticker,
-              sub: b2bLabel(sel) + ' · ' + b2bCategory(sel) + ' · real-time candles',
-              height: 420
-            })
-          : '<div class="card b2b-livechart"><div class="between"><span class="tiny muted">Live price movement</span>' +
+        ((window.WC_B2B_MARKET && window.WC_B2B_MARKET.tvSymbol && window.WC_B2B_MARKET.tvSymbol(sel.ticker, b2bCategory(sel)))
+          ? ''
+          : (window.WC_LIVE_CANDLES
+            ? window.WC_LIVE_CANDLES.embed({
+                ticker: sel.ticker,
+                sub: b2bLabel(sel) + ' · ' + b2bCategory(sel) + ' · real-time candles',
+                height: 420
+              })
+            : '<div class="card b2b-livechart"><div class="between"><span class="tiny muted">Live price movement</span>' +
               '<span class="tiny ' + ((q.changePct || 0) >= 0 ? 'up' : 'down') + '" data-b2b-chg="' + escH(sel.ticker) + '">' + ((q.changePct || 0) >= 0 ? '+' : '') + (Number(q.changePct) || 0).toFixed(2) + '%</span></div>' +
               '<svg viewBox="0 0 300 90" class="b2b-bigspark" preserveAspectRatio="none"><polyline data-b2b-bigspark="' + escH(sel.ticker) + '" points="' + b2bPoints(sel.ticker, 300, 90).points + '" fill="none" stroke="' + ((q.changePct || 0) >= 0 ? '#22c55e' : '#ef4444') + '" stroke-width="1.8" stroke-linejoin="round"/></svg>' +
-              '<div class="tiny muted center">Updates every 2 seconds from the live feed</div></div>') +
+              '<div class="tiny muted center">Updates every 2 seconds from the live feed</div></div>')) +
         '<div class="b2b-quote"><div><span class="tiny muted">Live price</span><b data-b2b-price="' + escH(sel.ticker) + '" data-b2b-unitprice>' + (price > 0 ? money(price) : '—') + '</b></div>' +
           '<div><span class="tiny muted">Today</span><b class="' + ((q.changePct || 0) >= 0 ? 'up' : 'down') + '">' + ((q.changePct || 0) >= 0 ? '+' : '') + (Number(q.changePct) || 0).toFixed(2) + '%</b></div>' +
           '<div><span class="tiny muted">Capital available</span><b>' + money(b2bCapital(a)) + '</b></div></div>' +
@@ -617,8 +619,11 @@
       '</div>' +
       (window.WC_B2B_MARKET && window.WC_B2B_MARKET.tvCard ? window.WC_B2B_MARKET.tvCard(sel.ticker, b2bCategory(sel)) : '') +
       '<div class="card"><div class="card-title">Price alerts</div>' +
-        '<div class="row" style="gap:8px"><div class="field grow"><label class="label">Buy below (USD)</label><input class="input" id="ihB2bBuyAlert" type="number" step="0.0001" value="' + (alert.buy || '') + '"/></div>' +
-        '<div class="field grow"><label class="label">Sell above (USD)</label><input class="input" id="ihB2bSellAlert" type="number" step="0.0001" value="' + (alert.sell || '') + '"/></div></div>' +
+        '<div class="tiny muted" style="margin-bottom:6px">Chart price <b data-b2b-price="' + escH(sel.ticker) + '">' + (price > 0 ? money(price) : '—') + '</b> · set your targets from this live price.</div>' +
+        '<div class="row" style="gap:8px"><div class="field grow"><label class="label">Buy below (USD)</label><input class="input" id="ihB2bBuyAlert" type="number" step="0.0001" value="' + (alert.buy || '') + '" placeholder="' + (price > 0 ? (price * 0.98).toFixed(4) : '') + '"/></div>' +
+        '<div class="field grow"><label class="label">Sell above (USD)</label><input class="input" id="ihB2bSellAlert" type="number" step="0.0001" value="' + (alert.sell || '') + '" placeholder="' + (price > 0 ? (price * 1.02).toFixed(4) : '') + '"/></div></div>' +
+        '<div class="row" style="gap:6px;margin-top:6px"><button class="btn btn-xs btn-ghost" data-act="ih-b2b-target-live" data-t="' + escH(sel.ticker) + '" data-mode="2">Use live ±2%</button>' +
+          '<button class="btn btn-xs btn-ghost" data-act="ih-b2b-target-live" data-t="' + escH(sel.ticker) + '" data-mode="5">Use live ±5%</button></div>' +
         '<label class="row" style="gap:8px;align-items:center;font-size:12px"><input type="checkbox" id="ihB2bAlertEmail" ' + (alert.email === false ? '' : 'checked') + '/> Email me when a target is hit</label>' +
         (window.WC_SUBS && WC_SUBS.autoFields ? WC_SUBS.autoFields(sel.ticker, alert, 'ih') : '') +
         '<button class="btn btn-soft" data-act="ih-b2b-alert" data-t="' + escH(sel.ticker) + '" style="width:100%;margin-top:8px">Save alerts</button>' +
@@ -1223,6 +1228,17 @@
       save(); toastH(i >= 0 ? 'Removed from favourites' : 'Saved to favourites', 'ok'); render();
     };
     App.ihB2bCat = function (id, ds) { b2bFilter = ds.cat || 'All'; render(); };
+    App.ihB2bTargetLive = function (id, ds) {
+      var t = String((ds && ds.t) || '').toUpperCase();
+      var p = b2bPriceOf(t, 0);
+      if (!(p > 0)) return toastH('Live price is not available yet', 'err');
+      var pct = Math.max(0.5, Math.min(25, Number(ds && ds.mode) || 2)) / 100;
+      var buyEl = document.getElementById('ihB2bBuyAlert');
+      var sellEl = document.getElementById('ihB2bSellAlert');
+      if (buyEl) buyEl.value = (p * (1 - pct)).toFixed(4);
+      if (sellEl) sellEl.value = (p * (1 + pct)).toFixed(4);
+      toastH('Targets set from the live price ' + money(p), 'ok');
+    };
     App.ihB2bAlert = function (id, ds) {
       var u = me(); var a = account(u);
       var t = String((ds && ds.t) || '').toUpperCase();
