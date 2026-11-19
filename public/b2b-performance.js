@@ -139,10 +139,16 @@
         lastValueVisible: false,
         priceLineVisible: false
       });
-      chart.resize(host.clientWidth || box.clientWidth || 320, host.classList.contains('mobile') ? 360 : 420);
+      /* size from the real container so the 360 px mobile rule is respected
+         (a hard-coded 420 canvas overflowed the card on phones) */
+      var w0 = host.clientWidth || box.clientWidth || 320;
+      var h0 = host.clientHeight || 420;
+      chart.resize(w0, h0);
       var ro = null;
       try {
-        ro = new ResizeObserver(function () { chart.applyOptions({ width: host.clientWidth || 320 }); });
+        ro = new ResizeObserver(function () {
+          chart.resize(host.clientWidth || w0, host.clientHeight || h0);
+        });
         ro.observe(host);
       } catch (e) {}
       instances[ticker] = { chart: chart, series: series, ro: ro, host: host, buy: tg.buy, sell: tg.sell };

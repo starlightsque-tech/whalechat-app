@@ -27,14 +27,20 @@
     DOGEUSDT: 'BINANCE:DOGEUSDT', TRUMPUSDT: 'BINANCE:TRUMPUSDT'
   };
 
-  TV.symbol = function (ticker, kind) {
+  TV.symbol = function (ticker, kind, exchange) {
     var t = String(ticker || '').toUpperCase().trim();
     if (!t || t === 'WC') return '';
     if (MAP[t]) return MAP[t];
     var k = String(kind || '').toLowerCase();
     if (/crypto|meme|usdt|coin/.test(k) || /USDT$/.test(t)) return 'BINANCE:' + t;
     if (/forex|currency/.test(k) || /^[A-Z]{6}$/.test(t)) return '';
-    if (/stock|company|pre-ipo/.test(k)) return 'NASDAQ:' + t;
+    /* use the listing's real exchange (NYSE/NASDAQ/OTC) — defaulting every
+       stock to NASDAQ made 45 of the 140 catalogue symbols invalid on TradingView */
+    var ex = String(exchange || '').toUpperCase().replace(/[^A-Z]/g, '');
+    if (/^(NASDAQ|NYSE|AMEX|NYSEARCA|OTC|CBOE|BATS)$/.test(ex)) {
+      if (ex === 'NYSEARCA') ex = 'AMEX';
+      return ex + ':' + t;
+    }
     return 'NASDAQ:' + t;
   };
 
@@ -103,10 +109,10 @@
     document.head.appendChild(st);
   }
 
-  TV.mount = function (host, ticker, kind) {
+  TV.mount = function (host, ticker, kind, exchange) {
     if (!host) return;
     styles();
-    var sym = TV.symbol(ticker, kind);
+    var sym = TV.symbol(ticker, kind, exchange);
     host.innerHTML = '';
     if (!sym) {
       host.innerHTML = '<div class="wc-tv-note">TradingView does not publish this symbol. The WhaleChat live candle chart below is used instead.</div>';
@@ -148,8 +154,9 @@
     (root || document).querySelectorAll('[data-wc-tv]').forEach(function (host) {
       var t = host.getAttribute('data-wc-tv');
       var k = host.getAttribute('data-wc-tv-kind');
-      if (host.getAttribute('data-tv-symbol') === TV.symbol(t, k) && host.childElementCount) return;
-      TV.mount(host, t, k);
+      var ex = host.getAttribute('data-wc-tv-exchange');
+      if (host.getAttribute('data-tv-symbol') === TV.symbol(t, k, ex) && host.childElementCount) return;
+      TV.mount(host, t, k, ex);
     });
   };
 

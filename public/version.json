@@ -1,8 +1,8 @@
 {
-  "version": "3.54.1",
-  "build": "2026-11-19T05:20:00Z",
+  "version": "3.54.2",
+  "build": "2026-11-19T05:40:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.54.1 - fix live 24h change/range: provider open/high/low now replace simulated anchors, so crypto no longer shows a fake +100% after the first real tick; Binance REST and WS both pass the 24h snapshot into the price engine.",
-  "releasedAt": "2026-11-19T05:20:00Z",
+  "notes": "WhaleChat 3.54.2 - TradingView widget resolves each listing's real exchange (NYSE/NASDAQ/OTC) instead of defaulting to NASDAQ (fixes 45 invalid symbols); B2B holdings chart now sizes from its container so the 360 px mobile height is respected.",
+  "releasedAt": "2026-11-19T05:40:00Z",
   "minimum": "3.0.0"
 }

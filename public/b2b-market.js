@@ -204,14 +204,23 @@
   }
   function holding(ticker) { var a = acct(); var h = a && a.b2b[ticker]; return h && Number(h.units) > 0 ? h : null; }
 
+  /* the DB listing knows the real exchange, so the widget can use NYSE vs NASDAQ */
+  function exchangeOf(t) {
+    try {
+      var s = INV.stock(String(t).toUpperCase());
+      if (s && s.exchange) return String(s.exchange).toUpperCase();
+    } catch (e) {}
+    var e = M.entry(t);
+    return (e && e.exchange) || '';
+  }
   /* TradingView widget card — the selected stock is re-rendered in place */
   function tvCard(t, kind) {
     if (!window.WC_TV) return '';
-    var sym = window.WC_TV.symbol(t, kind);
+    var sym = window.WC_TV.symbol(t, kind, exchangeOf(t));
     return '<div class="card" id="b2bmTvCard" style="margin-bottom:10px">' +
       '<div class="between" style="align-items:flex-start"><div><div class="card-title" style="margin:0" id="b2bmTvTitle">' + esc(String(t).replace('USDT', '/USDT')) + ' · live chart</div>' +
       '<div class="tiny muted">' + (sym ? 'TradingView · ' + esc(sym) : 'Select a stock to load its live chart') + '</div></div></div>' +
-      '<div class="wc-tv-host" id="b2bmTvHost" data-wc-tv="' + esc(t) + '" data-wc-tv-kind="' + esc(kind || '') + '"></div></div>';
+      '<div class="wc-tv-host" id="b2bmTvHost" data-wc-tv="' + esc(t) + '" data-wc-tv-kind="' + esc(kind || '') + '" data-wc-tv-exchange="' + esc(exchangeOf(t)) + '"></div></div>';
   }
   M.tvCard = tvCard;
   function selectForChart(t, kind) {
@@ -219,7 +228,8 @@
     if (!host) return;
     host.setAttribute('data-wc-tv', String(t).toUpperCase());
     host.setAttribute('data-wc-tv-kind', kind || '');
-    if (window.WC_TV) window.WC_TV.mount(host, t, kind);
+    host.setAttribute('data-wc-tv-exchange', exchangeOf(t));
+    if (window.WC_TV) window.WC_TV.mount(host, t, kind, exchangeOf(t));
     var title = document.getElementById('b2bmTvTitle');
     if (title) title.textContent = String(t).replace('USDT', '/USDT') + ' · live chart';
     document.querySelectorAll('[data-b2bm-card]').forEach(function (c) { c.classList.toggle('sel', c.getAttribute('data-b2bm-card') === String(t).toUpperCase()); });
