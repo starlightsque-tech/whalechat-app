@@ -1,8 +1,8 @@
 {
-  "version": "3.55.2",
-  "build": "2026-11-19T07:35:00Z",
+  "version": "3.55.3",
+  "build": "2026-11-19T07:55:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.55.2 - durable chart history drops legacy half-price first ticks on restore, so no synthetic 50% crash candle appears for SHOP, PLTR, MSTR, BTC and others.",
-  "releasedAt": "2026-11-19T07:35:00Z",
+  "notes": "WhaleChat 3.55.3 - a restart restores the last real print from durable history as a real quote, so Twelve Data/Finnhub/Binance symbols stay real on the board while provider polling catches up instead of dropping to simulated.",
+  "releasedAt": "2026-11-19T07:55:00Z",
   "minimum": "3.0.0"
 }

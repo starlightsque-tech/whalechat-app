@@ -590,10 +590,29 @@ class MarketService {
     const now = Date.now();
     this.refreshAssets();
     const db = this.getDb && this.getDb();
+    /* A restart must not blank the board while the provider rotation catches
+       up: the last real print (hydrated from Postgres) is restored as a real
+       quote for up to 7 days (a weekend/holiday close counts). */
+    const cachedReal = (ticker) => {
+      const p = Number(this.lastReal[ticker]) || 0;
+      const at = Number(this.lastRealTime[ticker]) || 0;
+      return (p > 0 && at > 0 && now - at < 7 * 86400000) ? { price: p, at } : null;
+    };
     if (this.liveConfigured) {
-      /* live mode: a symbol has no price until Finnhub prints one */
+      /* live mode: a symbol has no price until a provider prints one, unless a
+         real print survived the restart */
       this.assetList().forEach((a) => {
         if (this.quotes[a.ticker]) return;
+        const c = cachedReal(a.ticker);
+        if (c) {
+          this.quotes[a.ticker] = {
+            ticker: a.ticker, price: c.price, prevClose: c.price, open: c.price,
+            dayHigh: c.price, dayLow: c.price, changePct: 0, changeUsd: 0, vol: 0,
+            dir: 0, updatedAt: c.at, source: 'cached', real: true
+          };
+          this.seedBase[a.ticker] = c.price;
+          return;
+        }
         this.quotes[a.ticker] = {
           ticker: a.ticker, price: 0, prevClose: 0, open: 0,
           dayHigh: 0, dayLow: 0, changePct: 0, changeUsd: 0, vol: 0,
@@ -604,6 +623,18 @@ class MarketService {
     }
     this.assetList().forEach((a) => {
       if (this.quotes[a.ticker]) return;
+      const c = cachedReal(a.ticker);
+      if (c) {
+        this.quotes[a.ticker] = {
+          ticker: a.ticker, price: c.price, prevClose: c.price, open: c.price,
+          dayHigh: c.price, dayLow: c.price, changePct: 0, changeUsd: 0, vol: 0,
+          dir: 0, updatedAt: c.at, source: 'cached', real: true
+        };
+        this.seedBase[a.ticker] = c.price;
+        const rec0 = db && Array.isArray(db.stocks) ? db.stocks.find((x) => x && String(x.ticker).toUpperCase() === a.ticker) : null;
+        if (rec0 && !(Number(rec0.price) > 0)) { rec0.price = c.price; if (!(Number(rec0.prevClose) > 0)) rec0.prevClose = c.price; }
+        return;
+      }
       const base = this.fallbackBase(a.ticker);
       const price = Number(a.price) > 0 ? Number(a.price) : base;
       this.quotes[a.ticker] = {
