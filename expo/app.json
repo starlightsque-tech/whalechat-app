@@ -7,22 +7,38 @@
     "scheme": "whalechat",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#04101a",
-    "splash": { "backgroundColor": "#04101a", "resizeMode": "contain" },
+    "splash": {
+      "backgroundColor": "#04101a",
+      "resizeMode": "contain"
+    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "app.whalechat.mobile",
-      "infoPlist": { "NSAppTransportSecurity": { "NSAllowsArbitraryLoads": false } }
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": false
+        }
+      }
     },
     "android": {
       "package": "app.whalechat.mobile",
-      "adaptiveIcon": { "backgroundColor": "#04101a" },
-      "permissions": ["INTERNET", "POST_NOTIFICATIONS"]
+      "adaptiveIcon": {
+        "backgroundColor": "#04101a"
+      },
+      "permissions": [
+        "INTERNET",
+        "POST_NOTIFICATIONS"
+      ]
     },
-    "web": { "bundler": "metro" },
+    "web": {
+      "bundler": "metro"
+    },
     "extra": {
       "webUrl": "https://whalechat.appwrite.network/whalechat.html",
-      "eas": { "projectId": "REPLACE_WITH_EAS_PROJECT_ID" }
+      "eas": {
+        "projectId": "c114889f-0f49-4647-9be2-92ad1a6cdef1"
+      }
     },
-    "owner": "REPLACE_WITH_EXPO_ACCOUNT"
+    "owner": "whalechat.com"
   }
 }
