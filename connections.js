@@ -162,8 +162,8 @@ function createConnections(opts) {
         websocket: binStatus.ws || null
       },
       twelvedata: {
-        configured: !!(c.twelvedata && c.twelvedata.apiKey),
-        key: mask(!!(c.twelvedata && c.twelvedata.apiKey)),
+        configured: !!((c.twelvedata && c.twelvedata.apiKey) || process.env.TWELVEDATA_API_KEY || (twelvedata && twelvedata.status && twelvedata.status().configured)),
+        key: mask(!!((c.twelvedata && c.twelvedata.apiKey) || process.env.TWELVEDATA_API_KEY)),
         enabled: !(c.twelvedata && c.twelvedata.enabled === false),
         live: twelvedata ? twelvedata.status() : null
       },

@@ -59,11 +59,12 @@ function createTwelveDataFeed(opts) {
       const db = getDb();
       const c = (db && db.settings && db.settings.connections) || {};
       const legacy = (db && db.settings && db.settings.twelvedata) || {};
+      const marketData = (db && db.settings && db.settings.marketData && db.settings.marketData.twelvedata) || {};
       let managed = '';
       try { managed = String((getManagedKey && getManagedKey()) || '').trim(); } catch (e) {}
       return {
         enabled: true,
-        apiKey: String(managed || (c.twelvedata && c.twelvedata.apiKey) || legacy.apiKey || process.env.TWELVEDATA_API_KEY || '').trim()
+        apiKey: String(managed || (c.twelvedata && c.twelvedata.apiKey) || (marketData && marketData.apiKey) || legacy.apiKey || process.env.TWELVEDATA_API_KEY || '').trim()
       };
     } catch (e) { return { enabled: true, apiKey: '' }; }
   }

@@ -162,7 +162,7 @@ const marketAdmin = createMarketAdmin({
       return {
         binance: { apiKey: (s.binance || {}).apiKey || '', secret: (m.binance || {}).secret || '' },
         finnhub: { apiKey: (s.finnhub || {}).apiKey || '' },
-        twelvedata: { apiKey: (m.twelvedata || {}).apiKey || '' }
+        twelvedata: { apiKey: (s.twelvedata || {}).apiKey || (m.twelvedata || {}).apiKey || '' }
       };
     } catch (e) { return {}; }
   }
