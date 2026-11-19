@@ -179,6 +179,7 @@
       <div class="panel">
         <div class="between"><div><h2>Brevo sender</h2><p class="hint">The verified sender used for every verification code, welcome mail and broadcast.</p></div><span class="pill" id="senderPill">—</span></div>
         <div id="senderList" class="note">Checking Brevo senders…</div>
+        <div class="sec-item" style="margin-top:8px"><div><b>Delivery webhook</b><p id="webhookStatus">Checking…</p></div><button class="btn ghost sm" id="setupWebhook">Connect webhook</button></div>
         <div class="grid2" style="margin-top:14px">
           <div><form id="welcomeForm"><label>Send a welcome email to</label><input class="inp" id="welcomeTo" type="email" placeholder="you@email.com"/><button class="btn sm" type="submit" style="margin-top:10px">Send welcome email</button></form></div>
           <div><label>Test the connection</label><input class="inp" id="mailTestTo" type="email" placeholder="you@email.com"/><button class="btn ghost sm" id="mailTestBtn" style="margin-top:10px">Send test email</button></div>
@@ -465,23 +466,33 @@
     }).join('') || '<tr><td colspan="5" class="note">No in-app notifications yet.</td></tr>';
   }
 
+  function mailStatusPill(e) {
+    var m = { sent: ['Accepted', ''], delivered: ['Delivered', 'ok'], opened: ['Opened', 'ok'], clicked: ['Clicked', 'ok'], deferred: ['Deferred', 'warn'], bounced: ['Bounced', 'bad'], blocked: ['Blocked', 'bad'], spam: ['Spam', 'bad'], invalid: ['Invalid', 'bad'], failed: ['Failed', 'bad'], unsubscribed: ['Unsubscribed', 'warn'] };
+    var x = m[e.status] || [e.status || 'Sent', ''];
+    return '<span class="pill ' + x[1] + '">' + esc(x[0]) + '</span>';
+  }
+
   async function loadEmailAudit() {
     renderNotifications();
     var log = await post('/api/admin/email-log', { token: state.token, limit: 250 });
     if (!log.ok) { $('emailLogRows').innerHTML = '<tr><td colspan="6" class="note">Could not load the audit log.</td></tr>'; return; }
     var entries = log.entries || [];
-    var sent = entries.filter(function (e) { return e.status === 'sent'; }).length;
+    var delivered = entries.filter(function (e) { return ['delivered', 'opened', 'clicked'].indexOf(e.status) >= 0; }).length;
+    var opened = entries.filter(function (e) { return e.status === 'opened' || e.status === 'clicked' || e.openedAt; }).length;
+    var bounced = entries.filter(function (e) { return ['bounced', 'blocked', 'spam', 'invalid', 'failed'].indexOf(e.status) >= 0; }).length;
     var failed = entries.filter(function (e) { return e.status === 'failed'; }).length;
     $('emailCards').innerHTML = [
       ['Email provider', 'Brevo', 'transactional API'],
       ['Messages logged', entries.length, 'audit entries'],
-      ['Delivered', sent, 'accepted by Brevo'],
-      ['Failed', failed, 'needs attention']
-    ].map(function (c, i) { return '<div class="card ' + (i === 3 && failed ? 'warn' : i === 2 ? 'ok' : '') + '"><div class="k">' + esc(c[0]) + '</div><div class="v">' + esc(c[1]) + '</div><div class="d">' + esc(c[2]) + '</div></div>'; }).join('');
+      ['Delivered', delivered, 'inbox accepted'],
+      ['Opened', opened, 'real open events'],
+      ['Bounced / failed', bounced, 'needs attention'],
+      ['API failures', failed, 'send errors']
+    ].map(function (c, i) { return '<div class="card ' + (i === 2 ? 'ok' : i >= 4 && c[1] ? 'warn' : '') + '"><div class="k">' + esc(c[0]) + '</div><div class="v">' + esc(c[1]) + '</div><div class="d">' + esc(c[2]) + '</div></div>'; }).join('');
     $('emailLogRows').innerHTML = entries.map(function (e) {
       var detail = e.code ? 'Code ' + e.code + ' · ' + (e.purpose || 'verification') : (e.subject || '—');
-      var st = e.status === 'sent' ? pill('Delivered', 'ok') : pill('Failed', 'bad');
-      return '<tr><td>' + when(e.at) + '</td><td>' + pill(e.type || 'email', e.type === 'broadcast' ? 'admin' : '') + '</td><td>' + esc(e.to || '—') + '</td><td>' + esc(detail) + (e.error ? '<div class="note" style="color:#ff9aaa">' + esc(e.error) + '</div>' : '') + '</td><td>' + st + '</td><td class="note">' + esc(e.messageId || '—') + '</td></tr>';
+      var trail = (e.events || []).slice(-4).map(function (x) { return esc(x.event) + ' ' + when(x.at); }).join(' · ');
+      return '<tr><td>' + when(e.at) + '</td><td>' + pill(e.type || 'email', e.type === 'broadcast' ? 'admin' : '') + '</td><td>' + esc(e.to || '—') + '</td><td>' + esc(detail) + (trail ? '<div class="note" style="color:#7ff0c2">' + trail + '</div>' : '') + (e.error ? '<div class="note" style="color:#ff9aaa">' + esc(e.error) + '</div>' : '') + '</td><td>' + mailStatusPill(e) + (e.eventCount ? '<div class="note">' + e.eventCount + ' event' + (e.eventCount === 1 ? '' : 's') + '</div>' : '') + '</td><td class="note">' + esc(e.messageId || '—') + '</td></tr>';
     }).join('') || '<tr><td colspan="6" class="note">No email has been sent yet.</td></tr>';
 
     var snd = await post('/api/admin/senders', { token: state.token });
@@ -495,10 +506,28 @@
       $('senderPill').className = 'pill warn';
       $('senderList').textContent = snd.error || 'Connect Brevo and add a sender in the Brevo dashboard.';
     }
+
+    var wh = await post('/api/admin/webhook-status', { token: state.token });
+    if (wh.ok && wh.configured) {
+      $('webhookStatus').innerHTML = 'Connected · webhook #' + esc(wh.id || '') + ' · ' + esc(wh.url);
+      $('setupWebhook').textContent = 'Re-check webhook';
+      $('setupWebhook').className = 'btn ghost sm';
+    } else {
+      $('webhookStatus').textContent = 'Not connected — create it to receive delivered, opened and bounced events.';
+      $('setupWebhook').textContent = 'Connect webhook';
+      $('setupWebhook').className = 'btn sm';
+    }
   }
 
   document.getElementById('reloadEmailLog').onclick = loadEmailAudit;
   document.getElementById('reloadNotifs').onclick = renderNotifications;
+  document.getElementById('setupWebhook').onclick = async function () {
+    $('webhookStatus').textContent = 'Creating the Brevo webhook…';
+    var r = await post('/api/admin/webhook-setup', { token: state.token });
+    if (!r.ok) { $('webhookStatus').textContent = 'Could not connect: ' + (r.message || r.error || 'unknown'); toast('Webhook failed', 'err'); return; }
+    toast('Brevo webhook connected', 'ok');
+    loadEmailAudit();
+  };
   document.getElementById('welcomeForm').addEventListener('submit', async function (e) {
     e.preventDefault();
     var to = $('welcomeTo').value.trim();

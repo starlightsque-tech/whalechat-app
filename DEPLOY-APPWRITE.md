@@ -169,3 +169,19 @@ Endpoints (admin token required except status/test):
 | `POST /api/admin/welcome-test` | send + log a welcome email |
 | `POST /api/email/test` | send + log a test email |
 | `POST /api/email/broadcast` | send + log an admin broadcast |
+
+## 9. Brevo delivery webhook
+
+`POST https://whalechat-api.appwrite.network/api/webhook/brevo` receives Brevo
+transactional events. It is authenticated with the `x-whalechat-key` header
+created together with the webhook (the key is stored only in the private
+`whalechat-mail.json` snapshot).
+
+The function subscribes Brevo to `request, delivered, opened, uniqueOpened,
+click, hardBounce, softBounce, blocked, spam, invalid, deferred, unsubscribed`
+and matches each event to the audit entry by `message-id` (recipient + subject
+fallback). Status badges in the admin panel therefore move from **Accepted** to
+**Delivered**, **Opened**, **Clicked**, **Bounced**, etc.
+
+Admin panel → **Email & notifications → Delivery webhook → Connect webhook**
+creates or re-checks the Brevo webhook through `/api/admin/webhook-setup`.

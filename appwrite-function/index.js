@@ -145,6 +145,8 @@ async function readMailConfig() {
     resendKey: String(saved.resendKey || process.env.RESEND_API_KEY || '').trim(),
     from: String(saved.from || process.env.MAIL_FROM || 'whalechat1@gmail.com').trim(),
     fromName: String(saved.fromName || process.env.MAIL_FROM_NAME || 'WhaleChat').trim(),
+    webhookKey: String(saved.webhookKey || process.env.BREVO_WEBHOOK_KEY || '').trim(),
+    webhookId: saved.webhookId || null,
     updatedAt: saved.updatedAt || 0
   };
 }
@@ -457,6 +459,92 @@ module.exports = async ({ req, res, log, error }) => {
       const out = await sendMail(cfg, to, subject, html, 'Welcome to WhaleChat, ' + name + '! Your account is ready.');
       await appendMailLog({ type: 'welcome', to, subject, status: out.ok ? 'sent' : 'failed', provider: out.provider, messageId: out.messageId, error: out.error, from: cfg.from });
       return res.json(out.ok ? { ok: true, messageId: out.messageId, to, provider: out.provider } : { ok: false, error: 'send_failed', message: out.error || 'Brevo refused the message' }, out.ok ? 200 : 502, CORS);
+    }
+
+    /* ---------------- Brevo delivery webhook (public, header key) ---------- */
+    if (path === '/api/webhook/brevo' && (method === 'POST' || method === 'GET')) {
+      const cfg = await readMailConfig();
+      const given = String((req.headers && (req.headers['x-whalechat-key'] || req.headers['X-Whalechat-Key'])) || body.key || '').trim();
+      if (!cfg.webhookKey) return res.json({ ok: false, error: 'webhook_not_configured' }, 503, CORS);
+      if (given !== cfg.webhookKey) return res.json({ ok: false, error: 'forbidden' }, 401, CORS);
+      const events = Array.isArray(body) ? body : (Array.isArray(body.events) ? body.events : [body]);
+      const cur = await readJsonFile(MAIL_LOG_FILE, { entries: [] });
+      const entries = Array.isArray(cur.entries) ? cur.entries : [];
+      const norm = (v) => String(v || '').replace(/[<>]/g, '').trim().toLowerCase();
+      let updated = 0;
+      for (const ev of events) {
+        if (!ev || !ev.event) continue;
+        const raw = String(ev.event).toLowerCase();
+        const eventAt = Number(ev.ts_epoch) || (Number(ev.ts) ? Number(ev.ts) * 1000 : Date.now());
+        const msgId = norm(ev['message-id'] || ev.messageId || ev.message_id || '');
+        let entry = null;
+        if (msgId) entry = entries.find((e) => norm(e.messageId) === msgId);
+        if (!entry && ev.email && ev.subject) {
+          entry = entries.find((e) => String(e.to || '').toLowerCase() === String(ev.email).toLowerCase() && String(e.subject || '') === String(ev.subject) && Math.abs(Number(e.at) - eventAt) < 7 * 864e5);
+        }
+        if (!entry) continue;
+        entry.events = Array.isArray(entry.events) ? entry.events : [];
+        entry.events.push({ event: raw, at: eventAt, reason: String(ev.reason || ev.reason_message || '').slice(0, 200) });
+        if (entry.events.length > 40) entry.events = entry.events.slice(-40);
+        entry.lastEvent = raw;
+        entry.lastEventAt = eventAt;
+        entry.eventCount = (entry.eventCount || 0) + 1;
+        const map = {
+          request: 'sent', sent: 'sent', delivered: 'delivered',
+          opened: 'opened', unique_opened: 'opened', proxy_open: 'opened', unique_proxy_open: 'opened',
+          click: 'clicked', hard_bounce: 'bounced', soft_bounce: 'deferred', deferred: 'deferred',
+          blocked: 'blocked', spam: 'spam', invalid_email: 'invalid', invalid: 'invalid', error: 'failed', unsubscribed: 'unsubscribed'
+        };
+        const status = map[raw] || raw;
+        /* never downgrade an opened message back to delivered when a second
+           (proxy) open event arrives */
+        const rank = { sent: 1, delivered: 2, opened: 3, clicked: 4, deferred: 2, bounced: 5, blocked: 5, spam: 5, invalid: 5, failed: 5, unsubscribed: 5 };
+        const prev = rank[entry.status] || 0;
+        entry.status = (rank[status] || 0) >= prev || ['bounced', 'blocked', 'spam', 'invalid', 'failed'].includes(status) ? status : entry.status;
+        if (status === 'delivered') entry.deliveredAt = eventAt;
+        if (status === 'opened') entry.openedAt = entry.openedAt || eventAt;
+        if (status === 'clicked') entry.clickedAt = entry.clickedAt || eventAt;
+        if (status === 'bounced') entry.bouncedAt = eventAt;
+        updated++;
+      }
+      if (updated) await writeJsonFile(MAIL_LOG_FILE, 'whalechat-email-log.json', { entries, updatedAt: Date.now() });
+      return res.json({ ok: true, updated }, 200, CORS);
+    }
+
+    if (path === '/api/admin/webhook-setup' && method === 'POST') {
+      const payload = verifyToken(body.token);
+      if (!payload) return res.json({ ok: false, error: 'unauthorised' }, 401, CORS);
+      const cfg = await readMailConfig();
+      if (!cfg.brevoKey) return res.json({ ok: false, error: 'brevo_required', message: 'Connect Brevo first' }, 400, CORS);
+      if (!cfg.webhookKey) cfg.webhookKey = crypto.randomBytes(24).toString('hex');
+      const webhookUrl = 'https://whalechat-api.appwrite.network/api/webhook/brevo';
+      const events = ['request', 'delivered', 'opened', 'uniqueOpened', 'click', 'hardBounce', 'softBounce', 'blocked', 'spam', 'invalid', 'deferred', 'unsubscribed'];
+      const list = await apiRaw('https://api.brevo.com/v3/webhooks?type=transactional', { method: 'GET', headers: { 'api-key': cfg.brevoKey, accept: 'application/json' } });
+      const hooks = (list.json && list.json.webhooks) || [];
+      const existing = hooks.find((h) => String(h.url || '').indexOf('/api/webhook/brevo') >= 0);
+      let result = null;
+      if (existing) {
+        cfg.webhookId = existing.id;
+        result = { id: existing.id, url: existing.url, events: existing.events || events, reused: true };
+      } else {
+        const made = await apiRaw('https://api.brevo.com/v3/webhooks', {
+          method: 'POST', headers: { 'api-key': cfg.brevoKey, 'content-type': 'application/json', accept: 'application/json' },
+          body: JSON.stringify({ url: webhookUrl, description: 'WhaleChat delivery audit', type: 'transactional', events, headers: [{ key: 'x-whalechat-key', value: cfg.webhookKey }] })
+        });
+        if (!made.ok) return res.json({ ok: false, error: 'brevo_error', message: (made.json && made.json.message) || 'Could not create webhook' }, 502, CORS);
+        cfg.webhookId = made.json && made.json.id;
+        result = { id: cfg.webhookId, url: webhookUrl, events, reused: false };
+      }
+      cfg.updatedAt = Date.now();
+      await writeJsonFile(MAIL_FILE, 'whalechat-mail.json', cfg);
+      return res.json({ ok: true, webhook: result, active: true }, 200, CORS);
+    }
+
+    if (path === '/api/admin/webhook-status' && method === 'POST') {
+      const payload = verifyToken(body.token);
+      if (!payload) return res.json({ ok: false, error: 'unauthorised' }, 401, CORS);
+      const cfg = await readMailConfig();
+      return res.json({ ok: true, configured: !!cfg.webhookKey, id: cfg.webhookId || null, url: 'https://whalechat-api.appwrite.network/api/webhook/brevo' }, 200, CORS);
     }
 
     if (path === '/api/email/status' && method === 'GET') {
