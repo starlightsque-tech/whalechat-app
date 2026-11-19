@@ -434,12 +434,24 @@
     };
   };
 
-  /* ---- small svg chart, live-safe --------------------------------------- */
+  /* ---- professional chart, live-safe -------------------------------------
+     Rendered by the shared WC_TRADE_CHART engine: green while the series is
+     rising, red while it is falling, same look as the trade charts.        */
   P.chart = function (points, opts) {
     opts = opts || {};
-    var W = 300, H = opts.height || 90, pad = 6;
-    var pts = (points || []).filter(function (v) { return isFinite(v); });
-    if (pts.length < 2) pts = [0, 0.0001];
+    var TC = (typeof window !== 'undefined' && window.WC_TRADE_CHART) ? window.WC_TRADE_CHART : null;
+    var vals = (points || []).filter(function (v) { return isFinite(v); });
+    var height = opts.height || 90;
+    if (TC && TC.svg) {
+      return TC.svg(vals.map(function (v, i) { return { time: i, value: Number(v) || 0 }; }), {
+        width: 320,
+        height: height,
+        weight: height > 120 ? 2 : 1.8
+      }).replace('class="wtc-spark"', 'class="wtc-spark wci-chart"');
+    }
+    /* fallback: previous renderer if the chart engine is not on the page */
+    var W = 300, H = height, pad = 6;
+    var pts = vals.length >= 2 ? vals : [0, 0.0001];
     var min = Math.min.apply(null, pts), max = Math.max.apply(null, pts);
     var span = (max - min) || Math.abs(max) * 0.02 || 1;
     var step = (W - pad * 2) / (pts.length - 1);
@@ -450,12 +462,7 @@
     }).join(' ');
     var color = opts.color || '#2ee6c9';
     return '<svg viewBox="0 0 ' + W + ' ' + H + '" class="wci-chart" preserveAspectRatio="none">' +
-      '<defs><linearGradient id="wciFill' + (opts.uid || 'a') + '" x1="0" y1="0" x2="0" y2="1">' +
-        '<stop offset="0%" stop-color="' + color + '" stop-opacity=".32"/>' +
-        '<stop offset="100%" stop-color="' + color + '" stop-opacity="0"/></linearGradient></defs>' +
-      '<path d="' + d + ' L' + (pad + (pts.length - 1) * step).toFixed(1) + ' ' + (H - pad) + ' L' + pad + ' ' + (H - pad) + ' Z" fill="url(#wciFill' + (opts.uid || 'a') + ')" stroke="none"/>' +
-      '<path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="1.8" stroke-linejoin="round"/>' +
-    '</svg>';
+      '<path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="1.8" stroke-linejoin="round"/></svg>';
   };
 
   /* accrued series for one plan (or all) — drives the ROI charts */

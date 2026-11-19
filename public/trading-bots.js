@@ -139,6 +139,19 @@
     </div>`;
   }
 
+  /* direction-coloured path legs: green while the series rises, red while it
+     falls — the same rule the shared trade chart uses. */
+  function segsPath(pts, yFn, xAt) {
+    let up = '', down = '';
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i];
+      const d = 'M' + xAt(i - 1).toFixed(1) + ' ' + yFn(a).toFixed(1) +
+        ' L' + xAt(i).toFixed(1) + ' ' + yFn(b).toFixed(1) + ' ';
+      if (yFn(b) <= yFn(a)) up += d; else down += d;
+    }
+    return { up, down };
+  }
+
   function perfSVG(session) {
     const alloc = Math.max(0.01, Number(session.allocatedCoins) || 0.01);
     const trades = (session.trades || []).slice().reverse();
@@ -160,27 +173,39 @@
     const xAt = (i) => 6 + (i / Math.max(1, pts.length - 1)) * (W - 44);
     const yCap = (v) => topY + topH - ((v - capMin) / (capMax - capMin)) * topH;
     const yPnl = (v) => botY + botH - ((v - pMin) / (pMax - pMin)) * botH;
-    const line = (fn, val) => pts.map((p, i) => (i ? 'L' : 'M') + xAt(i).toFixed(1) + ' ' + fn(val(p)).toFixed(1)).join(' ');
-    const capPath = line(yCap, (p) => p.cap);
+
+    const capSegs = segsPath(pts.map((p) => p.cap), yCap, xAt);
+    const pnlSegs = segsPath(pts.map((p) => p.pnl), yPnl, xAt);
+
+    const capPath = pts.map((p, i) => (i ? 'L' : 'M') + xAt(i).toFixed(1) + ' ' + yCap(p.cap).toFixed(1)).join(' ');
     const areaPath = capPath + ' L' + xAt(pts.length - 1).toFixed(1) + ' ' + (topY + topH) + ' L' + xAt(0).toFixed(1) + ' ' + (topY + topH) + ' Z';
-    const pnlPath = line(yPnl, (p) => p.pnl);
+
     const lastPnl = pts[pts.length - 1].pnl;
     const pnlColor = lastPnl >= 0 ? '#22c55e' : '#ef4444';
+    const capUp = pts[pts.length - 1].cap >= pts[0].cap;
+    const capColor = capUp ? '#22c55e' : '#ef4444';
     const zeroY = yPnl(0).toFixed(1);
     const fmt = (v) => (Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(2));
     const tLabel = (ms) => { try { return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; } };
-    return `<svg class="bot-perf-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Bot capital and cumulative profit chart">
+
+    const line = (segs, w) =>
+      (segs.up ? `<path d="${segs.up}" fill="none" stroke="#22c55e" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round"/>` : '') +
+      (segs.down ? `<path d="${segs.down}" fill="none" stroke="#ef4444" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round"/>` : '');
+
+    return `<svg class="bot-perf-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Bot capital and cumulative profit chart, green while rising and red while falling">
       <defs><linearGradient id="botCapFill" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="#2ee6c9" stop-opacity=".28"/><stop offset="100%" stop-color="#2ee6c9" stop-opacity="0"/>
+        <stop offset="0%" stop-color="${capColor}" stop-opacity=".26"/><stop offset="100%" stop-color="${capColor}" stop-opacity="0"/>
       </linearGradient></defs>
+      <line x1="6" y1="${topY + topH}" x2="${W - 38}" y2="${topY + topH}" stroke="rgba(255,255,255,.07)"/>
       <text x="6" y="8" class="bot-perf-lbl">Allocated capital (USD)</text>
       <text x="${W - 6}" y="8" text-anchor="end" class="bot-perf-val">$${fmt(pts[pts.length - 1].cap * 0.5)}</text>
       <path d="${areaPath}" fill="url(#botCapFill)"/>
-      <path d="${capPath}" fill="none" stroke="#2ee6c9" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>
+      ${line(capSegs, 1.9)}
       <text x="6" y="${botY - 4}" class="bot-perf-lbl">Cumulative P/L (USD)</text>
       <text x="${W - 6}" y="${botY - 4}" text-anchor="end" class="bot-perf-val" style="fill:${pnlColor}">${lastPnl >= 0 ? '+' : '−'}$${fmt(Math.abs(lastPnl) * 0.5)}</text>
       <line x1="6" y1="${zeroY}" x2="${W - 38}" y2="${zeroY}" stroke="rgba(255,255,255,.14)" stroke-dasharray="3 3"/>
-      <path d="${pnlPath}" fill="none" stroke="${pnlColor}" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>
+      ${line(pnlSegs, 1.9)}
+      <circle cx="${xAt(pts.length - 1).toFixed(1)}" cy="${yPnl(lastPnl).toFixed(1)}" r="2.6" fill="${pnlColor}"/>
       <text x="${W - 38}" y="${topY + 10}" class="bot-perf-axis">${fmt(capMax)}</text>
       <text x="${W - 38}" y="${topY + topH}" class="bot-perf-axis">${fmt(capMin)}</text>
       <text x="${W - 38}" y="${botY + 8}" class="bot-perf-axis">${fmt(pMax)}</text>

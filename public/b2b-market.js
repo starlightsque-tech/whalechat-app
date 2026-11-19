@@ -249,7 +249,7 @@
           '<div><span>24h low</span><b>' + (q.dayLow ? money(q.dayLow) : '—') + '</b></div>' +
           '<div><span>24h volume</span><b>' + (q.vol ? Number(q.vol).toLocaleString(undefined, { maximumFractionDigits: 0 }) : '—') + '</b></div>' +
         '</div>' +
-        '<svg viewBox="0 0 300 110" class="b2bm-bigchart" preserveAspectRatio="none"><polyline data-b2bm-bigspark="' + esc(t) + '" points="' + sp.points + '" fill="none" stroke="' + (sp.up ? '#22c55e' : '#ef4444') + '" stroke-width="1.8"/></svg>' +
+        '<div class="b2bm-bigchart" data-b2bm-chart="' + esc(t) + '"></div>' +
         '<div class="tiny muted center">Live chart · updates every 2 seconds</div>' +
       '</div>' +
       (h ? '<div class="card"><div class="between"><span class="tiny muted">Your holding</span><b>' + Number(h.units).toFixed(6) + ' units</b></div>' +
@@ -401,6 +401,25 @@
       if (g.points) el.setAttribute('points', g.points);
       el.setAttribute('stroke', g.up ? '#22c55e' : '#ef4444');
     });
+    /* professional chart on the asset page — shared engine, green up / red down */
+    document.querySelectorAll('[data-b2bm-chart]').forEach(function (el) {
+      var t = el.getAttribute('data-b2bm-chart');
+      var pts = hist(t).map(function (x) { return { time: Math.floor(x.x / 1000), value: Number(x.p) || 0 }; })
+        .filter(function (p) { return p.value > 0; });
+      if (pts.length < 2) return;
+      var TC = (typeof window !== 'undefined' && window.WC_TRADE_CHART) ? window.WC_TRADE_CHART : null;
+      if (!TC) return;
+      if (!el.__wtc) {
+        el.__wtc = TC.mount(el, {
+          symbol: t.replace('USDT', '/USDT'),
+          points: pts,
+          height: 220,
+          mode: 'line'
+        });
+      } else if (el.__wtc.setData) {
+        el.__wtc.setData(pts);
+      }
+    });
   }
   M.paint = paint;
 
@@ -512,7 +531,7 @@
     .b2bm-statgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
     .b2bm-statgrid span{display:block;font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted-2);font-weight:700}
     .b2bm-statgrid b{font-size:12.5px;font-variant-numeric:tabular-nums}
-    .b2bm-bigchart{width:100%;height:110px;display:block;margin-top:10px}
+    .b2bm-bigchart{width:100%;height:auto;display:block;margin-top:10px}
     .b2bm-picklist{display:flex;flex-direction:column;gap:6px;max-height:62vh;overflow:auto}
     .b2bm-pick{border:1px solid var(--border);border-radius:11px;padding:8px 10px;background:var(--surface-2)}
     .b2bm-pickhead{display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12.5px}

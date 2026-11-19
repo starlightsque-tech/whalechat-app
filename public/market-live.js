@@ -390,27 +390,30 @@
     return data.length >= 2 ? data : [{ time: Math.floor(Date.now() / 1000) - 60, value: 100 }, { time: Math.floor(Date.now() / 1000), value: 100 }];
   }
 
+  /* ---------------------------------------------------------------- chart --
+     Rendered by the shared WC_TRADE_CHART engine (public/trade-chart.js):
+     professional TradingView-style line/candles, green while price rises and
+     red while it falls, entry/TP/SL reference lines and a live green/red P&L
+     readout for the open trade. No external CDN, no lightweight-charts.     */
+  function tcEngine() {
+    return (typeof window !== 'undefined' && window.WC_TRADE_CHART) ? window.WC_TRADE_CHART : null;
+  }
+
   function destroyChart() {
     if (!MK.chart) return;
-    try { MK.chart.chart.remove(); } catch (e) {}
+    try { if (MK.chart.tc) MK.chart.tc.destroy(); } catch (e) {}
+    try { if (MK.chart.chart && MK.chart.chart.remove) MK.chart.chart.remove(); } catch (e) {}
     MK.chart = null;
   }
 
-  function applyBaselineColors(series, side) {
-    const green = '#22c55e';
-    const red = '#ef4444';
-    series.applyOptions(side === 'short' ? {
-      topLineColor: red, topFillColor1: 'rgba(239,68,68,.28)', topFillColor2: 'rgba(239,68,68,.02)',
-      bottomLineColor: green, bottomFillColor1: 'rgba(34,197,94,.02)', bottomFillColor2: 'rgba(34,197,94,.28)'
-    } : {
-      topLineColor: green, topFillColor1: 'rgba(34,197,94,.28)', topFillColor2: 'rgba(34,197,94,.02)',
-      bottomLineColor: red, bottomFillColor1: 'rgba(239,68,68,.02)', bottomFillColor2: 'rgba(239,68,68,.28)'
-    });
-  }
+  /* kept for backwards-compat: the shared engine derives its own colours */
+  function applyBaselineColors() {}
 
   function makeChart(host, cfg) {
-    return loadLWC().then((LWC) => {
-      if (!document.body.contains(host)) return null;
+    return new Promise((resolve) => {
+      if (!document.body.contains(host)) return resolve(null);
+      const TC = tcEngine();
+      if (!TC) return resolve(null);
       host.classList.add('wc-chart-host');
       host.__wcLwc = true;
       host.removeAttribute('data-chart');
@@ -419,92 +422,75 @@
       wrap.className = 'wc-lwc';
       wrap.id = 'wcLwcHost';
       host.appendChild(wrap);
-      const data = cfg.data && cfg.data.length >= 2 ? cfg.data : [{ time: Math.floor(Date.now() / 1000) - 60, value: 100 }, { time: Math.floor(Date.now() / 1000), value: 100 }];
-      const defaultBase = Number(cfg.baseline) > 0 ? Number(cfg.baseline) : Number(data[0].value) || 100;
+
+      const data = (cfg.data && cfg.data.length >= 2) ? cfg.data
+        : [{ time: Math.floor(Date.now() / 1000) - 60, value: 100 },
+           { time: Math.floor(Date.now() / 1000), value: 100 }];
+      const lastVal = Number(data[data.length - 1].value) || 100;
+      const defaultBase = Number(cfg.baseline) > 0 ? Number(cfg.baseline) : lastVal;
       const side = cfg.side === 'short' ? 'short' : 'long';
-      const chart = LWC.createChart(wrap, {
-        width: wrap.clientWidth || host.clientWidth || 320,
-        height: 240,
-        layout: {
-          background: { type: LWC.ColorType.Solid, color: 'transparent' },
-          textColor: '#8ba4b6',
-          fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif',
-          fontSize: 11
-        },
-        grid: {
-          vertLines: { color: 'rgba(255,255,255,.035)', style: LWC.LineStyle.Dotted },
-          horzLines: { color: 'rgba(255,255,255,.055)', style: LWC.LineStyle.Dotted }
-        },
-        rightPriceScale: { borderColor: 'rgba(255,255,255,.10)', scaleMargins: { top: 0.12, bottom: 0.12 } },
-        timeScale: {
-          borderColor: 'rgba(255,255,255,.10)',
-          timeVisible: true,
-          secondsVisible: true,
-          rightOffset: 4,
-          barSpacing: 5,
-          fixLeftEdge: false
-        },
-        crosshair: {
-          mode: LWC.CrosshairMode.Normal,
-          vertLine: { color: 'rgba(46,230,201,.45)', width: 1, style: LWC.LineStyle.Dashed, labelBackgroundColor: '#0f2333' },
-          horzLine: { color: 'rgba(46,230,201,.45)', width: 1, style: LWC.LineStyle.Dashed, labelBackgroundColor: '#0f2333' }
-        },
-        localization: { priceFormatter: (p) => '$' + Number(p).toFixed(2) },
-        handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
-        handleScale: { axisPressedMouseMove: true, mouseWheel: true, pinch: true }
+      const pos = cfg.mode === 'stock' ? positionFor(cfg.ticker) : null;
+
+      const tc = TC.mount(wrap, {
+        symbol: cfg.mode === 'portfolio' ? 'Portfolio value' : (cfg.ticker || ''),
+        points: data,
+        height: 300,
+        tf: '1D',
+        mode: 'line',
+        baseline: defaultBase,
+        side: side,
+        positions: pos ? [{ side: side, entry: Number(pos.entryPrice) || defaultBase, qty: Number(pos.qty) || Number(pos.quantity) || 1 }] : [],
+        lines: []
       });
-      const series = chart.addBaselineSeries({
-        baseValue: { type: 'price', price: defaultBase },
-        topLineColor: '#22c55e', topFillColor1: 'rgba(34,197,94,.28)', topFillColor2: 'rgba(34,197,94,.02)',
-        bottomLineColor: '#ef4444', bottomFillColor1: 'rgba(239,68,68,.02)', bottomFillColor2: 'rgba(239,68,68,.28)',
-        lineWidth: 2, priceLineVisible: false, lastValueVisible: true,
-        crosshairMarkerVisible: true, crosshairMarkerRadius: 4,
-        crosshairMarkerBorderColor: '#04101a', crosshairMarkerBackgroundColor: side === 'short' ? '#ef4444' : '#22c55e'
-      });
-      applyBaselineColors(series, side);
-      series.setData(data);
-      chart.timeScale().fitContent();
+      if (!tc) return resolve(null);
+
       MK.chart = {
-        mode: cfg.mode || 'stock', ticker: cfg.ticker || '', chart, series, host, wrap, LWC,
+        mode: cfg.mode || 'stock',
+        ticker: cfg.ticker || '',
+        tc, host, wrap,
+        /* shims so the rest of the module keeps working unchanged */
+        chart: { remove() { try { tc.destroy(); } catch (e) {} } },
+        series: {
+          update(pt) { try { tc.update(pt); } catch (e) {} },
+          setData(pts) { try { tc.setData(pts); } catch (e) {} },
+          applyOptions() {},
+          removePriceLine() {},
+          createPriceLine() { return {}; }
+        },
         basePrice: defaultBase, defaultBase, side,
         lastTime: data[data.length - 1].time,
         points: data.length, lines: [], lineKey: ''
       };
       syncPriceLines();
-      if (typeof ResizeObserver !== 'undefined') {
-        MK.chart.ro = new ResizeObserver(() => {
-          if (!MK.chart || MK.chart.chart !== chart) return;
-          const width = wrap.clientWidth;
-          if (width > 0) chart.applyOptions({ width });
-        });
-        MK.chart.ro.observe(wrap);
-      }
-      return MK.chart;
+      resolve(MK.chart);
     });
   }
 
   function syncPriceLines() {
     const c = MK.chart;
-    if (!c || c.mode !== 'stock') return;
+    if (!c || c.mode !== 'stock' || !c.tc) return;
     const pos = positionFor(c.ticker);
     const key = pos ? [pos.id, pos.entryPrice, pos.takeProfitPrice, pos.stopLossPrice, pos.trailingActive, pos.trailingStopPct].join('|') : 'none';
     if (c.lineKey === key) return;
-    (c.lines || []).forEach((line) => { try { c.series.removePriceLine(line); } catch (e) {} });
-    c.lines = [];
     c.lineKey = key;
-    if (!pos) return;
-    const add = (price, color, title, style) => {
-      if (!(Number(price) > 0)) return;
-      try {
-        c.lines.push(c.series.createPriceLine({
-          price: Number(price), color, lineWidth: 1, lineStyle: style,
-          axisLabelVisible: true, title
-        }));
-      } catch (e) {}
-    };
-    add(pos.entryPrice, '#60a5fa', 'Entry $' + Number(pos.entryPrice).toFixed(2), 2);
-    add(pos.takeProfitPrice, '#22c55e', 'TP $' + Number(pos.takeProfitPrice).toFixed(2), 0);
-    add(pos.stopLossPrice, '#ef4444', (pos.trailingActive ? 'TSL $' : 'SL $') + Number(pos.stopLossPrice).toFixed(2), 0);
+    const lines = [];
+    if (pos) {
+      const add = (price, color, title) => {
+        if (!(Number(price) > 0)) return;
+        lines.push({ price: Number(price), color: color, title: title });
+      };
+      add(pos.entryPrice, '#60a5fa', 'Entry $' + Number(pos.entryPrice).toFixed(2));
+      add(pos.takeProfitPrice, '#22c55e', 'TP $' + Number(pos.takeProfitPrice).toFixed(2));
+      add(pos.stopLossPrice, '#ef4444', (pos.trailingActive ? 'TSL $' : 'SL $') + Number(pos.stopLossPrice).toFixed(2));
+    }
+    c.lines = lines;
+    try { c.tc.setLines(lines); } catch (e) {}
+    try {
+      c.tc.setPositions(pos ? [{
+        side: c.side, entry: Number(pos.entryPrice) || c.basePrice,
+        qty: Number(pos.qty) || Number(pos.quantity) || 1
+      }] : []);
+    } catch (e) {}
   }
 
   async function mountChart() {
@@ -591,8 +577,9 @@
 
   function appendPoint(c, time, value) {
     try {
-      /* same second → update the live point in place (no drift into the future) */
-      c.series.update({ time, value: Number(value) });
+      /* same second -> the shared engine replaces the live point in place */
+      if (c.tc) c.tc.update({ time, value: Number(value) });
+      else c.series.update({ time, value: Number(value) });
       if (time > c.lastTime) { c.lastTime = time; c.points += 1; }
     } catch (e) { /* out-of-order tick */ }
   }
@@ -622,8 +609,7 @@
     if (Math.abs(targetBase - c.basePrice) > 0.000001 || targetSide !== c.side) {
       c.basePrice = targetBase;
       c.side = targetSide;
-      c.series.applyOptions({ baseValue: { type: 'price', price: targetBase } });
-      applyBaselineColors(c.series, targetSide);
+      if (c.tc) { try { c.tc.setBaseline(targetBase, targetSide); } catch (e) {} }
     }
     syncPriceLines();
     const now = Math.floor(Date.now() / 1000);
@@ -632,7 +618,8 @@
     if (c.points > 900) {
       stockData(ticker).then((fresh) => {
         if (!MK.chart || MK.chart !== c) return;
-        c.series.setData(fresh);
+        if (c.tc) c.tc.setData(fresh);
+        else c.series.setData(fresh);
         c.lastTime = fresh[fresh.length - 1].time;
         c.points = fresh.length;
       });
@@ -1063,7 +1050,10 @@
     const st = document.createElement('style');
     st.id = 'wc-market-style';
     st.textContent = `
-    .inv-chart.wc-chart-host{height:240px !important}
+    .inv-chart.wc-chart-host{height:auto !important;min-height:300px}
+    .inv-chart.wc-chart-host .wc-lwc,.inv-chart.wc-chart-host .wtc-host{width:100%}
+    .inv-chart.wc-chart-host svg.wtc-svg{height:auto !important;width:100%}
+    .inv-chart.wc-chart-host svg{animation:none}
     .wc-lwc{width:100%;height:240px;position:relative}
     .wc-lwc-loading{height:240px;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--muted)}
     .wc-feed-notice{margin-top:5px;display:flex;align-items:center;justify-content:center;gap:6px}

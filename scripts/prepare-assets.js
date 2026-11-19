@@ -69,6 +69,7 @@ const MODULES = [
   { file: 'admin-auth.js', marker: 'wc-admin-auth' },
   { file: 'subscriptions.js', marker: 'wc-subs' },
   { file: 'tawk-control.js', marker: 'wc-tawk-control' },
+  { file: 'trade-chart.js', marker: 'wc-trade-chart' },
   { file: 'live-trade.js', marker: 'wc-live-trade' },
   { file: 'spot-orders.js', marker: 'wc-spot-orders' },
   { file: 'whalechat-shares.js', marker: 'wc-shares' },
