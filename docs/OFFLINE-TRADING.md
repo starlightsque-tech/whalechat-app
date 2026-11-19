@@ -112,6 +112,26 @@ Note: `api.binance.com` answers **HTTP 451** from this region; all Binance REST
 and WebSocket defaults now use `data-api.binance.vision` /
 `data-stream.binance.vision`, which serve the same public market data.
 
+## Collections, mirror and the two idempotency guards
+
+Created in database `6aff488e0006a3fe39e0` (idempotent deploy script):
+`offline_orders`, `orders`, `portfolios`, `sync_log`.
+The function's mirror is live — verified on the deployed function:
+
+```
+push#1  ADJUSTED @62000.01   balance 250 → 190   mirrored doc: ADJUSTED/62000.01/0.00096774
+push#2  duplicate: true (local ledger guard)    balance 190 → 190
+push#3  duplicate: true, source: "appwrite"     balance 190 → 190   (id existed only in the collection)
+trades written: 1
+```
+
+Two fixes were needed to get there:
+* `api()` in the function did not attach `X-Appwrite-Project` / `X-Appwrite-Key`,
+  so every document call failed with *“No Appwrite project was specified”*.
+* The `equal("field", ["…"])` string query DSL is rejected by Appwrite 2.x
+  (“Invalid query: Syntax error”); the mirror now sends the JSON query object
+  `{ method: 'equal', attribute: 'clientOrderId', values: [id] }`.
+
 ## Telesign
 
 `public/wc-telesign-auth.js` adds the OTP UI to signup and login:

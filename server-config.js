@@ -44,14 +44,22 @@ const DEFAULTS = {
     }
   },
 
-  telesign: {
+  telesign: (function () {
+    /* TELESIGN_BASIC accepts the pair as "customerId:apiKey"; the individual
+       variables still win when both are present. */
+    const combined = String(process.env.TELESIGN_BASIC || '').trim();
+    const cut = combined.indexOf(':');
+    const idFromCombined = cut > 0 ? combined.slice(0, cut) : '';
+    const keyFromCombined = cut > 0 ? combined.slice(cut + 1) : '';
+    return {
     baseUrl: String(process.env.TELESIGN_BASE_API || 'https://rest-ww.telesign.com/v1').replace(/\/+$/, ''),
-    customerId: String(process.env.TELESIGN_CUSTOMER_ID || '').trim(),
-    apiKey: String(process.env.TELESIGN_API_KEY || '').trim(),
+    customerId: String(process.env.TELESIGN_CUSTOMER_ID || idFromCombined || '').trim(),
+    apiKey: String(process.env.TELESIGN_API_KEY || keyFromCombined || '').trim(),
     verifyTemplate: String(process.env.TELESIGN_VERIFY_TEMPLATE || 'Your WhaleChat code is $$CODE$$. It expires in 5 minutes.'),
     senderId: String(process.env.TELESIGN_SENDER_ID || ''),
     codeTtlMs: Number(process.env.TELESIGN_CODE_TTL_MS || 5 * 60 * 1000)
-  },
+    };
+  })(),
 
   brevo: {
     apiKey: String(process.env.BREVO_API_KEY || '').trim(),

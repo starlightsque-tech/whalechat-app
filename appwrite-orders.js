@@ -54,7 +54,8 @@ async function api(pathname, opts) {
 
 async function findOrder(clientOrderId) {
   if (!configured()) return null;
-  const q = encodeURIComponent('equal("clientOrderId", ["' + String(clientOrderId).replace(/"/g, '') + '"])');
+  /* JSON query object (Appwrite 1.6+/2.x); the string DSL is rejected */
+  const q = encodeURIComponent(JSON.stringify({ method: 'equal', attribute: 'clientOrderId', values: [String(clientOrderId)] }));
   const res = await api('/databases/' + DB + '/collections/' + OFFLINE + '/documents?queries[]=' + q + '&limit=1');
   if (!res.ok) return null;
   const docs = (res.json && res.json.documents) || [];
@@ -89,7 +90,7 @@ async function createOrder(doc) {
 async function listOrders(userId, limit) {
   if (!configured()) return [];
   const n = Math.min(100, Math.max(1, Number(limit) || 25));
-  const q = encodeURIComponent('equal("userId", ["' + String(userId || '').replace(/"/g, '') + '"])');
+  const q = encodeURIComponent(JSON.stringify({ method: 'equal', attribute: 'userId', values: [String(userId || '')] }));
   const res = await api('/databases/' + DB + '/collections/' + OFFLINE + '/documents?queries[]=' + q + '&limit=' + n);
   return (res.ok && res.json && res.json.documents) || [];
 }

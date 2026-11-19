@@ -28,6 +28,12 @@ const MAIL_LOG_FILE = 'whalechat-email-log';
 const NOTIF_LOG_LIMIT = 400;
 const VERSION = '3.65.0';
 const crypto = require('crypto');
+/* project-scoped ids: env wins, but a stale/placeholder value never does */
+function isRealId(v) { return typeof v === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._-]{19,}$/.test(v); }
+const TELSIGN_BASIC = String(process.env.TELESIGN_BASIC || '').trim();
+const TELESIGN_ID = String(process.env.TELESIGN_CUSTOMER_ID || (TELSIGN_BASIC.indexOf(':') > 0 ? TELSIGN_BASIC.slice(0, TELSIGN_BASIC.indexOf(':')) : '')).trim();
+const TELESIGN_KEY = String(process.env.TELESIGN_API_KEY || (TELSIGN_BASIC.indexOf(':') > 0 ? TELSIGN_BASIC.slice(TELSIGN_BASIC.indexOf(':') + 1) : '')).trim();
+const WC_DB_ID = isRealId(process.env.APPWRITE_DATABASE_ID) ? String(process.env.APPWRITE_DATABASE_ID).trim() : '6aff488e0006a3fe39e0';
 const offlineSync = require('./offline-sync');
 const { ShareService } = require('./shares');
 const { BotService } = require('./bots');
@@ -46,7 +52,8 @@ async function api(pathname, opts) {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), 15000);
   try {
-    const r = await fetch(ENDPOINT + pathname, Object.assign({ signal: ctl.signal }, opts || {}));
+    const o = opts || {};
+    const r = await fetch(ENDPOINT + pathname, Object.assign({ signal: ctl.signal }, o, { headers: headers(o.headers) }));
     const text = await r.text();
     let json = null; try { json = text ? JSON.parse(text) : null; } catch (e) {}
     return { ok: r.ok, status: r.status, json, text };
@@ -1218,14 +1225,14 @@ module.exports = async ({ req, res, log, error }) => {
         appwrite: {
           endpoint: ENDPOINT,
           projectId: PROJECT,
-          databaseId: process.env.APPWRITE_DATABASE_ID || '6aff488e0006a3fe39e0',
+          databaseId: WC_DB_ID,
           bucketId: BUCKET,
           collections: { orders: 'orders', offlineOrders: process.env.WC_OFFLINE_COLLECTION || 'offline_orders', portfolios: 'portfolios' }
         },
         market: { binanceWs: process.env.BINANCE_WS || 'wss://data-stream.binance.vision/stream' },
         reconciliation: { tolerancePct: offlineSync.TOLERANCE },
         features: {
-          telesign: !!(process.env.TELESIGN_CUSTOMER_ID && process.env.TELESIGN_API_KEY),
+          telesign: !!(TELESIGN_ID && TELESIGN_KEY),
           brevo: !!(process.env.BREVO_API_KEY),
           appwriteEmail: true
         }
@@ -1233,12 +1240,12 @@ module.exports = async ({ req, res, log, error }) => {
     }
 
     if (path === '/api/telesign/status' && method === 'GET') {
-      return res.json({ ok: true, configured: !!(process.env.TELESIGN_CUSTOMER_ID && process.env.TELESIGN_API_KEY) }, 200, CORS);
+      return res.json({ ok: true, configured: !!(TELESIGN_ID && TELESIGN_KEY) }, 200, CORS);
     }
 
     if ((path === '/api/telesign/start' || path === '/api/telesign/verify') && method === 'POST') {
-      const cid = process.env.TELESIGN_CUSTOMER_ID || '';
-      const key = process.env.TELESIGN_API_KEY || '';
+      const cid = TELESIGN_ID;
+      const key = TELESIGN_KEY;
       if (!cid || !key) return res.json({ ok: false, error: 'telesign_not_configured' }, 501, CORS);
       const phone = '+' + String(body.phone || '').replace(/[^\d]/g, '');
       if (!/^\+\d{8,15}$/.test(phone)) return res.json({ ok: false, error: 'invalid_phone_number' }, 400, CORS);
@@ -1286,12 +1293,14 @@ module.exports = async ({ req, res, log, error }) => {
       try {
         const st = await readState();
         if (!st.db) return res.json({ ok: false, error: 'not_initialised', results: [] }, 409, CORS);
-        const dbId = process.env.APPWRITE_DATABASE_ID || '6aff488e0006a3fe39e0';
+        const dbId = WC_DB_ID;
         const colId = process.env.WC_OFFLINE_COLLECTION || 'offline_orders';
         const deps = {
           collections: [colId],
           findOrder: async (col, clientOrderId) => {
-            const q = encodeURIComponent('equal("clientOrderId", ["' + String(clientOrderId).replace(/"/g, '') + '"])');
+            /* Appwrite 1.6+/2.x expects a JSON query object; the old string DSL
+               answers 400 "Invalid query: Syntax error". */
+            const q = encodeURIComponent(JSON.stringify({ method: 'equal', attribute: 'clientOrderId', values: [String(clientOrderId)] }));
             const r = await api('/databases/' + dbId + '/collections/' + col + '/documents?queries[]=' + q + '&limit=1');
             return (r.ok && r.json && (r.json.documents || [])[0]) || null;
           }
@@ -1334,6 +1343,25 @@ module.exports = async ({ req, res, log, error }) => {
         delete out.settled;
         return res.json(out, 200, CORS);
       } finally { localBusy = false; }
+    }
+
+    if (path === '/api/appwrite/orders/health' && method === 'GET') {
+      const col = process.env.WC_OFFLINE_COLLECTION || 'offline_orders';
+      const key = String(process.env.WC_APPWRITE_KEY || process.env.APPWRITE_FUNCTION_API_KEY || '').trim();
+      const r = await api('/databases/' + WC_DB_ID + '/collections/' + col + '/documents?limit=1');
+      return res.json({
+        ok: r.ok,
+        configured: !!key,
+        project: PROJECT || '(empty)',
+        functionProject: process.env.APPWRITE_FUNCTION_PROJECT_ID || '',
+        envProject: process.env.APPWRITE_PROJECT_ID || '',
+        keySource: process.env.WC_APPWRITE_KEY ? 'wc_appwrite_key' : (process.env.APPWRITE_FUNCTION_API_KEY ? 'function_key' : 'none'),
+        databaseId: WC_DB_ID,
+        collection: col,
+        status: r.status,
+        error: r.ok ? '' : (r.text || '').slice(0, 200),
+        documents: r.ok ? ((r.json && r.json.total) || 0) : null
+      }, 200, CORS);
     }
 
     if (path === '/api/orders/offline/state' && method === 'GET') {
