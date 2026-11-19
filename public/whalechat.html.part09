@@ -198,7 +198,7 @@ INV.viewDash = function (params) {
     </div>
   </div>
 
-  <div class="card inv-note">${ic('shield', 14)} <span class="tiny">Prices on this build are <b>simulated</b> for demonstration, moving every 5 seconds. Trades settle instantly against your Whale Coin balance at 1 WC = $0.50.</span></div>`;
+  <div class="card inv-note">${ic('shield', 14)} <span class="tiny">Prices update continuously from the live market feed — Finnhub, Twelve Data and Binance. Trades settle instantly against your Whale Coin balance at 1 WC = $0.50.</span></div>`;
 };
 
 /* ------------------------------ market ------------------------------ */

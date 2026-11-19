@@ -19,6 +19,7 @@ const DATABASE_URL = process.env.DATABASE_URL || '';
 let email = null;
 try { email = require('./email'); } catch (e) { console.error('[email] module unavailable:', e.message); }
 const { MarketService, DEFAULT_ASSETS, assetKey, displayTickerFor } = require('./market');
+const marketCatalog = require('./market-catalog');
 const { SpotService } = require('./spot');
 const { BotService } = require('./bots');
 const { ShareService } = require('./shares');
@@ -57,7 +58,19 @@ const shares = new ShareService({
   broadcast: (event, data) => { try { broadcast(event, data); } catch (e) {} }
 });
 /* Binance live crypto prices alongside Finnhub (charts stay on Finnhub). */
-const binance = createBinanceFeed ? createBinanceFeed({ getDb: () => store.db, everyMs: Number(process.env.BINANCE_MS || 15000), onTick: (sym, price) => { try { market.ingestExternal(sym, price); } catch (e) {} } }) : null;
+const binance = createBinanceFeed ? createBinanceFeed({
+  getDb: () => store.db,
+  everyMs: Number(process.env.BINANCE_MS || 15000),
+  /* every crypto row owned by the Binance catalogue is streamed (30 pairs) */
+  getSymbols: () => {
+    try {
+      return market.assetList()
+        .filter((a) => !a.hidden && a.provider === 'binance')
+        .map((a) => String(a.ticker).toUpperCase());
+    } catch (e) { return []; }
+  },
+  onTick: (sym, price) => { try { market.ingestExternal(sym, price); } catch (e) {} }
+}) : null;
 
 /* Twelve Data runs next to Finnhub (stocks/forex) and Binance (crypto), so the
    app always shows the freshest real price from any of the three feeds. */
@@ -71,7 +84,7 @@ const twelvedata = createTwelveDataFeed ? createTwelveDataFeed({
   getTargets: () => {
     try {
       return market.assetList()
-        .filter((a) => !a.hidden && !a.synthetic && (a.assetClass === 'us' || a.assetClass === 'global' || a.assetClass === 'forex'))
+        .filter((a) => !a.hidden && !a.synthetic && a.provider === 'twelvedata')
         .map((a) => ({ ticker: a.ticker, symbol: a.finnhubSymbol || a.ticker, kind: a.assetClass }));
     } catch (e) { return []; }
   },
@@ -233,6 +246,41 @@ function ensureTradingAssets() {
     if (!s.exchange) { s.exchange = s.assetClass === 'forex' ? 'OANDA' : s.assetClass === 'crypto' ? 'Binance' : 'US'; changed = true; }
     if (!s.currency) { s.currency = s.assetClass === 'crypto' ? 'USDT' : 'USD'; changed = true; }
   });
+  /* Provider-owned catalogues: every listed row carries a `provider` so the
+     Binance, Finnhub and Twelve Data feeds only serve their own, disjoint set. */
+  const catBy = marketCatalog.byTicker;
+  db.stocks.forEach((s) => {
+    if (!s || !s.ticker) return;
+    const t = String(s.ticker).toUpperCase();
+    const row = catBy.get(t);
+    if (row) {
+      if (s.provider !== row.provider) { s.provider = row.provider; changed = true; }
+      if (s.synthetic) { s.synthetic = false; changed = true; }
+      if (!s.sector) { s.sector = row.sector; changed = true; }
+      if (!s.exchange) { s.exchange = row.exchange; changed = true; }
+      if (!s.currency) { s.currency = row.currency; changed = true; }
+      if (!s.color) { s.color = row.color; changed = true; }
+      if (!s.displayTicker) { s.displayTicker = row.displayTicker; changed = true; }
+      /* repair a fallback/hash price left far away from the real level */
+      const base = Number(row.price) || 0;
+      const cur = Number(s.price) || 0;
+      if (base > 0 && (!(cur > 0) || cur / base > 5 || cur / base < 0.2)) {
+        s.price = base; s.prevClose = base; changed = true;
+      }
+    } else if (!s.provider) {
+      s.provider = (s.assetClass === 'crypto' || /^BINANCE:/.test(String(s.finnhubSymbol || ''))) ? 'binance' : 'finnhub';
+      changed = true;
+    }
+  });
+  marketCatalog.rows.forEach((row) => {
+    if (db.stocks.some((s) => String(s.ticker).toUpperCase() === row.ticker)) return;
+    db.stocks.push(Object.assign({
+      id: 'st_' + row.ticker.toLowerCase().replace(/[^a-z0-9]/g, ''),
+      price: 0, prevClose: 0, div: 0, paused: false, custom: false, createdAt: Date.now()
+    }, row));
+    changed = true;
+  });
+
   /* The WhaleChat company stock is a real, continuously counting symbol.
      Its price is driven by the whale-share market (see bridgeCompanyStock). */
   if (!db.stocks.some((s) => String(s.ticker).toUpperCase() === 'WC')) {

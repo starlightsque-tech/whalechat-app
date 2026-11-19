@@ -1,4 +1,4 @@
-# WhaleChat 3.53.0 — web app + mobile apps
+# WhaleChat 3.54.0 — web app + mobile apps
 
 WhaleChat is a social + marketplace + wallet product built as a single-page app with a
 Node sync server and native Android/iOS shells.
@@ -80,15 +80,17 @@ FINNHUB_API_KEY=your_key node scripts/verify-finnhub.js
 npm run verify:finnhub          # same, uses FINNHUB_API_KEY from the environment
 ```
 
-## Twelve Data, Binance and durable candle history — 3.53.0
+## Provider catalogues, Twelve Data and durable candle history — 3.54.0
 
-Three real price feeds now run **at the same time**, and the freshest tick wins:
+Three real price feeds now run **at the same time**, and each owns a disjoint symbol set
+(`market-catalog.js` asserts at load time that no ticker appears twice):
 
 | Feed | Covers | Notes |
 |---|---|---|
 | **Finnhub** | US/global stocks | Existing REST + shared WebSocket. |
 | **Twelve Data** | US/global stocks and forex | New `twelvedata.js` feed. One batched `quote` request per cycle (8 symbols, rotating through the catalogue), free-tier friendly. |
-| **Binance** | Crypto and meme assets | Existing `binance.js` feed. |
+| **Binance** | Crypto and meme assets | 30 USDT pairs, REST 24h snapshot + one shared miniTicker WebSocket per pair. |
+| **Catalogue split** | — | Binance **30**, Finnhub **40**, Twelve Data **70** — different stocks, never duplicated. |
 
 `Admin → Markets` now shows **Binance** and **Twelve Data** cards (the Alpaca card is gone). The
 Twelve Data key is saved through `POST /api/connections` as `{ "twelvedata": { "apiKey": "…" } }`,

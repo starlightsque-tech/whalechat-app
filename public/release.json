@@ -1,8 +1,8 @@
 {
-  "version": "3.53.0",
-  "build": "2026-11-19T04:00:00Z",
+  "version": "3.54.0",
+  "build": "2026-11-19T05:00:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.53.0 - market tick ring-buffer persisted to Postgres (whalechat_market_ticks) so /api/market/history and the candle chart open with full history after every redeploy; Twelve Data added as a third live price source alongside Finnhub and Binance, with the Alpaca panel removed and replaced by a Twelve Data API key card in Admin > Markets; WhaleChat (WC) company stock is now a continuously counting live symbol and drives the WC-Investing daily return; B2B-Investing gains a holdings-performance chart (black live price, green user sell target, red admin buy price) and the TradingView symbol-overview widget on the marketplace, asset and trade views; trade chart defaults resized for desktop and mobile.",
-  "releasedAt": "2026-11-19T04:00:00Z",
+  "notes": "WhaleChat 3.54.0 - provider-owned stock catalogues: Binance streams 30 crypto pairs, Finnhub 40 US equities and Twelve Data 70 US/global equities, with hard disjointness (one ticker, one provider); every listed row is tagged with its provider and only that feed serves it, real ticks are never overwritten by simulation, and each feed's coverage is throttled to its plan limits. Builds on 3.53.0: Postgres tick history, Twelve Data admin key, live WC company stock, B2B holdings performance and TradingView widget.",
+  "releasedAt": "2026-11-19T05:00:00Z",
   "minimum": "3.0.0"
 }
