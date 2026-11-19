@@ -318,7 +318,7 @@
 
       function applyData(candles, source, tfUsed) {
         candles = cleanCandles(candles);
-        if (candles.length < 2) return false;
+        if (!candles.length) return false;
         series.setData(candles);
         chart.timeScale().fitContent();
         chart.timeScale().scrollToPosition(5);
@@ -333,14 +333,14 @@
       }
 
       function pickTf(ticks) {
-        var fallback = '1m';
-        for (var i = 0; i < TF_ORDER.length; i++) {
-          var tt = TF_ORDER[i];
-          var n = bucketTicks(ticks, TF_SEC[tt]).length;
-          if (n >= 2) fallback = tt;
-          if (n >= 40) return tt;             /* finest timeframe with a full screen of candles */
-        }
-        return fallback;                       /* otherwise the coarsest one that still has data */
+        var counts = TF_ORDER.map(function (tt) { return { tf: tt, n: bucketTicks(ticks, TF_SEC[tt]).length }; });
+        var usable = counts.filter(function (c) { return c.n >= 2; });
+        if (!usable.length) return '1m';
+        var comfy = usable.filter(function (c) { return c.n >= 30 && c.n <= 220; })[0];
+        if (comfy) return comfy.tf;            /* finest timeframe that fills the screen */
+        return usable.reduce(function (best, c) {
+          return Math.abs(c.n - 60) < Math.abs(best.n - 60) ? c : best;
+        }, usable[0]).tf;                      /* otherwise whichever is closest to ~60 candles */
       }
       function markChip(tf) {
         if (!sheet) return;
@@ -360,7 +360,11 @@
           var candles = bucketTicks(h.ticks, sec);
           if (applyData(candles, h.source, tf)) {
             var real = (h.ticks || []).some(function (x) { return x && (x.real === true || x.source === 'live'); });
-            src(real ? '<b>LIVE</b> · ' + candles.length + ' ' + tf + ' candles' : 'Feed · ' + candles.length + ' ' + tf + ' candles');
+            var unit = candles.length === 1 ? 'candle' : 'candles';
+            var building = candles.length < 12 ? ' · building' : '';
+            src(real
+              ? '<b>LIVE</b> · ' + candles.length + ' ' + tf + ' ' + unit + building
+              : 'Feed · ' + candles.length + ' ' + tf + ' ' + unit + building);
             note(real
               ? 'Ticks recorded by the WhaleChat market engine, bucketed into ' + tf + ' candles.'
               : 'Live feed is caching — candles form from the ticks this session records.');
