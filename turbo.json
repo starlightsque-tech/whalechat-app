@@ -1,0 +1,28 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "ui": "stream",
+  "globalEnv": [
+    "NODE_ENV",
+    "APPWRITE_ENDPOINT",
+    "APPWRITE_PROJECT_ID",
+    "APPWRITE_FUNCTION_ID",
+    "EXPO_PUBLIC_APPWRITE_ENDPOINT",
+    "EXPO_PUBLIC_APPWRITE_PROJECT_ID",
+    "EXPO_PUBLIC_APPWRITE_FUNCTION_ID",
+    "VITE_APPWRITE_ENDPOINT",
+    "VITE_APPWRITE_PROJECT_ID",
+    "VITE_APPWRITE_FUNCTION_ID",
+    "VITE_DEMO_MODE"
+  ],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", ".expo/**", "build/**"]
+    },
+    "dev": { "cache": false, "persistent": true },
+    "typecheck": { "dependsOn": ["^build"] },
+    "test": { "dependsOn": ["^build"], "outputs": ["coverage/**"] },
+    "lint": {},
+    "clean": { "cache": false }
+  }
+}

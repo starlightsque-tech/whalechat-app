@@ -1,0 +1,70 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-abyss text-slate-100 antialiased;
+  background-image:
+    radial-gradient(1200px 600px at 15% -10%, rgba(52, 211, 166, 0.12), transparent 60%),
+    radial-gradient(900px 500px at 90% 0%, rgba(56, 130, 246, 0.12), transparent 60%);
+  min-height: 100vh;
+}
+
+.card {
+  @apply rounded-2xl border border-white/10 bg-deep/80 shadow-card backdrop-blur;
+}
+
+.card-pad {
+  @apply p-4 sm:p-5;
+}
+
+.btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition
+    disabled:cursor-not-allowed disabled:opacity-40;
+}
+
+.btn-primary {
+  @apply btn bg-mint text-abyss hover:bg-foam;
+}
+
+.btn-ghost {
+  @apply btn border border-white/15 bg-white/5 text-slate-100 hover:bg-white/10;
+}
+
+.btn-danger {
+  @apply btn bg-coral/90 text-white hover:bg-coral;
+}
+
+.input {
+  @apply w-full rounded-xl border border-white/10 bg-abyss/70 px-3 py-2 text-sm text-slate-100
+    placeholder:text-slate-500 focus:border-mint/60 focus:outline-none;
+}
+
+.label {
+  @apply mb-1 block text-xs font-medium uppercase tracking-wide text-slate-400;
+}
+
+.pill {
+  @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold;
+}
+
+.scroll-thin::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.85); }
+}
+.live-dot {
+  animation: pulse-dot 1.8s ease-in-out infinite;
+}

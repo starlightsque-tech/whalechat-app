@@ -32,7 +32,15 @@
     "deploy:appwrite:db": "node scripts/deploy-appwrite-collections.mjs",
     "deploy:appwrite:function": "node scripts/deploy-appwrite-function.mjs",
     "deploy:appwrite:all": "node scripts/deploy-appwrite-collections.mjs && node scripts/deploy-appwrite-function.mjs && node scripts/deploy-appwrite.mjs",
-    "test:offline-trading": "node scripts/test-offline-trading.mjs"
+    "test:offline-trading": "node scripts/test-offline-trading.mjs",
+    "mono:build": "turbo run build",
+    "mono:typecheck": "turbo run typecheck",
+    "mono:test": "turbo run test",
+    "dev:web": "pnpm --filter @whalechat/web dev",
+    "build:web": "pnpm --filter @whalechat/web build",
+    "build:shared": "pnpm --filter @whalechat/shared build",
+    "dev:mobile": "pnpm --filter @whalechat/mobile start",
+    "appwrite:provision": "node scripts/provision-monorepo-appwrite.mjs"
   },
   "dependencies": {
     "web-push": "^3.6.7",
@@ -42,6 +50,14 @@
   },
   "devDependencies": {
     "jsdom": "^24.0.0",
-    "fake-indexeddb": "^6.0.0"
-  }
+    "fake-indexeddb": "^6.0.0",
+    "turbo": "^2.5.0",
+    "typescript": "^5.7.3",
+    "pnpm": "^10.4.1"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "packageManager": "pnpm@10.34.9"
 }
