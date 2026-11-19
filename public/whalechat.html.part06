@@ -596,6 +596,7 @@ async function loadReleasePanel() {
     }
     try {
       const bk = await fetch((typeof Remote !== 'undefined' ? Remote.url('/api/backup') : '/api/backup'), { cache: 'no-store' }).then(x => x.json());
+      try { localStorage.setItem('wc.backup.cache', JSON.stringify({ bk: bk, at: Date.now() })); } catch (e) {}
       const du = document.getElementById('relDataUsers'); if (du) du.textContent = String(bk.users || 0);
       const db = document.getElementById('relDataBackups'); if (db) db.textContent = (bk.count || 0) + ' snapshot' + ((bk.count || 0) === 1 ? '' : 's');
       const dl = document.getElementById('relDataLast'); if (dl) dl.textContent = bk.last ? new Date(bk.last).toLocaleString() : 'none yet';
@@ -621,6 +622,17 @@ async function loadReleasePanel() {
       set('relUptime', 'offline'); set('relClients', String(d.clients || 0));
       const badge = document.getElementById('relBadge');
       if (badge) { badge.className = 'badge badge-warn'; badge.textContent = 'Connected · offline cache (' + timeAgo(cached.at) + ' ago)'; }
+      try {
+        const bc = JSON.parse(localStorage.getItem('wc.backup.cache') || 'null');
+        if (bc && bc.bk) {
+          set('relDataUsers', String(bc.bk.users || 0));
+          set('relDataBackups', (bc.bk.count || 0) + ' snapshot' + ((bc.bk.count || 0) === 1 ? '' : 's'));
+          set('relDataLast', bc.bk.last ? new Date(bc.bk.last).toLocaleString() : 'none yet');
+          set('relDataStore', bc.bk.storage === 'appwrite' ? 'Appwrite Storage (persistent)' : 'Persistent storage');
+          const dgb = document.getElementById('relDataBadge');
+          if (dgb) { dgb.className = 'badge badge-success'; dgb.textContent = 'Protected · cached'; }
+        }
+      } catch (e3) {}
       return;
     }
     set('relServerBuild', typeof Remote !== 'undefined' && Remote.enabled ? 'connected' : 'local mode');

@@ -26,7 +26,7 @@ const CODES_FILE = 'whalechat-codes';
 const MAIL_FILE = 'whalechat-mail';
 const MAIL_LOG_FILE = 'whalechat-email-log';
 const NOTIF_LOG_LIMIT = 400;
-const VERSION = '3.57.5';
+const VERSION = '3.57.6';
 const crypto = require('crypto');
 
 const CORS = {
@@ -202,17 +202,6 @@ async function sendCodeEmail(to, code, purposeLabel) {
   const res = await sendMail(cfg, to, subject, html, text);
   await appendMailLog({ type: 'verification', to, subject, code, purpose: purposeLabel, status: res.ok ? 'sent' : 'failed', provider: res.provider, messageId: res.messageId, error: res.error, from: cfg.from });
   return res.ok;
-}
-async function sendCodeEmail(to, code, purposeLabel) {
-  const cfg = await readMailConfig();
-  const subject = 'Your WhaleChat verification code: ' + code;
-  const html = '<div style="font-family:system-ui,sans-serif;background:#04101a;color:#e9f4f9;padding:28px;border-radius:14px">' +
-    '<h2 style="margin:0 0 8px">WhaleChat verification</h2>' +
-    '<p style="color:#8ba4b6">Use this code to verify ' + purposeLabel + '. It expires in 15 minutes.</p>' +
-    '<div style="font-size:32px;letter-spacing:10px;font-weight:800;color:#2ee6c9;background:#0b1d29;border:1px dashed #2ee6c9;border-radius:12px;padding:16px;text-align:center;margin:18px 0">' + code + '</div>' +
-    '<p style="color:#8ba4b6;font-size:12px">If you did not request this, ignore this email and never share the code.</p></div>';
-  const text = 'Your WhaleChat verification code is ' + code + ' (valid 15 minutes).';
-  return sendMail(cfg, to, subject, html, text);
 }
 async function apiRaw(url, opts) {
   try {
@@ -577,6 +566,84 @@ module.exports = async ({ req, res, log, error }) => {
       if (!payload) return res.json({ ok: false, error: 'unauthorised' }, 401, CORS);
       const cfg = await readMailConfig();
       return res.json({ ok: true, configured: !!cfg.webhookKey, id: cfg.webhookId || null, url: 'https://whalechat-api.appwrite.network/api/webhook/brevo' }, 200, CORS);
+    }
+
+    if (path === '/api/email/welcome' && method === 'POST') {
+      const st = await readState();
+      const u = (st.db && st.db.users || []).find((x) => x && (x.id === body.userId || String(x.email || '').toLowerCase() === String(body.email || '').toLowerCase()));
+      if (!u || !u.email) return res.json({ ok: false, error: 'user_missing' }, 404, CORS);
+      const cfg = await readMailConfig();
+      if (!cfg.brevoKey && !cfg.resendKey) return res.json({ ok: false, error: 'not_configured' }, 400, CORS);
+      const first = String(u.fullName || u.username || 'there').split(' ')[0];
+      const subject = 'Welcome to WhaleChat 🐋';
+      const html = '<div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#04101a;color:#e9f4f9;padding:32px;border-radius:16px;max-width:560px;margin:auto">' +
+        '<div style="font-size:28px;font-weight:900;color:#2ee6c9">WhaleChat</div>' +
+        '<h2 style="margin:14px 0 8px">Welcome aboard, ' + first + ' 🐋</h2>' +
+        '<p style="color:#8ba4b6;line-height:1.7">Your email is verified and your WhaleChat account is ready. Chat, shop, trade and invest — all in one place.</p>' +
+        '<a href="https://whalechat.appwrite.network/whalechat.html#/profile" style="display:inline-block;margin-top:16px;background:#2ee6c9;color:#03221d;text-decoration:none;font-weight:800;padding:12px 20px;border-radius:10px">Open my account</a>' +
+        '<p style="color:#63798a;font-size:11px;margin-top:22px">Sent by WhaleChat · whalechat1@gmail.com via Brevo</p></div>';
+      const out = await sendMail(cfg, u.email, subject, html, 'Welcome to WhaleChat, ' + first + '! Your account is verified and ready.');
+      await appendMailLog({ type: 'welcome', to: u.email, subject, status: out.ok ? 'sent' : 'failed', provider: out.provider, messageId: out.messageId, error: out.error, from: cfg.from, userId: u.id });
+      return res.json(out.ok ? { ok: true, messageId: out.messageId } : { ok: false, error: 'send_failed', message: out.error }, out.ok ? 200 : 502, CORS);
+    }
+
+    if (path === '/api/notify/deposit-approved' && method === 'POST') {
+      const st = await readState();
+      const u = (st.db && st.db.users || []).find((x) => x && x.id === body.userId);
+      if (!u || !u.email) return res.json({ ok: false, error: 'user_missing' }, 404, CORS);
+      const cfg = await readMailConfig();
+      if (!cfg.brevoKey && !cfg.resendKey) return res.json({ ok: false, error: 'not_configured' }, 400, CORS);
+      const amount = Number(body.amount) || 0;
+      const coin = String(body.coin || 'USD').toUpperCase();
+      const subject = 'Deposit approved · ' + (coin === 'USD' ? '$' + amount.toFixed(2) : amount.toFixed(2) + ' ' + coin);
+      const html = '<div style="font-family:system-ui,sans-serif;background:#04101a;color:#e9f4f9;padding:28px;border-radius:14px;max-width:540px;margin:auto">' +
+        '<h2 style="color:#2ee6c9;margin:0 0 10px">Deposit approved ✅</h2>' +
+        '<p style="color:#8ba4b6;line-height:1.7">Hi ' + String(u.fullName || u.username || 'there').split(' ')[0] + ', your deposit of <b style="color:#e9f4f9">' + amount.toFixed(2) + ' ' + coin + '</b> has been credited to your WhaleChat crypto balance.</p>' +
+        '<p style="color:#8ba4b6">Open your account to convert it to WC or move it to your investment account.</p>' +
+        '<a href="https://whalechat.appwrite.network/whalechat.html#/account" style="display:inline-block;margin-top:14px;background:#2ee6c9;color:#03221d;text-decoration:none;font-weight:800;padding:11px 18px;border-radius:10px">Open my account</a></div>';
+      const out = await sendMail(cfg, u.email, subject, html, 'Your deposit of ' + amount.toFixed(2) + ' ' + coin + ' was approved and credited.');
+      await appendMailLog({ type: 'deposit', to: u.email, subject, status: out.ok ? 'sent' : 'failed', provider: out.provider, messageId: out.messageId, error: out.error, from: cfg.from, userId: u.id });
+      return res.json(out.ok ? { ok: true } : { ok: false, error: 'send_failed', message: out.error }, out.ok ? 200 : 502, CORS);
+    }
+
+    if (path === '/api/notify/withdrawal-approved' && method === 'POST') {
+      const st = await readState();
+      const u = (st.db && st.db.users || []).find((x) => x && x.id === body.userId);
+      if (!u || !u.email) return res.json({ ok: false, error: 'user_missing' }, 404, CORS);
+      const cfg = await readMailConfig();
+      if (!cfg.brevoKey && !cfg.resendKey) return res.json({ ok: false, error: 'not_configured' }, 400, CORS);
+      const amount = Number(body.amount) || 0;
+      const network = String(body.network || 'USDT');
+      const txRef = String(body.txRef || '');
+      const subject = 'Withdrawal approved · ' + amount.toFixed(2) + ' ' + network;
+      const html = '<div style="font-family:system-ui,sans-serif;background:#04101a;color:#e9f4f9;padding:28px;border-radius:14px;max-width:540px;margin:auto">' +
+        '<h2 style="color:#2ee6c9;margin:0 0 10px">Withdrawal approved 💸</h2>' +
+        '<p style="color:#8ba4b6;line-height:1.7">Hi ' + String(u.fullName || u.username || 'there').split(' ')[0] + ', your withdrawal of <b style="color:#e9f4f9">' + amount.toFixed(2) + ' ' + network + '</b> has been approved and sent.</p>' +
+        (txRef ? '<p style="color:#8ba4b6;font-size:12px">Transaction: <b style="color:#e9f4f9">' + txRef + '</b></p>' : '') +
+        '<a href="https://whalechat.appwrite.network/whalechat.html#/account" style="display:inline-block;margin-top:14px;background:#2ee6c9;color:#03221d;text-decoration:none;font-weight:800;padding:11px 18px;border-radius:10px">Open my account</a></div>';
+      const out = await sendMail(cfg, u.email, subject, html, 'Your withdrawal of ' + amount.toFixed(2) + ' ' + network + ' was approved.');
+      await appendMailLog({ type: 'withdrawal', to: u.email, subject, status: out.ok ? 'sent' : 'failed', provider: out.provider, messageId: out.messageId, error: out.error, from: cfg.from, userId: u.id });
+      return res.json(out.ok ? { ok: true } : { ok: false, error: 'send_failed', message: out.error }, out.ok ? 200 : 502, CORS);
+    }
+
+    if (path === '/api/notify/price-alert' && method === 'POST') {
+      const st = await readState();
+      const u = (st.db && st.db.users || []).find((x) => x && x.id === body.userId);
+      if (!u || !u.email) return res.json({ ok: false, error: 'user_missing' }, 404, CORS);
+      const cfg = await readMailConfig();
+      if (!cfg.brevoKey && !cfg.resendKey) return res.json({ ok: false, error: 'not_configured' }, 400, CORS);
+      const ticker = String(body.ticker || '').toUpperCase().slice(0, 20);
+      const price = Number(body.price) || 0;
+      const target = Number(body.target) || 0;
+      const side = String(body.side || 'price');
+      const subject = ticker + ' price alert · ' + (side === 'sell' ? 'sell target reached' : side === 'buy' ? 'buy target reached' : 'target reached');
+      const html = '<div style="font-family:system-ui,sans-serif;background:#04101a;color:#e9f4f9;padding:28px;border-radius:14px;max-width:540px;margin:auto">' +
+        '<h2 style="color:#2ee6c9;margin:0 0 10px">' + ticker + ' price alert</h2>' +
+        '<p style="color:#8ba4b6;line-height:1.7">Hi ' + String(u.fullName || u.username || 'there').split(' ')[0] + ', <b style="color:#e9f4f9">' + ticker + '</b> is now <b style="color:#e9f4f9">$' + price.toFixed(2) + '</b> and your ' + side + ' target of <b style="color:#e9f4f9">$' + target.toFixed(2) + '</b> was reached.</p>' +
+        '<a href="https://whalechat.appwrite.network/whalechat.html#/investment/b2b" style="display:inline-block;margin-top:14px;background:#2ee6c9;color:#03221d;text-decoration:none;font-weight:800;padding:11px 18px;border-radius:10px">Open the trading desk</a></div>';
+      const out = await sendMail(cfg, u.email, subject, html, ticker + ' is now $' + price.toFixed(2) + ' — your ' + side + ' target of $' + target.toFixed(2) + ' was reached.');
+      await appendMailLog({ type: 'price_alert', to: u.email, subject, status: out.ok ? 'sent' : 'failed', provider: out.provider, messageId: out.messageId, error: out.error, from: cfg.from, userId: u.id });
+      return res.json(out.ok ? { ok: true } : { ok: false, error: 'send_failed', message: out.error }, out.ok ? 200 : 502, CORS);
     }
 
     if (path === '/api/email/status' && method === 'GET') {

@@ -54,8 +54,20 @@
     var d = Math.abs(n) >= 1000 ? 2 : Math.abs(n) >= 1 ? 2 : 4;
     return '$' + n.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
   }
+  function syncBase() {
+    var b = safe(function () { return (typeof Remote !== 'undefined' && Remote.base) ? Remote.base : ''; }, '');
+    if (!b) b = safe(function () { return DEFAULT_SYNC_SERVER || ''; }, '');
+    return b;
+  }
   function api(path, body) {
-    return fetch(path, {
+    /* API paths must go to the Appwrite sync function, never to the static
+       site origin (that was why the verification card reported 404 / no code) */
+    var url = path;
+    if (path.indexOf('/api/') === 0) {
+      var base = syncBase();
+      url = base ? base + path : path;
+    }
+    return fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body || {})
@@ -444,35 +456,162 @@
     });
   }
 
-  async function startEmailVerification(u, purpose) {
-    if (!u) return;
-    if (!navigator.onLine) {
-      toast357('You are offline — verify your email from Settings when you reconnect', 'warn');
-      return;
-    }
-    var res = await api('/api/verify/email-code', {
-      email: u.email, purpose: purpose || 'signup', name: u.fullName || u.username,
-      userId: u.id
+  async function sendVerificationCode(u, purpose) {
+    return api('/api/verify/email-code', {
+      email: u.email, purpose: purpose || 'signup', name: u.fullName || u.username, userId: u.id
     });
-    if (!res.ok) {
-      toast357(res.message || 'Could not send the verification code — try again from Settings', 'err');
-      return;
+  }
+
+  function injectVerifyCSS() {
+    if (document.getElementById('wc357-verify-css')) return;
+    var st = document.createElement('style');
+    st.id = 'wc357-verify-css';
+    st.textContent = [
+      '#wcVerifyOverlay{position:fixed;inset:0;z-index:2147483000;display:flex;align-items:center;justify-content:center;padding:20px;',
+      'background:rgba(2,10,16,.82);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);overflow:auto}',
+      '#wcVerifyOverlay .wcv-card{width:100%;max-width:430px;background:linear-gradient(180deg,#123143,#081c28);border:1px solid rgba(46,230,201,.28);',
+      'border-radius:24px;padding:28px 24px;box-shadow:0 30px 90px rgba(0,0,0,.6);text-align:center;color:#e9f4f9;',
+      'font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Inter,sans-serif;animation:wcvIn .28s ease}',
+      '@keyframes wcvIn{from{opacity:0;transform:translateY(14px) scale(.98)}to{opacity:1;transform:none}}',
+      '#wcVerifyOverlay .wcv-ic{width:64px;height:64px;border-radius:50%;margin:0 auto 14px;display:flex;align-items:center;justify-content:center;',
+      'background:rgba(46,230,201,.14);color:#2ee6c9;font-size:30px;border:1px solid rgba(46,230,201,.3)}',
+      '#wcVerifyOverlay h2{font-size:21px;margin:0 0 8px;letter-spacing:-.02em}',
+      '#wcVerifyOverlay p{margin:0;color:#8ba4b6;font-size:13px;line-height:1.65}',
+      '#wcVerifyOverlay .wcv-code{width:100%;height:62px;margin-top:18px;border-radius:14px;border:1px solid rgba(46,230,201,.4);',
+      'background:#04101a;color:#e9f4f9;font:800 26px/1 Menlo,Consolas,monospace;letter-spacing:12px;text-align:center;outline:none}',
+      '#wcVerifyOverlay .wcv-code:focus{box-shadow:0 0 0 3px rgba(46,230,201,.15)}',
+      '#wcVerifyOverlay .wcv-btn{width:100%;height:50px;margin-top:12px;border:0;border-radius:13px;cursor:pointer;font-weight:800;font-size:14px;',
+      'background:linear-gradient(135deg,#2ee6c9,#3aa0ff);color:#03221d}',
+      '#wcVerifyOverlay .wcv-btn:disabled{opacity:.55}',
+      '#wcVerifyOverlay .wcv-ghost{background:rgba(255,255,255,.06);color:#e9f4f9;border:1px solid rgba(255,255,255,.14);font-weight:700}',
+      '#wcVerifyOverlay .wcv-msg{margin-top:12px;font-size:12.5px;line-height:1.55;display:none}',
+      '#wcVerifyOverlay .wcv-msg.err{display:block;color:#ff9aaa}',
+      '#wcVerifyOverlay .wcv-msg.ok{display:block;color:#7ff0c2}',
+      '#wcVerifyOverlay .wcv-success{font-size:15px;font-weight:700;line-height:1.7;color:#e9f4f9;margin:8px 0 0}',
+      '#wcVerifyOverlay .wcv-mail{color:#2ee6c9;font-weight:700;word-break:break-all}',
+      '#wcVerifyOverlay .wcv-spin{display:inline-block;width:18px;height:18px;border:2px solid rgba(3,34,29,.25);border-top-color:#03221d;border-radius:50%;animation:wcvSpin .7s linear infinite;vertical-align:-3px}',
+      '@keyframes wcvSpin{to{transform:rotate(360deg)}}'
+    ].join('\n');
+    document.head.appendChild(st);
+  }
+
+  function showVerifyScreen(u, opts) {
+    opts = opts || {};
+    injectVerifyCSS();
+    var old = document.getElementById('wcVerifyOverlay');
+    if (old) old.remove();
+    var el = document.createElement('div');
+    el.id = 'wcVerifyOverlay';
+    el.innerHTML =
+      '<div class="wcv-card">' +
+        '<div class="wcv-ic" id="wcvIcon">✉</div>' +
+        '<h2 id="wcvTitle">Verify your email</h2>' +
+        '<p id="wcvSub">We sent a 6-digit code to <span class="wcv-mail">' + esc(u.email) + '</span>. Paste it below to finish creating your account.</p>' +
+        '<input class="wcv-code" id="wcvCode" inputmode="numeric" maxlength="6" placeholder="000000" autocomplete="one-time-code"/>' +
+        '<div class="wcv-msg" id="wcvMsg"></div>' +
+        '<button class="wcv-btn" id="wcvVerify">Verify email</button>' +
+        '<button class="wcv-btn wcv-ghost" id="wcvRetry" style="display:none">Try again — send a new code</button>' +
+        '<div class="wcv-msg" id="wcvFoot" style="color:#63798a">The code expires in 15 minutes. Check your spam folder if it is not there.</div>' +
+      '</div>';
+    document.body.appendChild(el);
+    var input = el.querySelector('#wcvCode');
+    var verify = el.querySelector('#wcvVerify');
+    var retry = el.querySelector('#wcvRetry');
+    var msg = el.querySelector('#wcvMsg');
+    var foot = el.querySelector('#wcvFoot');
+
+    function say(kind, text) {
+      msg.className = 'wcv-msg';
+      if (kind) msg.className += ' ' + kind;
+      msg.textContent = text || '';
     }
-    var out = await codeDialog({
-      title: 'Verify your email',
-      sub: 'We sent a 6-digit code to ' + u.email + '. Paste it below and press Verify.',
-      email: u.email, purpose: purpose || 'signup',
-      fallbackCode: res.code || ''
-    });
-    if (out && out.ok) {
+    function busy(on) {
+      verify.disabled = !!on;
+      verify.innerHTML = on ? '<span class="wcv-spin"></span> Verifying…' : 'Verify email';
+    }
+    function success() {
+      el.querySelector('.wcv-card').innerHTML =
+        '<div class="wcv-ic" style="color:#7ff0c2;background:rgba(34,197,94,.16);border-color:rgba(34,197,94,.4)">✓</div>' +
+        '<h2>Email verified</h2>' +
+        '<p class="wcv-success">Congratulations your account is now verified successfully. Welcome to Whalechat🤝</p>' +
+        '<p style="margin-top:12px">Sending your welcome email…</p>';
       u.verified = true;
       u.emailVerifiedAt = Date.now();
       u.updatedAt = Date.now();
       save357(); backupNow();
-      toast357('Email verified — welcome to your account');
-      go357('profile');
+      /* welcome mail is sent once, after a successful verification */
+      if (!u.welcomeEmailAt) {
+        api('/api/email/welcome', { userId: u.id }).then(function (r) {
+          if (r && r.ok) { u.welcomeEmailAt = Date.now(); save357(); }
+        }).catch(function () {});
+      }
+      setTimeout(function () {
+        var o = document.getElementById('wcVerifyOverlay');
+        if (o) o.remove();
+        go357('profile');
+        try { if (typeof render === 'function') render(); } catch (e) {}
+      }, 2400);
     }
+    async function doVerify() {
+      var code = String(input.value || '').replace(/\D/g, '');
+      if (code.length !== 6) { say('err', 'Enter the 6-digit code from your email.'); input.focus(); return; }
+      busy(true); say('', '');
+      var r = await api('/api/verify/email-check', { email: u.email, purpose: opts.purpose || 'signup', code: code });
+      busy(false);
+      if (!r.ok) {
+        say('err', (r.message || 'Verification failed — the code is incorrect or expired.'));
+        retry.style.display = 'block';
+        input.select();
+        return;
+      }
+      success();
+    }
+    async function resend() {
+      retry.disabled = true;
+      retry.textContent = 'Sending a new code…';
+      say('', '');
+      var r = await sendVerificationCode(u, opts.purpose || 'signup');
+      retry.disabled = false;
+      retry.textContent = 'Try again — send a new code';
+      if (!r.ok) { say('err', r.message || 'Could not send a new code. Try again in a moment.'); return; }
+      input.value = '';
+      input.focus();
+      say('ok', 'A new 6-digit code was sent to ' + u.email + '.');
+      retry.style.display = 'none';
+      if (r.code) {
+        foot.innerHTML = 'Email delivery is not configured — your code is <b style="color:#2ee6c9">' + esc(r.code) + '</b>';
+        foot.className = 'wcv-msg ok';
+      }
+    }
+    verify.onclick = doVerify;
+    retry.onclick = resend;
+    input.addEventListener('keydown', function (e) { if (e.key === 'Enter') doVerify(); });
+    input.addEventListener('input', function () {
+      input.value = input.value.replace(/\D/g, '').slice(0, 6);
+      if (input.value.length === 6) setTimeout(doVerify, 250);
+    });
+    if (opts.error) say('err', opts.error);
+    if (opts.code) {
+      foot.innerHTML = 'Email delivery is not configured — your code is <b style="color:#2ee6c9">' + esc(opts.code) + '</b>';
+      foot.className = 'wcv-msg ok';
+    }
+    setTimeout(function () { try { input.focus(); } catch (e) {} }, 250);
   }
+
+  async function startEmailVerification(u, purpose) {
+    if (!u) return;
+    if (!navigator.onLine) {
+      showVerifyScreen(u, { purpose: purpose || 'signup', error: 'You are offline. Reconnect and press “Try again” to receive your code.' });
+      return;
+    }
+    var res = await sendVerificationCode(u, purpose || 'signup');
+    showVerifyScreen(u, {
+      purpose: purpose || 'signup',
+      error: res.ok ? '' : (res.message || 'Could not send the verification code.'),
+      code: res.code || ''
+    });
+  }
+
   window.wc357VerifyEmail = function () {
     var u = me357();
     if (!u) return;
@@ -911,6 +1050,102 @@
   }
 
   /* =====================================================================
+     11b · transactional emails: deposits, withdrawals, price alerts
+     ===================================================================== */
+  function notifyEmail(path, body) {
+    if (!navigator.onLine) return Promise.resolve({ ok: false, error: 'offline' });
+    var base = safe(function () { return (typeof Remote !== 'undefined' && Remote.base) ? Remote.base : ''; }, '');
+    if (!base) return Promise.resolve({ ok: false, error: 'no_server' });
+    return fetch(base + path, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body || {})
+    }).then(function (r) { return r.json().catch(function () { return {}; }); })
+      .catch(function () { return { ok: false, error: 'network' }; });
+  }
+
+  function patchMoneyEmails() {
+    if (!safe(function () { return App && App.depApprove; }, null) || App.depApprove.__wc357mail) return;
+    var dep = App.depApprove, wd = App.wdApprove;
+    App.depApprove = async function (id) {
+      var out = await dep.apply(App, arguments);
+      try {
+        var d = safe(function () { return DB.deposits.find(function (x) { return x.id === id; }); }, null);
+        if (d && d.status === 'approved' && !d.approvalEmailAt) {
+          var r = await notifyEmail('/api/notify/deposit-approved', { userId: d.userId, amount: Number(d.usd) || 0, coin: d.coin || 'USD' });
+          if (r && r.ok) { d.approvalEmailAt = Date.now(); save357(); }
+        }
+      } catch (e) {}
+      return out;
+    };
+    App.depApprove.__wc357mail = true;
+    if (typeof wd === 'function' && !wd.__wc357mail) {
+      App.wdApprove = async function (id) {
+        var out = await wd.apply(App, arguments);
+        try {
+          var w = safe(function () { return DB.withdrawals.find(function (x) { return x.id === id; }); }, null);
+          if (w && w.status === 'approved' && !w.approvalEmailAt) {
+            var amount = w.crypto ? Number(w.usd) || 0 : Number(w.coins) || 0;
+            var network = w.crypto ? (w.coin || 'USDT') : (w.network || 'WC');
+            var r = await notifyEmail('/api/notify/withdrawal-approved', { userId: w.userId, amount: amount, network: network, txRef: w.txHash || '' });
+            if (r && r.ok) { w.approvalEmailAt = Date.now(); save357(); }
+          }
+        } catch (e) {}
+        return out;
+      };
+      App.wdApprove.__wc357mail = true;
+    }
+  }
+
+  function patchPriceAlertEmails() {
+    var INV = safe(function () { return window.INV; }, null);
+    if (!INV || !INV.checkAlerts || INV.checkAlerts.__wc357) return;
+    INV.checkAlerts.__wc357 = true;
+    var base = INV.checkAlerts;
+    INV.checkAlerts = function () {
+      var out = base.apply(INV, arguments);
+      try {
+        var u = me357();
+        if (!u || !navigator.onLine) return out;
+        (DB.alerts || []).forEach(function (a) {
+          if (!a || a.userId !== u.id || !a.triggeredAt || a.alertEmailedAt) return;
+          if (Date.now() - a.triggeredAt > 120000) return;
+          var q = INV.quote(a.ticker);
+          notifyEmail('/api/notify/price-alert', {
+            userId: u.id, ticker: a.ticker, price: Number(q && q.price) || Number(a.triggerPrice) || 0,
+            target: Number(a.target) || 0, side: a.dir === 'above' ? 'sell' : 'buy'
+          }).then(function (r) { if (r && r.ok) { a.alertEmailedAt = Date.now(); save357(); } });
+        });
+      } catch (e) {}
+      return out;
+    };
+  }
+
+  function b2bAlertEmailWatch() {
+    if (!navigator.onLine) return;
+    var u = me357();
+    var INV = safe(function () { return window.INV; }, null);
+    if (!u || !INV || !u.investAcct || !Array.isArray(u.investAcct.b2bAlerts)) return;
+    var sent = false;
+    u.investAcct.b2bAlerts.forEach(function (al) {
+      if (!al || !al.ticker) return;
+      var q = safe(function () { return INV.quote(al.ticker); }, null);
+      if (!q || !(Number(q.price) > 0)) return;
+      var px = Number(q.price);
+      var buy = Number(al.buy) || 0, sell = Number(al.sell) || 0;
+      if (buy > 0 && px <= buy && !al.buyEmailAt) {
+        al.buyEmailAt = Date.now();
+        notifyEmail('/api/notify/price-alert', { userId: u.id, ticker: al.ticker, price: px, target: buy, side: 'buy' });
+        sent = true;
+      }
+      if (sell > 0 && px >= sell && !al.sellEmailAt) {
+        al.sellEmailAt = Date.now();
+        notifyEmail('/api/notify/price-alert', { userId: u.id, ticker: al.ticker, price: px, target: sell, side: 'sell' });
+        sent = true;
+      }
+    });
+    if (sent) save357();
+  }
+
+  /* =====================================================================
      12 · boot
      ===================================================================== */
   function ensureVerificationStep() {
@@ -944,7 +1179,10 @@
     patchTV();
     patchBuyLinks();
     patchAutoSellOnly();
+    patchMoneyEmails();
+    patchPriceAlertEmails();
     bindActions();
+    setInterval(b2bAlertEmailWatch, 10000);
     patchOfflinePrices();
     restoreLocalBackup();
     mergeServerAccounts().then(function () { restoreLocalBackup(); });

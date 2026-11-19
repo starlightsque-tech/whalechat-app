@@ -2064,7 +2064,12 @@ App.admPushDismiss = function () {
 
 async function ltServersPanel() {
   let mail = null;
-  try { mail = await fetch((typeof Remote !== 'undefined' ? Remote.url('/api/email/status') : '/api/email/status'), { cache: 'no-store' }).then(r => r.json()); } catch (e) {}
+  try {
+    mail = await fetch((typeof Remote !== 'undefined' ? Remote.url('/api/email/status') : '/api/email/status'), { cache: 'no-store' }).then(r => r.json());
+    if (mail && mail.ok !== false) { try { localStorage.setItem('wc.email.status', JSON.stringify({ d: mail, at: Date.now() })); } catch (e) {} }
+  } catch (e) {
+    try { const c = JSON.parse(localStorage.getItem('wc.email.status') || 'null'); if (c && c.d) { mail = Object.assign({}, c.d, { cached: true }); } } catch (e2) {}
+  }
   const pushOn = !!(DB.settings && DB.settings.push && DB.settings.push.enabled);
   const tabs = `<div class="admin-nav">${ADMIN_NAV.map(n => {
     const key = n.href.replace('#/admin', '') || '';
@@ -2090,7 +2095,7 @@ async function ltServersPanel() {
     <div class="between" style="align-items:center;flex-wrap:wrap;gap:10px">
       <div><div class="card-title" style="margin:0 0 4px">Email server</div>
         <div class="small ${mail && mail.configured ? 'up' : 'muted'}">
-          ${mail && mail.configured ? 'Connected · sending from ' + esc(mail.from || '') + ' via ' + esc(mail.provider || '') : 'Not connected'}</div></div>
+          ${mail && mail.configured ? 'Connected' + (mail.cached ? ' (cached)' : '') + ' · sending from ' + esc(mail.from || '') + ' via ' + esc(mail.provider || '') : 'Not connected'}</div></div>
       <span class="badge ${mail && mail.configured ? 'badge-success' : 'badge-warn'}">${mail && mail.configured ? 'Live' : 'Off'}</span>
     </div>
     <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:12px">

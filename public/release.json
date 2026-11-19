@@ -1,8 +1,8 @@
 {
-  "version": "3.57.5",
-  "build": "2026-11-19T11:42:26Z",
+  "version": "3.57.6",
+  "build": "2026-11-19T11:56:58Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.57.5 — Release page now reads /api/release and /api/backup from the Appwrite sync function instead of the static site origin, so it shows the correct build, revision, uptime, live connections and protected storage instead of “No sync server”. Offline, the page and the email panel show the last known server/email state from a device cache. The sync connection keeps retrying every 12 seconds, Brevo delivery events update the audit log live, and both the function and the email service run 24/7 in Appwrite.",
-  "releasedAt": "2026-11-19T11:42:26Z",
+  "notes": "WhaleChat 3.57.6 — sign-up now opens a full-screen email verification card immediately after Create account, sends the 6-digit code, verifies it, shows the success notice “Congratulations your account is now verified successfully. Welcome to Whalechat🤝”, sends the welcome email and redirects to My account; wrong codes show a failure notice with a Try again button that sends a new code. Deposit approvals, withdrawal approvals and price alert targets now send Brevo email automatically. Release/email pages keep cached status offline.",
+  "releasedAt": "2026-11-19T11:56:58Z",
   "minimum": "3.0.0"
 }
