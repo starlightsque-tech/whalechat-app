@@ -101,8 +101,10 @@ async function callTelesign(pathname, form) {
     let json = null;
     try { json = text ? JSON.parse(text) : null; } catch (e) {}
     if (!res.ok) {
-      const err = new Error((json && (json.errors && json.errors[0] && json.errors[0].description)) || 'telesign_http_' + res.status);
-      err.status = res.status;
+      const first = json && json.errors && json.errors[0];
+      const err = new Error((first && first.description) || (json && json.status && json.status.description) || 'telesign_http_' + res.status);
+      err.status = res.status === 401 ? 403 : res.status;   /* auth succeeded, the transaction was refused */
+      err.code = first ? first.code : undefined;
       err.detail = json;
       throw err;
     }

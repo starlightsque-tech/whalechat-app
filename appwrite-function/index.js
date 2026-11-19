@@ -1265,7 +1265,17 @@ module.exports = async ({ req, res, log, error }) => {
           headers: { authorization: auth, accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded' },
           body: new URLSearchParams({ phone_number: phone, template }).toString()
         });
-        if (!r.ok) return res.json({ ok: false, error: 'telesign_send_failed', detail: (r.json && r.json.status && r.json.status.description) || r.status }, 502, CORS);
+        if (!r.ok) {
+          const first = r.json && r.json.errors && r.json.errors[0];
+          const why = (first && first.description) || (r.json && r.json.status && r.json.status.description) || ('HTTP ' + r.status);
+          return res.json({
+            ok: false,
+            error: 'telesign_send_failed',
+            message: why,
+            code: first ? first.code : undefined,
+            trial: /trial account/i.test(why)
+          }, 502, CORS);
+        }
         codes.codes[phone] = { hash: await sha256('wc::' + phone + '::' + code), referenceId: String((r.json && r.json.reference_id) || ''), sentAt: now, exp: now + 5 * 60000, tries: 0 };
         for (const k of Object.keys(codes.codes)) if (Number(codes.codes[k].exp) < now) delete codes.codes[k];
         await writeJsonFile('wc-telesign-codes', 'wc-telesign-codes.json', codes);

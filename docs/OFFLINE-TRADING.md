@@ -144,3 +144,18 @@ Two fixes were needed to get there:
 
 The browser never sees a Telesign credential — it calls `/api/telesign/start`
 and `/api/telesign/verify`, which the function signs with HTTP Basic auth.
+
+Live check against the deployed function (credentials configured):
+
+```json
+{"ok": false, "error": "telesign_send_failed",
+ "message": "+14692466072 has not been verified for this trial account.",
+ "code": -10033, "trial": true}
+```
+
+That is Telesign itself answering — the customer id / API key pair is accepted
+(it returns a `reference_id` and a transaction record), but this **trial
+account** may only message numbers verified in the Telesign portal. Add and
+verify the destination number under Telesign → Numbers, or move the account to a
+funded plan, and the same call delivers the OTP. The app now shows Telesign's
+own message instead of a generic failure.

@@ -100,7 +100,9 @@
         send.disabled = false;
         if (!out.ok || !out.json.ok) {
           var err = out.json.error || 'send_failed';
-          msg(err === 'code_already_sent' ? 'A code was just sent — wait a minute and retry' : 'Could not send the code (' + err + ')', 'err');
+          if (err === 'code_already_sent') msg('A code was just sent — wait a minute and retry', 'err');
+          else if (out.json.message) msg(out.json.message + (out.json.trial ? ' — verify this number in your Telesign account first.' : ''), 'err');
+          else msg('Could not send the code (' + err + ')', 'err');
           return;
         }
         state.referenceId = out.json.referenceId || '';
@@ -198,7 +200,9 @@
       post('/api/telesign/start', { phone: phone, purpose: 'login' }).then(function (out) {
         btn.disabled = false;
         if (!out.ok || !out.json.ok) {
-          loginMsg('Could not send (' + ((out.json && out.json.error) || 'error') + ')', 'err');
+          var why = (out.json && out.json.message) || ((out.json && out.json.error) || 'error');
+          if (out.json && out.json.trial) why += ' — verify this number in your Telesign account first.';
+          loginMsg(why, 'err');
           return;
         }
         state.referenceId = out.json.referenceId || '';
