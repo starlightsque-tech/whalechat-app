@@ -106,7 +106,17 @@ function createBinanceFeed(opts) {
         };
         /* REST snapshots seed every pair immediately — the WebSocket then
            keeps them moving tick by tick between polls */
-        if (onTick) { try { onTick(symbol, price); } catch (e) {} }
+        if (onTick) {
+          try {
+            onTick(symbol, price, {
+              prevClose: open > 0 ? open : price,
+              open: open > 0 ? open : price,
+              dayHigh: Number(r.highPrice) || price,
+              dayLow: Number(r.lowPrice) || price,
+              vol: Number(r.quoteVolume) || 0
+            });
+          } catch (e) {}
+        }
       });
       state.lastAt = now; state.ticks++; state.source = 'binance'; state.lastError = '';
       try {
@@ -164,7 +174,17 @@ function createBinanceFeed(opts) {
           source: 'binance-ws'
         };
         state.wsTicks = (state.wsTicks || 0) + 1;
-        if (onTick) { try { onTick(symbol, price); } catch (e) {} }
+        if (onTick) {
+          try {
+            onTick(symbol, price, {
+              prevClose: open > 0 ? open : price,
+              open: open > 0 ? open : price,
+              dayHigh: Number(d.h) || price,
+              dayLow: Number(d.l) || price,
+              vol: Number(d.q) || 0
+            });
+          } catch (e) {}
+        }
         state.lastAt = Date.now();
         state.source = 'binance-ws';
       } catch (e) {}

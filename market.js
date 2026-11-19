@@ -695,8 +695,13 @@ class MarketService {
       price: roundPrice(price),
       prevClose: Number(meta && meta.prevClose) > 0 ? roundPrice(meta.prevClose) : (prev.prevClose || roundPrice(price)),
       open: Number(meta && meta.open) > 0 ? roundPrice(meta.open) : (prev.open || roundPrice(price)),
-      dayHigh: Math.max(prev.dayHigh || price, Number(meta && meta.dayHigh) || 0, price),
-      dayLow: Math.min(prev.dayLow || price, Number(meta && meta.dayLow) || price, price),
+      /* a provider-supplied 24h range replaces a stale simulated range */
+      dayHigh: Number(meta && meta.dayHigh) > 0
+        ? Math.max(Number(meta.dayHigh), price)
+        : Math.max(prev.dayHigh || price, price),
+      dayLow: Number(meta && meta.dayLow) > 0
+        ? Math.min(Number(meta.dayLow), price)
+        : Math.min(prev.dayLow || price, price),
       vol: Number(meta && meta.vol) || prev.vol || 1000000,
       dir: price > (prev.price || price) ? 1 : price < (prev.price || price) ? -1 : 0,
       updatedAt: now,
@@ -753,7 +758,7 @@ class MarketService {
   }
 
   /* real prices from another live source (Binance websocket) */
-  ingestExternal(symbol, price) {
+  ingestExternal(symbol, price, meta) {
     const sym = String(symbol || '').toUpperCase();
     const p = Number(price);
     if (!sym || !(p > 0)) return;
@@ -783,7 +788,20 @@ class MarketService {
          synthetic base and the next real ticks set the exact market price. */
       let next = p;
       if (!old.real && !this.lastRealTime[t] && Math.abs(p - old.price) / p > 0.02) next = old.price + (p - old.price) * 0.5;
-      this.writeQuote(t, next, { prevClose: old.prevClose, open: old.open, vol: old.vol, source: 'live', real: true });
+      /* A real 24h open/high/low from the provider beats a simulated anchor —
+         without this, the first blended tick locked prevClose at half price
+         and the app displayed a fake +100% change. */
+      const m = meta || {};
+      const prevClose = Number(m.prevClose) > 0 ? Number(m.prevClose) : (Number(old.prevClose) > 0 ? Number(old.prevClose) : p);
+      const open = Number(m.open) > 0 ? Number(m.open) : (Number(old.open) > 0 ? Number(old.open) : p);
+      this.writeQuote(t, next, {
+        prevClose,
+        open,
+        dayHigh: Number(m.dayHigh) > 0 ? Number(m.dayHigh) : undefined,
+        dayLow: Number(m.dayLow) > 0 ? Number(m.dayLow) : undefined,
+        vol: Number(m.vol) > 0 ? Number(m.vol) : old.vol,
+        source: 'live', real: true
+      });
       touched++;
     });
     if (targets.length) this.extRealAt = now;

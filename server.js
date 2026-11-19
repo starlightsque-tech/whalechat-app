@@ -69,7 +69,7 @@ const binance = createBinanceFeed ? createBinanceFeed({
         .map((a) => String(a.ticker).toUpperCase());
     } catch (e) { return []; }
   },
-  onTick: (sym, price) => { try { market.ingestExternal(sym, price); } catch (e) {} }
+  onTick: (sym, price, meta) => { try { market.ingestExternal(sym, price, meta); } catch (e) {} }
 }) : null;
 
 /* Twelve Data runs next to Finnhub (stocks/forex) and Binance (crypto), so the
@@ -88,7 +88,17 @@ const twelvedata = createTwelveDataFeed ? createTwelveDataFeed({
         .map((a) => ({ ticker: a.ticker, symbol: a.finnhubSymbol || a.ticker, kind: a.assetClass }));
     } catch (e) { return []; }
   },
-  onTick: (ticker, price) => { try { market.ingestExternal(ticker, price); } catch (e) {} }
+  onTick: (ticker, price, row) => {
+    try {
+      market.ingestExternal(ticker, price, row ? {
+        prevClose: Number(row.previous_close) || Number(row.close) || price,
+        open: Number(row.open) || price,
+        dayHigh: Number(row.high) || price,
+        dayLow: Number(row.low) || price,
+        vol: Number(row.volume) || 0
+      } : null);
+    } catch (e) {}
+  }
 }) : null;
 
 /* Durable third-party connection settings (Finnhub, Binance, Brevo, SMTP).

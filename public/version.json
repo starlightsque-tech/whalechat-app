@@ -1,8 +1,8 @@
 {
-  "version": "3.54.0",
-  "build": "2026-11-19T05:00:00Z",
+  "version": "3.54.1",
+  "build": "2026-11-19T05:20:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.54.0 - provider-owned stock catalogues: Binance streams 30 crypto pairs, Finnhub 40 US equities and Twelve Data 70 US/global equities, with hard disjointness (one ticker, one provider); every listed row is tagged with its provider and only that feed serves it, real ticks are never overwritten by simulation, and each feed's coverage is throttled to its plan limits. Builds on 3.53.0: Postgres tick history, Twelve Data admin key, live WC company stock, B2B holdings performance and TradingView widget.",
-  "releasedAt": "2026-11-19T05:00:00Z",
+  "notes": "WhaleChat 3.54.1 - fix live 24h change/range: provider open/high/low now replace simulated anchors, so crypto no longer shows a fake +100% after the first real tick; Binance REST and WS both pass the 24h snapshot into the price engine.",
+  "releasedAt": "2026-11-19T05:20:00Z",
   "minimum": "3.0.0"
 }
