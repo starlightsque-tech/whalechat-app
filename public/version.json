@@ -1,8 +1,8 @@
 {
-  "version": "3.62.0",
-  "build": "2026-11-19T15:04:18Z",
+  "version": "3.63.0",
+  "build": "2026-11-19T15:11:30Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.62.0 — bot engine deployed inside the Appwrite sync function: bots tick server-side every minute and keep trading while the phone is off, with live /api/bots/state, subscribe/start/stop/topup endpoints; WC-Investing daily interest now accrues on the server with /api/wc/state; stock quotes now come from the dedicated stock-proxy function with Twelve Data candle history, and Binance gets a REST fallback plus stream splitting so crypto stays live; email provider and all connections are part of the build gate.",
-  "releasedAt": "2026-11-19T15:04:18Z",
+  "notes": "WhaleChat 3.63.0 — WC-Investing now reads /api/wc/state as its source of truth and merges server accruals into the local wallet without double-counting (server profit replaces local, unsynced plans preserved); 7-day offline maturity verified server-side and idempotent; new public /api/engine/tick catches up bots/shares/WC, registered with the service worker periodic sync and called once a minute while any tab is open.",
+  "releasedAt": "2026-11-19T15:11:30Z",
   "minimum": "3.0.0"
 }

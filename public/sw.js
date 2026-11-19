@@ -7,10 +7,10 @@
    network switched off, and the worker can raise buy/sell notifications from
    its periodic background sync when the page is closed.
    ========================================================================= */
-const VERSION = 'wc-v3.62.0-1';
-const API_CACHE = 'wc-api-v3.62.0';
+const VERSION = 'wc-v3.63.0-1';
+const API_CACHE = 'wc-api-v3.63.0';
 const APP_CACHE = VERSION;
-const IMAGE_CACHE = 'wc-img-v3.62.0';
+const IMAGE_CACHE = 'wc-img-v3.63.0';
 const PLACEHOLDER = './assets/offline-placeholder.svg';
 const PLACEHOLDER_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240">'
   + '<rect width="240" height="240" rx="18" fill="#0b2230"/>'
@@ -329,10 +329,36 @@ async function alertCheck() {
   return sent;
 }
 
+const ENGINE_TICK_URL = 'https://whalechat-api.appwrite.network/api/engine/tick';
+
+/* Settle bots, shares and WC interest from the service worker even when no
+   app tab is open. The endpoint is public and idempotent. */
+async function engineTick() {
+  try {
+    const r = await fetch(ENGINE_TICK_URL, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+      cache: 'no-store'
+    });
+    return r.ok;
+  } catch (e) { return false; }
+}
+
 self.addEventListener('periodicsync', (event) => {
   if (event.tag === 'wc-alert-check') event.waitUntil(alertCheck());
+  if (event.tag === 'wc-engine-tick') {
+    event.waitUntil((async () => {
+      await engineTick();
+      const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      all.forEach((c) => c.postMessage({ type: 'WC_ENGINE_TICKED' }));
+    })());
+  }
 });
 self.addEventListener('sync', (event) => {
+  if (event.tag === 'wc-engine-tick') {
+    event.waitUntil(engineTick());
+  }
   if (event.tag === 'wc-alert-check') {
     event.waitUntil((async () => {
       await alertCheck();

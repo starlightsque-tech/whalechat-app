@@ -104,6 +104,8 @@ const MODULES = [
   { file: 'connections-admin.js', marker: 'wc-connections-admin' },
   { file: 'wc-invest-plans.js', marker: 'wc-invest-plans' },
   { file: 'wc-invest-ui.js', marker: 'wc-invest-ui' },
+  /* server accruals are the source of truth for the WC page */
+  { file: 'wc-wc-server-sync.js', marker: 'wc-wc-server-sync' },
   { file: 'typography.js', marker: 'wc-typography' },
   { file: 'session-guard.js', marker: 'wc-session-guard' },
   { file: 'scroll-stability.js', marker: 'wc-scroll-stability' },

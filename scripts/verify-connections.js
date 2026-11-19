@@ -52,6 +52,10 @@ async function hit(path, opts) {
   const sharesReachable = !!shares.json && (shares.json.error === 'admin_only' || shares.json.ok === true);
   add('shares engine', sharesReachable, shares.json && shares.json.error ? shares.json.error : 'ok');
 
+  const tick = await fetch(CFG.sync + '/api/engine/tick', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+    .then((r) => r.json()).catch(() => null);
+  add('engine tick', !!(tick && tick.ok), tick ? 'bots ' + (tick.botsTrades || 0) + ' · sessions ' + (tick.sessions || 0) : 'unreachable');
+
   const site = await hit('/release.json', { base: CFG.site });
   add('published site', site.ok && !!site.json, site.json ? 'v' + site.json.version : site.error);
 

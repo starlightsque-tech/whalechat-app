@@ -999,6 +999,32 @@ module.exports = async ({ req, res, log, error }) => {
     }
 
 
+
+    /* ---------------- public engine tick (no cron on this plan) ------------- */
+    if ((path === '/api/engine/tick' || path === '/api/engine/tick/') && (method === 'GET' || method === 'POST')) {
+      const st = await readState();
+      if (!st.db) return res.json({ ok: false, error: 'not_initialised' }, 409, CORS);
+      let botsTrades = 0, sharesTicked = false, wcChanged = false;
+      try {
+        const svc = shareServiceFor(st);
+        svc.ensureDefaults(st.db);
+        svc.tick();
+        sharesTicked = true;
+      } catch (e) {}
+      try {
+        const b = botServiceFor(st);
+        b.ensureDefaults(st.db);
+        botsTrades = botCatchUp(b, st);
+      } catch (e) {}
+      try { wcChanged = wcSweep(st.db, 0); } catch (e) {}
+      const ok = await saveState(st);
+      return res.json({
+        ok: !!ok, engine: 'tick', rev: st.rev || 0, at: Date.now(),
+        botsTrades, sharesTicked, wcChanged,
+        sessions: (st.db.botSessions || []).filter((x) => x && x.status === 'running').length
+      }, ok ? 200 : 502, CORS);
+    }
+
     /* ------------------------------ bots ---------------------------------- */
     if (path === '/api/bots/state' && method === 'GET') {
       const userId = String((req.query || {}).userId || '');
