@@ -1,0 +1,32 @@
+--- a/appwrite-function/index.js
++++ b/appwrite-function/index.js
+@@ -880,14 +880,27 @@
+       if (adminBlocked(key)) return res.json({ ok: false, error: 'too_many', message: 'Too many attempts. Wait 15 minutes.' }, 429, CORS);
+       const st = await readState();
+       const users = (st.db && st.db.users) || [];
+-      const u = users.find((x) => x && x.role === 'admin' && !x.banned &&
++      let u = users.find((x) => x && x.role === 'admin' && !x.banned &&
+         (String(x.email || '').toLowerCase() === login || String(x.username || '').toLowerCase() === login || String(x.id || '').toLowerCase() === login));
+       const hash = await sha256('whalechat::v1::' + given);
+-      if (!u || !u.pass || hash !== u.pass) {
++      const envUser = String(process.env.ADMIN_USERNAME || 'admin').trim().toLowerCase();
++      const envPw = String(process.env.ADMIN_PASSWORD || '');
++      const envOk = !!(envPw && given && login === envUser && given.length === envPw.length &&
++        crypto.timingSafeEqual(Buffer.from(given), Buffer.from(envPw)));
++      const dbOk = !!(u && u.pass && hash === u.pass);
++      if (!dbOk && !envOk) {
+         adminFail(key);
+         return res.json({ ok: false, error: 'invalid', message: 'Incorrect admin email or password' }, 401, CORS);
+       }
+       ADMIN_FAILS.delete(key);
++      if (!u) {
++        /* first login with the ADMIN_USERNAME / ADMIN_PASSWORD host variables: create the admin record */
++        const nu = { id: 'u_admin', username: envUser, email: '', fullName: 'WhaleChat Admin', role: 'admin', pass: hash, createdAt: Date.now() };
++        st.db = st.db || {}; st.db.users = st.db.users || [];
++        st.db.users.push(nu);
++        await saveState(st);
++        u = nu;
++      }
+       const token = signToken({ sub: u.id, email: u.email || '', role: 'admin', exp: Date.now() + ADMIN_TTL });
+       return res.json({ ok: true, token, admin: { id: u.id, email: u.email || '', username: u.username || '', fullName: u.fullName || 'WhaleChat Admin', hasRecovery: !!u.adminRecoveryHash }, expiresAt: Date.now() + ADMIN_TTL }, 200, CORS);
+     }
