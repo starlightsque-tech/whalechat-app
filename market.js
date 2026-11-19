@@ -383,11 +383,46 @@ class MarketService {
     this.lastSimAt = 0;
     this.simTicks = 0;
     this.quoteListeners = [];
+    /* every recorded point is also handed to the durable tick store so the
+       candle chart still opens with full history after a restart */
+    this.tickListeners = [];
   }
 
   /* Called on every price update (B2B Auto Buy/Sell watches each tick so a target is never missed). */
   onQuote(fn) {
     if (typeof fn === 'function' && this.quoteListeners.indexOf(fn) < 0) this.quoteListeners.push(fn);
+  }
+
+  /* Called for every history point (used by the Postgres tick store). */
+  onTick(fn) {
+    if (typeof fn === 'function' && this.tickListeners.indexOf(fn) < 0) this.tickListeners.push(fn);
+  }
+
+  /* Restore the ring buffer from durable storage before the feed starts.
+     A hydrated symbol is marked as seeded so synthetic history never replaces
+     the real ticks that survived the previous deployment. */
+  hydrateHistory(map) {
+    if (!map || typeof map !== 'object') return 0;
+    let n = 0;
+    Object.keys(map).forEach((raw) => {
+      const t = String(raw || '').toUpperCase();
+      const rows = Array.isArray(map[raw]) ? map[raw] : [];
+      if (!t || !rows.length) return;
+      const pts = rows.map((r) => ({
+        t: Number(r.t) || 0,
+        p: round(Number(r.p), 4),
+        real: !!r.real,
+        source: r.source || 'restored'
+      })).filter((x) => x.t > 0 && x.p > 0).sort((a, b) => a.t - b.t);
+      if (!pts.length) return;
+      this.history[t] = pts.slice(-3000);
+      const last = pts[pts.length - 1];
+      this.seedBase[t] = last.p;
+      if (last.real) { this.lastReal[t] = last.p; this.lastRealTime[t] = last.t; this.lastRealAt = Math.max(this.lastRealAt || 0, last.t); }
+      n++;
+    });
+    if (n) console.log('[market] restored ' + n + ' symbol history series from Postgres');
+    return n;
   }
 
   /* ------------------------------- config ------------------------------- */
@@ -752,8 +787,12 @@ class MarketService {
       last.real = !!real;
       return;
     }
-    arr.push({ t: at, p: round(price, 4), real: !!real, source: source || 'simulated' });
+    const rec = { t: at, p: round(price, 4), real: !!real, source: source || 'simulated' };
+    arr.push(rec);
     if (arr.length > 3000) arr.splice(0, arr.length - 3000);
+    if (this.tickListeners && this.tickListeners.length) {
+      for (const fn of this.tickListeners) { try { fn(ticker, rec); } catch (e) {} }
+    }
   }
 
   /* Last real quotes survive a restart or a cold start (Render sleeps idle

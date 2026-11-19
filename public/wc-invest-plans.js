@@ -53,6 +53,15 @@
 
   /* ---- share price ------------------------------------------------------- */
   P.sharePrice = function () {
+    /* The WhaleChat company stock (WC) is the reference price: whatever the
+       live WC quote shows is what the plan's daily return is calculated on. */
+    try {
+      if (typeof INV !== 'undefined' && INV && INV.quote) {
+        var wq = INV.quote('WC');
+        if (wq && Number(wq.price) > 0) return Number(wq.price);
+      }
+      if (typeof INV !== 'undefined' && INV && INV.live && INV.live.WC && Number(INV.live.WC.price) > 0) return Number(INV.live.WC.price);
+    } catch (e) {}
     try {
       var st = window.WC_SHARES && window.WC_SHARES.state;
       var p = st && st.shareMarket && Number(st.shareMarket.priceUsd);

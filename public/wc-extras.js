@@ -44,8 +44,8 @@
   /* 2. Admin trade guide notes */
   function guideNotes() {
     return '<details class="guide-sec" id="wcGuideData"><summary>Market data &amp; connections</summary><div class="guide-body" style="padding:10px 12px;line-height:1.7">' +
-      '<p><b>Admin &gt; Markets</b> has three cards: Finnhub, Binance (API key) and Alpaca (key ID + secret). Press <b>Connect</b>, then <b>Test</b>. Keys are stored on the server only, never sent back to browsers, and re-applied after every restart or deploy.</p>' +
-      '<p><b>Alpaca</b> supplies live US stock prices, refreshed about every 10 seconds. If no key is connected, prices shown may be simulated: say so to users.</p>' +
+      '<p><b>Admin &gt; Markets</b> has three cards: Finnhub, Binance (API key) and Twelve Data (API key). Press <b>Connect</b>, then <b>Test</b>. Keys are stored on the server only, never sent back to browsers, and re-applied after every restart or deploy.</p>' +
+      '<p><b>Twelve Data</b> supplies live US stock and forex prices alongside Finnhub, refreshed continuously. Binance supplies crypto. If no stock key is connected, prices shown may be simulated: say so to users.</p>' +
       '<p><b>Honest labelling:</b> trading here is virtual (Whale Coins). Do not tell users trades use real capital unless real money actually moves.</p></div></details>' +
       '<details class="guide-sec" id="wcGuideOffline"><summary>Offline use, alerts &amp; server address</summary><div class="guide-body" style="padding:10px 12px;line-height:1.7">' +
       '<p>Once installed, the app opens offline from its cache and shows the last saved data. Live prices, sync and push need a connection. Alerts triggered inside the app appear as device notifications when the app is in the background; alerts while fully closed need the server push (enable it in Admin &gt; Servers).</p>' +

@@ -9,7 +9,7 @@
      · Indices 24/7         US30 24/7 US100 24/7 GOLD 24/7 OIL 24/7
 
    · the list is filtered to that universe until the admin connects a data
-     provider (Finnhub, Binance or Alpaca); after that every listed asset shows
+     provider (Finnhub, Binance or Twelve Data); after that every listed asset shows
    · every card carries a pulsing dot + "LIVE — 24/7" and synthetic assets a
      "24/7 SYNTHETIC · ALWAYS LIVE" badge
    · a watchdog forces a feed refresh when any quote is older than 5 seconds,
@@ -43,7 +43,7 @@
     fetch(base + '/api/market/status', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (st) {
       if (!st) return;
       var f = st.feeds || {};
-      var on = !!(st.hasKey || f.finnhub || f.binance || f.alpaca || Number(st.realTickers) > 0);
+      var on = !!(st.hasKey || f.finnhub || f.binance || f.twelvedata || Number(st.realTickers) > 0);
       if (on !== !!window.__wcFeedsOn) {
         window.__wcFeedsOn = on;
         try { if (typeof render === 'function') render(); } catch (e) {}
@@ -69,7 +69,7 @@
     var n = String(s.name || '');
     if (/24\/7/i.test(n)) return true;
     if (s.twentyFourSeven === true && s.hidden !== true) return true;
-    /* once the admin has connected Finnhub, Binance or Alpaca, every listed
+    /* once the admin has connected Finnhub, Binance or Twelve Data, every listed
        (non-hidden) asset joins the market list */
     if (window.__wcFeedsOn && s.hidden !== true) return true;
     return false;

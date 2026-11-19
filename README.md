@@ -1,4 +1,4 @@
-# WhaleChat 3.33.1 — web app + mobile apps
+# WhaleChat 3.53.0 — web app + mobile apps
 
 WhaleChat is a social + marketplace + wallet product built as a single-page app with a
 Node sync server and native Android/iOS shells.
@@ -79,6 +79,51 @@ For provider testing only: `FINNHUB_REST_BASE`, `FINNHUB_WS_URL`, `FINNHUB_SEED_
 FINNHUB_API_KEY=your_key node scripts/verify-finnhub.js
 npm run verify:finnhub          # same, uses FINNHUB_API_KEY from the environment
 ```
+
+## Twelve Data, Binance and durable candle history — 3.53.0
+
+Three real price feeds now run **at the same time**, and the freshest tick wins:
+
+| Feed | Covers | Notes |
+|---|---|---|
+| **Finnhub** | US/global stocks | Existing REST + shared WebSocket. |
+| **Twelve Data** | US/global stocks and forex | New `twelvedata.js` feed. One batched `quote` request per cycle (8 symbols, rotating through the catalogue), free-tier friendly. |
+| **Binance** | Crypto and meme assets | Existing `binance.js` feed. |
+
+`Admin → Markets` now shows **Binance** and **Twelve Data** cards (the Alpaca card is gone). The
+Twelve Data key is saved through `POST /api/connections` as `{ "twelvedata": { "apiKey": "…" } }`,
+stored server-side (never returned to a browser) and re-applied on every boot. Test it with:
+
+```bash
+npm run verify:twelvedata -- TWELVEDATA_API_KEY=your_key
+```
+
+### Durable market tick ring-buffer
+
+The in-memory history is a 3000-point ring buffer per symbol. It is now mirrored to Postgres in
+`whalechat_market_ticks (ticker, t, p, is_real, source)`:
+
+* every recorded point is queued and flushed every 10 seconds (batched upsert),
+* `loadMarketTicks()` hydrates the ring buffer **before** the feeds start, so
+  `GET /api/market/history` and the candle chart open with the full series after a redeploy,
+* rows older than `MARKET_TICK_RETENTION_MS` (default 14 days) are pruned,
+* without `DATABASE_URL` everything still works from memory and the file cache.
+
+### WhaleChat (WC) company stock and WC-Investing
+
+`WC` is a live symbol: the server bridges the whale-share market price into the market engine every
+three seconds, so the stock counts and moves like every other listing, keeps its own candle history,
+and the same price drives the **WC-Investing** daily return (`daily = WC price × plan % × capital`).
+
+### B2B-Investing charts
+
+* **Holdings performance** (`public/b2b-performance.js`): Lightweight Charts v5 line chart on the B2B
+  dashboard for every open holding — black live price, **green** = the user's sell target,
+  **red** = the admin buy price. Data comes from the durable `/api/market/history`.
+* **TradingView symbol-overview widget** (`public/tv-widget.js`): mounted on the marketplace, asset
+  page and buy/trade ticket. Clicking a stock card re-renders the widget for that stock. Ticker →
+  exchange mapping is in `WC_TV.symbol()` (`TSLA → NASDAQ:TSLA`, `BTCUSDT → BINANCE:BTCUSDT`, …).
+* Trade chart defaults: 420 px desktop / 360 px mobile (CSS `--lc-h` with a mobile override).
 
 ## Stock trading flows (Rise/Fall + Spot) — 3.23.0
 

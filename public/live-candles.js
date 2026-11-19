@@ -102,7 +102,7 @@
       '.wc-lc-chip[aria-pressed="true"]{background:#06202c;border-color:#06202c;color:#fff}',
       '.wc-lc-src{margin-left:auto;font-size:9.5px;color:#8ba4b6;white-space:nowrap}',
       '.wc-lc-src b{color:#0f9d6b;font-weight:700}',
-      '.wc-lc-body{position:relative;height:380px;min-height:220px;background:#fff;',
+      '.wc-lc-body{position:relative;height:var(--lc-h,420px);min-height:220px;background:#fff;',
       '  border:1px solid #E3E9EC;border-radius:12px;overflow:hidden;display:flex;flex-direction:column}',
       '.wc-lc-canvas{flex:1;min-height:0}',
       '.wc-lc-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;',
@@ -116,7 +116,7 @@
       '.wc-lc-note{font-size:9.5px;color:#8ba4b6;line-height:1.5}',
       /* the stock card already shows the big live price above the chart */
       '.inv-pricecard .wc-lc-px{display:none}',
-      '@media(max-width:520px){.wc-lc-body{height:300px}.wc-lc-price{font-size:18px}}'
+      '@media(max-width:520px){.wc-lc-body{height:360px}.wc-lc-price{font-size:18px}}'
     ].join('\n');
     document.head.appendChild(st);
   }
@@ -145,7 +145,7 @@
         '<span class="wc-lc-src" data-lc-src>Connecting to the live feed…</span>' +
       '</div>' +
       '<div class="wc-lc-body" data-wc-lc-chart="' + esc(t) + '" data-lc-tf="' + tf + '"' +
-        (opts.height ? ' style="height:' + parseInt(opts.height, 10) + 'px"' : '') + '>' +
+        (opts.height ? ' style="--lc-h:' + parseInt(opts.height, 10) + 'px"' : '') + '>' +
         '<div class="wc-lc-empty">Loading real market candles…</div>' +
       '</div>' +
       '<div class="wc-lc-foot">' +

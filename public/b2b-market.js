@@ -39,7 +39,7 @@
     { t: 'SPACEX', name: 'SpaceX', kind: 'Pre-IPO', sym: null, c: '#005288' }
   ];
 
-  var WC_USD = 0.50;             /* WhaleChat token value */
+  var WC_USD = 12.50;            /* WhaleChat company stock starts at the share price */
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
   function money(v) { return '$' + (Math.round((Number(v) || 0) * 100) / 100).toFixed(2); }
   function pct(v) { v = Number(v) || 0; return (v >= 0 ? '+' : '') + v.toFixed(2) + '%'; }
@@ -114,14 +114,38 @@
     } catch (e) {}
   }
 
+  /* The WhaleChat company stock is a live symbol, not a constant: it follows
+     the same whale-share market price that drives WC-Investing daily returns. */
+  function wcShare() {
+    try {
+      var st = window.WC_SHARES && window.WC_SHARES.state;
+      var p = st && st.shareMarket && Number(st.shareMarket.priceUsd);
+      if (p > 0) return p;
+      var s2 = st && st.summary && Number(st.summary.sharePriceUsd);
+      if (s2 > 0) return s2;
+    } catch (e) {}
+    return 0;
+  }
   M.price = function (ticker) {
-    if (String(ticker).toUpperCase() === 'WC') return WC_USD;
-    try { var q = INV.quote(String(ticker).toUpperCase()); if (q && Number(q.price) > 0) return Number(q.price); } catch (e) {}
+    var t = String(ticker).toUpperCase();
+    if (t === 'WC') {
+      try { var q = INV.quote('WC'); if (q && Number(q.price) > 0) return Number(q.price); } catch (e) {}
+      var p = wcShare();
+      return p > 0 ? p : WC_USD;
+    }
+    try { var q2 = INV.quote(t); if (q2 && Number(q2.price) > 0) return Number(q2.price); } catch (e) {}
     return 0;
   };
   M.quote = function (ticker) {
-    if (String(ticker).toUpperCase() === 'WC') return { price: WC_USD, changePct: 0 };
-    try { return INV.quote(String(ticker).toUpperCase()) || { price: 0, changePct: 0 }; } catch (e) { return { price: 0, changePct: 0 }; }
+    var t = String(ticker).toUpperCase();
+    if (t === 'WC') {
+      try { var q = INV.quote('WC'); if (q && Number(q.price) > 0) return q; } catch (e) {}
+      var p = wcShare() || WC_USD;
+      var hist = M.hist('WC');
+      var first = hist.length ? Number(hist[0].p) : p;
+      return { price: p, prevClose: first, changePct: first > 0 ? ((p - first) / first) * 100 : 0, source: 'whaleshares' };
+    }
+    try { return INV.quote(t) || { price: 0, changePct: 0 }; } catch (e) { return { price: 0, changePct: 0 }; }
   };
   M.entry = function (ticker) {
     var found = null;
@@ -136,7 +160,14 @@
   function hist(ticker) {
     if (HIST[ticker] && HIST[ticker].length > 2) return HIST[ticker];
     var seed = [];
-    try { seed = (INV.series(ticker, '1D') || []).slice(-40); } catch (e) {}
+    if (String(ticker).toUpperCase() === 'WC') {
+      try {
+        var st = window.WC_SHARES && window.WC_SHARES.state;
+        var h = st && st.shareMarket && st.shareMarket.history;
+        if (Array.isArray(h) && h.length > 2) seed = h.slice(-40).map(function (x) { return Number(x.p); });
+      } catch (e) {}
+    }
+    if (!seed.length) { try { seed = (INV.series(ticker, '1D') || []).slice(-40); } catch (e) {} }
     var p = M.price(ticker);
     if (!seed.length && p > 0) seed = [p, p];
     HIST[ticker] = seed.map(function (v, i) { return { x: i, p: v }; });
@@ -152,6 +183,7 @@
       if (h.length > 48) h.shift();
     });
   }
+  M.hist = hist;
   function spark(ticker, w, h) {
     var vals = hist(ticker).map(function (x) { return x.p; }).filter(function (v) { return v > 0; });
     if (vals.length < 2) return { points: '', up: true };
@@ -171,6 +203,28 @@
       '<div><h1 style="margin:0">' + esc(title) + '</h1><p class="muted" style="margin:2px 0 0">' + esc(sub) + '</p></div></div></div>';
   }
   function holding(ticker) { var a = acct(); var h = a && a.b2b[ticker]; return h && Number(h.units) > 0 ? h : null; }
+
+  /* TradingView widget card — the selected stock is re-rendered in place */
+  function tvCard(t, kind) {
+    if (!window.WC_TV) return '';
+    var sym = window.WC_TV.symbol(t, kind);
+    return '<div class="card" id="b2bmTvCard" style="margin-bottom:10px">' +
+      '<div class="between" style="align-items:flex-start"><div><div class="card-title" style="margin:0" id="b2bmTvTitle">' + esc(String(t).replace('USDT', '/USDT')) + ' · live chart</div>' +
+      '<div class="tiny muted">' + (sym ? 'TradingView · ' + esc(sym) : 'Select a stock to load its live chart') + '</div></div></div>' +
+      '<div class="wc-tv-host" id="b2bmTvHost" data-wc-tv="' + esc(t) + '" data-wc-tv-kind="' + esc(kind || '') + '"></div></div>';
+  }
+  M.tvCard = tvCard;
+  function selectForChart(t, kind) {
+    var host = document.getElementById('b2bmTvHost');
+    if (!host) return;
+    host.setAttribute('data-wc-tv', String(t).toUpperCase());
+    host.setAttribute('data-wc-tv-kind', kind || '');
+    if (window.WC_TV) window.WC_TV.mount(host, t, kind);
+    var title = document.getElementById('b2bmTvTitle');
+    if (title) title.textContent = String(t).replace('USDT', '/USDT') + ' · live chart';
+    document.querySelectorAll('[data-b2bm-card]').forEach(function (c) { c.classList.toggle('sel', c.getAttribute('data-b2bm-card') === String(t).toUpperCase()); });
+  }
+  M.selectForChart = selectForChart;
 
   /* ---- live ticker strip for the B2B dashboard --------------------------- */
   M.strip = function () {
@@ -197,10 +251,12 @@
         kinds.map(function (k) { return '<a class="chip b2b-cat ' + (k === kind ? 'on' : '') + '" href="#/investment/b2b/market?kind=' + encodeURIComponent(k) + '">' + k + '</a>'; }).join('') +
         '<a class="chip b2b-cat" href="#/investment/b2b/alerts">Price alerts</a>' +
       '</div>' +
+      tvCard(({ Crypto: 'BTCUSDT', Meme: 'DOGEUSDT', Company: 'WC', 'Pre-IPO': 'SPACEX' })[kind] || 'TSLA',
+        ({ Crypto: 'Crypto', Meme: 'Meme', Company: 'Company', 'Pre-IPO': 'Pre-IPO' })[kind] || 'Stock') +
       '<div class="b2bm-grid">' + list.map(function (x) {
         var q = M.quote(x.t); var sp = spark(x.t, 140, 40); var h = holding(x.t);
         var fav = favs.indexOf(x.t) >= 0;
-        return '<div class="b2bm-card" data-b2bm-card="' + esc(x.t) + '">' +
+        return '<div class="b2bm-card" data-b2bm-card="' + esc(x.t) + '" data-b2bm-tv="' + esc(x.t) + '" data-b2bm-kind="' + esc(x.kind) + '">' +
           '<div class="between" style="align-items:flex-start">' +
             '<a class="b2bm-name" href="#/investment/b2b/asset?t=' + encodeURIComponent(x.t) + '">' +
               '<i class="b2bm-dot" style="background:' + x.c + '"></i>' + esc(x.name) + '</a>' +
@@ -250,8 +306,9 @@
           '<div><span>24h volume</span><b>' + (q.vol ? Number(q.vol).toLocaleString(undefined, { maximumFractionDigits: 0 }) : '—') + '</b></div>' +
         '</div>' +
         '<div class="b2bm-bigchart" data-b2bm-chart="' + esc(t) + '"></div>' +
-        '<div class="tiny muted center">Live chart · updates every 2 seconds</div>' +
+        '<div class="tiny muted center">WhaleChat live feed · updates every 2 seconds</div>' +
       '</div>' +
+      tvCard(t, e.kind) +
       (h ? '<div class="card"><div class="between"><span class="tiny muted">Your holding</span><b>' + Number(h.units).toFixed(6) + ' units</b></div>' +
         '<div class="between"><span class="tiny muted">Entry price</span><b>' + money(h.avgPrice) + '</b></div>' +
         '<div class="between"><span class="tiny muted">Market value</span><b>' + money(h.units * (q.price || h.avgPrice)) + '</b></div>' +
@@ -455,6 +512,17 @@
       if (h.indexOf('#/investment/b2b') !== 0) return;
       paint();
     }, 2000);
+    document.addEventListener('click', function (ev) {
+      var card = ev.target && ev.target.closest ? ev.target.closest('[data-b2bm-tv]') : null;
+      if (!card) return;
+      /* action buttons keep their normal behaviour (buy / sell / data / star) */
+      if (ev.target.closest('a[href], button')) return;
+      var t = card.getAttribute('data-b2bm-tv');
+      var k = card.getAttribute('data-b2bm-kind') || '';
+      selectForChart(t, k);
+      var host = document.getElementById('b2bmTvHost');
+      if (host && host.scrollIntoView) { try { host.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {} }
+    }, false);
     document.addEventListener('change', function (ev) {
       var t = ev.target;
       if (t && t.matches && t.matches('[data-b2bm-pick]')) { try { App.wcbmCount(); } catch (e) {} }
@@ -517,7 +585,8 @@
     .b2bm-stripitem i.up{color:#22c55e}.b2bm-stripitem i.down{color:#ef4444}
     .b2bm-sym{font-size:9.5px;font-weight:800;letter-spacing:.03em}
     .b2bm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(158px,1fr));gap:8px}
-    .b2bm-card{padding:10px;border:1px solid var(--border);border-radius:12px;background:var(--surface-2);min-width:0}
+    .b2bm-card{padding:10px;border:1px solid var(--border);border-radius:12px;background:var(--surface-2);min-width:0;cursor:pointer}
+    .b2bm-card.sel{border-color:#2ee6c9;box-shadow:0 0 0 1px #2ee6c9 inset}
     .b2bm-name{display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:700;color:var(--text);text-decoration:none;min-width:0}
     .b2bm-dot{width:8px;height:8px;border-radius:99px;flex:none;display:inline-block}
     .b2bm-row{display:flex;justify-content:space-between;align-items:baseline;margin-top:4px}

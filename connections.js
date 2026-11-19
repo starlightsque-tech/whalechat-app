@@ -6,7 +6,7 @@
 
      Finnhub   — stock/chart price source (REST + websocket)
      Binance   — crypto/meme price source (REST + websocket)
-     Alpaca    — US stock price source (REST snapshots)
+     Twelve Data — US stock/forex price source (REST, runs alongside Finnhub)
      Brevo     — transactional email
      SMTP      — fallback mail transport
 
@@ -32,15 +32,7 @@ function createConnections(opts) {
   const market = opts.market;
   const email = opts.email;
   const binance = opts.binance;
-  let alpaca = null;
-  try {
-    alpaca = require('./alpaca').createAlpacaFeed({
-      getDb,
-      everyMs: Number(process.env.ALPACA_MS || 10000),
-      getTickers: () => { try { return market.assetList().filter((a) => !a.hidden && !a.synthetic && a.assetClass === 'us').map((a) => String(a.ticker).toUpperCase()); } catch (e) { return []; } },
-      onTick: (sym, price) => { try { market.ingestExternal(sym, price); } catch (e) {} }
-    });
-  } catch (e) { console.error('[alpaca] module unavailable: ' + e.message); }
+  const twelvedata = opts.twelvedata || null;
   const log = opts.log || (() => {});
 
   function readFile() {
@@ -111,16 +103,17 @@ function createConnections(opts) {
       } catch (e) { log('[connections] binance apply failed: ' + e.message); }
     }
 
-    if (c.alpaca && c.alpaca.keyId && c.alpaca.secret) {
+    if (c.twelvedata && c.twelvedata.apiKey) {
       try {
         const db = getDb();
         if (db) {
           if (!db.settings) db.settings = {};
-          db.settings.alpaca = { enabled: c.alpaca.enabled !== false, keyId: c.alpaca.keyId, secret: c.alpaca.secret, feed: c.alpaca.feed === 'sip' ? 'sip' : 'iex' };
+          db.settings.marketData = Object.assign({}, db.settings.marketData || {});
+          db.settings.marketData.twelvedata = { apiKey: c.twelvedata.apiKey };
         }
-        applied.push('alpaca');
-        if (alpaca) alpaca.poll().catch(() => {});
-      } catch (e) { log('[connections] alpaca apply failed: ' + e.message); }
+        applied.push('twelvedata');
+        if (twelvedata) twelvedata.poll().catch(() => {});
+      } catch (e) { log('[connections] twelvedata apply failed: ' + e.message); }
     }
 
     if (c.brevo && c.brevo.apiKey && email) {
@@ -168,12 +161,11 @@ function createConnections(opts) {
         host: binStatus.host || null,
         websocket: binStatus.ws || null
       },
-      alpaca: {
-        configured: !!(c.alpaca && c.alpaca.keyId && c.alpaca.secret),
-        key: mask(!!(c.alpaca && c.alpaca.keyId)),
-        enabled: !(c.alpaca && c.alpaca.enabled === false),
-        feed: (c.alpaca && c.alpaca.feed) || 'iex',
-        live: alpaca ? alpaca.status() : null
+      twelvedata: {
+        configured: !!(c.twelvedata && c.twelvedata.apiKey),
+        key: mask(!!(c.twelvedata && c.twelvedata.apiKey)),
+        enabled: !(c.twelvedata && c.twelvedata.enabled === false),
+        live: twelvedata ? twelvedata.status() : null
       },
       brevo: {
         configured: !!bre.apiKey || !!(mailStatus.provider === 'brevo'),
@@ -209,13 +201,11 @@ function createConnections(opts) {
         apiKey: body.binance.apiKey ? String(body.binance.apiKey).trim() : (stored().binance || {}).apiKey || ''
       };
     }
-    if (body.alpaca) {
-      const cur = stored().alpaca || {};
-      next.alpaca = {
-        enabled: body.alpaca.enabled !== false,
-        keyId: body.alpaca.keyId ? String(body.alpaca.keyId).trim() : cur.keyId || '',
-        secret: body.alpaca.secret ? String(body.alpaca.secret).trim() : cur.secret || '',
-        feed: body.alpaca.feed === 'sip' ? 'sip' : 'iex'
+    if (body.twelvedata) {
+      const cur = stored().twelvedata || {};
+      next.twelvedata = {
+        enabled: body.twelvedata.enabled !== false,
+        apiKey: body.twelvedata.apiKey ? String(body.twelvedata.apiKey).trim() : cur.apiKey || ''
       };
     }
     if (body.brevo) {
@@ -227,14 +217,14 @@ function createConnections(opts) {
     }
     save(next);
     const applied = apply();
-    if (body.alpacaPoll && alpaca) alpaca.poll().catch(() => {});
+    if (body.twelvedataPoll && twelvedata) twelvedata.poll().catch(() => {});
     return { ok: true, applied, status: status() };
   }
 
   /* ---- boot: never lose a configuration -------------------------------- */
   function boot() {
     apply();
-    try { if (alpaca) alpaca.start(); } catch (e) {}
+    try { if (twelvedata) twelvedata.start(); } catch (e) {}
     try {
       const c = stored();
       if (c && Object.keys(c).length) {

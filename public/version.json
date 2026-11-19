@@ -1,8 +1,8 @@
 {
-  "version": "3.52.1",
-  "build": "2026-11-19T03:10:00Z",
+  "version": "3.53.0",
+  "build": "2026-11-19T04:00:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.52.1 - the TradingView market-overview board is removed and the trade views now run a real-time candlestick chart (Lightweight Charts v5 streaming view) fed by the WhaleChat market engine: recorded ticks are bucketed into OHLC candles per timeframe and the live quote stream grows the current candle every 100ms. Installed on the stock trade view and the B2B-Investing buy view, with entry/TP/SL price lines, timeframe switch and Go-to-realtime control.",
-  "releasedAt": "2026-11-19T03:10:00Z",
+  "notes": "WhaleChat 3.53.0 - market tick ring-buffer persisted to Postgres (whalechat_market_ticks) so /api/market/history and the candle chart open with full history after every redeploy; Twelve Data added as a third live price source alongside Finnhub and Binance, with the Alpaca panel removed and replaced by a Twelve Data API key card in Admin > Markets; WhaleChat (WC) company stock is now a continuously counting live symbol and drives the WC-Investing daily return; B2B-Investing gains a holdings-performance chart (black live price, green user sell target, red admin buy price) and the TradingView symbol-overview widget on the marketplace, asset and trade views; trade chart defaults resized for desktop and mobile.",
+  "releasedAt": "2026-11-19T04:00:00Z",
   "minimum": "3.0.0"
 }

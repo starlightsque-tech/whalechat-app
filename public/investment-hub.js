@@ -600,7 +600,7 @@
           ? window.WC_LIVE_CANDLES.embed({
               ticker: sel.ticker,
               sub: b2bLabel(sel) + ' · ' + b2bCategory(sel) + ' · real-time candles',
-              height: 330
+              height: 420
             })
           : '<div class="card b2b-livechart"><div class="between"><span class="tiny muted">Live price movement</span>' +
               '<span class="tiny ' + ((q.changePct || 0) >= 0 ? 'up' : 'down') + '" data-b2b-chg="' + escH(sel.ticker) + '">' + ((q.changePct || 0) >= 0 ? '+' : '') + (Number(q.changePct) || 0).toFixed(2) + '%</span></div>' +
@@ -615,6 +615,7 @@
         '<button class="btn btn-primary" data-act="ih-b2b-buy" data-t="' + escH(sel.ticker) + '" style="width:100%">Buy ' + escH(b2bLabel(sel)) + '</button>' +
         '<div class="tiny muted mt6">Buys are paid from your capital balance. The assets balance then shows their live market worth.</div>' +
       '</div>' +
+      (window.WC_B2B_MARKET && window.WC_B2B_MARKET.tvCard ? window.WC_B2B_MARKET.tvCard(sel.ticker, b2bCategory(sel)) : '') +
       '<div class="card"><div class="card-title">Price alerts</div>' +
         '<div class="row" style="gap:8px"><div class="field grow"><label class="label">Buy below (USD)</label><input class="input" id="ihB2bBuyAlert" type="number" step="0.0001" value="' + (alert.buy || '') + '"/></div>' +
         '<div class="field grow"><label class="label">Sell above (USD)</label><input class="input" id="ihB2bSellAlert" type="number" step="0.0001" value="' + (alert.sell || '') + '"/></div></div>' +

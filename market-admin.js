@@ -475,7 +475,10 @@ function createMarketAdmin(opts) {
     return { ok: true, providers: providersView(), controls: controls(), symbols: symbolsAll(), storage: pool ? 'postgres' : 'memory', encryptionReady: !!encKey() };
   }
 
-  return { init, reload, resolve, quote, symbolsPublic, symbolsAll, controls, gate, updateControls, updateProvider, testProvider, upsertSymbol, audit, logs, overview, providersView, uuidFrom };
+  /* decrypted provider credentials for the server-side live feeds (never sent
+     to a browser). Twelve Data is polled by twelvedata.js. */
+  function keyFor(name) { try { return providerKeys(String(name || '')); } catch (e) { return { apiKey: '', secret: '', enabled: false }; } }
+  return { init, reload, resolve, quote, symbolsPublic, symbolsAll, controls, gate, updateControls, updateProvider, testProvider, upsertSymbol, audit, logs, overview, providersView, keyFor, uuidFrom };
 }
 
 module.exports = { createMarketAdmin, encrypt, decrypt, uuidFrom };

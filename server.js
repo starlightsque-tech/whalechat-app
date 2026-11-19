@@ -28,6 +28,8 @@ let createConnections = null;
 try { createConnections = require('./connections').createConnections; } catch (e) { console.error('[connections] module unavailable:', e.message); }
 let createBinanceFeed = null;
 try { createBinanceFeed = require('./binance').createBinanceFeed; } catch (e) { console.error('[binance] module unavailable:', e.message); }
+let createTwelveDataFeed = null;
+try { createTwelveDataFeed = require('./twelvedata').createTwelveDataFeed; } catch (e) { console.error('[twelvedata] module unavailable:', e.message); }
 let createB2BAlertWatcher = null;
 try { createB2BAlertWatcher = require('./b2b-alerts').createB2BAlertWatcher; } catch (e) { console.error('[b2b-alerts] module unavailable:', e.message); }
 const market = new MarketService({
@@ -57,6 +59,25 @@ const shares = new ShareService({
 /* Binance live crypto prices alongside Finnhub (charts stay on Finnhub). */
 const binance = createBinanceFeed ? createBinanceFeed({ getDb: () => store.db, everyMs: Number(process.env.BINANCE_MS || 15000), onTick: (sym, price) => { try { market.ingestExternal(sym, price); } catch (e) {} } }) : null;
 
+/* Twelve Data runs next to Finnhub (stocks/forex) and Binance (crypto), so the
+   app always shows the freshest real price from any of the three feeds. */
+const twelvedata = createTwelveDataFeed ? createTwelveDataFeed({
+  getDb: () => store.db,
+  /* a key saved in Admin > Market Controls (encrypted in Postgres) is read here
+     too, so either admin card works */
+  getApiKey: () => { try { return marketAdmin.keyFor('twelvedata').apiKey; } catch (e) { return ''; } },
+  everyMs: Number(process.env.TWELVEDATA_MS || 65000),
+  /* real listings only: synthetic 24/7 products mirror their real symbol */
+  getTargets: () => {
+    try {
+      return market.assetList()
+        .filter((a) => !a.hidden && !a.synthetic && (a.assetClass === 'us' || a.assetClass === 'global' || a.assetClass === 'forex'))
+        .map((a) => ({ ticker: a.ticker, symbol: a.finnhubSymbol || a.ticker, kind: a.assetClass }));
+    } catch (e) { return []; }
+  },
+  onTick: (ticker, price) => { try { market.ingestExternal(ticker, price); } catch (e) {} }
+}) : null;
+
 /* Durable third-party connection settings (Finnhub, Binance, Brevo, SMTP).
    Applied on every boot so a new release never comes up disconnected. */
 let createMarketData = null;
@@ -65,7 +86,7 @@ const connections = createConnections ? createConnections({
   getDb: () => store.db,
   persist: () => persist(),
   dataDir: DATA_DIR,
-  market, email, binance,
+  market, email, binance, twelvedata,
   log: (m) => console.log(m),
   storageBackend: () => (pool ? 'postgres' : 'file')
 }) : null;
@@ -212,6 +233,17 @@ function ensureTradingAssets() {
     if (!s.exchange) { s.exchange = s.assetClass === 'forex' ? 'OANDA' : s.assetClass === 'crypto' ? 'Binance' : 'US'; changed = true; }
     if (!s.currency) { s.currency = s.assetClass === 'crypto' ? 'USDT' : 'USD'; changed = true; }
   });
+  /* The WhaleChat company stock is a real, continuously counting symbol.
+     Its price is driven by the whale-share market (see bridgeCompanyStock). */
+  if (!db.stocks.some((s) => String(s.ticker).toUpperCase() === 'WC')) {
+    db.stocks.push({
+      id: 'st_wc', ticker: 'WC', displayTicker: 'WC', finnhubSymbol: 'WC',
+      assetClass: 'us', name: 'WhaleChat (WC)', exchange: 'WhaleChat', currency: 'USD',
+      color: '#2ee6c9', sector: 'Company', price: 12.5, prevClose: 12.5, div: 0,
+      paused: false, custom: false, synthetic: true, twentyFourSeven: true, createdAt: Date.now()
+    });
+    changed = true;
+  }
   DEFAULT_ASSETS.forEach((a) => {
     if (!db.stocks.some((s) => String(s.ticker).toUpperCase() === String(a.ticker).toUpperCase())) {
       db.stocks.push(Object.assign({ id: 'st_' + String(a.ticker).toLowerCase().replace(/[^a-z0-9]/g, ''), price: 0, prevClose: 0, div: 0, paused: false, custom: false, createdAt: Date.now() }, a));
@@ -383,6 +415,142 @@ async function connectPostgres() {
     return false;
   }
 }
+
+/* -------------------------------------------------------------------------
+   Durable market tick ring-buffer (Postgres)
+
+   The in-memory history is a 3000-point ring buffer per symbol. Without this
+   table a redeploy started with an empty ring buffer and the candle chart had
+   to rebuild itself from the first ticks of the new process. Every recorded
+   point is now inserted into whalechat_market_ticks and the ring buffer is
+   hydrated from it before the feeds start, so /api/market/history always has
+   the full series after a restart.
+   ------------------------------------------------------------------------- */
+const TICK_RETENTION_MS = Number(process.env.MARKET_TICK_RETENTION_MS || 14 * 24 * 60 * 60 * 1000);
+const TICK_KEEP_PER_SYMBOL = 3000;
+let tickQueue = [];
+let tickTableReady = false;
+let tickFlushAt = 0;
+
+async function ensureMarketTicksTable() {
+  if (!pool) return false;
+  if (tickTableReady) return true;
+  await pool.query('create table if not exists whalechat_market_ticks (ticker text not null, t bigint not null, p numeric not null, is_real boolean not null default false, source text, primary key (ticker, t))');
+  await pool.query('create index if not exists whalechat_market_ticks_t_idx on whalechat_market_ticks (t)');
+  tickTableReady = true;
+  return true;
+}
+
+async function loadMarketTicks() {
+  if (!pool) return 0;
+  try {
+    await ensureMarketTicksTable();
+    const cutoff = Date.now() - TICK_RETENTION_MS;
+    const r = await pool.query(
+      'select ticker, t, p, is_real, source from whalechat_market_ticks where t >= $1 order by ticker asc, t asc',
+      [cutoff]
+    );
+    const byTicker = {};
+    for (const row of r.rows) {
+      const t = String(row.ticker || '').toUpperCase();
+      if (!t) continue;
+      const arr = byTicker[t] || (byTicker[t] = []);
+      arr.push({ t: Number(row.t), p: Number(row.p), real: !!row.is_real, source: row.source || 'restored' });
+      if (arr.length > TICK_KEEP_PER_SYMBOL) arr.splice(0, arr.length - TICK_KEEP_PER_SYMBOL);
+    }
+    const n = market.hydrateHistory(byTicker);
+    if (n) console.log('[market] durable tick store · ' + r.rows.length + ' ticks restored across ' + n + ' symbols');
+    return n;
+  } catch (e) {
+    console.error('[market] durable tick read failed:', e.message);
+    return 0;
+  }
+}
+
+const lastDurableTick = new Map();
+function queueMarketTick(ticker, rec) {
+  if (!pool || !rec) return;
+  const tk = String(ticker).toUpperCase();
+  const at = Number(rec.t) || Date.now();
+  /* the chart only needs one durable point per 5 s; throttling keeps the
+     table small on a free Postgres plan while preserving the full series */
+  if (at - (lastDurableTick.get(tk) || 0) < 5000) return;
+  lastDurableTick.set(tk, at);
+  tickQueue.push([tk, at, Number(rec.p) || 0, !!rec.real, rec.source || 'live']);
+  if (tickQueue.length > 20000) tickQueue.splice(0, tickQueue.length - 12000);
+}
+
+async function flushMarketTicks(force) {
+  if (!pool || !tickQueue.length) return 0;
+  const now = Date.now();
+  if (!force && now - tickFlushAt < 5000) return 0;
+  tickFlushAt = now;
+  const batch = tickQueue;
+  tickQueue = [];
+  const seen = new Set();
+  const rows = [];
+  for (const r of batch) {
+    if (!(r[2] > 0)) continue;
+    const key = r[0] + '|' + r[1];
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push(r);
+  }
+  if (!rows.length) return 0;
+  try {
+    await ensureMarketTicksTable();
+    for (let i = 0; i < rows.length; i += 400) {
+      const chunk = rows.slice(i, i + 400);
+      const values = [];
+      const params = [];
+      chunk.forEach((r, j) => {
+        const b = j * 5;
+        values.push('($' + (b + 1) + ',$' + (b + 2) + ',$' + (b + 3) + ',$' + (b + 4) + ',$' + (b + 5) + ')');
+        params.push(r[0], r[1], r[2], r[3], r[4]);
+      });
+      await pool.query(
+        'insert into whalechat_market_ticks (ticker, t, p, is_real, source) values ' + values.join(',') +
+        ' on conflict (ticker, t) do update set p = excluded.p, is_real = excluded.is_real, source = excluded.source',
+        params
+      );
+    }
+    /* prune outside the retention window at most once a minute */
+    if (now - (flushMarketTicks._prunedAt || 0) > 60000) {
+      flushMarketTicks._prunedAt = now;
+      await pool.query('delete from whalechat_market_ticks where t < $1', [now - TICK_RETENTION_MS]).catch(() => {});
+    }
+    return rows.length;
+  } catch (e) {
+    console.error('[market] durable tick write failed:', e.message);
+    if (isConnError(e)) { dropPool(); schedulePgRetry(); }
+    return 0;
+  }
+}
+market.onTick(queueMarketTick);
+setInterval(() => { flushMarketTicks(false).catch(() => {}); }, 10000).unref();
+
+/* The WhaleChat company stock (WC) counts like any other symbol: its price is
+   the live whale-share market price, the same number WC-Investing plans use for
+   their daily return, and every move is a real tick in the chart/history. */
+let companyStockAt = 0;
+function bridgeCompanyStock() {
+  try {
+    const now = Date.now();
+    if (now - companyStockAt < 3000) return;
+    companyStockAt = now;
+    const px = Number(shares.sharePrice());
+    if (!(px > 0)) return;
+    const q = market.quotes['WC'] || {};
+    market.writeQuote('WC', px, {
+      prevClose: Number(q.prevClose) > 0 ? Number(q.prevClose) : px,
+      open: Number(q.open) > 0 ? Number(q.open) : px,
+      vol: Number(q.vol) || 0,
+      source: 'whaleshares',
+      real: true
+    });
+  } catch (e) {}
+}
+setInterval(bridgeCompanyStock, 3000).unref();
 
 async function initStorage() {
   if (!DATABASE_URL) return;
@@ -739,7 +907,11 @@ async function api(req, res, pathname, query) {
       }
       if (req.method === 'POST') {
         const body = await readBody(req);
-        if (pathname === '/api/admin/market/provider') return json(res, 200, { ok: true, provider: await marketAdmin.updateProvider(admin, rc, body) });
+        if (pathname === '/api/admin/market/provider') {
+          const provider = await marketAdmin.updateProvider(admin, rc, body);
+          if (String(body.provider || body.provider_name || '') === 'twelvedata' && twelvedata) twelvedata.poll().catch(() => {});
+          return json(res, 200, { ok: true, provider });
+        }
         if (pathname === '/api/admin/market/provider/test') return json(res, 200, { ok: true, provider: await marketAdmin.testProvider(admin, rc, String(body.provider || '')) });
         if (pathname === '/api/admin/market/controls') {
           const out = await marketAdmin.updateControls(admin, rc, body);
@@ -837,6 +1009,9 @@ async function api(req, res, pathname, query) {
     }
     if (which === 'all' || which === 'finnhub') {
       try { out.results.finnhub = market.status(); } catch (e) { out.results.finnhub = { error: e.message }; }
+    }
+    if (which === 'all' || which === 'twelvedata') {
+      if (twelvedata) { await twelvedata.poll().catch(() => {}); out.results.twelvedata = twelvedata.status(); }
     }
     if (which === 'all' || which === 'brevo') {
       try {
@@ -1456,13 +1631,17 @@ server.headersTimeout = 70000;
   try { await marketAdmin.init(pool); } catch (e) { console.error('[market-admin] init:', e.message); }
   try { if (typeof marketData !== 'undefined' && marketData && marketData.setQuoteSource) marketData.setQuoteSource((sym) => marketAdmin.quote(sym)); } catch (e) { console.error('[market-admin] quote hook:', e.message); }
   ensureTradingAssets();
+  /* restore the candle ring buffer before any feed writes a new tick */
+  try { await loadMarketTicks(); } catch (e) { console.error('[market] tick restore:', e.message); }
   const durableMarket = await loadMarketConfig();
   if (durableMarket) {
     market.hydrateConfig(durableMarket);
     console.log('[market] restored durable config · mode', durableMarket.mode || 'simulated', '· key', durableMarket.apiKey ? 'set' : 'not set');
   }
   market.start();
+  try { bridgeCompanyStock(); } catch (e) {}
   if (binance) { binance.start(); console.log('[binance] live crypto price feed started'); }
+  if (twelvedata) { twelvedata.start(); console.log('[twelvedata] stock/forex price feed started'); }
   if (connections) { try { connections.boot(); } catch (e) { console.error('[connections] boot:', e.message); } }
   if (b2bAlerts) { b2bAlerts.start(); console.log('[b2b-alerts] watcher started (email + in-app)'); }
   ensureServices(store.db);
@@ -1481,6 +1660,8 @@ function shutdown(signal) {
   if (stopping) return; stopping = true;
   try { market.stop(); } catch (e) {}
   try { if (binance) binance.stop(); } catch (e) {}
+  try { if (twelvedata) twelvedata.stop(); } catch (e) {}
+  try { flushMarketTicks(true).catch(() => {}); } catch (e) {}
   try { if (b2bAlerts) b2bAlerts.stop(); } catch (e) {}
   try { spot.stopTimers(); } catch (e) {}
   try { bots.stopTimers(); } catch (e) {}

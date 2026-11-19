@@ -45,7 +45,7 @@
         '<label class="row" style="gap:8px;margin-top:10px"><input type="checkbox" id="mdBinTest"' + (p.binance.testnet ? ' checked' : '') + '/> <span class="tiny">Use Binance Testnet</span></label>', p.binance.status) +
       card('mdFin', 'Finnhub', 'US stock quotes (and candles where your plan allows).', inp('mdFinKey', 'API Key', 'Finnhub API key', p.finnhub.hasKey), p.finnhub.status) +
       card('mdTwd', 'Twelve Data', 'Forex and stock candles.', inp('mdTwdKey', 'API Key', 'Twelve Data API key', p.twelvedata.hasKey), p.twelvedata.status) +
-      '<div class="card" style="margin-top:12px"><div class="tiny muted">Without a Finnhub key, stock symbols show clearly labelled demo data. Use the Alpaca and other connection cards in Admin &gt; Markets for the trading price cache.</div></div>';
+      '<div class="card" style="margin-top:12px"><div class="tiny muted">Without a Finnhub key, stock symbols show clearly labelled demo data. Use the Twelve Data and Binance connection cards in Admin &gt; Markets for the trading price cache.</div></div>';
   }
   function bodyFor(id) {
     var v = function (i) { var e = $id(i); return e ? e.value.trim() : ''; };
@@ -61,7 +61,13 @@
       el.innerHTML = adminHtml(d.providers);
       el.querySelectorAll('[data-mdsave]').forEach(function (b) { b.onclick = function () {
         var id = b.getAttribute('data-mdsave');
-        jpost('/api/market/providers', bodyFor(id)).then(function (r) { $id(id + 'Msg').textContent = r.ok ? 'Saved on the server.' : 'Save failed.'; if (r.ok) { ['mdBinKey', 'mdBinSec', 'mdFinKey', 'mdTwdKey'].forEach(function (k) { var e = $id(k); if (e && bodyFor(id)) e.value = ''; }); $id(id + 'Bd').innerHTML = badge(r.providers[WHICH[id]].status); } });
+        jpost('/api/connections', bodyFor(id)).then(function (r) {
+          $id(id + 'Msg').textContent = r.ok ? 'Saved on the server.' : ('Save failed: ' + (r.error || 'unknown'));
+          if (r.ok) {
+            ['mdBinKey', 'mdBinSec', 'mdFinKey', 'mdTwdKey'].forEach(function (k) { var e = $id(k); if (e) e.value = ''; });
+            mountAdmin();
+          }
+        });
       }; });
       el.querySelectorAll('[data-mdtest]').forEach(function (b) { b.onclick = function () {
         var id = b.getAttribute('data-mdtest'); $id(id + 'Msg').textContent = 'Testing…';
