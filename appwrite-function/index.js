@@ -29,6 +29,7 @@ const NOTIF_LOG_LIMIT = 400;
 const VERSION = '3.59.0';
 const crypto = require('crypto');
 const { ShareService } = require('./shares');
+const { BotService } = require('./bots');
 
 const CORS = {
   'access-control-allow-origin': '*',
@@ -660,6 +661,172 @@ async function proxyQuotes(provider, symbols) {
   return { ok: true, provider: used, quotes, at: Date.now(), configured: { finnhub: !!FINNHUB_KEY, twelvedata: !!TWELVE_KEY }, debug: Object.assign({}, LAST_YAHOO, { cnbc: LAST_CNBC, fh: LAST_FH }) };
 }
 
+
+/* =========================================================================
+   WhaleChat Bots — engine ported from server-side bots.js
+   -------------------------------------------------------------------------
+   Bots keep trading while the phone is off: the engine is ticked lazily on
+   every state read (and at most once a minute), so elapsed intervals are
+   settled server-side. No frontend JS is needed for a bot to trade.
+   ========================================================================= */
+const BOT_DEFAULT_SETTINGS = {
+  intervalMin: 5, minCapitalCoins: 20, minPoolPct: 10, stakePct: 20,
+  winPct: 4, lossPct: 6, leverage: 5, tradeFeePct: 0.5,
+  autoSecurePriceUsd: 20, autoSecureCycle: 'monthly'
+};
+function botServiceFor(st) {
+  return new BotService({
+    getDb: () => st.db,
+    persist: () => {},
+    broadcast: () => {},
+    getQuote: (ticker) => {
+      try {
+        const row = (st.db.stocks || []).find((x) => x && String(x.ticker).toUpperCase() === String(ticker).toUpperCase());
+        return row && Number(row.price) > 0 ? { price: Number(row.price) } : null;
+      } catch (e) { return null; }
+    }
+  });
+}
+function botTickDue(st) {
+  const t = st && st.db ? Number(st.db.botLastTickAt) || 0 : 0;
+  return Date.now() - t >= 60000;
+}
+async function botsRoute(req, res, mode, fn) {
+  const st = await readState();
+  if (!st.db) return res.json({ ok: false, error: 'not_initialised' }, 409, CORS);
+  const svc = botServiceFor(st);
+  try { svc.ensureDefaults(st.db); } catch (e) {}
+  let ticked = false;
+  if (mode !== 'read' || botTickDue(st)) { try { svc.tick(); ticked = true; st.db.botLastTickAt = Date.now(); } catch (e) {} }
+  let out;
+  try { out = fn(svc, st); }
+  catch (e) { return res.json({ ok: false, error: e.message, message: e.message }, 200, CORS); }
+  if (mode !== 'read' || ticked) {
+    const ok = await saveState(st);
+    if (!ok) return res.json({ ok: false, error: 'storage_write_failed' }, 502, CORS);
+  }
+  return res.json(out, 200, CORS);
+}
+
+/* =========================================================================
+   WhaleChat WC-Investing — server-side daily interest
+   -------------------------------------------------------------------------
+   Plans live in user.investAcct.wcInvest. Every state read settles elapsed
+   days against the server's WC share price and matures plans on time, so
+   interest accrues while the user is offline. Mirrors the client engine.
+   ========================================================================= */
+const WC_RATE = 0.5;
+const WC_DEFAULT_PLANS = [
+  { id: 'starter', name: 'Whale Starter', ratePct: 3, days: 7, minUsd: 10, maxUsd: 500, blurb: 'One-week plan · daily return on the shares you hold.' },
+  { id: 'growth', name: 'Whale Growth', ratePct: 5, days: 14, minUsd: 50, maxUsd: 2500, blurb: 'Two-week plan · higher daily return.' },
+  { id: 'elite', name: 'Whale Elite', ratePct: 8, days: 30, minUsd: 250, maxUsd: 25000, blurb: 'Monthly plan for larger allocations.' }
+];
+function r2(v) { return Math.round((Number(v) || 0) * 100) / 100; }
+function r4(v) { return Math.round((Number(v) || 0) * 10000) / 10000; }
+function wcWallet(u) {
+  if (!u.investAcct) u.investAcct = { usd: 0, payout: 0, portfolios: { stock: 0, wc: 0, b2b: 0, bot: 0 } };
+  const a = u.investAcct;
+  if (!a.wcInvest || typeof a.wcInvest !== 'object') {
+    a.wcInvest = { capital: 0, profit: 0, leftover: 0, autoReinvest: false, plans: [], history: [] };
+  }
+  const w = a.wcInvest;
+  if (!Array.isArray(w.plans)) w.plans = [];
+  if (!Array.isArray(w.history)) w.history = [];
+  return w;
+}
+function wcPrice(db) {
+  const m = db.shareMarket || {};
+  const p = Number(m.priceUsd);
+  return p > 0 ? p : Number(m.basePriceUsd) || 12.5;
+}
+function wcPlanCatalog(db) {
+  if (!Array.isArray(db.wcPlans) || !db.wcPlans.length) db.wcPlans = WC_DEFAULT_PLANS.map((p) => Object.assign({}, p));
+  return db.wcPlans;
+}
+function wcSweep(db, minGapMs) {
+  if (!db || !Array.isArray(db.users)) return false;
+  const now = Date.now();
+  const price = wcPrice(db);
+  const last = Number(db.wcLastSweepAt) || 0;
+  const due = now - last >= (minGapMs == null ? 60000 : minGapMs);
+  let changed = false;
+  wcPlanCatalog(db);
+  db.users.forEach((u) => {
+    if (!u) return;
+    const w = wcWallet(u);
+    (w.plans || []).forEach((inv) => {
+      if (!inv || inv.status !== 'active') return;
+      const days = Math.max(1, Number(inv.days) || 1);
+      const capital = Number(inv.capitalUsd) || 0;
+      const start = Number(inv.startedAt) || now;
+      const end = Number(inv.endsAt) || start + days * 864e5;
+      const elapsedDays = Math.min(days, Math.max(0, Math.floor((Math.min(now, end) - start) / 864e5)));
+      inv.priceLog = Array.isArray(inv.priceLog) ? inv.priceLog : [];
+      if (!inv.priceLog.length) { inv.priceLog.push(r4(inv.entryPriceUsd || price)); changed = true; }
+      if (due) {
+        while (inv.priceLog.length < elapsedDays + 1 && inv.priceLog.length < days) {
+          inv.priceLog.push(r4(price));
+          changed = true;
+        }
+        const day = inv.priceLog.length - 1;
+        if (day >= 0 && inv.priceLog[day] !== r4(price) && elapsedDays >= day) {
+          inv.priceLog[day] = r4(price);
+          changed = true;
+        }
+      }
+      if (now < end) return;
+      while (inv.priceLog.length < days) inv.priceLog.push(r4(price));
+      const prices = inv.priceLog.slice(0, days);
+      const avg = prices.reduce((a, p) => a + (Number(p) || 0), 0) / days;
+      const profit = r2(prices.reduce((a, p) => a + (Number(p) || 0) * (Number(inv.ratePct) || 0) / 100 * capital, 0));
+      inv.status = 'completed';
+      inv.completedAt = now;
+      inv.maturedPriceUsd = price;
+      inv.avgPriceUsd = r4(avg);
+      inv.maturityRoiUsd = profit;
+      w.capital = r2((Number(w.capital) || 0) + capital);
+      w.profit = r2((Number(w.profit) || 0) + profit);
+      w.history.unshift({ id: 'wch_' + now.toString(36) + Math.random().toString(36).slice(2, 6), planName: inv.planName, capitalUsd: capital, profitUsd: profit, at: now });
+      if (w.history.length > 200) w.history.length = 200;
+      changed = true;
+    });
+  });
+  if (due) db.wcLastSweepAt = now;
+  return changed;
+}
+function wcStatePayload(db, userId) {
+  const u = (db.users || []).find((x) => x && x.id === userId);
+  if (!u) return { ok: false, error: 'user_not_found' };
+  const w = wcWallet(u);
+  const price = wcPrice(db);
+  const plans = wcPlanCatalog(db);
+  const view = (w.plans || []).map((inv) => {
+    const days = Math.max(1, Number(inv.days) || 1);
+    const start = Number(inv.startedAt) || Date.now();
+    const end = Number(inv.endsAt) || start + days * 864e5;
+    const active = inv.status === 'active';
+    let accrued = 0;
+    if (inv.status === 'completed') accrued = Number(inv.maturityRoiUsd) || 0;
+    else {
+      const log = (inv.priceLog || []).slice(0, Math.max(1, Math.min(days, Math.floor((Date.now() - start) / 864e5) + 1)));
+      accrued = r2(log.reduce((a, p) => a + (Number(p) || 0) * (Number(inv.ratePct) || 0) / 100 * (Number(inv.capitalUsd) || 0), 0));
+    }
+    return Object.assign({}, inv, {
+      accruedUsd: accrued,
+      valueUsd: r2((Number(inv.capitalUsd) || 0) + accrued),
+      progressPct: inv.status === 'completed' ? 100 : Math.min(100, Math.max(0, ((Date.now() - start) / Math.max(1, end - start)) * 100)),
+      daysLeft: inv.status === 'completed' ? 0 : Math.max(0, Math.ceil((end - Date.now()) / 864e5)),
+      serverActive: active
+    });
+  });
+  return {
+    ok: true,
+    plans, investments: view, history: (w.history || []).slice(0, 40),
+    wallet: { capitalUsd: r2(w.capital), profitUsd: r2(w.profit), leftoverUsd: r2(w.leftover), autoReinvest: !!w.autoReinvest },
+    sharePriceUsd: r4(price), coinsPerUsd: 2, serverTime: Date.now()
+  };
+}
+
 module.exports = async ({ req, res, log, error }) => {
   const method = (req.method || 'GET').toUpperCase();
   const path = String(req.path || '/').replace(/\/+$/, '') || '/';
@@ -794,6 +961,63 @@ module.exports = async ({ req, res, log, error }) => {
       return res.json({ ok: true, token: signToken({ sub: u.id, email: u.email || '', role: 'admin', exp: now + ADMIN_TTL }), adminId: u.id, expiresAt: now + ADMIN_TTL }, 200, CORS);
     }
 
+
+    /* ------------------------------ bots ---------------------------------- */
+    if (path === '/api/bots/state' && method === 'GET') {
+      const userId = String((req.query || {}).userId || '');
+      return botsRoute(req, res, 'read', (svc) => svc.publicState(userId));
+    }
+    if (path === '/api/bots/admin' && method === 'GET') {
+      const st0 = await readState();
+      if (!isAdminRequest(req, body, st0, req.query || {})) return res.json({ ok: false, error: 'admin_only' }, 403, CORS);
+      return botsRoute(req, res, 'read', (svc) => svc.adminState());
+    }
+    if (path === '/api/bots/history' && method === 'GET') {
+      const userId = String((req.query || {}).userId || '');
+      return botsRoute(req, res, 'read', (svc) => svc.history(userId));
+    }
+    if (path === '/api/bots/subscribe' && method === 'POST') {
+      return botsRoute(req, res, 'write', (svc) => svc.subscribe(body));
+    }
+    if (path === '/api/bots/start' && method === 'POST') {
+      return botsRoute(req, res, 'write', (svc) => svc.start(body));
+    }
+    if (path === '/api/bots/resume' && method === 'POST') {
+      return botsRoute(req, res, 'write', (svc) => svc.resume(body));
+    }
+    if (path === '/api/bots/stop' && method === 'POST') {
+      return botsRoute(req, res, 'write', (svc) => svc.stop(body));
+    }
+    if (path === '/api/bots/topup' && method === 'POST') {
+      return botsRoute(req, res, 'write', (svc) => svc.topup(body));
+    }
+    if (path === '/api/bots/transfer' && method === 'POST') {
+      return botsRoute(req, res, 'write', (svc) => svc.transfer(body));
+    }
+    if (path === '/api/bots/auto-secure/subscribe' && method === 'POST') {
+      return botsRoute(req, res, 'write', (svc) => svc.subscribeAutoSecure(body));
+    }
+    if (path === '/api/bots/auto-secure/toggle' && method === 'POST') {
+      return botsRoute(req, res, 'write', (svc) => svc.toggleAutoSecure(body));
+    }
+    if (path === '/api/bots/admin/save' && method === 'POST') {
+      const st0 = await readState();
+      if (!isAdminRequest(req, body, st0, req.query || {})) return res.json({ ok: false, error: 'admin_only' }, 403, CORS);
+      return botsRoute(req, res, 'write', (svc) => svc.saveAdminConfig(body));
+    }
+
+    /* --------------------------- WC investing ----------------------------- */
+    if (path === '/api/wc/state' && method === 'GET') {
+      return sharesRoute(req, res, 'write', (svc, st) => {
+        wcSweep(st.db, 0);
+        return wcStatePayload(st.db, String((req.query || {}).userId || ''));
+      });
+    }
+    if (path === '/api/wc/plans' && method === 'GET') {
+      const st = await readState();
+      return res.json({ ok: true, plans: wcPlanCatalog(st.db) }, 200, CORS);
+    }
+
     /* ------------------------- WhaleChat shares --------------------------- */
     if (path === '/api/shares/state' && method === 'GET') {
       const query = req.query || {};
@@ -901,13 +1125,29 @@ module.exports = async ({ req, res, log, error }) => {
       const st = await readState();
       /* shares keep moving while the app is closed: one lazy tick per minute
          accrues profit and settles matured plans into the payout balance */
-      if (st.db && marketTickDue(st, 60000)) {
-        try {
-          const svc = shareServiceFor(st);
-          svc.ensureDefaults(st.db);
-          svc.tick();
-          await saveState(st);
-        } catch (e) { try { error('shares tick: ' + e.message); } catch (x) {} }
+      if (st.db) {
+        let dirty = false;
+        if (marketTickDue(st, 60000)) {
+          try {
+            const svc = shareServiceFor(st);
+            svc.ensureDefaults(st.db);
+            svc.tick();
+            dirty = true;
+          } catch (e) { try { error('shares tick: ' + e.message); } catch (x) {} }
+        }
+        /* bots trade while the phone is off — settled on the server */
+        if (botTickDue(st)) {
+          try {
+            const b = botServiceFor(st);
+            b.ensureDefaults(st.db);
+            b.tick();
+            st.db.botLastTickAt = Date.now();
+            dirty = true;
+          } catch (e) { try { error('bots tick: ' + e.message); } catch (x) {} }
+        }
+        /* WC-Investing daily interest keeps accruing while offline */
+        try { if (wcSweep(st.db, 60000)) dirty = true; } catch (e) {}
+        if (dirty) await saveState(st);
       }
       return res.json({ rev: st.rev || 0, db: st.db, updatedAt: st.at || 0 }, 200, CORS);
     }

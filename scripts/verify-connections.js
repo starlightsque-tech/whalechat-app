@@ -45,6 +45,9 @@ async function hit(path, opts) {
   const qn = proxy.json && proxy.json.quotes ? Object.keys(proxy.json.quotes).length : 0;
   add('stock quote proxy', proxy.ok && qn > 0, qn + ' quote(s) · ' + proxy.ms + 'ms');
 
+  const email = await hit('/api/email/status');
+  add('email provider', email.ok && email.json && email.json.configured === true, email.json ? email.json.provider || '' : email.error);
+
   const shares = await hit('/api/shares/admin');
   const sharesReachable = !!shares.json && (shares.json.error === 'admin_only' || shares.json.ok === true);
   add('shares engine', sharesReachable, shares.json && shares.json.error ? shares.json.error : 'ok');

@@ -143,7 +143,7 @@
     var symbols = binanceSymbols();
     if (!symbols.length) return;
     var chunks = [];
-    for (var i = 0; i < symbols.length; i += 55) chunks.push(symbols.slice(i, i + 55));
+    for (var i = 0; i < symbols.length; i += 30) chunks.push(symbols.slice(i, i + 30));
     chunks.forEach(function (chunk) {
       connectBinanceChunk(chunk, 0);
     });
@@ -172,6 +172,14 @@
     ws.onerror = function () {};
     ws.onclose = function () {
       alive = false;
+      /* one bad pair can close a combined stream: split the chunk so the
+         healthy symbols keep streaming instead of losing Binance entirely */
+      if (chunk.length > 1) {
+        var mid = Math.ceil(chunk.length / 2);
+        connectBinanceChunk(chunk.slice(0, mid), attempt + 1);
+        connectBinanceChunk(chunk.slice(mid), attempt + 1);
+        return;
+      }
       retry();
     };
     var watchdog = setInterval(function () {
@@ -190,6 +198,29 @@
   document.addEventListener('visibilitychange', function () {
     if (!document.hidden) { openBinance(); pollTwelve(true); if (finnhubWS && finnhubWS.readyState > 1) openFinnhub(); }
   });
+
+
+  /* Binance REST fallback — no WebSocket required. Keeps crypto prices real
+     even when a combined stream is rejected by the network. */
+  function pollBinanceRest() {
+    var syms = binanceSymbols();
+    if (!syms.length) return;
+    var batch = syms.slice(0, 80).map(function (x) { return x.toUpperCase(); });
+    var url = 'https://api.binance.com/api/v3/ticker/24hr?symbols=' + encodeURIComponent(JSON.stringify(batch));
+    fetch(url, { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (list) {
+        if (!Array.isArray(list)) return;
+        var n = 0;
+        list.forEach(function (d) {
+          if (!d || !d.symbol) return;
+          apply(d.symbol, Number(d.lastPrice), Number(d.openPrice), { open: Number(d.openPrice), high: Number(d.highPrice), low: Number(d.lowPrice), vol: Number(d.volume), source: 'binance' });
+          n++;
+        });
+        if (n) { touch('binance', Date.now()); paint(); }
+      })
+      .catch(function () {});
+  }
 
   /* ---------------------------------------------------------------- finnhub */
   var finnhubSymbols = [];
@@ -292,42 +323,74 @@
     });
     return Array.from(new Set(list));
   }
+  function stockProxyConfig() {
+    try {
+      var c = window.WC_BUILD_CONFIG || {};
+      return { url: c.stockProxyFunction || '', project: c.appwriteProjectId || '' };
+    } catch (e) { return { url: '', project: '' }; }
+  }
+  function applyProviderRows(rows) {
+    var n = 0;
+    (rows || []).forEach(function (row) {
+      if (!row || !row.symbol || !(Number(row.price) > 0)) return;
+      var sym = up(row.symbol);
+      var prev = Number(row.prevClose);
+      if (!(prev > 0)) prev = Number(row.price) - (Number(row.change) || 0);
+      var src = row.source === 'twelvedata' ? 'twelvedata' : row.source === 'yahoo' ? 'yahoo' : 'finnhub';
+      try {
+        apply(sym, Number(row.price), prev, { open: prev, vol: Number(row.volume) || 0, source: src });
+        n++;
+      } catch (e) { proxyDbg.errors++; proxyDbg.lastError = e && e.message; }
+    });
+    if (n) paint();
+    proxyDbg.applied += n;
+    return n;
+  }
   function pollProxy(force) {
     if (proxyBusy) return;
-    if (!force && !serverKeys.finnhub && !serverKeys.twelvedata) return;
+    if (!force && !serverKeys.finnhub && !serverKeys.twelvedata && !stockProxyConfig().url) return;
     var all = proxySymbols();
     if (!all.length) return;
     if (force) proxyCursor = 0;
     var batch = [];
-    for (var i = 0; i < 50 && i < all.length; i++) {
-      batch.push(all[(proxyCursor + i) % all.length]);
-    }
+    for (var i = 0; i < 50 && i < all.length; i++) batch.push(all[(proxyCursor + i) % all.length]);
     proxyCursor = (proxyCursor + batch.length) % all.length;
     proxyBusy = true;
     proxyDbg.calls++; proxyDbg.lastBatch = batch.length;
+
+    var cfg = stockProxyConfig();
+    var done = function () { proxyBusy = false; };
+    if (cfg.url) {
+      /* primary: dedicated Appwrite stock-proxy function */
+      var body = JSON.stringify({ body: JSON.stringify({ symbols: batch.join(',') }), method: 'POST' });
+      fetch(cfg.url, { method: 'POST', cache: 'no-store', headers: { 'content-type': 'application/json', 'X-Appwrite-Project': cfg.project }, body: body })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          done();
+          var payload = d && d.responseBody ? JSON.parse(d.responseBody) : d;
+          if (!payload || !payload.data) { proxyDbg.errors++; proxyDbg.lastError = 'stock_proxy_empty'; return; }
+          if (applyProviderRows(payload.data)) {
+            serverKeys.finnhub = true; serverKeys.proxy = true;
+            touch('finnhub', Date.now());
+          }
+        })
+        .catch(function (e) { done(); proxyDbg.errors++; proxyDbg.lastError = e && e.message; });
+      return;
+    }
+    /* fallback: sync-server proxy */
     var req;
     try {
       req = fetch(apiUrl('/api/market/proxy?provider=auto&symbols=' + encodeURIComponent(batch.join(','))), { cache: 'no-store', headers: { accept: 'application/json' } });
-    } catch (e) { proxyBusy = false; return; }
+    } catch (e) { done(); return; }
     Promise.resolve(req)
       .then(function (r) { return r.json(); })
       .then(function (d) {
-        proxyBusy = false;
+        done();
         if (!d || !d.ok || !d.quotes) { proxyDbg.errors++; proxyDbg.lastError = 'bad_response'; return; }
-        var n = 0;
-        Object.keys(d.quotes).forEach(function (sym) {
-          var q = d.quotes[sym];
-          if (!q || !(Number(q.price) > 0)) return;
-          try {
-            var src = q.source === 'twelvedata' ? 'twelvedata' : q.source === 'yahoo' ? 'yahoo' : 'finnhub';
-            apply(sym, Number(q.price), Number(q.prevClose), { open: Number(q.open), vol: Number(q.vol), source: src });
-            n++;
-          } catch (e) { proxyDbg.errors++; proxyDbg.lastError = e && e.message; }
-        });
-        proxyDbg.applied += n;
-        if (n) paint();
+        var rows = Object.keys(d.quotes).map(function (k) { return Object.assign({ symbol: k }, d.quotes[k]); });
+        if (applyProviderRows(rows)) touch(d.provider === 'twelvedata' ? 'twelvedata' : 'finnhub', Date.now());
       })
-      .catch(function (e) { proxyBusy = false; proxyDbg.errors++; proxyDbg.lastError = e && e.message; });
+      .catch(function (e) { done(); proxyDbg.errors++; proxyDbg.lastError = e && e.message; });
   }
   window.WC_MARKET_PROXY = { poll: pollProxy, available: function () { return serverKeys; }, debug: function () { return proxyDbg; } };
 
@@ -392,6 +455,8 @@
     setInterval(function () { if (document.hidden) return; openBinance(); }, 90000);
     setInterval(function () { if (document.hidden) return; openFinnhub(); }, 60000);
     setInterval(function () { collectTwelve(); pollTwelve(); pollYahoo(); }, 60000);
+    pollBinanceRest();
+    setInterval(function () { if (!document.hidden) pollBinanceRest(); }, 20000);
     setInterval(function () { if (!document.hidden) pollProxy(); }, 25000);
     setInterval(continuity, 2200);
     setInterval(function () { writeCache(); }, 25000);

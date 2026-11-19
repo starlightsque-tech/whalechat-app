@@ -167,6 +167,7 @@
   function detail(t, opts) {
     opts = opts || {};
     t = up(t);
+    if ((HIST[t] || []).length < 20) loadHistory(t);
     var q = quote(t) || {};
     var p = priceOf(t);
     var chg = num(q.changePct);
@@ -191,6 +192,37 @@
       '<div class="wcc-chips">' + chips + '<span class="wcc-src" data-wcc-src>' + (offline ? 'Offline · showing last real price' : (!hasFeed ? 'Waiting for live ticks' : 'Live feed')) + '</span></div>' +
       '<div data-wcc-body="' + esc(t) + '">' + svg(t, { h: opts.h || 320, tf: tf }) + '</div>' +
     '</div>';
+  }
+
+  /* ------------------------------------------------ real candle history */
+  var HIST_INFLIGHT = {};
+  var HIST_AT = {};
+  function loadHistory(t) {
+    t = up(t);
+    var cfg = window.WC_BUILD_CONFIG || {};
+    if (!t || !cfg.stockProxyFunction) return;
+    if (HIST_INFLIGHT[t]) return;
+    if (HIST_AT[t] && Date.now() - HIST_AT[t] < 300000) return;
+    if ((HIST[t] || []).length >= 20) { HIST_AT[t] = Date.now(); return; }
+    HIST_INFLIGHT[t] = true;
+    HIST_AT[t] = Date.now();
+    var body = JSON.stringify({ body: JSON.stringify({ history: true, symbol: t }), method: 'POST' });
+    fetch(cfg.stockProxyFunction, { method: 'POST', cache: 'no-store', headers: { 'content-type': 'application/json', 'X-Appwrite-Project': cfg.appwriteProjectId || '' }, body: body })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        var payload = d && d.responseBody ? JSON.parse(d.responseBody) : d;
+        var pts = payload && payload.history && payload.history.points;
+        if (!Array.isArray(pts) || pts.length < 2) return;
+        var cur = HIST[t] || [];
+        var byT = {};
+        cur.forEach(function (x) { byT[x.t] = x; });
+        pts.forEach(function (x) { if (x && x.p > 0 && x.t > 0) byT[x.t] = { t: Number(x.t), p: Number(x.p) }; });
+        HIST[t] = Object.keys(byT).map(function (k) { return byT[k]; }).sort(function (a, b) { return a.t - b.t; }).slice(-MAX_PTS);
+        save();
+        mountAll();
+      })
+      .catch(function () {})
+      .then(function () { HIST_INFLIGHT[t] = false; });
   }
 
   /* -------------------------------------------------------------- styles */

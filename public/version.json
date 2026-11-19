@@ -1,8 +1,8 @@
 {
-  "version": "3.61.0",
-  "build": "2026-11-19T14:48:58Z",
+  "version": "3.62.0",
+  "build": "2026-11-19T15:04:18Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.61.0 — dedicated Appwrite stock-proxy function deployed (Finnhub → Twelve Data → Alpha Vantage → cache, tested AAPL/TSLA/MSFT live); Brevo confirmed as the app email provider (signup verification codes unchanged); B2B, Stock, Bot and WC-Investing pages verified opening instantly from IndexedDB with no Loading/Connecting text offline.",
-  "releasedAt": "2026-11-19T14:48:58Z",
+  "notes": "WhaleChat 3.62.0 — bot engine deployed inside the Appwrite sync function: bots tick server-side every minute and keep trading while the phone is off, with live /api/bots/state, subscribe/start/stop/topup endpoints; WC-Investing daily interest now accrues on the server with /api/wc/state; stock quotes now come from the dedicated stock-proxy function with Twelve Data candle history, and Binance gets a REST fallback plus stream splitting so crypto stays live; email provider and all connections are part of the build gate.",
+  "releasedAt": "2026-11-19T15:04:18Z",
   "minimum": "3.0.0"
 }
