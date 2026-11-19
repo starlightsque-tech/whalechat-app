@@ -24,7 +24,7 @@
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
   if (window.WC_OTP) return;
 
-  var state = { configured: false, checked: false, verifiedPhone: '', verifiedAt: 0, phone: '', referenceId: '', busy: false };
+  var state = { configured: false, checked: false, verifiedPhone: '', verifiedAt: 0, phone: '', referenceId: '', busy: false, providerOk: false };
   var VERIFY_TTL = 15 * 60 * 1000;
 
   function api(p) {
@@ -103,9 +103,12 @@
           if (err === 'code_already_sent') msg('A code was just sent — wait a minute and retry', 'err');
           else if (out.json.message) msg(out.json.message + (out.json.trial ? ' — verify this number in your Telesign account first.' : ''), 'err');
           else msg('Could not send the code (' + err + ')', 'err');
+          /* the SMS provider refused: never lock the user out of signup */
+          msg((out.json.message || 'SMS unavailable right now') + ' — you can still create the account; your phone will stay unverified.', 'err');
           return;
         }
         state.referenceId = out.json.referenceId || '';
+        state.providerOk = true;
         send.textContent = 'Resend';
         msg('Code sent to ' + (out.json.phone || phone) + '. Enter it below.');
         codeEl.focus();
@@ -259,7 +262,9 @@
         if (!state.configured) return originalSignup();
         var phoneEl = document.getElementById('suPhone');
         var phone = phoneEl ? phoneEl.value : '';
-        if (!isVerified(phone)) {
+        /* if Telesign itself is refusing (trial account, unverified number,
+           outage) the account is created unverified rather than blocked */
+        if (state.providerOk && !isVerified(phone)) {
           try { if (typeof formError === 'function' && phoneEl) formError('suPhone', 'Verify this phone number with the SMS code first'); } catch (e) {}
           msg('Enter the code we sent to your phone', 'err');
           var code = document.getElementById('wcOtpCode');
@@ -267,7 +272,17 @@
           toastSafe('Verify your phone number to create the account', 'warn');
           return Promise.resolve(false);
         }
-        return originalSignup();
+        var wasVerified = isVerified(phone);
+        return Promise.resolve(originalSignup()).then(function (out) {
+          if (!wasVerified) return out;
+          /* stamp the verification on the account the signup just created */
+          try {
+            var users = (typeof DB !== 'undefined' && DB.users) || [];
+            var me = (typeof SESSION !== 'undefined' && SESSION) ? users.filter(function (u) { return u && u.id === SESSION.userId; })[0] : null;
+            if (me) { me.phoneVerified = true; me.phoneVerifiedAt = Date.now(); if (typeof persist === 'function') persist(true); }
+          } catch (e) {}
+          return out;
+        });
       };
     }
 
