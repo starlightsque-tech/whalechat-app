@@ -1,8 +1,8 @@
 {
-  "version": "3.52.0",
-  "build": "2026-11-19T02:05:00Z",
+  "version": "3.52.1",
+  "build": "2026-11-19T03:10:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.52.0 - TradingView Market Overview widget installed on every trade view: stock trading dashboard, stock trade view, live trade dashboard, B2B-Investing desk and the B2B buy view. One shared widget (96 instruments across Indices, Stocks, Crypto, Forex, Commodities and Brazil B3 tabs), dark-theme matched to the app, lazily loaded and re-mounted on every SPA render.",
-  "releasedAt": "2026-11-19T02:05:00Z",
+  "notes": "WhaleChat 3.52.1 - the TradingView market-overview board is removed and the trade views now run a real-time candlestick chart (Lightweight Charts v5 streaming view) fed by the WhaleChat market engine: recorded ticks are bucketed into OHLC candles per timeframe and the live quote stream grows the current candle every 100ms. Installed on the stock trade view and the B2B-Investing buy view, with entry/TP/SL price lines, timeframe switch and Go-to-realtime control.",
+  "releasedAt": "2026-11-19T03:10:00Z",
   "minimum": "3.0.0"
 }
