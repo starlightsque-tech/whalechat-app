@@ -51,6 +51,24 @@ describe('offline runtime', () => {
     expect(store.getState().connection.pendingCount).toBe(0);
   });
 
+  it('executes a retried checkout at most once', async () => {
+    const backend = createDemoBackend({ latencyMs: 0 });
+    const meta = { idempotencyKey: 'checkout-idem-0001', clientTimestamp: new Date().toISOString() };
+    const input = {
+      items: [{ productId: 'p1', title: 'Test', unitPrice: { amountMinor: 1_000, currency: 'USD' }, quantity: 2, imageUrl: '' }],
+      currency: 'USD',
+      shippingMinor: 0,
+      note: '',
+    };
+    const first = await backend.shop.placeOrder(input, meta);
+    const replay = await backend.shop.placeOrder(input, meta);
+    expect(replay.id).toBe(first.id);
+    const wallet = await backend.wallet.getWallet();
+    const ledger = await backend.wallet.listLedger();
+    expect(wallet.balances.USD).toBe(25_000_00 - 2_000);
+    expect(ledger.items.filter((row) => row.idempotencyKey === meta.idempotencyKey)).toHaveLength(1);
+  });
+
   it('locks funds on an offline trade and flags it pending_sync', async () => {
     const storage = createMemoryStorage();
     const store = createWhalechatStore();
