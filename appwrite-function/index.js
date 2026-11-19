@@ -691,13 +691,25 @@ function botTickDue(st) {
   const t = st && st.db ? Number(st.db.botLastTickAt) || 0 : 0;
   return Date.now() - t >= 60000;
 }
+/* settle every interval a bot missed while no device was open */
+function botCatchUp(svc, st) {
+  let n = 0;
+  for (let i = 0; i < 20; i++) {
+    let changed = 0;
+    try { changed = svc.tick(); } catch (e) { break; }
+    n += changed ? 1 : 0;
+    if (!changed) break;
+  }
+  st.db.botLastTickAt = Date.now();
+  return n;
+}
 async function botsRoute(req, res, mode, fn) {
   const st = await readState();
   if (!st.db) return res.json({ ok: false, error: 'not_initialised' }, 409, CORS);
   const svc = botServiceFor(st);
   try { svc.ensureDefaults(st.db); } catch (e) {}
   let ticked = false;
-  if (mode !== 'read' || botTickDue(st)) { try { svc.tick(); ticked = true; st.db.botLastTickAt = Date.now(); } catch (e) {} }
+  if (mode !== 'read' || botTickDue(st)) { try { botCatchUp(svc, st); ticked = true; } catch (e) {} }
   let out;
   try { out = fn(svc, st); }
   catch (e) { return res.json({ ok: false, error: e.message, message: e.message }, 200, CORS); }
@@ -835,6 +847,31 @@ module.exports = async ({ req, res, log, error }) => {
   try { body = req.body ? (typeof req.body === 'string' ? JSON.parse(req.body) : req.body) : {}; } catch (e) { body = {}; }
 
   try {
+    /* Appwrite cron invocation: settle every server-side engine even when no
+       device is open, then return. This is what keeps bots trading 24/7. */
+    const trigger = String((req.headers && (req.headers['x-appwrite-trigger'] || req.headers['X-Appwrite-Trigger'])) || '');
+    if (trigger === 'schedule') {
+      const st = await readState();
+      let changed = false;
+      try {
+        const svc = shareServiceFor(st);
+        svc.ensureDefaults(st.db);
+        svc.tick();
+        changed = true;
+      } catch (e) {}
+      try {
+        if (botTickDue(st)) {
+          const b = botServiceFor(st);
+          b.ensureDefaults(st.db);
+          botCatchUp(b, st);
+          changed = true;
+        }
+      } catch (e) {}
+      try { if (wcSweep(st.db, 60000)) changed = true; } catch (e) {}
+      if (changed) await saveState(st);
+      return res.json({ ok: true, engine: 'cron', rev: st.rev || 0, at: Date.now() }, 200, CORS);
+    }
+
     if (path === '/api/admin/login' && method === 'POST') {
       const login = String(body.login || '').trim().toLowerCase();
       const given = String(body.password || '');
@@ -1140,8 +1177,7 @@ module.exports = async ({ req, res, log, error }) => {
           try {
             const b = botServiceFor(st);
             b.ensureDefaults(st.db);
-            b.tick();
-            st.db.botLastTickAt = Date.now();
+            botCatchUp(b, st);
             dirty = true;
           } catch (e) { try { error('bots tick: ' + e.message); } catch (x) {} }
         }
