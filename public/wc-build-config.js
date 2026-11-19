@@ -13,8 +13,10 @@ window.WC_BUILD_CONFIG = {
   bucketId: 'whalechat',
   syncServer: 'https://whalechat-api.appwrite.network',
   stockProxy: 'https://whalechat-api.appwrite.network/api/market/proxy',
+  stockProxyFunction: 'https://nyc.cloud.appwrite.io/v1/functions/stock-proxy/executions',
+  stockProxyFunctionId: 'stock-proxy',
   realtimeChannel: 'stocks-live',
   emailFunction: 'https://whalechat-api.appwrite.network/api/email/send',
   siteUrl: 'https://whalechat.appwrite.network',
-  build: '3.60.0'
+  build: '3.61.0'
 };

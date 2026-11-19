@@ -1,8 +1,8 @@
 {
-  "version": "3.60.0",
-  "build": "2026-11-19T13:49:40Z",
+  "version": "3.61.0",
+  "build": "2026-11-19T14:48:58Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.60.0 — TradingView removed: every price and performance chart is now the native green/red baseline chart, online and offline, with no invented prices while offline (charts pause on the last real tick); mobile view is the dark phone layout, desktop view the white wide layout, with Mobile/Auto/Desktop listed one after another and desktop as the default; one ConnectionManager keeps the app connected with a 30s heartbeat and silent resume; Sync-server/Reconnect UI removed; build now fails unless the sync function, quote proxy, shares engine and site all answer.",
-  "releasedAt": "2026-11-19T13:49:40Z",
+  "notes": "WhaleChat 3.61.0 — dedicated Appwrite stock-proxy function deployed (Finnhub → Twelve Data → Alpha Vantage → cache, tested AAPL/TSLA/MSFT live); Brevo confirmed as the app email provider (signup verification codes unchanged); B2B, Stock, Bot and WC-Investing pages verified opening instantly from IndexedDB with no Loading/Connecting text offline.",
+  "releasedAt": "2026-11-19T14:48:58Z",
   "minimum": "3.0.0"
 }

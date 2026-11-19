@@ -43,6 +43,17 @@ The script:
 The site is served from `https://<site-id>.<appwrite-domain>` (the exact host is
 shown in the Appwrite console → Sites → Domains).
 
+## stock-proxy function
+
+A dedicated quote function is deployed at function id `stock-proxy`
+(`https://nyc.cloud.appwrite.io/v1/functions/stock-proxy/executions`).
+It accepts `?symbols=AAPL,TSLA` or a POST body `{"symbols":"AAPL,TSLA"}` and
+fails over Finnhub → Twelve Data → Alpha Vantage → memory cache. Provider keys
+live in its variables (`FINNHUB_KEY`, `TWELVE_DATA_KEY`, `ALPHA_VANTAGE_KEY`).
+
+Email: the sync function sends verification, welcome and transactional mail
+through Brevo (`/api/email/status` → provider: brevo).
+
 ## 3. Enable the server-side data mirror
 
 Set these on Render (Environment):
