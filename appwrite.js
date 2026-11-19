@@ -83,7 +83,7 @@ async function ensureBucket() {
       permissions: [],
       fileSecurity: false,
       enabled: true,
-      maximumFileSize: 50 * 1024 * 1024,
+      maximumFileSize: 50000000,
       allowedFileExtensions: ['json', 'txt', 'png', 'jpg', 'jpeg', 'webp', 'svg', 'pdf'],
       compression: 'none',
       encryption: true,
