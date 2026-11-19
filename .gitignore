@@ -28,3 +28,6 @@ public/offline-manifest.json
 
 # local state exports (never commit user data)
 backups/
+
+# local test state
+data-admin/

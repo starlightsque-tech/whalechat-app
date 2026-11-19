@@ -90,6 +90,7 @@ const MODULES = [
   { file: 'view-mode.js', marker: 'wc-view-mode' },
   { file: 'portfolio-share.js', marker: 'wc-portfolio-share' },
   { file: 'pro-chart.js', marker: 'wc-pro-chart' },
+  { file: 'tv-market-overview.js', marker: 'wc-tv-overview' },
   { file: 'readability.js', marker: 'wc-readability' },
   { file: 'b2b-market.js', marker: 'wc-b2b-market' },
   { file: 'connections-admin.js', marker: 'wc-connections-admin' },

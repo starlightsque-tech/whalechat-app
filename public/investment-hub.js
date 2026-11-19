@@ -551,6 +551,7 @@
 
       (window.WC_B2B_MARKET ? '<div class="card"><div class="between"><div class="card-title" style="margin:0">Live market</div>' +
         '<a href="#/investment/b2b/market" class="tiny">Open marketplace →</a></div>' + window.WC_B2B_MARKET.strip() + '</div>' : '') +
+      (window.WC_TV_OVERVIEW ? window.WC_TV_OVERVIEW.card({ title: 'Market overview', sub: 'Live indices, crypto, forex & B3 · TradingView' }) : '') +
       /* buy and sell are deliberately separate buttons */
       '<div class="b2b-pair">' +
         '<a href="#/investment/b2b/buy" class="b2b-bigbtn buy" data-b2b-cta="buy">' +
@@ -586,7 +587,8 @@
     var assets = b2bAssets();
     var picked = String((params && params.asset) || '').toUpperCase();
     var sel = assets.find(function (s) { return s.ticker === picked; }) || (INV.stock && picked ? INV.stock(picked) : null) || assets[0] || null;
-    if (!sel) return b2bHead(u, 'Buy assets', 'No tradable asset is available right now.') + '<div class="card"><div class="tiny muted">The company contract has no assets loaded.</div></div>';
+    if (!sel) return b2bHead(u, 'Buy assets', 'No tradable asset is available right now.') + '<div class="card"><div class="tiny muted">The company contract has no assets loaded.</div></div>' +
+      (window.WC_TV_OVERVIEW ? window.WC_TV_OVERVIEW.card({ title: 'Market overview', sub: 'Live indices, crypto, forex & B3 · TradingView' }) : '');
     var q = b2bQuote(sel.ticker) || {};
     var price = Number(q.price) || 0;
     var alert = (a.b2bAlerts || []).find(function (x) { return x.ticker === sel.ticker; }) || {};
@@ -609,6 +611,7 @@
         '<button class="btn btn-primary" data-act="ih-b2b-buy" data-t="' + escH(sel.ticker) + '" style="width:100%">Buy ' + escH(b2bLabel(sel)) + '</button>' +
         '<div class="tiny muted mt6">Buys are paid from your capital balance. The assets balance then shows their live market worth.</div>' +
       '</div>' +
+      (window.WC_TV_OVERVIEW ? window.WC_TV_OVERVIEW.card({ title: 'Market overview', sub: 'Live world markets around ' + escH(b2bLabel(sel)) + ' · TradingView' }) : '') +
       '<div class="card"><div class="card-title">Price alerts</div>' +
         '<div class="row" style="gap:8px"><div class="field grow"><label class="label">Buy below (USD)</label><input class="input" id="ihB2bBuyAlert" type="number" step="0.0001" value="' + (alert.buy || '') + '"/></div>' +
         '<div class="field grow"><label class="label">Sell above (USD)</label><input class="input" id="ihB2bSellAlert" type="number" step="0.0001" value="' + (alert.sell || '') + '"/></div></div>' +

@@ -163,6 +163,8 @@ INV.viewDash = function (params) {
     </div>
   </div>
 
+  ${window.WC_TV_OVERVIEW ? WC_TV_OVERVIEW.card({ title: 'Market overview', sub: 'Live indices, stocks, crypto, forex & B3 · TradingView' }) : ''}
+
   <div class="inv-two">
     <div class="card">
       <div class="card-title">Allocation</div>
@@ -408,6 +410,8 @@ INV.viewStock = function (rawTicker, params) {
     <div class="tiny muted center" data-lt-chart-hint style="margin-top:4px"></div>
     <div class="tiny muted center wc-feed-notice" data-market-notice="1" style="margin-top:4px">Simulated market data · 24/7</div>
   </div>
+
+  ${window.WC_TV_OVERVIEW ? WC_TV_OVERVIEW.card({ title: 'Market overview', sub: 'Live world markets around ' + esc(s.ticker) + ' · TradingView' }) : ''}
 
   <div class="inv-two">
     <div class="card">

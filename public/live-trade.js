@@ -1339,6 +1339,8 @@ LT.dash = function (params) {
     <div class="tiny muted center wc-feed-notice" data-market-notice="1" style="margin-top:6px">Simulated market data · 24/7</div>
   </div>
 
+  ${window.WC_TV_OVERVIEW ? WC_TV_OVERVIEW.card({ title: 'Market overview', sub: 'Live indices, stocks, crypto, forex & B3 · TradingView' }) : ''}
+
   <div class="inv-two">
     <div class="card">
       <div class="card-title">Allocation</div>
