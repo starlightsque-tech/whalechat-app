@@ -1,8 +1,8 @@
 {
-  "version": "3.55.1",
-  "build": "2026-11-19T07:10:00Z",
+  "version": "3.55.2",
+  "build": "2026-11-19T07:35:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.55.1 - the TradingView symbol selected by tapping a B2B stock card now survives the app's background sync/re-render instead of snapping back to the default TSLA chart; first-tick price blend no longer records half price.",
-  "releasedAt": "2026-11-19T07:10:00Z",
+  "notes": "WhaleChat 3.55.2 - durable chart history drops legacy half-price first ticks on restore, so no synthetic 50% crash candle appears for SHOP, PLTR, MSTR, BTC and others.",
+  "releasedAt": "2026-11-19T07:35:00Z",
   "minimum": "3.0.0"
 }

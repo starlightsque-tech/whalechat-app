@@ -424,8 +424,18 @@ class MarketService {
         source: r.source || 'restored'
       })).filter((x) => x.t > 0 && x.p > 0).sort((a, b) => a.t - b.t);
       if (!pts.length) return;
-      this.history[t] = pts.slice(-3000);
-      const last = pts[pts.length - 1];
+      /* Older builds could persist a half-price first tick (the 50% blend from
+         a zero simulated level). Drop such points while hydrating so the chart
+         never shows a one-candle 50% crash. */
+      const clean = [];
+      for (let i = 0; i < pts.length; i++) {
+        const cur = pts[i], next = pts[i + 1];
+        if (next && cur.p > 0 && Math.abs(cur.p - next.p / 2) < next.p * 0.01) continue;
+        clean.push(cur);
+      }
+      const use = clean.length ? clean : pts;
+      this.history[t] = use.slice(-3000);
+      const last = use[use.length - 1];
       this.seedBase[t] = last.p;
       if (last.real) { this.lastReal[t] = last.p; this.lastRealTime[t] = last.t; this.lastRealAt = Math.max(this.lastRealAt || 0, last.t); }
       n++;
