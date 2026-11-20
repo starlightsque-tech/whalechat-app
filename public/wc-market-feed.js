@@ -119,6 +119,13 @@
     LAST_REAL[t] = now;
     touch(q.source, now);
     try { if (window.WC_CHART && window.WC_CHART.record) window.WC_CHART.record(t, q.price, now); } catch (e) {}
+    /* 3.66.1: every real quote also drives the charts in real time — the line
+       recolours green on a rising tick and red on a falling one. */
+    try {
+      document.dispatchEvent(new CustomEvent('wc:tick', {
+        detail: { symbol: t, price: q.price, changePct: q.changePct, dir: q.dir }
+      }));
+    } catch (e) {}
     try {
       var key = t + '::1D';
       var series = INV.seriesCache && INV.seriesCache[key];

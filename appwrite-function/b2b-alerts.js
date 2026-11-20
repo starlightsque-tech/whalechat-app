@@ -316,6 +316,14 @@ function createB2BAlertWatcher({ getDb, persist, broadcast, quotes, email, appUr
     return true;
   }
 
+  function heldUnits(user, ticker) {
+    try {
+      const a = user && user.investAcct;
+      const h = a && a.b2b && a.b2b[normTicker(ticker)];
+      return h ? (Number(h.units) || 0) : 0;
+    } catch (e) { return 0; }
+  }
+
   /* Check one alert against one price. Fills at exactly the price the user set. */
   function evaluate(db, user, al, price, now) {
     if (!al || !al.auto || !(price > 0)) return false;
@@ -328,8 +336,14 @@ function createB2BAlertWatcher({ getDb, persist, broadcast, quotes, email, appUr
     } else if (s.state === 'buy' && buy > 0 && price <= buy) {
       /* new entries need the tool active; an existing auto holding can always exit */
       if (tool) changed = execute(db, user, al, s, 'buy', buy, now) || changed;
-    } else if (s.state === 'sell' && sell > 0 && price >= sell) {
-      if (tool || Number(s.units) > 0) changed = execute(db, user, al, s, 'sell', sell, now) || changed;
+    } else if (sell > 0 && price >= sell && (s.state === 'sell' || heldUnits(user, al.ticker) > 0)) {
+      /* 3.66.1 — sell-only targets. A user who bought MANUALLY (never through
+         the auto tool) can set just a sell price and arm Auto Buy/Sell; the
+         state machine stays at 'buy'/'done', so the old condition never fired
+         and the holding was never sold. Any real holding can always exit. */
+      if (tool || Number(s.units) > 0 || heldUnits(user, al.ticker) > 0) {
+        changed = execute(db, user, al, s, 'sell', sell, now) || changed;
+      }
     }
     if (mirror(al, s)) changed = true;
     return changed;

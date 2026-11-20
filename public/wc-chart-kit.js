@@ -98,6 +98,10 @@
       '.wck-empty b{font-size:12.5px;color:#9fb3c2}',
       '@media(max-width:420px){.wck-price{font-size:22px}.wck-seg button{padding:5px 7px;font-size:10.5px}}',
       '.wck.inline{padding:0;background:transparent;border:0;border-radius:0}',
+      '.wck-price.up{color:' + C.up + '}.wck-price.down{color:' + C.down + '}',
+      '.wck-price{transition:color .25s ease}',
+      '.wck-price.flash{animation:wckFlash .6s ease-out}',
+      '@keyframes wckFlash{0%{text-shadow:0 0 16px currentColor;transform:scale(1.015)}100%{text-shadow:none;transform:none}}',
       /* legacy chart hosts adopt the same panel so nothing on the app still
          renders a white TradingView box next to a reference chart */
       '.wc-tv-host,#sharesPerfChart,.shares-chart{background:transparent;border-radius:16px;overflow:hidden}',
@@ -202,6 +206,7 @@
       changePct: opts.changePct,
       decimals: opts.decimals,
       lines: Array.isArray(opts.lines) ? opts.lines.slice() : [],
+      lastDir: 0,
       symbol: opts.symbol || '',
       baselineOverride: opts.baseline != null ? n(opts.baseline) : null
     };
@@ -228,15 +233,44 @@
 
     function visible() { return windowed(state.data, state.range); }
 
+    var shown = 0, tween = 0;
     function paintHeader() {
       var last = state.data.length ? state.data[state.data.length - 1].p : state.price;
       var first = (visible()[0] || {}).p;
       var ch = state.changePct;
       if (ch == null && first > 0 && last > 0) ch = ((last - first) / first) * 100;
-      priceEl.textContent = money(last || state.price, dp);
-      subEl.textContent = wcTxt((last || state.price) * state.wcRate);
+      var target = last || state.price;
+      animatePrice(target);
+      subEl.textContent = wcTxt(target * state.wcRate);
       chgEl.textContent = pct(ch || 0);
       chgEl.className = 'wck-chg ' + ((ch || 0) >= 0 ? 'up' : 'down');
+    }
+    /* the price counts to its new value and flashes green/red with the tick */
+    function animatePrice(target) {
+      var from = shown || target;
+      var up = target > from;
+      var flat = Math.abs(target - from) < 1e-9;
+      shown = target;
+      try {
+        priceEl.classList.remove('up', 'down', 'flash');
+        if (!flat) {
+          priceEl.classList.add(up ? 'up' : 'down');
+          void priceEl.offsetWidth;
+          priceEl.classList.add('flash');
+          setTimeout(function () { try { priceEl.classList.remove('flash'); } catch (e) {} }, 620);
+        }
+      } catch (e) {}
+      if (tween) cancelAnimationFrame(tween);
+      if (flat) { priceEl.textContent = money(target, dp); return; }
+      var t0 = performance.now(), dur = 320;
+      function step(now) {
+        var k = Math.min(1, (now - t0) / dur);
+        var ease = 1 - Math.pow(1 - k, 3);
+        priceEl.textContent = money(from + (target - from) * ease, dp);
+        if (k < 1) tween = requestAnimationFrame(step);
+        else { priceEl.textContent = money(target, dp); tween = 0; }
+      }
+      tween = requestAnimationFrame(step);
     }
 
     function draw() {
@@ -462,8 +496,9 @@
       g.shadowColor = 'rgba(49,224,160,.45)';
       g.shadowBlur = 9;
       segs.forEach(function (s) {
-        g.shadowColor = s.up ? 'rgba(49,224,160,.45)' : 'rgba(255,93,108,.4)';
-        g.strokeStyle = s.up ? C.up : C.down;
+        var rising = (s.b.v >= s.a.v);
+        g.shadowColor = rising ? 'rgba(49,224,160,.45)' : 'rgba(255,93,108,.4)';
+        g.strokeStyle = rising ? C.up : C.down;
         g.beginPath(); g.moveTo(s.a.x, s.a.y); g.lineTo(s.b.x, s.b.y); g.stroke();
       });
       g.restore();
@@ -578,6 +613,17 @@
         return api;
       },
       points: function () { return state.data.length; },
+      /* one paint per tick: append the point, move the price, keep the colour */
+      tick: function (px, changePct) {
+        var v = Number(px);
+        if (!(v > 0)) return api;
+        state.data.push({ t: Date.now(), p: v });
+        if (state.data.length > 4000) state.data = state.data.slice(-3000);
+        state.price = v;
+        if (changePct != null) state.changePct = Number(changePct);
+        paintHeader(); schedule();
+        return api;
+      },
       destroy: function () {
         try { if (ro) ro.disconnect(); } catch (e) {}
         canvas.removeEventListener('mousemove', onMove);
@@ -585,12 +631,58 @@
         canvas.removeEventListener('mouseleave', onLeave);
         canvas.removeEventListener('touchend', onLeave);
         host.innerHTML = '';
+        unregister(api);
         try { delete host.__wck; } catch (e) { host.__wck = null; }
       },
-      root: host
+      root: host,
+      __kitoken: 'k' + Math.random().toString(36).slice(2, 8),
+      __symbol: String(opts.symbol || '').toUpperCase()
     };
+    register(api, opts);
     return api;
   }
+  /* ---- live registry: real-time ticks colour every mounted chart --------- */
+  var REG = window.__wcKitRegistry || (window.__wcKitRegistry = {});
+  function register(api, opts) {
+    var sym = String((opts && opts.symbol) || '').toUpperCase();
+    if (!sym) return;
+    REG[sym] = REG[sym] || [];
+    REG[sym].push(api);
+    if (REG[sym].length > 8) REG[sym].shift();
+  }
+  function unregister(api) {
+    Object.keys(REG).forEach(function (k) {
+      REG[k] = (REG[k] || []).filter(function (a) { return a !== api; });
+    });
+  }
+  /* K.tick(symbol, price, changePct) — called from the market feed on every
+     real quote so charts move and recolour in real time, not on a repaint. */
+  K.tick = function (symbol, price, changePct) {
+    var sym = String(symbol || '').toUpperCase();
+    var px = Number(price);
+    if (!(px > 0)) return 0;
+    var list = REG[sym];
+    if (!list || !list.length) return 0;
+    var n = 0;
+    list.forEach(function (api) {
+      try {
+        var host = api.root;
+        if (!host || !document.body.contains(host)) return;
+        if (api.tick) api.tick(px, changePct);
+        else { api.push({ t: Date.now(), p: px }); api.setPrice(px, changePct); }
+        n++;
+      } catch (e) {}
+    });
+    return n;
+  };
+  /* also listen for the app-wide tick event so no extra wiring is needed */
+  try {
+    document.addEventListener('wc:tick', function (ev) {
+      var d = (ev && ev.detail) || {};
+      K.tick(d.symbol, d.price, d.changePct);
+    });
+  } catch (e) {}
+
   K.mount = mount;
 
   /* -------------------------------------------------- compact static chart */

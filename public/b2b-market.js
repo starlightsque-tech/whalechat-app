@@ -363,7 +363,18 @@
         '<div class="between"><span class="tiny muted">Market value</span><b>' + money(h.units * (q.price || h.avgPrice)) + '</b></div>' +
         '<div class="between"><span class="tiny muted">Unrealised P/L</span><b class="' + ((q.price || h.avgPrice) >= h.avgPrice ? 'up' : 'down') + '">' +
           ((q.price || h.avgPrice) >= h.avgPrice ? '+' : '') + money(h.units * ((q.price || h.avgPrice) - h.avgPrice)) + '</b></div>' +
-        '<a class="btn btn-sm btn-primary" href="#/investment/b2b/sell?asset=' + encodeURIComponent(t) + '" style="width:100%;margin-top:8px">Sell ' + esc(e.name) + '</a></div>' : '') +
+        '<a class="btn btn-sm btn-primary" href="#/investment/b2b/sell?asset=' + encodeURIComponent(t) + '" style="width:100%;margin-top:8px">Sell ' + esc(e.name) + '</a>' +
+        /* 3.66.1 — manual buyers: set ONLY a sell target and let Auto Buy/Sell exit */
+        '<div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)">' +
+          '<div class="between"><b class="tiny" style="letter-spacing:.04em">AUTO SELL TARGET</b>' +
+            '<span class="tiny muted">' + Number(h.units).toFixed(6) + ' units held</span></div>' +
+          '<div class="field" style="margin:6px 0 0"><label class="label">Sell when price reaches (USD)</label>' +
+            '<input class="input" id="b2bmAutoSell_' + esc(t) + '" type="number" step="0.0001" min="0" value="' + (Number(alert.sell) > 0 ? Number(alert.sell) : '') + '" placeholder="' + (q.price > 0 ? (q.price * 1.05).toFixed(4) : '') + '"/>' +
+            '<div class="tiny muted mt6">Live ' + (q.price > 0 ? money(q.price) : '—') + ' · the whole holding sells at or above this price</div></div>' +
+          '<label class="row" style="gap:8px;align-items:center;font-size:12px;margin-top:6px"><input type="checkbox" id="b2bmAutoSellOn_' + esc(t) + '"' + (alert.auto ? ' checked' : ' checked') + '/> <b>Use Auto Buy/Sell</b></label>' +
+          '<button class="btn btn-primary btn-sm" data-act="wcbm-auto-sell" data-t="' + esc(t) + '" style="width:100%;margin-top:8px">' + (alert.auto ? 'Update auto sell target' : 'Arm auto sell') + '</button>' +
+          (alert.auto ? '<div class="tiny" style="margin-top:6px;color:#31e0a0">Auto sell armed at ' + money(Number(alert.sell) || 0) + ' — it fires with the app closed.</div>' : '') +
+        '</div></div>' : '') +
       '<div class="card"><div class="card-title">Buy at market</div>' +
         '<div class="tiny muted">Paid from your B2B capital · filled at the live price above.</div>' +
         '<a class="btn btn-primary" href="#/investment/b2b/buy?asset=' + encodeURIComponent(t) + '" style="width:100%;margin-top:8px">Buy ' + esc(e.name) + '</a></div>' +
@@ -430,6 +441,36 @@
       if (buyEl) buyEl.value = (p * (1 - pct)).toFixed(4);
       if (sellEl) sellEl.value = (p * (1 + pct)).toFixed(4);
       tmsg('Targets set from the live chart price ' + money(p), 'ok');
+    };
+
+    /* Manual buy → sell-only target → automatic exit. */
+    App.wcbmAutoSell = function (id, ds) {
+      var a = acct(); if (!a) return;
+      var t = String((ds && ds.t) || '').toUpperCase();
+      var h = holding(t);
+      if (!h || !(Number(h.units) > 0)) return tmsg('Buy ' + t + ' first — there is no holding to sell', 'err');
+      var onEl = document.getElementById('b2bmAutoSellOn_' + t);
+      var wantOn = onEl ? !!onEl.checked : true;
+      var target = Number((document.getElementById('b2bmAutoSell_' + t) || {}).value) || 0;
+      var live = M.price(t);
+      if (wantOn && !(target > 0)) return tmsg('Enter the sell price you want', 'err');
+      if (wantOn && live > 0 && target < live) return tmsg('Your sell target must be at or above the live price ' + money(live), 'err');
+      var ex = (a.b2bAlerts || []).filter(function (x) { return x.ticker === t; })[0];
+      if (!ex) {
+        ex = { id: 'al_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), ticker: t, buy: 0, sell: target, email: true, createdAt: Date.now() };
+        a.b2bAlerts = a.b2bAlerts || [];
+        a.b2bAlerts.push(ex);
+      }
+      ex.sell = target;
+      ex.auto = wantOn;
+      ex.autoRepeat = false;
+      ex.sellOnly = true;
+      ex.autoArmedAt = Date.now();
+      ex.sellHit = false; ex.sellHitAt = 0; ex.sellEmailAt = 0; ex.sellNotifyAt = 0; ex.sellRearmAt = 0;
+      a.autoBuySellOn = wantOn;
+      save();
+      tmsg(wantOn ? 'Auto sell armed for ' + t + ' at ' + money(target) : 'Auto sell switched off for ' + t, 'ok');
+      repaint();
     };
 
     App.wcbmAlertOne = function (id, ds) {
