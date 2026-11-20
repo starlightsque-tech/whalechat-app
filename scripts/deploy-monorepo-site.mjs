@@ -54,7 +54,7 @@ async function ensureSite() {
     headers: Object.assign({ 'content-type': 'application/json' }, headers),
     body: JSON.stringify({
       siteId: SITE_ID,
-      name: 'WhaleChat',
+      name: process.env.APPWRITE_SITE_NAME || 'Whalechat',
       framework: 'other',
       buildRuntime: 'node-22',
       adapter: 'static',
@@ -86,6 +86,12 @@ function packageDist() {
 
 async function bindDomain() {
   if (!DOMAIN) return;
+  // Appwrite's own <site>.appwrite.network hostname is assigned automatically;
+  // attempting to add it as a custom domain can 400/409. Verify it instead.
+  if (DOMAIN === SITE_ID + '.appwrite.network') {
+    console.log('[deploy] using the Appwrite-assigned hostname:', DOMAIN);
+    return;
+  }
   const list = await req('/sites/' + encodeURIComponent(SITE_ID) + '/domains');
   const exists = list.ok && (list.json?.domains || []).some((d) => d.domain === DOMAIN);
   if (exists) {
