@@ -32,7 +32,11 @@
     "deploy:appwrite:db": "node scripts/deploy-appwrite-collections.mjs",
     "deploy:appwrite:function": "node scripts/deploy-appwrite-function.mjs",
     "deploy:appwrite:all": "node scripts/deploy-appwrite-collections.mjs && node scripts/deploy-appwrite-function.mjs && node scripts/deploy-appwrite.mjs",
-    "test:offline-trading": "node scripts/test-offline-trading.mjs"
+    "test:offline-trading": "node scripts/test-offline-trading.mjs",
+    "test:chat-e2e": "node scripts/test-chat-e2e.mjs",
+    "test:chat-e2e:live": "WC_E2E_BASE=https://whalechat-api.appwrite.network node scripts/test-chat-e2e.mjs",
+    "test:live-trades": "node scripts/test-live-trades.mjs",
+    "test:370": "node scripts/test-370.mjs"
   },
   "dependencies": {
     "web-push": "^3.6.7",
