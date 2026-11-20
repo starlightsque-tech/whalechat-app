@@ -1982,14 +1982,42 @@ async function api(req, res, pathname, query) {
   }
   if (pathname === '/api/admin/mail' && req.method === 'POST') {
     const body = await readBody(req);
-    const db = (store && store.db) || {};
     const admin = adminFor(body.adminId);
     if (!admin) return json(res, 403, { ok: false, error: 'admin only' });
     try {
       const file = path.join(DATA_DIR, 'mail.json');
       let cur = {};
       try { cur = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) {}
-      if (body.brevoKey) cur.brevoKey = String(body.brevoKey).trim();
+      const key = String(body.brevoKey || '').trim();
+      /* 3.77 · a Brevo key is checked against Brevo before it is saved, so the
+         admin console can never report "connected" for a dead or mistyped key
+         and every verification mail / receipt keeps flowing. Put an empty
+         string to keep the stored key untouched. */
+      let brevo = null;
+      if (key) {
+        if (!/^xkeysib-/i.test(key)) return json(res, 400, { ok: false, error: 'not_a_brevo_key', message: 'A Brevo API key starts with xkeysib‑' });
+        try {
+          const r = await fetch('https://api.brevo.com/v3/account', { headers: { 'api-key': key, accept: 'application/json' } });
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) {
+            return json(res, 400, {
+              ok: false,
+              error: 'brevo_rejected_key',
+              message: (d && (d.message || d.error)) || ('Brevo answered ' + r.status),
+              status: r.status
+            });
+          }
+          brevo = {
+            companyName: d.companyName || null,
+            email: d.email || null,
+            plan: (d.plan && d.plan.type) || null,
+            verified: true
+          };
+        } catch (e) {
+          return json(res, 502, { ok: false, error: 'brevo_unreachable', message: e.message });
+        }
+        cur.brevoKey = key;
+      }
       if (body.from) cur.from = String(body.from).trim();
       if (body.fromName) cur.fromName = String(body.fromName).trim();
       if (body.resendKey) cur.resendKey = String(body.resendKey).trim();
@@ -1997,7 +2025,17 @@ async function api(req, res, pathname, query) {
       writeJSONAtomic(file, cur);
       if (cur.brevoKey) process.env.BREVO_API_KEY = cur.brevoKey;
       if (cur.from) process.env.MAIL_FROM = cur.from;
-      return json(res, 200, { ok: true, configured: email.configured(), from: cur.from || null });
+      let probe = null;
+      try {
+        if (email) probe = email.status();
+      } catch (e) { probe = { error: e.message }; }
+      return json(res, 200, {
+        ok: true,
+        configured: email.configured(),
+        provider: probe && probe.provider,
+        from: cur.from || null,
+        brevo
+      });
     } catch (e) { return json(res, 500, { ok: false, error: e.message }); }
   }
   if (pathname === '/api/reload' && req.method === 'POST') {
