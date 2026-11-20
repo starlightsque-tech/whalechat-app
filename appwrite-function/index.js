@@ -850,6 +850,17 @@ function autoWatchTickers(db) {
   (db.holdings || []).forEach((h) => { if (h && h.ticker) out.add(String(h.ticker).toUpperCase()); });
   return Array.from(out).slice(0, 60);
 }
+let lastB2bPollAt = 0;
+function b2bSig(db) {
+  try {
+    return JSON.stringify((db.users || []).map((u) => {
+      const a = (u && u.investAcct) || {};
+      return [u.id,
+        a.portfolios && a.portfolios.b2b, a.b2bProfit,
+        (a.b2bAlerts || []).map((x) => [x.id, x.auto, x.autoState, x.autoUnits, x.autoError, x.sell])];
+    }));
+  } catch (e) { return ''; }
+}
 async function b2bTick(st, svc) {
   try {
     const db = st.db;
@@ -868,7 +879,7 @@ async function b2bTick(st, svc) {
       everyMs: 15000
     });
     watcher.run();
-    db.b2bAutoLastAt = Date.now();
+    lastB2bPollAt = Date.now();
     return true;
   } catch (e) { return false; }
 }
@@ -1801,6 +1812,19 @@ module.exports = async ({ req, res, log, error }) => {
         }
         /* WC-Investing daily interest keeps accruing while offline */
         try { if (wcSweep(st.db, 60000)) dirty = true; } catch (e) {}
+        /* Auto Buy/Sell + spot TP/SL also settle on a normal state poll, so an
+           open app never waits for the next minute tick */
+        if (Date.now() - lastB2bPollAt > 10000) {
+          try {
+            const before = b2bSig(st.db);
+            const ms = marketServiceFor(st);
+            await b2bTick(st, ms);
+            const hts = Array.from(new Set((st.db.holdings || []).map((h) => h && h.ticker).filter(Boolean)));
+            let closed = 0;
+            if (hts.length) { await hydrateLiveQuotes(st, ms, hts); closed = spotServiceFor(st, ms).settle(); }
+            if (closed > 0 || b2bSig(st.db) !== before) dirty = true;
+          } catch (e) {}
+        }
         if (dirty) await saveState(st);
       }
       return res.json({ rev: st.rev || 0, db: st.db, updatedAt: st.at || 0 }, 200, CORS);
