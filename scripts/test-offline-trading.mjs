@@ -251,9 +251,12 @@ await test('the built bundle carries every 3.64 module', () => {
 
 await test('release metadata and service worker cache are rotated', () => {
   const rel = JSON.parse(fs.readFileSync(path.join(ROOT, 'public/release.json'), 'utf8'));
-  assert.equal(rel.version, '3.65.0');
+  const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+  /* the release lever is package.json → release.json; the service worker must
+     follow it, so this check is version-agnostic on purpose */
+  assert.equal(rel.version, pkg.version);
   const sw = fs.readFileSync(path.join(ROOT, 'public/sw.js'), 'utf8');
-  assert.ok(sw.includes('wc-v3.65.0'));
+  assert.ok(sw.includes('wc-v' + rel.version));
   assert.ok(sw.includes("'sync'"));
   assert.ok(sw.includes('wc-device-store.js'));
 });

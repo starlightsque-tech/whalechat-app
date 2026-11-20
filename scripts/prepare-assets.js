@@ -144,6 +144,8 @@ const MODULES = [
   { file: 'wc-feed-health.js', marker: 'wc-feed-health' },
   /* singleton heartbeat: one connection for the whole app lifetime */
   { file: 'wc-connection.js', marker: 'wc-connection' },
+  /* 3.68: admin SMS desk — message, link button, audience, send log */
+  { file: 'wc-admin-sms.js', marker: 'wc-admin-sms' },
   /* 3.57: account dashboard, email verification, PIN reset and offline charts.
      Must stay last so its VIEWS/App patches win over earlier modules. */
   { file: 'wc-build-357.js', marker: 'wc-build-357' }

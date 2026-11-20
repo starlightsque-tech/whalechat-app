@@ -1472,9 +1472,57 @@ async function api(req, res, pathname, query) {
   if (pathname === '/api/telesign/sms' && req.method === 'POST') {
     if (!telesign) return json(res, 501, { ok: false, error: 'telesign_unavailable' });
     const body = await readBody(req);
-    if (!isAdmin(store.db, body.adminId)) return json(res, 403, { ok: false, error: 'admin_only' });
-    try { return json(res, 200, await telesign.sendSms({ phone: body.phone, message: body.message })); }
+    if (!adminAuth.currentAdmin() && !isAdmin(store.db, body.adminId)) return adminRequired(res);
+    try { return json(res, 200, await telesign.sendSms({ phone: body.phone, message: body.message, buttonLabel: body.buttonLabel, buttonUrl: body.buttonUrl })); }
     catch (e) { return json(res, e.status || 400, { ok: false, error: e.message }); }
+  }
+  /* Admin → users SMS with an embeddable link button. The button is a
+     labelled https link on its own line: phones make it tappable. */
+  if (pathname === '/api/telesign/broadcast' && req.method === 'POST') {
+    if (!telesign) return json(res, 501, { ok: false, error: 'telesign_unavailable' });
+    const body = await readBody(req);
+    const admin = adminAuth.currentAdmin() || (isAdmin(store.db, body.adminId) ? body.adminId : null);
+    if (!admin) return adminRequired(res);
+    const audience = String(body.audience || 'all');
+    const ids = Array.isArray(body.userIds) ? body.userIds.map(String) : [];
+    const users = ((store.db && store.db.users) || []).filter(function (u) {
+      if (!u || !u.phone || u.banned) return false;
+      return audience === 'all' || ids.indexOf(String(u.id)) >= 0;
+    });
+    if (!users.length) return json(res, 400, { ok: false, error: 'no_recipients', message: 'No user account has a phone number yet.' });
+    try {
+      const out = await telesign.sendBulk({
+        message: body.message,
+        buttonLabel: body.buttonLabel,
+        buttonUrl: body.buttonUrl,
+        phones: users.map(function (u) { return u.phone; }),
+        limit: body.limit
+      });
+      store.db.smsCampaigns = store.db.smsCampaigns || [];
+      store.db.smsCampaigns.unshift({
+        id: 'sms_' + Date.now().toString(36),
+        message: String(body.message || '').slice(0, 700),
+        buttonLabel: out.button ? out.button.label : '',
+        buttonUrl: out.button ? out.button.url : '',
+        audience,
+        recipients: out.recipients,
+        sent: out.sent,
+        failed: out.failed,
+        by: String(admin),
+        createdAt: Date.now()
+      });
+      store.db.smsCampaigns = store.db.smsCampaigns.slice(0, 50);
+      store.rev += 1; store.updatedAt = Date.now(); persist();
+      broadcast('change', { rev: store.rev, source: 'sms-campaign', at: store.updatedAt });
+      return json(res, 200, out);
+    } catch (e) {
+      return json(res, e.status || 400, { ok: false, error: e.message });
+    }
+  }
+  if (pathname === '/api/telesign/log' && req.method === 'GET') {
+    if (!adminAuth.currentAdmin()) return adminRequired(res);
+    const list = ((store.db && store.db.smsCampaigns) || []).slice(0, 30);
+    return json(res, 200, { ok: true, campaigns: list, status: telesign ? telesign.status() : { configured: false } });
   }
 
   /* --- offline trade reconciliation ---------------------------------- */

@@ -7,10 +7,10 @@
    network switched off, and the worker can raise buy/sell notifications from
    its periodic background sync when the page is closed.
    ========================================================================= */
-const VERSION = 'wc-v3.65.0-1';
-const API_CACHE = 'wc-api-v3.65.0';
+const VERSION = 'wc-v3.68.0-1';
+const API_CACHE = 'wc-api-v3.68.0';
 const APP_CACHE = VERSION;
-const IMAGE_CACHE = 'wc-img-v3.65.0';
+const IMAGE_CACHE = 'wc-img-v3.68.0';
 const PLACEHOLDER = './assets/offline-placeholder.svg';
 const PLACEHOLDER_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240">'
   + '<rect width="240" height="240" rx="18" fill="#0b2230"/>'

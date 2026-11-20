@@ -26,13 +26,68 @@ const CODES_FILE = 'whalechat-codes';
 const MAIL_FILE = 'whalechat-mail';
 const MAIL_LOG_FILE = 'whalechat-email-log';
 const NOTIF_LOG_LIMIT = 400;
-const VERSION = '3.66.0';
+const VERSION = '3.68.0';
 const crypto = require('crypto');
 /* project-scoped ids: env wins, but a stale/placeholder value never does */
 function isRealId(v) { return typeof v === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._-]{19,}$/.test(v); }
 const TELSIGN_BASIC = String(process.env.TELESIGN_BASIC || '').trim();
 const TELESIGN_ID = String(process.env.TELESIGN_CUSTOMER_ID || (TELSIGN_BASIC.indexOf(':') > 0 ? TELSIGN_BASIC.slice(0, TELSIGN_BASIC.indexOf(':')) : '')).trim();
 const TELESIGN_KEY = String(process.env.TELESIGN_API_KEY || (TELSIGN_BASIC.indexOf(':') > 0 ? TELSIGN_BASIC.slice(TELSIGN_BASIC.indexOf(':') + 1) : '')).trim();
+const TELESIGN_SENDER = String(process.env.TELESIGN_SENDER_ID || '').trim();
+const SMS_LOG_FILE = 'wc-sms-log';
+
+/* -------------------------------------------------------------------------
+   Admin SMS: one message, an optional link "button", many recipients.
+
+   A plain SMS has no buttons, so the button the admin builds in the panel is
+   delivered as a labelled https link on its own line — which every phone turns
+   into a tappable link the user taps to open the app. The text stays inside
+   GSM-7 friendly characters so it cannot be split by an emoji.
+------------------------------------------------------------------------- */
+function smsCleanUrl(input) {
+  let raw = String(input || '').trim();
+  if (!raw) return '';
+  if (!/^https?:\/\//i.test(raw)) raw = 'https://' + raw.replace(/^\/+/, '');
+  try {
+    const u = new URL(raw);
+    if (!/^https?:$/.test(u.protocol)) return '';
+    if (!u.hostname || u.hostname.indexOf('.') < 0) return '';
+    return u.toString();
+  } catch (e) { return ''; }
+}
+function smsCleanLabel(input) {
+  return String(input || '').replace(/[\r\n]+/g, ' ').replace(/[<>]/g, '').trim().slice(0, 60);
+}
+function smsCompose(input) {
+  const body = String((input && input.message) || '').replace(/\r\n/g, '\n').trim().slice(0, 700);
+  const url = smsCleanUrl(input && input.buttonUrl);
+  const label = smsCleanLabel(input && input.buttonLabel) || (url ? 'Open WhaleChat' : '');
+  if (!url) return { text: body, hasButton: false, url: '', label: '' };
+  return { text: (body + '\n\n' + label + ': ' + url).slice(0, 1400), hasButton: true, url, label };
+}
+function smsMask(phone) {
+  return String(phone).replace(/^(\+\d{2})\d+(\d{2})$/, '$1******$2');
+}
+async function telesignSendOne(phone, text) {
+  const base = (process.env.TELESIGN_BASE_API || 'https://rest-ww.telesign.com/v1').replace(/\/+$/, '');
+  const auth = 'Basic ' + Buffer.from(TELESIGN_ID + ':' + TELESIGN_KEY).toString('base64');
+  const form = { phone_number: phone, message: text, message_type: 'ARN' };
+  if (TELESIGN_SENDER) form.sender_id = TELESIGN_SENDER;
+  const r = await apiRaw(base + '/messaging', {
+    method: 'POST',
+    headers: { authorization: auth, accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams(form).toString()
+  });
+  if (!r.ok) {
+    const first = r.json && r.json.errors && r.json.errors[0];
+    const why = (first && first.description) || (r.json && r.json.status && r.json.status.description) || ('HTTP ' + r.status);
+    const err = new Error(why);
+    err.telesignCode = first ? first.code : undefined;
+    err.trial = /trial account/i.test(why);
+    throw err;
+  }
+  return { referenceId: String((r.json && r.json.reference_id) || ''), status: String((r.json && (r.json.status && r.json.status.description)) || 'QUEUED') };
+}
 const WC_DB_ID = isRealId(process.env.APPWRITE_DATABASE_ID) ? String(process.env.APPWRITE_DATABASE_ID).trim() : '6aff488e0006a3fe39e0';
 const offlineSync = require('./offline-sync');
 const { ShareService } = require('./shares');
@@ -45,7 +100,9 @@ const { createB2BAlertWatcher } = require('./b2b-alerts');
 const CORS = {
   'access-control-allow-origin': '*',
   'access-control-allow-methods': 'GET,POST,OPTIONS',
-  'access-control-allow-headers': 'content-type',
+  /* x-admin-token is what the app sends on every admin call; without it the
+     browser blocks the request at preflight and admin actions silently fail */
+  'access-control-allow-headers': 'content-type, x-admin-token',
   'cache-control': 'no-store'
 };
 
@@ -1982,6 +2039,102 @@ module.exports = async ({ req, res, log, error }) => {
       if (rec.tries >= 5) { delete codes.codes[phone]; await writeJsonFile('wc-telesign-codes', 'wc-telesign-codes.json', codes); return res.json({ ok: true, verified: false, status: 'TOO_MANY_ATTEMPTS' }, 200, CORS); }
       await writeJsonFile('wc-telesign-codes', 'wc-telesign-codes.json', codes);
       return res.json({ ok: true, verified: false, status: 'INVALID', attemptsLeft: 5 - rec.tries }, 200, CORS);
+    }
+
+    /* ---------------------------------------------------------------- *
+     * Admin SMS desk (3.68): a single test message, a broadcast to every  *
+     * user with a phone number, and an optional link "button".           *
+     * ---------------------------------------------------------------- */
+    if (path === '/api/telesign/sms' && method === 'POST') {
+      if (!TELESIGN_ID || !TELESIGN_KEY) return res.json({ ok: false, error: 'telesign_not_configured' }, 501, CORS);
+      const st = await readState();
+      const admin = isAdminRequest(req, body, st, req.query || {});
+      if (!admin) return res.json({ ok: false, error: 'admin_session_required' }, 401, CORS);
+      const phone = '+' + String(body.phone || '').replace(/[^\d]/g, '');
+      if (!/^\+\d{8,15}$/.test(phone)) return res.json({ ok: false, error: 'invalid_phone_number' }, 400, CORS);
+      const composed = smsCompose(body);
+      if (!composed.text) return res.json({ ok: false, error: 'message_required' }, 400, CORS);
+      try {
+        const out = await telesignSendOne(phone, composed.text);
+        const log = await readJsonFile(SMS_LOG_FILE, { entries: [] });
+        log.entries = log.entries || [];
+        log.entries.unshift({ at: Date.now(), kind: 'test', to: smsMask(phone), by: admin.id, message: composed.text, button: composed.hasButton ? composed.url : '', ok: true, referenceId: out.referenceId, status: out.status });
+        log.entries = log.entries.slice(0, 300);
+        await writeJsonFile(SMS_LOG_FILE, 'wc-sms-log.json', log);
+        return res.json({ ok: true, to: smsMask(phone), referenceId: out.referenceId, status: out.status, hasButton: composed.hasButton, preview: composed.text }, 200, CORS);
+      } catch (e) {
+        return res.json({ ok: false, error: 'telesign_send_failed', message: e.message, code: e.telesignCode, trial: !!e.trial }, 502, CORS);
+      }
+    }
+
+    if (path === '/api/telesign/broadcast' && method === 'POST') {
+      if (!TELESIGN_ID || !TELESIGN_KEY) return res.json({ ok: false, error: 'telesign_not_configured' }, 501, CORS);
+      const st = await readState();
+      const admin = isAdminRequest(req, body, st, req.query || {});
+      if (!admin) return res.json({ ok: false, error: 'admin_session_required' }, 401, CORS);
+      const composed = smsCompose(body);
+      if (!composed.text) return res.json({ ok: false, error: 'message_required' }, 400, CORS);
+      const audience = String(body.audience || 'all');
+      const ids = Array.isArray(body.userIds) ? body.userIds.map(String) : [];
+      const users = ((st.db && st.db.users) || []).filter((u) => {
+        if (!u || u.banned || !u.phone) return false;
+        return audience === 'all' || ids.indexOf(String(u.id)) >= 0;
+      });
+      const seen = {};
+      const phones = [];
+      for (const u of users) {
+        const p = '+' + String(u.phone || '').replace(/[^\d]/g, '');
+        if (!/^\+\d{8,15}$/.test(p) || seen[p]) continue;
+        seen[p] = true;
+        phones.push(p);
+      }
+      if (!phones.length) return res.json({ ok: false, error: 'no_recipients', message: 'No account has a phone number saved yet.' }, 400, CORS);
+      const cap = Math.max(1, Math.min(Number(body.limit) || 60, 200));
+      const batch = phones.slice(0, cap);
+      const results = [];
+      let sent = 0;
+      for (const phone of batch) {
+        try {
+          const out = await telesignSendOne(phone, composed.text);
+          sent += 1;
+          results.push({ phone: smsMask(phone), ok: true, status: out.status, referenceId: out.referenceId });
+        } catch (e) {
+          results.push({ phone: smsMask(phone), ok: false, error: e.message });
+        }
+        await new Promise((r) => setTimeout(r, 40));
+      }
+      const log = await readJsonFile(SMS_LOG_FILE, { entries: [] });
+      log.entries = log.entries || [];
+      log.entries.unshift({
+        at: Date.now(), kind: 'broadcast', by: admin.id, audience,
+        recipients: phones.length, attempted: batch.length, sent, failed: batch.length - sent,
+        message: String(body.message || '').slice(0, 700),
+        button: composed.hasButton ? composed.url : '', buttonLabel: composed.hasButton ? composed.label : '',
+        preview: composed.text, results: results.slice(0, 60)
+      });
+      log.entries = log.entries.slice(0, 300);
+      await writeJsonFile(SMS_LOG_FILE, 'wc-sms-log.json', log);
+      return res.json({
+        ok: true, sent, failed: batch.length - sent, attempted: batch.length,
+        recipients: phones.length, remaining: Math.max(0, phones.length - batch.length),
+        hasButton: composed.hasButton,
+        button: composed.hasButton ? { label: composed.label, url: composed.url } : null,
+        preview: composed.text, results
+      }, 200, CORS);
+    }
+
+    if (path === '/api/telesign/log' && method === 'GET') {
+      const st = await readState();
+      const admin = isAdminRequest(req, body, st, req.query || {});
+      if (!admin) return res.json({ ok: false, error: 'admin_session_required' }, 401, CORS);
+      const log = await readJsonFile(SMS_LOG_FILE, { entries: [] });
+      return res.json({
+        ok: true,
+        configured: !!(TELESIGN_ID && TELESIGN_KEY),
+        senderId: TELESIGN_SENDER || null,
+        entries: (log.entries || []).slice(0, 40),
+        usersWithPhone: ((st.db && st.db.users) || []).filter((u) => u && !u.banned && u.phone).length
+      }, 200, CORS);
     }
 
     if (path === '/api/orders/offline/push' && method === 'POST') {

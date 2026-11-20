@@ -212,11 +212,46 @@ async function checkVerification(input) {
 }
 
 /* -------------------------------------------------------------- sms send */
+
+/* A plain SMS cannot render an HTML button, so an admin "button" is delivered
+   the way a phone can actually tap it: a labelled link on its own line, below
+   the message, with the full https URL on the next line. iPhone/Android both
+   turn that URL into a tappable link, which is the button the user taps.
+   The text stays inside one GSM-7 friendly body so it cannot be split into
+   dozens of segments by an emoji. */
+function cleanUrl(input) {
+  const raw = String(input || '').trim();
+  if (!raw) return '';
+  let url = raw;
+  if (!/^https?:\/\//i.test(url)) url = 'https://' + url.replace(/^\/+/, '');
+  try {
+    const u = new URL(url);
+    if (!/^https?:$/.test(u.protocol)) return '';
+    if (!u.hostname || u.hostname.indexOf('.') < 0) return '';
+    return u.toString();
+  } catch (e) { return ''; }
+}
+
+function cleanLabel(input) {
+  return String(input || '').replace(/[\r\n]+/g, ' ').replace(/[<>]/g, '').trim().slice(0, 60);
+}
+
+function composeMessage(input) {
+  const body = String(input && input.message || '').replace(/\r\n/g, '\n').trim().slice(0, 700);
+  const url = cleanUrl(input && input.buttonUrl);
+  const label = cleanLabel(input && input.buttonLabel) || (url ? 'Open WhaleChat' : '');
+  if (!url) return { text: body, hasButton: false, url: '', label: '' };
+  const link = '\n\n' + label + ': ' + url;
+  const text = (body + link).slice(0, 1400);
+  return { text, hasButton: true, url, label };
+}
+
 async function sendSms(input) {
   if (!configured()) throw Object.assign(new Error('telesign_not_configured'), { status: 501 });
   const phone = normalizePhone(input.phone);
   if (!phone) throw Object.assign(new Error('invalid_phone_number'), { status: 400 });
-  const message = String(input.message || '').slice(0, 900);
+  const composed = composeMessage(input);
+  const message = composed.text;
   if (!message) throw Object.assign(new Error('message_required'), { status: 400 });
   const out = await callTelesign('/messaging', {
     phone_number: phone,
@@ -224,7 +259,61 @@ async function sendSms(input) {
     message_type: String(input.messageType || 'ARN'),
     ...(cfg.DEFAULTS.telesign.senderId ? { sender_id: cfg.DEFAULTS.telesign.senderId } : {})
   });
-  return { ok: true, referenceId: String(out.reference_id || ''), status: String(out.status || 'QUEUED') };
+  return {
+    ok: true,
+    phone: phone.replace(/^(\+\d{2})\d+(\d{2})$/, '$1******$2'),
+    referenceId: String(out.reference_id || ''),
+    status: String(out.status || 'QUEUED'),
+    hasButton: composed.hasButton
+  };
+}
+
+/* Admin broadcast: one composed message, many recipients, sequential so a
+   provider rate limit cannot swallow half the batch. Results are reported per
+   phone number so the panel can show exactly who was reached. */
+async function sendBulk(input) {
+  if (!configured()) throw Object.assign(new Error('telesign_not_configured'), { status: 501 });
+  const composed = composeMessage(input);
+  if (!composed.text) throw Object.assign(new Error('message_required'), { status: 400 });
+  const phones = [];
+  const seen = {};
+  (Array.isArray(input.phones) ? input.phones : []).forEach(function (p) {
+    const phone = normalizePhone(p);
+    if (!phone || seen[phone]) return;
+    seen[phone] = true;
+    phones.push(phone);
+  });
+  const cap = Math.max(1, Math.min(Number(input.limit) || 100, 500));
+  const batch = phones.slice(0, cap);
+  const results = [];
+  let sent = 0;
+  for (const phone of batch) {
+    try {
+      const out = await callTelesign('/messaging', {
+        phone_number: phone,
+        message: composed.text,
+        message_type: String(input.messageType || 'ARN'),
+        ...(cfg.DEFAULTS.telesign.senderId ? { sender_id: cfg.DEFAULTS.telesign.senderId } : {})
+      });
+      sent += 1;
+      results.push({ phone: phone.replace(/^(\+\d{2})\d+(\d{2})$/, '$1******$2'), ok: true, status: String(out.status || 'QUEUED'), referenceId: String(out.reference_id || '') });
+    } catch (e) {
+      results.push({ phone: phone.replace(/^(\+\d{2})\d+(\d{2})$/, '$1******$2'), ok: false, error: String(e.message || 'send_failed') });
+    }
+    await new Promise(function (r) { setTimeout(r, 40); });
+  }
+  return {
+    ok: true,
+    sent,
+    failed: batch.length - sent,
+    attempted: batch.length,
+    remaining: Math.max(0, phones.length - batch.length),
+    recipients: phones.length,
+    hasButton: composed.hasButton,
+    button: composed.hasButton ? { label: composed.label, url: composed.url } : null,
+    preview: composed.text,
+    results
+  };
 }
 
 function status() {
@@ -237,4 +326,4 @@ function status() {
   };
 }
 
-module.exports = { startVerification, checkVerification, sendSms, status, normalizePhone, configured };
+module.exports = { startVerification, checkVerification, sendSms, sendBulk, composeMessage, cleanUrl, status, normalizePhone, configured };
