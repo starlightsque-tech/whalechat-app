@@ -19,5 +19,5 @@ window.WC_BUILD_CONFIG = {
   emailFunction: 'https://whalechat-api.appwrite.network/api/email/send',
   siteUrl: 'https://whalechat.appwrite.network',
   streaming: false,
-  build: '3.66.0'
+  build: '3.77.0'
 };
