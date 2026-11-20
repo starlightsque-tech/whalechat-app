@@ -168,6 +168,10 @@ const MODULES = [
   /* 3.69: repaints are invisible — no scroll jump, no lost typing, no focus loss.
      Must be last so it wraps the final render(). */
   { file: 'wc-quiet-render.js', marker: 'wc-quiet-render' },
+  /* 3.77: a still screen — charts repaint on a calm cadence, background
+     repaints pause while the user types / scrolls / trades, and the page can
+     never move by itself. Must load after the chart and invest engines. */
+  { file: 'wc-smooth.js', marker: 'wc-smooth' },
   /* 3.74: contacts — one-way add, incoming conversations never blocked, and a
      sync refresh can never erase a newly saved contact. */
   { file: 'wc-contact-fix.js', marker: 'wc-contact-fix' },

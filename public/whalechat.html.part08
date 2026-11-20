@@ -773,6 +773,48 @@ App.serverDetails = async function () {
 const LS_SERVER = 'whalechat.server';
 const LS_PUSH = 'whalechat.push';
 
+/* -------------------------------------------------------------------------
+   3.77 · a sync can never sign the user out.
+   The server copy can legitimately be missing the signed-in account for a
+   moment: a signup whose first write has not landed, an older snapshot, or
+   another device saving at the same instant. Clearing the session there was
+   what dropped people on the login screen mid-trade. Instead the device puts
+   its own copy of the account back and pushes it up; the session key is only
+   ever removed by an explicit sign-out.
+   ------------------------------------------------------------------------- */
+function wcKeepSessionUser() {
+  try {
+    if (typeof SESSION === 'undefined' || !SESSION || !SESSION.userId) return null;
+    if (typeof DB === 'undefined' || !DB || !Array.isArray(DB.users)) return null;
+    var found = DB.users.filter(function (u) { return u && u.id === SESSION.userId; })[0];
+    if (found) return found;
+    var mine = null;
+    try { mine = JSON.parse(localStorage.getItem('wc.session.user.v1') || 'null'); } catch (e) { mine = null; }
+    if (!mine || mine.id !== SESSION.userId) {
+      mine = null;
+      try {
+        var bk = JSON.parse(localStorage.getItem('whalechat.v357.backup') || 'null');
+        var list = (bk && bk.db && bk.db.users) || [];
+        mine = list.filter(function (u) { return u && u.id === SESSION.userId; })[0] || null;
+      } catch (e2) { mine = null; }
+    }
+    if (!mine) {
+      try {
+        var last = (Remote && Remote.last && Remote.last.users) || [];
+        mine = last.filter(function (u) { return u && u.id === SESSION.userId; })[0] || null;
+      } catch (e3) {}
+    }
+    if (!mine) return null;
+    DB.users.push(mine);
+    try { saveLocalNow(); } catch (e4) {}
+    try {
+      Remote.dirty = true;
+      setTimeout(function () { try { Remote.flush(); } catch (e5) {} }, 300);
+    } catch (e6) {}
+    return mine;
+  } catch (e) { return null; }
+}
+
 const Remote = {
   base: '',
   enabled: false,
@@ -922,10 +964,9 @@ const Remote = {
         }
       }
       try { resolvePendingReferrals(); reconcileReferralBonuses(); } catch (e) {}
-      // session may point at a user this server doesn't know
-      if (SESSION && !DB.users.some(u => u.id === SESSION.userId)) {
-        SESSION = null; localStorage.removeItem(LS_SESSION);
-      }
+      // session may point at a user this server copy doesn't know yet —
+      // restore the device's own record instead of signing the user out
+      if (SESSION && !DB.users.some(u => u.id === SESSION.userId)) wcKeepSessionUser();
       startEventStream();
       if (!opts.silent) toast('Connected — syncing across devices', 'ok');
       return true;
@@ -1029,9 +1070,7 @@ const Remote = {
       this.rev = r.data.rev;
       this.last = cloneDB(DB);
       saveLocalNow();
-      if (SESSION && !DB.users.some(u => u.id === SESSION.userId)) {
-        SESSION = null; localStorage.removeItem(LS_SESSION);
-      }
+      if (SESSION && !DB.users.some(u => u.id === SESSION.userId)) wcKeepSessionUser();
       if (upgradeMerge) {
         this.dirty = true;
         setTimeout(() => { try { this.flush(); } catch (e) {} }, 80);
@@ -1483,9 +1522,13 @@ async function boot() {
   try { await Remote.init(); } catch (e) { console.warn('sync init failed', e); }
   try { resolvePendingReferrals(); reconcileReferralBonuses(); } catch (e) {}
   if (SESSION) {
-    const u = me();
-    if (!u) { SESSION = null; localStorage.removeItem(LS_SESSION); }
-    else if (u.pin) Presence.touch();
+    let u = me();
+    if (!u) u = wcKeepSessionUser();
+    /* keep the session key even if the record has not arrived yet; the next
+       sync restores it. Never bounce a signed-in user to the login screen. */
+    if (!u) {
+      setTimeout(() => { try { const r = wcKeepSessionUser(); if (r && typeof render === 'function') render(); } catch (e) {} }, 2500);
+    } else if (u.pin) Presence.touch();
   }
   initTheme();
   // referral short links: /ref/CODE, ?ref=CODE, #/ref=CODE

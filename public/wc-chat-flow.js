@@ -109,21 +109,25 @@
       wrapped.__wcQuiet = true;
       window.toast = wrapped;
     }
+    /* The offline chrome is hidden by the stylesheet above, not by deleting
+       and re-adding nodes. The old 250 ms remove loop fought the app's own
+       paint loop: each removal made the observer recreate the pill, which put
+       the page into a visible 8-per-second add/remove cycle (the "shaking"
+       screen) and burned a full layout per tick. Hiding is enough, and these
+       one-off sweeps only run when the connectivity state actually changes. */
     var sweep = function () {
       ['wcNetPill', 'wcOfflineChip'].forEach(function (id) {
         var el = document.getElementById(id);
-        if (el) { try { el.remove(); } catch (e) { el.style.display = 'none'; } }
+        if (el) el.style.display = 'none';
       });
-      document.querySelectorAll('.wc-device-mode').forEach(function (el) {
-        try { el.remove(); } catch (e) { el.style.display = 'none'; }
+      document.querySelectorAll('.wc-device-mode, .wc-pending-badge').forEach(function (el) {
+        el.style.display = 'none';
       });
-      document.querySelectorAll('.wc-pending-badge').forEach(function (el) { el.remove(); });
     };
     sweep();
-    /* a notice that is already gone cannot be read by the user: sweep faster
-       than the app can repaint one back in */
-    setInterval(sweep, 250);
+    setTimeout(sweep, 1200);
     window.addEventListener('offline', sweep);
+    window.addEventListener('online', sweep);
   }
 
   /* ------------------------------------------------------------------ 2

@@ -320,3 +320,31 @@ a whole-DB sync overwriting one of them cannot hide a fill.
 
 Verified by `npm run test:ui` (jsdom boots the built bundle, opens Toyota, clicks
 Buy and asserts the stored leverage, then renders the B2B history page).
+
+## Chat and contacts with no connection (3.77)
+
+The installed app is offline-first for conversations, not just prices:
+
+| Action with the network completely off | What happens |
+| --- | --- |
+| Add someone to your contacts | Saved on the device immediately (`DB.contacts`, one row per owner+person). The add is pushed to the server on the next successful sync and can never be erased by a refresh (`wc-contact-fix`). |
+| Send a message | The bubble renders at once, the message is written to IndexedDB + the Outbox, and a clock tick shows it is waiting. The Outbox drains on reconnect (2 s loop, 5/10/30 s retries). |
+| Read the conversation | The cached transcript opens first, so history is readable with no signal. |
+| The other person adds you back / replies | One-way add is enough: they can open the conversation, read it, reply, and are saved to your contacts automatically. |
+| Both users see each other's messages | After **one** of the two devices reconnects, the queued message reaches the server; the other device receives it over Realtime (or its poll/SSE fallback) and it appears in the transcript exactly once. |
+
+**The honest limit:** two phones that are *both* offline, with no shared network of any kind, cannot
+exchange data — there is no radio path between two browsers. "Offline chat" in WhaleChat means the
+app never blocks on the network: you can add contacts, write, and read while offline, and the
+messages are delivered the moment either device has a connection. Messages are never lost and are
+never duplicated (the message id is the Appwrite document id).
+
+### Verified automatically
+
+```bash
+npm run test:chat-e2e        # two independent clients: send, go offline, exchange, reconnect
+```
+
+`scripts/test-chat-e2e.mjs` drives the real `wc-live-chat.js` module: both clients go offline,
+exchange messages, reconnect, and the suite asserts the messages arrived exactly once on each side
+and the outboxes are empty afterwards.
