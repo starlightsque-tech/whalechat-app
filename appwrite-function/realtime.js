@@ -64,8 +64,8 @@ function ablyConfig() {
     keyName, secret,
     /* Ably's public browser key is the key *name*; the secret never leaves the server */
     key: keyName,
-    restHost: clean(process.env.WC_ABLY_HOST || 'rest.ably.io', 120),
-    realtimeHost: clean(process.env.WC_ABLY_REALTIME_HOST || 'realtime.ably.io', 120),
+    restHost: clean(process.env.WC_ABLY_HOST || 'main.realtime.ably.net', 120),
+    realtimeHost: clean(process.env.WC_ABLY_REALTIME_HOST || 'main.realtime.ably.net', 120),
     secure: true
   };
 }
