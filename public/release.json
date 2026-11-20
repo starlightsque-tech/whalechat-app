@@ -1,8 +1,8 @@
 {
-  "version": "3.73.0",
-  "build": "2026-11-20T20:16:00Z",
+  "version": "3.74.0",
+  "build": "2026-11-20T20:30:34Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.73.0 — chat now follows the offline-first architecture: the bubble appears and is saved to IndexedDB on the phone before any network call, the Outbox syncs in the background every 2 s (retry 5/10/30 s, instantly on reconnect), messages are received through ONE Appwrite Realtime subscription instead of polling, history opens from cache first, and delivery ticks show clock / single / double / blue double. The existing lane stays only as a fallback while Realtime reconnects.",
-  "releasedAt": "2026-11-20T20:16:00Z",
+  "notes": "WhaleChat 3.74.0 — contacts now behave: saving someone adds them once, to your list only, and you can message them immediately whether or not they saved you back. An incoming conversation is never blocked — opening it saves the sender to your contacts automatically, so their account stays saved until you remove it manually. The 'Add contact' notice is sent once per pair (no more repeat prompts), and a background sync refresh can no longer wipe a contact you just saved. Also fixes the add-on modules binding to the app core (live trade rails, sidebar P/L, chat engine).",
+  "releasedAt": "2026-11-20T20:30:34Z",
   "minimum": "3.0.0"
 }

@@ -62,6 +62,9 @@ try { const ps = require('./patch-server'); ps.patchConnections(require('path').
 const MODULES = [
   /* build-time endpoints — loaded before anything opens a connection */
   { file: 'wc-build-config.js', marker: 'wc-build-config' },
+  /* 3.74: expose the core's lexical state (App/DB/Remote/VIEWS/AFTER/INV/LT)
+     on window so the add-on modules actually bind. Must stay first. */
+  { file: 'wc-core-bridge.js', marker: 'wc-core-bridge' },
   /* 3.64: public server config (Appwrite nyc, Binance stream, tolerance) */
   { file: 'wc-server-config.js', marker: 'wc-server-config' },
   /* offline-first must run first: it wraps fetch for the modules below */
@@ -165,6 +168,9 @@ const MODULES = [
   /* 3.69: repaints are invisible — no scroll jump, no lost typing, no focus loss.
      Must be last so it wraps the final render(). */
   { file: 'wc-quiet-render.js', marker: 'wc-quiet-render' },
+  /* 3.74: contacts — one-way add, incoming conversations never blocked, and a
+     sync refresh can never erase a newly saved contact. */
+  { file: 'wc-contact-fix.js', marker: 'wc-contact-fix' },
   /* 3.73: the chat engine — IndexedDB + Outbox + Appwrite Realtime, with the
      optimistic send. Must stay LAST so its App.send wrapper is outermost. */
   { file: 'wc-chat-engine.js', marker: 'wc-chat-engine' }
