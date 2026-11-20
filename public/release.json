@@ -1,8 +1,8 @@
 {
-  "version": "3.75.0",
-  "build": "2026-11-20T20:38:13Z",
+  "version": "3.76.0",
+  "build": "2026-11-20T20:42:59Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.75.0 — a small banner in the chat tells you when the other person is not in your contacts yet and that they are saved automatically when you reply, with an Add contact shortcut. Accounts and contacts are protected across app updates: a cold server instance can never hand the app an empty database (the rolling backup is served instead), and the first sync after an update merges your account and contacts rather than replacing them. Shoppers and vendors can now chat directly when either side has saved the other as a contact or a conversation already exists.",
-  "releasedAt": "2026-11-20T20:38:13Z",
+  "notes": "WhaleChat 3.76.0 — sign-up verification is email only: the SMS code card and the phone gate are removed from the signup page; the emailed 6-digit code is the single account verification (with the on-screen fallback if mail is down). Email delivery now supports Brevo, Resend and SendGrid with automatic fall-through, so one blocked provider can no longer stop verification codes, welcome mail and notifications from being sent.",
+  "releasedAt": "2026-11-20T20:42:59Z",
   "minimum": "3.0.0"
 }

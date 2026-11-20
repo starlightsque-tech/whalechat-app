@@ -11,8 +11,8 @@
    Behaviour
      · Telesign not configured  → the module stays completely invisible and the
        existing password signup/login is untouched.
-     · configured + signup      → the phone field gains a "Send code" control
-       and the account cannot be created until the number is verified.
+     · signup                    → EMAIL ONLY (3.76): no SMS card, no phone
+       gate; the emailed 6-digit code verifies the account.
      · configured + login       → a "Sign in with SMS code" option appears, so
        a user can sign in with their registered phone and a 6-digit code.
 
@@ -144,8 +144,12 @@
 
   /* ------------------------------------------------------------- signup UI */
   function enhanceSignup() {
-    var phone = document.getElementById('suPhone');
-    if (!phone || document.getElementById('wcOtpCard')) return;
+    /* SIGN-UP USES EMAIL ONLY (3.76). The old SMS card is removed from the
+       signup page; the emailed 6-digit code in wc-build-357 is the only
+       account-verification step. Any card left by an older build is removed. */
+    var stale = document.getElementById('wcOtpCard');
+    if (stale && stale.parentNode) stale.parentNode.removeChild(stale);
+    return;
     var anchor = phone.closest('.field') || phone.parentElement;
     if (!anchor) return;
     anchor.insertAdjacentHTML('afterend', card(phone.value || '', 'signup'));
@@ -256,40 +260,14 @@
     if (window.__wcOtpGuards) return;
     window.__wcOtpGuards = true;
 
-    if (typeof App !== 'undefined' && App && typeof App.signup === 'function') {
-      var originalSignup = App.signup.bind(App);
-      App.signup = function () {
-        if (!state.configured) return originalSignup();
-        var phoneEl = document.getElementById('suPhone');
-        var phone = phoneEl ? phoneEl.value : '';
-        /* if Telesign itself is refusing (trial account, unverified number,
-           outage) the account is created unverified rather than blocked */
-        if (state.providerOk && !isVerified(phone)) {
-          try { if (typeof formError === 'function' && phoneEl) formError('suPhone', 'Verify this phone number with the SMS code first'); } catch (e) {}
-          msg('Enter the code we sent to your phone', 'err');
-          var code = document.getElementById('wcOtpCode');
-          if (code) code.focus();
-          toastSafe('Verify your phone number to create the account', 'warn');
-          return Promise.resolve(false);
-        }
-        var wasVerified = isVerified(phone);
-        return Promise.resolve(originalSignup()).then(function (out) {
-          if (!wasVerified) return out;
-          /* stamp the verification on the account the signup just created */
-          try {
-            var users = (typeof DB !== 'undefined' && DB.users) || [];
-            var me = (typeof SESSION !== 'undefined' && SESSION) ? users.filter(function (u) { return u && u.id === SESSION.userId; })[0] : null;
-            if (me) { me.phoneVerified = true; me.phoneVerifiedAt = Date.now(); if (typeof persist === 'function') persist(true); }
-          } catch (e) {}
-          return out;
-        });
-      };
-    }
+    /* Sign-up is no longer wrapped: email verification (wc-build-357) is the
+       only code required to create and verify an account. The SMS code remains
+       available as an optional SIGN-IN method below. */
 
     /* keep the UI injected as the router swaps views */
     setInterval(function () {
       if (!state.configured) return;
-      if (location.hash.indexOf('/signup') >= 0) enhanceSignup();
+      if (location.hash.indexOf('/signup') >= 0) enhanceSignup(); /* removes any stale card */
       if (location.hash.indexOf('/login') >= 0) enhanceLogin();
     }, 700);
   }

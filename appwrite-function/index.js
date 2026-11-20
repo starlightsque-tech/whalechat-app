@@ -26,7 +26,7 @@ const CODES_FILE = 'whalechat-codes';
 const MAIL_FILE = 'whalechat-mail';
 const MAIL_LOG_FILE = 'whalechat-email-log';
 const NOTIF_LOG_LIMIT = 400;
-const VERSION = '3.75.0';
+const VERSION = '3.76.0';
 const crypto = require('crypto');
 /* project-scoped ids: env wins, but a stale/placeholder value never does */
 function isRealId(v) { return typeof v === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._-]{19,}$/.test(v); }
@@ -647,12 +647,76 @@ async function readMailConfig() {
   return {
     brevoKey: String(saved.brevoKey || process.env.BREVO_API_KEY || '').trim(),
     resendKey: String(saved.resendKey || process.env.RESEND_API_KEY || '').trim(),
+    sendgridKey: String(saved.sendgridKey || process.env.SENDGRID_API_KEY || '').trim(),
+    /* optional: force one provider first ('brevo' | 'resend' | 'sendgrid') */
+    prefer: String(saved.prefer || process.env.MAIL_PROVIDER || '').trim().toLowerCase(),
     from: String(saved.from || process.env.MAIL_FROM || 'whalechat1@gmail.com').trim(),
     fromName: String(saved.fromName || process.env.MAIL_FROM_NAME || 'WhaleChat').trim(),
     webhookKey: String(saved.webhookKey || process.env.BREVO_WEBHOOK_KEY || '').trim(),
     webhookId: saved.webhookId || null,
     updatedAt: saved.updatedAt || 0
   };
+}
+
+function mailProviders(cfg) {
+  const list = [];
+  if (cfg && cfg.brevoKey) list.push('brevo');
+  if (cfg && cfg.resendKey) list.push('resend');
+  if (cfg && cfg.sendgridKey) list.push('sendgrid');
+  const prefer = cfg && cfg.prefer;
+  if (prefer && list.indexOf(prefer) > 0) {
+    list.splice(list.indexOf(prefer), 1);
+    list.unshift(prefer);
+  }
+  return list;
+}
+
+async function deliverOne(provider, cfg, to, subject, html, text) {
+  if (provider === 'brevo') {
+    const r = await apiRaw('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST', headers: { 'api-key': cfg.brevoKey, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        sender: { email: cfg.from, name: cfg.fromName || 'WhaleChat' },
+        to: [{ email: to }], subject, htmlContent: html, textContent: text || undefined
+      })
+    });
+    return {
+      ok: r.ok, provider: 'brevo',
+      messageId: (r.json && r.json.messageId) || '',
+      error: r.ok ? '' : ((r.json && (r.json.message || r.json.error)) || ('Brevo rejected the message (HTTP ' + r.status + ')'))
+    };
+  }
+  if (provider === 'resend') {
+    const r = await apiRaw('https://api.resend.com/emails', {
+      method: 'POST', headers: { authorization: 'Bearer ' + cfg.resendKey, 'content-type': 'application/json' },
+      body: JSON.stringify({ from: (cfg.fromName || 'WhaleChat') + ' <' + cfg.from + '>', to: [to], subject, html, text })
+    });
+    return {
+      ok: r.ok, provider: 'resend',
+      messageId: (r.json && r.json.id) || '',
+      error: r.ok ? '' : ((r.json && r.json.message) || ('Resend rejected the message (HTTP ' + r.status + ')'))
+    };
+  }
+  if (provider === 'sendgrid') {
+    const r = await apiRaw('https://api.sendgrid.com/v3/mail/send', {
+      method: 'POST', headers: { authorization: 'Bearer ' + cfg.sendgridKey, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        personalizations: [{ to: [{ email: to }] }],
+        from: { email: cfg.from, name: cfg.fromName || 'WhaleChat' },
+        subject,
+        content: [
+          { type: 'text/plain', value: text || String(html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() },
+          { type: 'text/html', value: html }
+        ]
+      })
+    });
+    return {
+      ok: r.ok, provider: 'sendgrid',
+      messageId: (r.headers && typeof r.headers.get === 'function' && r.headers.get('x-message-id')) || '',
+      error: r.ok ? '' : ((r.json && (r.json.errors && r.json.errors[0] && r.json.errors[0].message)) || r.text || ('SendGrid rejected the message (HTTP ' + r.status + ')'))
+    };
+  }
+  return { ok: false, provider: provider, messageId: '', error: 'Unknown email provider' };
 }
 
 async function appendMailLog(entry) {
@@ -666,32 +730,20 @@ async function appendMailLog(entry) {
 }
 
 async function sendMail(cfg, to, subject, html, text) {
-  const out = { ok: false, provider: cfg.brevoKey ? 'brevo' : cfg.resendKey ? 'resend' : 'none', messageId: '', error: '' };
-  if (cfg.brevoKey) {
-    const r = await apiRaw('https://api.brevo.com/v3/smtp/email', {
-      method: 'POST', headers: { 'api-key': cfg.brevoKey, 'content-type': 'application/json' },
-      body: JSON.stringify({
-        sender: { email: cfg.from, name: cfg.fromName || 'WhaleChat' },
-        to: [{ email: to }], subject, htmlContent: html, textContent: text || undefined
-      })
-    });
-    out.ok = r.ok;
-    if (r.json && r.json.messageId) out.messageId = r.json.messageId;
-    if (!r.ok) out.error = (r.json && (r.json.message || r.json.error)) || 'Brevo rejected the message';
-    return out;
+  const chain = mailProviders(cfg);
+  if (!chain.length) return { ok: false, provider: 'none', messageId: '', error: 'Email server is not configured' };
+  const errors = [];
+  for (const provider of chain) {
+    const out = await deliverOne(provider, cfg, to, subject, html, text);
+    if (out.ok) {
+      out.attempts = errors.concat([provider]);
+      return out;
+    }
+    errors.push(provider + ': ' + out.error);
+    /* a provider that is configured but blocked (e.g. Brevo account not yet
+       activated) must not stop a second configured provider from delivering */
   }
-  if (cfg.resendKey) {
-    const r = await apiRaw('https://api.resend.com/emails', {
-      method: 'POST', headers: { authorization: 'Bearer ' + cfg.resendKey, 'content-type': 'application/json' },
-      body: JSON.stringify({ from: cfg.fromName + ' <' + cfg.from + '>', to: [to], subject, html, text })
-    });
-    out.ok = r.ok;
-    if (r.json && r.json.id) out.messageId = r.json.id;
-    if (!r.ok) out.error = (r.json && r.json.message) || 'Resend rejected the message';
-    return out;
-  }
-  out.error = 'Email server is not configured';
-  return out;
+  return { ok: false, provider: chain[0], messageId: '', error: errors.join(' · '), attempts: chain };
 }
 
 async function sendCodeEmail(to, code, purposeLabel) {
@@ -3056,7 +3108,23 @@ module.exports = async ({ req, res, log, error }) => {
 
     if (path === '/api/email/status' && method === 'GET') {
       const cfg = await readMailConfig();
-      return res.json({ ok: true, configured: !!(cfg.brevoKey || cfg.resendKey), provider: cfg.brevoKey ? 'brevo' : cfg.resendKey ? 'resend' : '', from: cfg.from, fromName: cfg.fromName, queued: 0, sent: 0, host: '', port: '' }, 200, CORS);
+      const chain = mailProviders(cfg);
+      let last = null;
+      try {
+        const log = await readJsonFile(MAIL_LOG_FILE, { entries: [] });
+        last = (log.entries || [])[0] || null;
+      } catch (e) {}
+      return res.json({
+        ok: true,
+        configured: chain.length > 0,
+        provider: chain[0] || '',
+        providers: chain,
+        preference: cfg.prefer || '',
+        from: cfg.from,
+        fromName: cfg.fromName,
+        lastStatus: last ? { at: last.at, status: last.status, to: last.to, error: last.error || '', provider: last.provider || '' } : null,
+        queued: 0, sent: 0, host: '', port: ''
+      }, 200, CORS);
     }
 
     if (path === '/api/admin/mail' && method === 'POST') {
@@ -3070,6 +3138,13 @@ module.exports = async ({ req, res, log, error }) => {
         if (!/^(xkeysib-|xsmtpsib-)/i.test(key)) return res.json({ ok: false, error: 'invalid_key', message: 'That does not look like a Brevo API key' }, 400, CORS);
         cfg.brevoKey = key;
       }
+      if (body.resendKey) cfg.resendKey = String(body.resendKey).trim();
+      if (body.sendgridKey) {
+        const key = String(body.sendgridKey).trim();
+        if (!/^SG\./i.test(key)) return res.json({ ok: false, error: 'invalid_key', message: 'That does not look like a SendGrid API key' }, 400, CORS);
+        cfg.sendgridKey = key;
+      }
+      if (body.prefer) cfg.prefer = String(body.prefer).toLowerCase().replace(/[^a-z]/g, '').slice(0, 12);
       if (body.from) {
         const from = String(body.from).trim();
         if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(from)) return res.json({ ok: false, error: 'invalid_from', message: 'Enter a valid sender email' }, 400, CORS);

@@ -115,7 +115,11 @@ async function uploadDeployment() {
 }
 
 const VARS = [
-  'FINNHUB_API_KEY', 'TWELVEDATA_API_KEY', 'BREVO_API_KEY', 'MAIL_FROM', 'MAIL_FROM_NAME',
+  'FINNHUB_API_KEY', 'TWELVEDATA_API_KEY',
+  /* email: any one of these delivers; the function falls through to the next
+     configured provider when one is blocked */
+  'BREVO_API_KEY', 'RESEND_API_KEY', 'SENDGRID_API_KEY', 'MAIL_PROVIDER',
+  'MAIL_FROM', 'MAIL_FROM_NAME',
   'TELESIGN_CUSTOMER_ID', 'TELESIGN_API_KEY', 'TELESIGN_BASE_API', 'WC_OFFLINE_TOLERANCE_PCT',
   'BINANCE_WS', 'WC_BUCKET', 'APPWRITE_DATABASE_ID', 'WC_OFFLINE_COLLECTION', 'PUBLIC_URL',
   /* 3.71: hosted realtime provider for chat delivery (either provider works) */
