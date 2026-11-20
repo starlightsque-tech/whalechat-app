@@ -2046,8 +2046,9 @@ App.admMailSave = async function () {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ adminId: me().id, brevoKey: key || undefined, from: from || undefined, fromName: name })
     }).then(x => x.json());
-    if (!r || !r.ok) throw new Error((r && r.error) || 'failed');
-    toast('Email server connected for all users', 'ok');
+    if (!r || !r.ok) throw new Error((r && (r.message || r.error)) || 'failed');
+    const acct = r.brevo && (r.brevo.companyName || r.brevo.email);
+    toast(acct ? 'Brevo verified · ' + acct + ' — email is live for all users' : 'Email server connected for all users', 'ok');
     render();
   } catch (e) { toast('Could not save: ' + e.message, 'err'); }
 };
