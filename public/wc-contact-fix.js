@@ -201,13 +201,35 @@
     return true;
   }
 
+  /* one row per person for every account already saved (cleans rows stacked by
+     the old repeated-add bug) */
+  function dedupeAll() {
+    var d = db();
+    if (!d || !Array.isArray(d.contacts)) return;
+    var seen = {};
+    var out = [];
+    var changed = false;
+    d.contacts.forEach(function (c) {
+      if (!c || !c.ownerId || !c.userId || c.ownerId === c.userId) { changed = true; return; }
+      var key = c.ownerId + '>' + c.userId;
+      if (seen[key]) { changed = true; return; }
+      seen[key] = 1;
+      out.push(c);
+    });
+    if (changed) {
+      d.contacts = out;
+      persist(); saveLocal(); sync(); flushNow();
+    }
+  }
+
   var tries = 0;
   (function bind() {
     var a = hookAfterChat();
     var r = hookRemote();
     var d = hookDelete();
     var s = hookSave();
-    if ((!a || !r || !d || !s) && tries++ < 60) setTimeout(bind, 500);
+    if (a && r && d && s) { dedupeAll(); return; }
+    if (tries++ < 60) setTimeout(bind, 500);
   })();
 
   window.WCContacts = {
