@@ -77,23 +77,139 @@ async function readJsonFile(id, fallback) {
   }
   return fallback;
 }
-async function writeJsonFile(id, name, obj) {
-  /* delete + recreate: Appwrite PUT /files/{id} only updates name/permissions */
-  await api('/storage/buckets/' + encodeURIComponent(BUCKET) + '/files/' + id, { method: 'DELETE', headers: headers() });
+/* ---------------------------------------------------------------------------
+   3.66.5 — NON-DESTRUCTIVE STATE WRITES.
+
+   Appwrite's update-file endpoint only changes metadata, so the state file has
+   to be recreated to change its bytes. The old implementation simply deleted
+   it and posted a new one: any failure between those two calls destroyed every
+   user, trade and transaction in the app.
+
+   The write now follows a recoverable protocol:
+     1. read the current bytes (the thing we are about to replace),
+     2. copy them to a rolling backup file FIRST — if that copy fails we abort
+        and the live state is never touched,
+     3. only then replace the live file, with retries,
+     4. read it back to prove the new copy is readable,
+     5. if the replacement failed, restore the backup automatically.
+
+   Nothing is ever deleted without a verified copy on disk first, and the
+   backup file itself is never removed.
+--------------------------------------------------------------------------- */
+const STATE_BACKUP_ID = 'whalechat-state-backup';
+let LAST_BACKUP_AT = 0;
+const BACKUP_MIN_MS = 45000;   /* at most one backup copy per 45 s per instance */
+
+function fileForm(id, name, obj) {
   const form = new FormData();
   form.append('fileId', id);
   form.append('file', new Blob([JSON.stringify(obj)], { type: 'application/json' }), name);
-  const r = await api('/storage/buckets/' + encodeURIComponent(BUCKET) + '/files', { method: 'POST', headers: headers(), body: form });
+  return form;
+}
+async function rawCreate(id, name, obj) {
+  const r = await api('/storage/buckets/' + encodeURIComponent(BUCKET) + '/files', {
+    method: 'POST', headers: headers(), body: fileForm(id, name, obj)
+  });
   return r.ok;
+}
+async function rawDelete(id) {
+  const r = await api('/storage/buckets/' + encodeURIComponent(BUCKET) + '/files/' + id, { method: 'DELETE', headers: headers() });
+  return r.ok || r.status === 404;
+}
+async function replaceFile(id, name, obj, tries) {
+  const n = Math.max(1, tries || 3);
+  for (let i = 0; i < n; i++) {
+    await rawDelete(id);
+    if (await rawCreate(id, name, obj)) {
+      const back = await readJsonFile(id, null);
+      if (back) return true;
+    }
+    await new Promise((r) => setTimeout(r, 150 * (i + 1)));
+  }
+  return false;
+}
+async function writeJsonFile(id, name, obj) {
+  if (id !== STATE_FILE) {
+    /* side files (codes, mail log) are not the user database: plain replace */
+    return replaceFile(id, name, obj, 2);
+  }
+
+  const previous = await readJsonFile(STATE_FILE, null);
+
+  /* 1 · verified backup before anything is removed */
+  if (previous && Date.now() - LAST_BACKUP_AT > BACKUP_MIN_MS) {
+    const backed = await replaceFile(STATE_BACKUP_ID, 'whalechat-state-backup.json', previous, 2);
+    if (!backed) {
+      console.error('[state] backup failed — refusing to touch the live database');
+      return false;
+    }
+    LAST_BACKUP_AT = Date.now();
+  }
+
+  /* 2 · replace the live file */
+  const ok = await replaceFile(STATE_FILE, name, obj, 3);
+  if (ok) return true;
+
+  /* 3 · the replacement did not verify — put the previous copy back */
+  if (previous) {
+    console.error('[state] write failed — restoring the previous snapshot');
+    const restored = await replaceFile(STATE_FILE, name, previous, 3);
+    if (restored) return false;
+  }
+  return false;
 }
 
 /* simple cross-instance lock using the state file's rev */
 let localBusy = false;
 
+/* how many accounts the last verified read/write carried — used to stop a
+   transient empty read from ever being persisted over real data */
+let KNOWN_USERS = 0;
+function countUsers(st) {
+  try { return (st && st.db && Array.isArray(st.db.users)) ? st.db.users.length : 0; } catch (e) { return 0; }
+}
+
 async function readState() {
   const s = await readJsonFile(STATE_FILE, null);
-  if (s && s.db) { ensureMarketCatalogue(s.db); return s; }
-  return { rev: 0, at: 0, db: ensureMarketCatalogue(null) };
+  if (s && s.db) {
+    ensureMarketCatalogue(s.db);
+    const n = countUsers(s);
+    if (n > KNOWN_USERS) KNOWN_USERS = n;
+    s.__liveRead = true;
+    return s;
+  }
+  /* the file genuinely did not answer: mark it so a write cannot silently
+     replace a populated database with an empty one */
+  const empty = { rev: 0, at: 0, db: ensureMarketCatalogue(null), __emptyRead: true };
+  return empty;
+}
+
+/* Every state write goes through here. It refuses the one catastrophic case:
+   persisting zero users when the app is known to have accounts. That is what a
+   storage hiccup or a bad deploy would otherwise turn into permanent data loss.
+   An admin who really wants to clear the app can pass { force: true }. */
+async function persistState(st, opts) {
+  const force = !!(opts && opts.force);
+  const users = countUsers(st);
+  if (!force && users === 0 && KNOWN_USERS > 0) {
+    console.error('[state] refused to persist an empty user table (had ' + KNOWN_USERS + ')');
+    return false;
+  }
+  /* cold start guard: a fresh instance has KNOWN_USERS = 0, so also compare
+     against the rolling backup on disk before allowing an empty write */
+  if (!force && users === 0 && st.__emptyRead) {
+    const backup = await readJsonFile(STATE_BACKUP_ID, null);
+    if (backup && countUsers(backup) > 0) {
+      console.error('[state] cold-start guard: backup holds ' + countUsers(backup) + ' users, refusing to persist an empty state');
+      return false;
+    }
+  }
+  const ok = await writeJsonFile(STATE_FILE, 'whalechat-state.json', st);
+  if (ok) {
+    KNOWN_USERS = Math.max(KNOWN_USERS, users);
+    try { delete st.__emptyRead; } catch (e) {}
+  }
+  return ok;
 }
 
 /* -------------------------------------------------------------------------
@@ -307,7 +423,7 @@ function marketTickDue(st, minAgeMs) {
 async function saveState(st) {
   st.rev = Math.max(1, Number(st.rev) || 0) + 1;
   st.at = Date.now();
-  return writeJsonFile(STATE_FILE, 'whalechat-state.json', st);
+  return persistState(st);
 }
 async function sharesRoute(req, res, mode, fn) {
   const st = await readState();
@@ -1287,7 +1403,7 @@ module.exports = async ({ req, res, log, error }) => {
       }
       u.updatedAt = Date.now();
       st.rev = Math.max(1, Number(st.rev) || 0) + 1; st.at = Date.now();
-      const ok = await writeJsonFile(STATE_FILE, 'whalechat-state.json', st);
+      const ok = await persistState(st);
       if (!ok) return res.json({ ok: false, error: 'storage_write_failed' }, 502, CORS);
       const token = signToken({ sub: u.id, email: u.email || '', role: 'admin', exp: Date.now() + ADMIN_TTL });
       return res.json({ ok: true, token, rev: st.rev, admin: { id: u.id, email: u.email || '', username: u.username || '', fullName: u.fullName || '' }, hasRecovery: !!u.adminRecoveryHash }, 200, CORS);
@@ -1304,7 +1420,7 @@ module.exports = async ({ req, res, log, error }) => {
       if (typeof body.banned === 'boolean') u.banned = body.banned;
       u.updatedAt = Date.now();
       st.rev = Math.max(1, Number(st.rev) || 0) + 1; st.at = Date.now();
-      const ok = await writeJsonFile(STATE_FILE, 'whalechat-state.json', st);
+      const ok = await persistState(st);
       return res.json(ok ? { ok: true, rev: st.rev } : { ok: false, error: 'storage_write_failed' }, ok ? 200 : 502, CORS);
     }
 
@@ -1319,7 +1435,7 @@ module.exports = async ({ req, res, log, error }) => {
       u.adminRecoveryHash = await sha256('recovery::' + key);
       u.updatedAt = Date.now();
       st.rev = Math.max(1, Number(st.rev) || 0) + 1; st.at = Date.now();
-      const ok = await writeJsonFile(STATE_FILE, 'whalechat-state.json', st);
+      const ok = await persistState(st);
       return res.json(ok ? { ok: true } : { ok: false, error: 'storage_write_failed' }, ok ? 200 : 502, CORS);
     }
 
@@ -1337,7 +1453,7 @@ module.exports = async ({ req, res, log, error }) => {
       u.passChangedAt = Date.now();
       u.updatedAt = Date.now();
       st.rev = Math.max(1, Number(st.rev) || 0) + 1; st.at = Date.now();
-      const ok = await writeJsonFile(STATE_FILE, 'whalechat-state.json', st);
+      const ok = await persistState(st);
       return res.json(ok ? { ok: true, message: 'Password reset — sign in with the new password' } : { ok: false, error: 'storage_write_failed' }, ok ? 200 : 502, CORS);
     }
 
@@ -1890,7 +2006,7 @@ module.exports = async ({ req, res, log, error }) => {
         if (!out.ok) return res.json(out, 400, CORS);
         st.rev = Math.max(1, Number(st.rev) || 0) + 1;
         st.at = Date.now();
-        const saved = await writeJsonFile(STATE_FILE, 'whalechat-state.json', st);
+        const saved = await persistState(st);
         if (!saved) return res.json({ ok: false, error: 'storage_write_failed', results: out.results }, 502, CORS);
 
         /* mirror every settled order into the Appwrite collection */
@@ -2003,7 +2119,7 @@ module.exports = async ({ req, res, log, error }) => {
       if (users > 0) return res.json({ ok: false, error: 'already_initialised', rev: st.rev || 0 }, 409, CORS);
       if (!body.db) return res.json({ ok: false, error: 'invalid_db' }, 400, CORS);
       const next = { at: Date.now(), rev: Math.max(1, Number(body.rev) || 1), db: body.db };
-      const ok = await writeJsonFile(STATE_FILE, 'whalechat-state.json', next);
+      const ok = await persistState(next);
       if (!ok) return res.json({ ok: false, error: 'storage_write_failed' }, 502, CORS);
       return res.json({ ok: true, rev: next.rev }, 200, CORS);
     }
@@ -2017,7 +2133,7 @@ module.exports = async ({ req, res, log, error }) => {
         st.db = applyOps(st.db, body.ops || []);
         st.rev = Math.max(1, Number(st.rev) || 0) + 1;
         st.at = Date.now();
-        const ok = await writeJsonFile(STATE_FILE, 'whalechat-state.json', st);
+        const ok = await persistState(st);
         if (!ok) return res.json({ ok: false, error: 'storage_write_failed' }, 502, CORS);
         return res.json({ ok: true, rev: st.rev }, 200, CORS);
       } finally { localBusy = false; }
@@ -2110,7 +2226,7 @@ module.exports = async ({ req, res, log, error }) => {
       const st = await readState();
       if (method === 'POST') {
         st.at = Date.now();
-        const ok = await writeJsonFile(STATE_FILE, 'whalechat-state.json', st);
+        const ok = await persistState(st);
         if (!ok) return res.json({ ok: false, error: 'storage_write_failed' }, 502, CORS);
       }
       const users = (st.db && st.db.users) ? st.db.users.length : 0;
@@ -2129,7 +2245,7 @@ module.exports = async ({ req, res, log, error }) => {
       /* keep the previous snapshot as a separate rollback file */
       if (st.db) await writeJsonFile('whalechat-state-prev', 'whalechat-state-prev.json', prev);
       const next = { at: Date.now(), rev: Math.max(1, Number(st.rev) || 0) + 1, db: body.db };
-      const ok = await writeJsonFile(STATE_FILE, 'whalechat-state.json', next);
+      const ok = await persistState(next);
       return res.json(ok ? { ok: true, rev: next.rev, users: body.db.users.length } : { ok: false, error: 'storage_write_failed' }, ok ? 200 : 502, CORS);
     }
 

@@ -88,7 +88,27 @@
     } catch (e) {}
   }
 
-  function touch(source, at) { if (LAST_BY[source] !== undefined) LAST_BY[source] = Number(at) || Date.now(); }
+  /* 3.66.5 — connection log: every provider tick records when it arrived and
+     where it came from, so a feed that stops is visible instead of silently
+     grey. Kept in memory (last 40) and mirrored to the health card. */
+  var TICK_LOG = [];
+  var LAST_SRC = {};
+  function logTick(provider, source, symbol, price) {
+    var at = Date.now();
+    LAST_SRC[provider] = source;
+    TICK_LOG.unshift({ at: at, provider: provider, source: source, symbol: symbol || '', price: Number(price) || 0 });
+    if (TICK_LOG.length > 40) TICK_LOG.length = 40;
+  }
+  function providerOfSource(source) {
+    var s = String(source || '').toLowerCase();
+    if (s === 'twelvedata') return 'twelvedata';
+    if (s === 'binance') return 'binance';
+    if (s === 'finnhub' || s === 'yahoo' || s === 'frankfurter' || s === 'cnbc') return 'finnhub';
+    return 'finnhub';
+  }
+  function touch(source, at) {
+    if (LAST_BY[source] !== undefined) LAST_BY[source] = Number(at) || Date.now();
+  }
 
   function apply(ticker, price, prevClose, extra) {
     if (!(price > 0)) return;
@@ -118,6 +138,7 @@
     if (pc > 0) s.prevClose = pc;
     LAST_REAL[t] = now;
     touch(q.source, now);
+    logTick(providerOfSource(q.source), q.source, t, q.price);
     try { if (window.WC_CHART && window.WC_CHART.record) window.WC_CHART.record(t, q.price, now); } catch (e) {}
     /* 3.66.1: every real quote also drives the charts in real time — the line
        recolours green on a rising tick and red on a falling one. */
@@ -554,6 +575,24 @@
       try { if (finnhubWS) { finnhubWS.onclose = null; finnhubWS.close(); } } catch (e) {}
       openBinance(); openFinnhub(); pollTwelve(true); pollProxy(true);
     },
+    log: function () { return TICK_LOG.slice(); },
+    lastSources: function () { return Object.assign({}, LAST_SRC); },
+    /* one-tap retry for a single provider */
+    retry: function (provider) {
+      var p = String(provider || '').toLowerCase();
+      try {
+        if (p === 'binance') {
+          BINANCE.forEach(function (w) { try { w.onclose = null; w.close(); } catch (e) {} });
+          BINANCE = [];
+          openBinance();
+          try { pollBinanceRest(); } catch (e) {}
+          return true;
+        }
+        if (p === 'finnhub') { try { openFinnhub(); } catch (e) {} pollProxy(true); return true; }
+        if (p === 'twelvedata') { try { pollTwelve(true); } catch (e) {} pollProxy(true); return true; }
+      } catch (e) {}
+      return false;
+    },
     status: function () {
       return {
         binance: BINANCE.filter(function (w) { return w.readyState === 1; }).length,
@@ -567,6 +606,7 @@
         },
         localKeys: !!keys.finnhub,
         last: { binance: LAST_BY.binance, finnhub: LAST_BY.finnhub, twelvedata: LAST_BY.twelvedata, proxy: LAST_BY.proxy },
+        sources: Object.assign({}, LAST_SRC),
         lastTickAt: Math.max(LAST_BY.binance, LAST_BY.finnhub, LAST_BY.twelvedata, LAST_BY.proxy, LAST_BY.yahoo),
         liveInstruments: liveInstruments(),
         listed: stocks().length,

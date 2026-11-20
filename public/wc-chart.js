@@ -380,6 +380,9 @@
 
   function mountTVHosts() {
     document.querySelectorAll('[data-wc-tv]').forEach(function (host) {
+      /* 3.66.6: a host claimed by the shared chart kit is left alone */
+      if (host.getAttribute('data-wck-owned') === '1') return;
+      if (host.querySelector('.wck-canvas')) return;
       if (host.querySelector('.wcc-detail')) return;
       var t = host.getAttribute('data-wc-tv');
       if (t && window.WC_TV) window.WC_TV.mount(host, t, host.getAttribute('data-wc-tv-kind') || '');

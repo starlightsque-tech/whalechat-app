@@ -254,6 +254,8 @@
         var px = M.price(t) || (pts.length ? pts[pts.length - 1].p : 0);
         var firstPx = pts.length ? pts[0].p : px;
         host.innerHTML = '';
+        /* claim the host so the legacy TradingView shim stops repainting it */
+        host.setAttribute('data-wck-owned', '1');
         if (host.__wcKit) { try { host.__wcKit.destroy(); } catch (e) {} host.__wcKit = null; }
         host.__wcKit = WCChartKit.mount(host, {
           symbol: String(t).toUpperCase(), data: pts, price: px,
@@ -616,6 +618,13 @@
       var h = String(location.hash || '');
       if (h.indexOf('#/investment/b2b') !== 0) return;
       paint();
+      /* the marketplace chart is the shared reference chart: if a re-render
+         wiped the canvas, put it straight back */
+      var tvHost = document.getElementById('b2bmTvHost');
+      if (tvHost && !tvHost.querySelector('.wck-canvas')) {
+        var tt = tvHost.getAttribute('data-wc-tv');
+        if (tt) selectForChart(tt, tvHost.getAttribute('data-wc-tv-kind') || '');
+      }
     }, 2000);
     document.addEventListener('click', function (ev) {
       var card = ev.target && ev.target.closest ? ev.target.closest('[data-b2bm-tv]') : null;
