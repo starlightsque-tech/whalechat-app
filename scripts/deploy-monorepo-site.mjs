@@ -50,7 +50,35 @@ async function req(pathname, opts) {
 
 async function ensureSite() {
   const got = await req('/sites/' + encodeURIComponent(SITE_ID));
-  if (got.ok) return got.json;
+  if (got.ok) {
+    // Keep the console name/branding in sync. Send the full static-site payload:
+    // a partial PUT makes Appwrite fall back to disabled/live=false.
+    if (got.json.name !== (process.env.APPWRITE_SITE_NAME || 'Whalechat') || got.json.live === false) {
+      const upd = await req('/sites/' + encodeURIComponent(SITE_ID), {
+        method: 'PUT',
+        headers: Object.assign({ 'content-type': 'application/json' }, headers),
+        body: JSON.stringify({
+          name: process.env.APPWRITE_SITE_NAME || 'Whalechat',
+          framework: 'other',
+          enabled: true,
+          logging: true,
+          timeout: 30,
+          installCommand: '',
+          buildCommand: '',
+          startCommand: '',
+          outputDirectory: './',
+          buildRuntime: 'node-22',
+          adapter: 'static',
+          fallbackFile: '',
+          deploymentRetention: 0,
+        }),
+      });
+      if (upd.ok) console.log('[deploy] site branding updated:', upd.json.name);
+      else console.warn('[deploy] site update warning:', upd.status, upd.json?.message || upd.text);
+      return upd.ok ? upd.json : got.json;
+    }
+    return got.json;
+  }
   const made = await req('/sites', {
     method: 'POST',
     headers: Object.assign({ 'content-type': 'application/json' }, headers),
