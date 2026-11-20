@@ -351,6 +351,40 @@
         g.restore();
       }
 
+      /* ---- open position: shade the profit / loss zone against entry ---- */
+      var entryLn = null;
+      if (Array.isArray(state.lines)) {
+        for (var li = 0; li < state.lines.length; li++) {
+          var cand = state.lines[li];
+          if (cand && cand.entry && n(cand.price) > 0) { entryLn = cand; break; }
+        }
+      }
+      if (entryLn) {
+        var entryPx = n(entryLn.price);
+        var nowPx = n(state.price);
+        if (entryPx > 0 && nowPx > 0) {
+          var ey = sy(entryPx), py = sy(nowPx);
+          var inProfit = (typeof entryLn.inProfit === 'boolean') ? entryLn.inProfit : nowPx >= entryPx;
+          g.save();
+          g.fillStyle = inProfit ? 'rgba(49,224,160,.11)' : 'rgba(255,93,108,.11)';
+          g.fillRect(0, Math.min(ey, py), plotW, Math.abs(py - ey));
+          g.restore();
+          /* a plain-language badge: in profit / in loss, right now */
+          var deltaPct = (entryLn.pnlPct != null && isFinite(Number(entryLn.pnlPct)))
+            ? Number(entryLn.pnlPct)
+            : ((nowPx - entryPx) / entryPx) * 100;
+          var badge = (inProfit ? 'IN PROFIT ' : 'IN LOSS ') + (deltaPct >= 0 ? '+' : '') + deltaPct.toFixed(2) + '%';
+          g.font = '700 10px system-ui,-apple-system,sans-serif';
+          var bw = g.measureText(badge).width + 14;
+          g.fillStyle = inProfit ? 'rgba(49,224,160,.92)' : 'rgba(255,93,108,.92)';
+          roundRect(g, plotW - bw - 6, Math.min(ey, py) + 5, bw, 18, 5);
+          g.fill();
+          g.fillStyle = '#04231e';
+          g.textBaseline = 'middle';
+          g.fillText(badge, plotW - bw + 1, Math.min(ey, py) + 14);
+        }
+      }
+
       if (vis.length >= 2 && state.mode !== 'candles') {
         /* split the line at the reference: green above, red below */
         var pts = vis.map(function (p, i) { return { x: sx(i, vis.length), y: sy(p.p), v: p.p }; });
@@ -397,9 +431,9 @@
           if (!(pv > 0) || pv < lo || pv > hi) return;
           var y = sy(pv);
           g.save();
-          if (ln.solid) g.setLineDash([]); else g.setLineDash([5, 4]);
+          if (ln.solid) g.setLineDash([]); else g.setLineDash(ln.entry ? [7, 5] : [5, 4]);
           g.strokeStyle = ln.color || 'rgba(96,165,250,.85)';
-          g.lineWidth = ln.solid ? (ln.live ? 1.7 : 1.4) : 1.2;
+          g.lineWidth = ln.entry ? 1.7 : (ln.solid ? (ln.live ? 1.7 : 1.4) : 1.2);
           g.beginPath(); g.moveTo(0, y); g.lineTo(plotW, y); g.stroke();
           /* a live price rail also gets a small marker at the right edge */
           if (ln.live) {
@@ -410,7 +444,7 @@
           if (ln.title) {
             g.font = '700 9.5px system-ui,-apple-system,sans-serif';
             g.textBaseline = 'middle';
-            var tw2 = g.measureText(ln.title).width + 12;
+            var tw2 = Math.min(plotW - 8, g.measureText(ln.title).width + 14);
             g.fillStyle = 'rgba(8,18,26,.88)';
             roundRect(g, 4, y - 8, Math.min(tw2, plotW - 8), 16, 4);
             g.fill();
@@ -652,6 +686,7 @@
       __kitoken: 'k' + Math.random().toString(36).slice(2, 8),
       __symbol: String(opts.symbol || '').toUpperCase()
     };
+    try { host.__wck = api; } catch (e) {}
     register(api, opts);
     return api;
   }

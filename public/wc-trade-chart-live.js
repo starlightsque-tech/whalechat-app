@@ -186,33 +186,55 @@
       .catch(function () {});
   }
 
-  /* entry / take-profit / stop-loss, exactly the rails the trade uses */
-  function tradeLines(t) {
+  /* entry / take-profit / stop-loss, exactly the rails the trade uses.
+     The entry rail carries the exact entry price and the live P/L state, so the
+     chart itself answers "am I up or down on this stock?" — the kit shades the
+     zone between entry and the live price green/red and prints it as a badge. */
+  function tradeRails(t) {
     var out = [];
+    var rails = { lines: out, baseline: null, entry: 0, pnlPct: 0, inProfit: null, side: null, label: '' };
     var u = safe(function () { return typeof me === 'function' ? me() : null; }, null);
-    if (!u) return out;
+    if (!u) return rails;
     var pos = null;
     try {
       if (typeof LT !== 'undefined' && LT && LT.open) {
         pos = (LT.open(u.id) || []).filter(function (x) { return x && x.ticker === t; })[0] || null;
       }
     } catch (e) {}
+
+    function pushEntry(price, side) {
+      var live = priceOf(t);
+      var pct = live > 0 ? ((live - price) / price) * 100 * (side === 'short' ? -1 : 1) : 0;
+      var up = live > 0 ? pct >= 0 : null;
+      var col = up === null ? '#60a5fa' : (up ? '#31e0a0' : '#ff5d6c');
+      rails.baseline = price;
+      rails.entry = price;
+      rails.pnlPct = pct;
+      rails.inProfit = up;
+      rails.side = side || 'long';
+      rails.label = (up === null ? 'Entry ' : up ? 'Entry · in profit ' : 'Entry · in loss ') + fmtPrice(price) +
+        (live > 0 ? ' (' + (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%)' : '');
+      out.push({ price: price, color: col, title: rails.label, entry: true, side: side || 'long', inProfit: up, pnlPct: pct });
+    }
+
     if (pos) {
-      if (num(pos.entryPrice) > 0) out.push({ price: num(pos.entryPrice), color: '#60a5fa', title: 'Entry' });
-      if (num(pos.takeProfitPrice) > 0) out.push({ price: num(pos.takeProfitPrice), color: '#31e0a0', title: 'TP' });
-      if (num(pos.stopLossPrice) > 0) out.push({ price: num(pos.stopLossPrice), color: '#ff5d6c', title: 'SL' });
-    }
-    if (!pos) {
+      var side = String(pos.side || 'long').toLowerCase() === 'short' ? 'short' : 'long';
+      if (num(pos.entryPrice) > 0) pushEntry(num(pos.entryPrice), side);
+      if (num(pos.takeProfitPrice) > 0) out.push({ price: num(pos.takeProfitPrice), color: '#31e0a0', title: 'Target ' + fmtPrice(num(pos.takeProfitPrice)), target: true });
+      if (num(pos.stopLossPrice) > 0) out.push({ price: num(pos.stopLossPrice), color: '#ff5d6c', title: 'Stop ' + fmtPrice(num(pos.stopLossPrice)), stop: true });
+    } else {
       var holding = null;
-      try {
-        var a = (u.investAcct || {});
-        holding = (a.b2b || {})[t] || null;
-      } catch (e) {}
-      if (holding && num(holding.units) > 0 && num(holding.avgPrice) > 0) {
-        out.push({ price: num(holding.avgPrice), color: '#60a5fa', title: 'Entry' });
-      }
+      try { holding = ((u.investAcct || {}).b2b || {})[t] || null; } catch (e) {}
+      if (holding && num(holding.units) > 0 && num(holding.avgPrice) > 0) pushEntry(num(holding.avgPrice), 'long');
     }
-    return out;
+    return rails;
+  }
+  function tradeLines(t) { return tradeRails(t).lines; }
+  function fmtPrice(v) {
+    var n = num(v);
+    if (!(n > 0)) return '—';
+    if (n >= 1000) return '$' + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return '$' + (n >= 10 ? n.toFixed(2) : n >= 1 ? n.toFixed(3) : n.toFixed(5));
   }
 
   function wcRate() {
@@ -227,8 +249,8 @@
     var h = Math.min(380, Math.max(220, parseInt(opts.height, 10) || 320));
     return '<div class="wc-live-chart" data-wc-live-chart="' + t + '" data-wc-live-h="' + h + '">' +
       '<div class="wc-live-host" data-wc-live-host></div>' +
-      '<div class="wc-live-caption"><b>Green = price up · Red = price down.</b> ' +
-        'Open a Rise or Fall trade to see your profit zone.<br/>' +
+      '<div class="wc-live-caption"><b>Dashed line = your entry · green = in profit · red = in loss.</b> ' +
+        'Target and stop rails follow the trade.<br/>' +
         'All markets live 24/7 — no weekend or overnight closure' +
         ' · <span data-wc-live-time style="color:#5f7788">live</span></div>' +
     '</div>';
@@ -246,7 +268,12 @@
     var host = el.querySelector('[data-wc-live-host]');
     if (!host) return null;
 
-    if (host.__api && host.querySelector('.wck-canvas')) return host.__api;
+    if (host.__api && host.querySelector('.wck-canvas')) {
+      var liveRails = tradeRails(t);
+      try { host.__api.setLines(liveRails.lines); } catch (e) {}
+      try { if (host.__api.setBaseline) host.__api.setBaseline(liveRails.baseline); } catch (e) {}
+      return host.__api;
+    }
 
     var h = Math.min(380, Math.max(220, parseInt(el.getAttribute('data-wc-live-h'), 10) || 320));
     fetchHistory(t);
@@ -272,7 +299,9 @@
           var p = priceOf(t) || price;
           a.setData(seriesFor(t, r), p);
           a.setPrice(p, changeOf(t));
-          a.setLines(tradeLines(t));
+          var rr = tradeRails(t);
+          a.setLines(rr.lines);
+          if (a.setBaseline) a.setBaseline(rr.baseline);
         }
       });
     } catch (e) { return null; }
@@ -282,7 +311,9 @@
     host.__ticks = 0;
     host.__linesAt = 0;
     host.__price = price;
-    try { api.setLines(tradeLines(t)); } catch (e) {}
+    var mountedRails = tradeRails(t);
+    try { api.setLines(mountedRails.lines); } catch (e) {}
+    try { if (api.setBaseline) api.setBaseline(mountedRails.baseline); } catch (e) {}
     var timeEl = el.querySelector('[data-wc-live-time]');
     if (timeEl) timeEl.textContent = 'live · ' + new Date().toLocaleTimeString();
 
@@ -329,9 +360,11 @@
       var timeEl = el.querySelector('[data-wc-live-time]');
       if (timeEl) timeEl.textContent = 'live · ' + new Date().toLocaleTimeString();
       var now = Date.now();
-      if (!host.__linesAt || now - host.__linesAt > 3000) {
+      if (!host.__linesAt || now - host.__linesAt > 1000) {
         host.__linesAt = now;
-        try { a.setLines(tradeLines(t)); } catch (e) {}
+        var railsNow = tradeRails(t);
+        try { a.setLines(railsNow.lines); } catch (e) {}
+        try { if (a.setBaseline) a.setBaseline(railsNow.baseline); } catch (e) {}
       }
     });
   }
@@ -363,7 +396,12 @@
     window.addEventListener('wc:trade-opened', function () {
       document.querySelectorAll('[data-wc-live-chart]').forEach(function (el) {
         var host = el.querySelector('[data-wc-live-host]');
-        if (host && host.__api) { try { host.__api.setLines(tradeLines(String(el.getAttribute('data-wc-live-chart')).toUpperCase())); } catch (e) {} }
+        if (host && host.__api) {
+          var tk = String(el.getAttribute('data-wc-live-chart')).toUpperCase();
+          var rl = tradeRails(tk);
+          try { host.__api.setLines(rl.lines); } catch (e) {}
+          try { if (host.__api.setBaseline) host.__api.setBaseline(rl.baseline); } catch (e) {}
+        }
       });
     });
     window.addEventListener('online', schedule);

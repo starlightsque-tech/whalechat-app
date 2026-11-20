@@ -102,39 +102,71 @@
     return next;
   }
 
-  /* ------------------------------------------------------------- the button */
-  function ensureButton() {
-    if (document.getElementById('wcThemeBtn')) return;
-    var b = document.createElement('button');
-    b.id = 'wcThemeBtn';
-    b.type = 'button';
-    b.setAttribute('aria-label', label(current()));
-    b.setAttribute('title', label(current()));
-    b.style.cssText = [
-      'position:fixed', 'right:14px', 'bottom:calc(var(--nav-h,70px) + 14px)', 'z-index:9000',
-      'width:42px', 'height:42px', 'border-radius:50%', 'display:flex', 'align-items:center',
-      'justify-content:center', 'cursor:pointer', 'padding:0',
-      'border:1px solid var(--border-strong,rgba(255,255,255,.16))',
-      'background:var(--surface-2,#0f2333)', 'color:var(--text,#e9f4f9)',
-      'box-shadow:0 10px 26px -10px rgba(0,0,0,.65)', 'backdrop-filter:blur(8px)',
-      'transition:transform .15s ease, background .2s ease', 'touch-action:manipulation'
-    ].join(';');
+  /* ------------------------------------------------------------- the button
+     The switch lives in the TOP BAR, beside search / notifications / view —
+     it is a normal flex child there, so it can never float over a card, a
+     button or the bottom navigation. (The old fixed bubble in the bottom-right
+     corner covered page content and is gone.) */
+  function topbarRow() {
+    return document.querySelector('header.topbar .row') || document.querySelector('header.topbar');
+  }
+
+  function bindButton(b) {
+    if (!b || b.__wcBound) return;
+    b.__wcBound = true;
     b.addEventListener('click', function (e) {
       e.preventDefault(); e.stopPropagation();
       toggle();
-    });
-    document.body.appendChild(b);
+    }, true);
+  }
+
+  function ensureButton() {
+    var old = document.getElementById('wcThemeBtn');
+    var host = topbarRow();
+    if (!host) { if (old && old.parentNode) old.parentNode.removeChild(old); return; }
+    var b = null;
+
+    /* reuse the app's own topbar theme control (the moon/sun button) */
+    var nativeBtn = host.querySelector('[data-theme-toggle]');
+    if (nativeBtn) {
+      nativeBtn.classList.remove('hide-desktop');
+      nativeBtn.id = 'wcThemeBtn';
+      try { nativeBtn.style.position = 'relative'; nativeBtn.style.display = ''; } catch (e) {}
+      b = nativeBtn;
+    } else if (old && old.parentNode === host) {
+      b = old;
+    } else {
+      if (old && old.parentNode) old.parentNode.removeChild(old);
+      b = document.createElement('button');
+      b.id = 'wcThemeBtn';
+      b.type = 'button';
+      b.className = 'btn-icon';
+      b.style.cssText = 'position:relative;flex:none;display:flex;align-items:center;justify-content:center;padding:0';
+      var profile = host.lastElementChild;
+      if (profile) host.insertBefore(b, profile); else host.appendChild(b);
+    }
+    bindButton(b);
+    /* every theme control in the app (sidebar entry included) goes through
+       this module, so the choice sticks and nothing double-toggles */
+    document.querySelectorAll('[data-theme-toggle]').forEach(bindButton);
     paintButton();
   }
 
   function paintButton() {
-    var b = document.getElementById('wcThemeBtn');
-    if (!b) return;
     var t = current();
-    b.innerHTML = icon(t);
-    b.setAttribute('aria-label', label(t));
-    b.setAttribute('title', label(t));
-    b.dataset.theme = t;
+    var b = document.getElementById('wcThemeBtn');
+    if (b) {
+      b.innerHTML = icon(t);
+      b.setAttribute('aria-label', label(t));
+      b.setAttribute('title', label(t));
+      b.dataset.theme = t;
+    }
+    /* the sidebar entry mirrors the same state */
+    document.querySelectorAll('aside.sidebar [data-theme-toggle]').forEach(function (n) {
+      if (n === b) return;
+      var txt = n.querySelector('span:last-child');
+      if (txt) txt.textContent = t === 'dark' ? 'Light mode' : 'Dark mode';
+    });
   }
 
   /* --------------------------------------------------------- re-assertion */
@@ -187,7 +219,7 @@
 
     /* route changes rebuild the DOM: keep the button and the theme */
     window.addEventListener('hashchange', function () { setTimeout(function () { ensureButton(); reassert(); }, 60); });
-    setInterval(function () { ensureButton(); paintButton(); }, 1500);
+    setInterval(function () { ensureButton(); paintButton(); }, 900);
     setInterval(reassert, 2500);
   }
 

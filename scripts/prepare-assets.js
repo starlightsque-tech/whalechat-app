@@ -128,6 +128,10 @@ const MODULES = [
   /* 3.70: live trade readout — entry/live rails on the chart and a move counter
      that updates in place on the order card. Must load after the live chart. */
   { file: 'wc-live-moves.js', marker: 'wc-live-moves' },
+  /* 3.71: entry/target rails on the chart + live P/L in the sidebar and a
+     portfolio performance curve that moves with the market. Must load after
+     the chart and the live-trade engine. */
+  { file: 'wc-live-portfolio.js', marker: 'wc-live-portfolio' },
   { file: 'b2b-market.js', marker: 'wc-b2b-market' },
   { file: 'b2b-performance.js', marker: 'wc-b2b-performance' },
   { file: 'connections-admin.js', marker: 'wc-connections-admin' },
