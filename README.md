@@ -1,5 +1,24 @@
 # WhaleChat 3.54.0 — web app + mobile apps
 
+> **3.77 · a still screen, a session that survives, verified Brevo**
+>
+> * **No more shaking.** The offline connectivity pill was removed and rebuilt by two modules
+>   fighting each other — eight DOM cycles per second, each one a full layout. It is now hidden
+>   with CSS (`wc-chat-flow`) and the page produces **one** DOM change at boot instead of ~50.
+> * **Charts breathe instead of flicker.** Market sparklines and the live trading chart used to be
+>   rebuilt every 2 s (and again every 5 s on Invest). `wc-smooth.js` keeps the price text instant
+>   but redraws the drawings at most every 12 s, and pauses all background repaints while a field,
+>   dialog, scroll or drag is active — a trade ticket keeps its amount, leverage and caret.
+> * **Pull-to-refresh is contained** (`overscroll-behavior`), chart hosts reserve their height, and
+>   entrance animations stop after the first paint, so the layout cannot move by itself.
+> * **A sync can never sign you out.** When a server refresh arrives without the signed-in account
+>   (first write not landed, older snapshot, two devices saving together) the device now restores
+>   its own record and pushes it back (`wcKeepSessionUser` + `wc-stay-signed-in`). The session key
+>   is only removed by an explicit Sign out — this was the "app collapses" report.
+> * **Brevo keys are verified before they are stored** (`POST /api/admin/mail` calls
+>   `GET /api.brevo.com/v3/account`), so the admin console can no longer report “Connected” for a
+>   dead key.
+
 > **3.73 · offline-first chat engine**
 >
 > Send is optimistic: the bubble renders and the message is written to IndexedDB
