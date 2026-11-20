@@ -520,6 +520,32 @@ async function yahooQuotes(symbols) {
 }
 
 
+/* Yahoo v8 chart fallback: the spark endpoint is often 401/429 while the
+   chart endpoint still answers, and it carries the last two closes we need
+   for a real quote. No invented prices. */
+async function yahooChartQuotes(symbols) {
+  const out = {};
+  const list = (symbols || []).slice(0, 12);
+  await Promise.all(list.map(async (sym) => {
+    try {
+      const y = yahooSymbol(sym);
+      const r = await apiRaw('https://query1.finance.yahoo.com/v8/finance/chart/' + encodeURIComponent(y) + '?interval=1d&range=5d', {
+        headers: { 'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36', accept: 'application/json' }
+      });
+      if (!r.ok || !r.json) return;
+      const res = r.json.chart && r.json.chart.result && r.json.chart.result[0];
+      const q = res && res.indicators && res.indicators.quote && res.indicators.quote[0];
+      const closes = (q && q.close || []).filter((x) => Number(x) > 0);
+      if (!closes.length) return;
+      const last = Number(closes[closes.length - 1]);
+      const prev = Number(res.meta && res.meta.chartPreviousClose) || Number(closes[closes.length - 2]) || last;
+      const nq = normQuote(last, prev, { open: Number(closes[0]), vol: 0, at: Date.now(), source: 'yahoo' });
+      if (nq) out[String(sym).toUpperCase()] = nq;
+    } catch (e) {}
+  }));
+  return out;
+}
+
 /* Key-free FX breadth: ECB reference rates via Frankfurter. Real rates, cached
    for ten minutes — used only for forex pairs the keyed providers miss. */
 let FX_CACHE = { at: 0, rates: null };
@@ -722,6 +748,13 @@ async function proxyQuotes(provider, symbols) {
         const more = await yahooQuotes(missing);
         if (Object.keys(more).length) { Object.assign(quotes, more); used = used === 'finnhub' ? 'hybrid' : 'yahoo'; }
       }
+    }
+    /* last resort for stocks when Finnhub is rate-limited / Twelve Data is not
+       configured: Yahoo's chart endpoint still returns the real close */
+    const chartMissing = list.filter((x) => !quotes[x]).slice(0, 12);
+    if (chartMissing.length) {
+      const cq = await yahooChartQuotes(chartMissing);
+      if (Object.keys(cq).length) { Object.assign(quotes, cq); used = used === 'auto' ? 'yahoo' : used; }
     }
   }
   cacheSet(key, quotes);
