@@ -26,7 +26,7 @@ const CODES_FILE = 'whalechat-codes';
 const MAIL_FILE = 'whalechat-mail';
 const MAIL_LOG_FILE = 'whalechat-email-log';
 const NOTIF_LOG_LIMIT = 400;
-const VERSION = '3.78.0';
+const VERSION = '3.79.0';
 const crypto = require('crypto');
 const smtpClient = require('./smtp');
 /* project-scoped ids: env wins, but a stale/placeholder value never does */

@@ -1,8 +1,8 @@
 {
-  "version": "3.78.0",
-  "build": "2026-11-20T22:56:48Z",
+  "version": "3.79.0",
+  "build": "2026-11-20T23:10:31Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.78.0 — email is delivered through the Brevo SMTP relay for verification codes, transactional mail and receipts; SMS notifications and OTP use Telesign (with Brevo SMS as fallback). Admin panel pages no longer auto-repaint while an admin is reading or editing: timer/sync-driven renders are suppressed on admin routes and every nested scroll panel, focused field and caret position is preserved across the repaints that do happen.",
-  "releasedAt": "2026-11-20T22:56:48Z",
+  "notes": "WhaleChat 3.79.0 — deposits now require a payment-slip photo, which travels with the request and is viewable in Admin → Deposits; approval credits the user's crypto deposit balance exactly once and the account page updates that number in place. Transfers now write both the sending and receiving balances (and both ledgers) together. Background repaints are suppressed app-wide after the user stops interacting, and every nested scroll panel, focused field and caret is preserved; admin sees new deposit/withdrawal requests through a fixed banner instead of the page refreshing underneath them.",
+  "releasedAt": "2026-11-20T23:10:31Z",
   "minimum": "3.0.0"
 }

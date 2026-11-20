@@ -64,13 +64,23 @@
   }
   function location_hash() { return (typeof location !== 'undefined' && location.hash) || ''; }
   var lastUserAction = 0;
-  ['pointerdown', 'touchstart', 'keydown', 'input', 'change'].forEach(function (ev) {
+  var bootedAt = Date.now();
+  ['pointerdown', 'touchstart', 'keydown', 'input', 'change', 'wheel', 'touchmove'].forEach(function (ev) {
     window.addEventListener(ev, function () { lastUserAction = Date.now(); }, { passive: true, capture: true });
   });
-  function adminBusy() {
-    if (!adminRoute()) return false;
-    return Date.now() - lastUserAction > 4000;
+  /* App-wide stability rule (3.79): a timer/sync-driven repaint is only
+     allowed while the app is still booting or within 5 s of something the
+     user actually did. After that, pages stay exactly as they are — reading,
+     trading, investing, chatting and admin work are never interrupted by a
+     background refresh. Route changes and explicit actions still paint at
+     once, and the data modules that tick prices/chat paint in place. */
+  function autoRepaintSuppressed() {
+    if (Date.now() - bootedAt < 9000) return false;
+    var app = document.getElementById('app');
+    if (!app || !app.firstElementChild) return false;
+    return Date.now() - lastUserAction > 5000;
   }
+  function adminBusy() { return autoRepaintSuppressed(); }
 
   ['scroll', 'wheel', 'touchmove'].forEach(function (ev) {
     window.addEventListener(ev, function () { window.__wcLastScrollAt = Date.now(); }, { passive: true, capture: true });
@@ -211,10 +221,9 @@
       var moved = String(location.hash || '') !== lastHash;
       if (forced || moved) { pending = false; pendingForce = false; realPaint(forced); return; }
 
-      /* admin console: a timer/sync-driven repaint must not move the page,
-         steal the cursor or interrupt a form — wait for the admin's next
-         action or route change instead */
-      if (adminBusy()) {
+      /* never let a background repaint move the page, steal the cursor or
+         interrupt a form — wait for the user's next action or a route change */
+      if (autoRepaintSuppressed()) {
         pending = false;
         pendingForce = false;
         return;

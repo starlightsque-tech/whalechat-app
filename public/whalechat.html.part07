@@ -245,25 +245,44 @@ function adminDeposits() {
     <div class="between mb16"><h3 style="font-size:15px">Deposit requests</h3>
       <div class="row gap8"><span class="badge badge-warn">${list.filter(d => d.status === 'pending').length} pending</span>
       <button class="btn btn-sm btn-ghost" data-nav="#/admin/settings">${ic('settings', 14)} Payment methods</button></div></div>
-    <div class="table-wrap"><table class="tbl"><thead><tr><th>User</th><th>Amount</th><th>Whale Coin</th><th>Method</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+    <div class="table-wrap"><table class="tbl"><thead><tr><th>User</th><th>Amount</th><th>Whale Coin</th><th>Method</th><th>Slip</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead><tbody>
     ${list.length ? list.map(d => {
       const u = findUser(d.userId);
       return `<tr><td><div style="font-weight:600">${esc(u ? u.fullName : 'Deleted user')}</div><div class="tiny muted">${esc(u ? '@' + u.username : '')} · ${timeAgo(d.createdAt)} ago</div></td>
         <td style="font-weight:600">${usd(d.usd)}</td><td>${coins(d.coins)} WC</td>
         <td><div class="small">${esc(d.methodName || d.method)}</div><div class="tiny muted" style="max-width:180px;overflow:hidden;text-overflow:ellipsis">${esc(d.detail || '')}</div></td>
+        <td>${d.slip ? `<button class="btn btn-xs btn-ghost" data-act="dep-slip" data-id="${d.id}" title="Open payment slip">${ic('image', 13)} View</button>` : '<span class="tiny muted">No slip</span>'}</td>
         <td>${statusBadge(d.status)}</td>
         <td><div class="row gap6" style="justify-content:flex-end">
           ${d.status === 'pending' ? `<button class="btn btn-xs btn-primary" data-act="dep-approve" data-id="${d.id}">Approve</button>
           <button class="btn btn-xs btn-danger" data-act="dep-reject" data-id="${d.id}">Reject</button>` : ''}
           <button class="btn btn-xs btn-ghost" data-act="dep-del" data-id="${d.id}">${ic('trash', 12)}</button></div></td></tr>`;
-    }).join('') : `<tr><td colspan="6" class="center muted" style="padding:30px">No deposit requests</td></tr>`}
+    }).join('') : `<tr><td colspan="7" class="center muted" style="padding:30px">No deposit requests</td></tr>`}
     </tbody></table></div>
   </div>`;
 }
+App.depSlip = function (id) {
+  const d = (DB.deposits || []).find(x => x.id === id);
+  if (!d || !d.slip) return toast('No payment slip attached to this deposit', 'err');
+  openModal(modalShell('Payment slip', `
+    <div class="center">
+      <div class="tiny muted mb10">${esc(d.slipName || 'Payment slip')} · ${usd(d.usd)} · ${esc(findUser(d.userId) ? '@' + findUser(d.userId).username : '')}</div>
+      <img src="${d.slip}" alt="Payment slip" style="max-width:100%;max-height:70vh;border-radius:12px;display:block;margin:0 auto"/>
+    </div>`, `<button class="btn btn-ghost" data-close style="width:100%">Close</button>`), { width: '760px' });
+};
+
 App.depApprove = async function (id) {
   const d = DB.deposits.find(x => x.id === id); if (!d || d.status !== 'pending') return;
   const u = findUser(d.userId); if (!u) return toast('User not found', 'err');
-  d.status = 'approved'; d.reviewedAt = Date.now();
+  if (!d.slip) {
+    const go = await confirmDialog({
+      title: 'No payment slip attached',
+      body: 'This deposit has no payment slip. Approving without proof can credit money that was never received. Approve anyway?',
+      danger: true, ok: 'Approve anyway'
+    });
+    if (!go) return;
+  }
+  d.status = 'approved'; d.reviewedAt = Date.now(); d.reviewedBy = me().id;
   const coin = String(d.coin || (typeof depositCoinOf === 'function' ? depositCoinOf(d) : 'USD')).toUpperCase();
   d.coin = coin;
   u.depositBalances = (u.depositBalances && typeof u.depositBalances === 'object' && !Array.isArray(u.depositBalances)) ? u.depositBalances : {};

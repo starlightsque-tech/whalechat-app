@@ -115,6 +115,8 @@ const MODULES = [
   { file: 'trade-guide.js', marker: 'wc-trade-guide' },
   { file: 'investment-hub.js', marker: 'wc-investment-hub' },
   { file: 'account-center.js', marker: 'wc-account-centre' },
+  /* 3.79: balance numbers update in place after approval/transfer — no repaint */
+  { file: 'wc-money-live.js', marker: 'wc-money-live' },
   { file: 'money-hub.js', marker: 'wc-money-hub' },
   { file: 'service-center.js', marker: 'wc-service-center' },
   { file: 'demo-sellers.js', marker: 'wc-demo-sellers' },
@@ -160,6 +162,8 @@ const MODULES = [
   { file: 'wc-connection.js', marker: 'wc-connection' },
   /* 3.68: admin SMS desk — message, link button, audience, send log */
   { file: 'wc-admin-sms.js', marker: 'wc-admin-sms' },
+  /* 3.79: new deposit/withdrawal requests reach the admin without repainting */
+  { file: 'wc-admin-watch.js', marker: 'wc-admin-watch' },
   /* 3.57: account dashboard, email verification, PIN reset and offline charts.
      Must stay last so its VIEWS/App patches win over earlier modules. */
   { file: 'wc-build-357.js', marker: 'wc-build-357' },

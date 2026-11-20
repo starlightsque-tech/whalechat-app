@@ -295,10 +295,12 @@
       return;
     }
 
-    src.set(src.get() - amt);
-    dst.set(dst.get() + receive);
-    ledgerM(u, src.label + ' → ' + dst.label + ' · ' + moneyM(amt * units(src.cur)) + ' value', 0, 0, { from: src.id, to: dst.id });
-    saveM(); toastM('Transfer complete', 'ok'); renderM();
+    var srcBefore = src.get(), dstBefore = dst.get();
+    src.set(roundM(srcBefore - amt));
+    dst.set(roundM(dstBefore + receive));
+    /* both sides are written and persisted together */
+    ledgerM(u, src.label + ' → ' + dst.label + ' · ' + display(src, amt) + ' sent', 0, 0, { from: src.id, to: dst.id, srcBefore: srcBefore, dstBefore: dstBefore });
+    saveM(); toastM('Transfer complete — ' + display(dst, receive) + ' added to ' + dst.label, 'ok'); renderM();
   }
 
   /* ---------------------------------------------------------- convert */
@@ -514,6 +516,9 @@
     var oa = ia(other);
     oa.usd = roundM((Number(oa.usd) || 0) + amt);
     ledgerM(u, 'Sent ' + moneyM(amt) + ' to ' + (other.accountId || other.referralCode), -amt, 0, { toUser: other.id });
+    /* the receiver's balance and ledger both move with the same write, so a
+       refresh can never show the money leaving one account and not arriving */
+    ledgerM(other, 'Received ' + moneyM(amt) + ' from @' + u.username, amt, 0, { fromUser: u.id });
     try { notify(other.id, 'Investment transfer received', moneyM(amt) + ' was added to your investment total assets by @' + u.username + '.', '#/investment', 'briefcase'); } catch (e) {}
     saveM(); toastM('Sent ' + moneyM(amt) + ' to ' + (other.accountId || other.referralCode), 'ok'); renderM();
   }
