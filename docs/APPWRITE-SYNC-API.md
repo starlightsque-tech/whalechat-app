@@ -41,10 +41,11 @@ Financial rows are additionally locked by the deterministic ledger document.
 
 ## Identity & admin
 
-- Identity comes from `x-appwrite-user-id` (Appwrite session header). For
-  migration compatibility `body.userId` is accepted when
-  `WC_SYNC_TRUST_BODY_USER` is not `0`; set
-  `WC_SYNC_REQUIRE_SESSION=1` to require the session header.
+- Identity comes from `x-appwrite-user-id` (Appwrite session header). This is
+  required by default — a body-supplied `userId` is ignored unless
+  `WC_SYNC_TRUST_BODY_USER=1` is set for a migration/test window. Financial
+  endpoints must never be deployed with the body fallback enabled.
+- `WC_SYNC_REQUIRE_SESSION=0` is only for local harnesses.
 - `GET/POST /api/admin/*` additionally requires the user document (or the
   legacy state mirror) to have `role: admin|superadmin`.
 

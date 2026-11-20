@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
+// Tests exercise the explicit body-user compatibility path; production keeps
+// the secure default (session header required).
+process.env.WC_SYNC_TRUST_BODY_USER = '1';
 const { createMonorepoSync } = require('../monorepo-sync.js');
 
 /** Minimal in-memory Appwrite Databases REST double. */

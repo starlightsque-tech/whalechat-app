@@ -40,8 +40,10 @@ const COLLECTIONS = {
 };
 
 const DATABASE_ID = String(process.env.WC_SYNC_DB || 'whalechat').trim();
-const TRUST_BODY_USER = String(process.env.WC_SYNC_TRUST_BODY_USER || '1') !== '0';
-const REQUIRE_SESSION = String(process.env.WC_SYNC_REQUIRE_SESSION || '0') === '1';
+// Secure default: identity must come from Appwrite's session header. The body
+// fallback exists only for migrations/tests and must be enabled explicitly.
+const TRUST_BODY_USER = String(process.env.WC_SYNC_TRUST_BODY_USER || '0') === '1';
+const REQUIRE_SESSION = String(process.env.WC_SYNC_REQUIRE_SESSION || '1') !== '0';
 
 class SyncError extends Error {
   constructor(status, code, message) {
@@ -153,7 +155,9 @@ function createMonorepoSync(deps) {
     }
     const userId = headerUser || bodyUser;
     if (!userId) throw new SyncError(401, 'auth_required', 'an Appwrite user session is required');
-    if (REQUIRE_SESSION && !headerUser) throw new SyncError(401, 'session_required', 'session header required');
+    if (REQUIRE_SESSION && !headerUser && !(TRUST_BODY_USER && bodyUser)) {
+      throw new SyncError(401, 'session_required', 'session header required');
+    }
     return userId;
   }
 
