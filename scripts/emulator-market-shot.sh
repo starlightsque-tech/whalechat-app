@@ -19,7 +19,7 @@ if [ -n "$LOGIN_EMAIL" ]; then
   sleep 1
   adb shell input text "$LOGIN_PASSWORD" || true
   sleep 1
-  adb shell input keyevent 66 || true
+  adb shell input keyevent 4 || true
   sleep 1
   adb shell input tap 160 438 || true
   sleep 18
