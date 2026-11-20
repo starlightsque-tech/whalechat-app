@@ -246,7 +246,7 @@
     return q ? q.price : 0;
   }
 
-  WC_SIM = {
+  window.WC_SIM = {
     start: start,
     stop: stop,
     quote: quote,
