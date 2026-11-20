@@ -12,6 +12,19 @@ on:
         required: false
         default: '25'
         type: string
+      login_email:
+        description: 'Optional admin/user email to log in before the screenshot'
+        required: false
+        type: string
+      login_password:
+        description: 'Optional password for the login above'
+        required: false
+        type: string
+      target_hash:
+        description: 'Optional in-app route after login, e.g. #/invest/market'
+        required: false
+        default: '#/invest/market'
+        type: string
   push:
     paths:
       - 'whalechat-release.apk'
@@ -59,7 +72,23 @@ jobs:
           script: |
             adb install -r -d "$APK_PATH"
             adb shell monkey -p app.whalechat.mobile -c android.intent.category.LAUNCHER 1
-            sleep "$WAIT_SECONDS"
+            sleep 12
+            if [ -n "${{ inputs.login_email }}" ]; then
+              adb shell input tap 174 101 || true
+              sleep 3
+              adb shell input tap 160 255 || true
+              adb shell input text "${{ inputs.login_email }}" || true
+              sleep 1
+              adb shell input tap 160 330 || true
+              adb shell input text "${{ inputs.login_password }}" || true
+              sleep 1
+              adb shell input keyevent 66 || true
+              sleep 14
+              adb shell am start -a android.intent.action.VIEW -d "https://whalechat.appwrite.network/whalechat.html${{ inputs.target_hash }}" app.whalechat.mobile || true
+              sleep 10
+            else
+              sleep "$WAIT_SECONDS"
+            fi
             adb exec-out screencap -p > whalechat-emulator.png
             adb shell dumpsys activity activities | grep -i whalechat || true
 
