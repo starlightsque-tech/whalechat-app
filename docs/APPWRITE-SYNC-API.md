@@ -54,9 +54,11 @@ Financial rows are additionally locked by the deterministic ledger document.
 Run the idempotent provisioner:
 
 ```bash
-APPWRITE_PROJECT_ID=... APPWRITE_API_KEY=... \
-  node scripts/provision-monorepo-appwrite.mjs
+APPWRITE_API_KEY=... node scripts/provision-monorepo-appwrite.mjs
 ```
+
+Defaults: project `6aff3eda000983f5a975`, database `6aff488e0006a3fe39e0`
+(the plan is at its database limit), collection prefix `wc_`.
 
 It creates 8 collections with per-document security: `users` readable by the
 `users` role, `products` public, and wallets/orders/trades/ledger/messages
@@ -65,14 +67,13 @@ readable only by the owning user (`read("user:<id>")` set by the function).
 ## Deploy the new web build
 
 ```bash
-APPWRITE_PROJECT_ID=... APPWRITE_API_KEY=... \
-WC_DEPLOY_DOMAIN=whalechat.appwrite.network \
-  node scripts/deploy-monorepo-site.mjs
+APPWRITE_API_KEY=... pnpm deploy:monorepo
 ```
 
 The script builds `apps/web` (hosted bundle), publishes both `index.html` and
-`whalechat.html` (the APK entry), activates the deployment, optionally binds
-the domain, and verifies `https://<domain>/whalechat.html` returns 200 with the
+`whalechat.html` (the APK entry), activates the deployment, attaches the
+`whalechat.appwrite.network` site rule when needed, and verifies
+`https://whalechat.appwrite.network/whalechat.html` returns 200 with the
 Whalechat shell.
 
 ## Tests

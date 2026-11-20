@@ -47,6 +47,7 @@ export async function createWebBackend(options: BackendOptions): Promise<Whalech
     projectId,
     databaseId: (import.meta.env.VITE_APPWRITE_DATABASE_ID as string | undefined) ?? 'whalechat',
     functionId: (import.meta.env.VITE_APPWRITE_FUNCTION_ID as string | undefined) ?? 'whalechat-sync',
+    collectionPrefix: (import.meta.env.VITE_APPWRITE_COLLECTION_PREFIX as string | undefined) ?? '',
   };
 
   // Appwrite Auth session user id; the sync function validates the JWT too.

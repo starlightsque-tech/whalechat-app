@@ -97,7 +97,7 @@ export const conversationsCollection: AppwriteCollectionSchema = {
     updatedAt,
   ],
   indexes: [
-    { key: 'idx_participants', type: 'key', attributes: ['participantIds'], orders: ['ASC'] },
+    // Appwrite cannot index array attributes; participant lookup uses contains().
     { key: 'idx_updated', type: 'key', attributes: ['updatedAt'], orders: ['DESC'] },
   ],
 };

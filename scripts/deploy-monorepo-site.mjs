@@ -21,9 +21,11 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DIST = path.join(ROOT, 'apps/web/dist');
 const ENDPOINT = String(process.env.APPWRITE_ENDPOINT || 'https://nyc.cloud.appwrite.io/v1').replace(/\/+$/, '');
-const PROJECT = String(process.env.APPWRITE_PROJECT_ID || '').trim();
+const PROJECT = String(process.env.APPWRITE_PROJECT_ID || '6aff3eda000983f5a975').trim();
 const KEY = String(process.env.APPWRITE_API_KEY || '').trim();
 const SITE_ID = String(process.env.APPWRITE_SITE_ID || 'whalechat').trim().toLowerCase().replace(/[^a-z0-9-]/g, '-');
+const DB_ID = String(process.env.APPWRITE_DATABASE_ID || '6aff488e0006a3fe39e0').trim();
+const PREFIX = String(process.env.WC_COLLECTION_PREFIX ?? 'wc_');
 const DOMAIN = String(process.env.WC_DEPLOY_DOMAIN || '').trim();
 
 if (!PROJECT || !KEY) {
@@ -71,7 +73,18 @@ async function ensureSite() {
 function buildIfNeeded() {
   if (process.env.WC_SKIP_BUILD === '1' && fs.existsSync(path.join(DIST, 'index.html'))) return;
   console.log('[deploy] building apps/web (hosted multi-file bundle)…');
-  execFileSync('pnpm', ['--filter', '@whalechat/web', 'build:hosted'], { stdio: 'inherit', cwd: ROOT });
+  execFileSync('pnpm', ['--filter', '@whalechat/web', 'build:hosted'], {
+    stdio: 'inherit',
+    cwd: ROOT,
+    env: {
+      ...process.env,
+      VITE_APPWRITE_ENDPOINT: ENDPOINT,
+      VITE_APPWRITE_PROJECT_ID: PROJECT,
+      VITE_APPWRITE_DATABASE_ID: DB_ID,
+      VITE_APPWRITE_FUNCTION_ID: process.env.APPWRITE_FUNCTION_ID || 'whalechat-sync',
+      VITE_APPWRITE_COLLECTION_PREFIX: PREFIX,
+    },
+  });
 }
 
 function packageDist() {

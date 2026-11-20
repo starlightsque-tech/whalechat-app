@@ -51,14 +51,15 @@ The monorepo writes go through `appwrite-function/monorepo-sync.js`
 idempotency rules and wallet holds.
 
 ```bash
-APPWRITE_ENDPOINT=https://nyc.cloud.appwrite.io/v1 \
-APPWRITE_PROJECT_ID=... APPWRITE_API_KEY=... \
-node scripts/provision-monorepo-appwrite.mjs
-
-APPWRITE_PROJECT_ID=... APPWRITE_API_KEY=... \
-WC_DEPLOY_DOMAIN=whalechat.appwrite.network \
-node scripts/deploy-monorepo-site.mjs
+APPWRITE_API_KEY=... pnpm deploy:monorepo
 ```
+
+Defaults are pinned to the live deployment so the key is the only input:
+project `6aff3eda000983f5a975`, database `6aff488e0006a3fe39e0`,
+collection prefix `wc_`, site `whalechat`, function `whalechat-sync`.
+Override with `APPWRITE_DATABASE_ID`, `WC_COLLECTION_PREFIX`, etc.
+
+Live: **https://whalechat.appwrite.network/whalechat.html** (200).
 
 The script is idempotent and creates `users`, `wallets`, `conversations`,
 `messages`, `products`, `orders`, `trades`, `ledger_transactions` with the

@@ -42,6 +42,7 @@ function q(method: string, attribute: string, values: unknown[]): string {
 }
 
 const equal = (attr: string, ...values: unknown[]) => q('equal', attr, values);
+const contains = (attr: string, ...values: unknown[]) => q('contains', attr, values);
 const orderDesc = (attr: string) => q('orderDesc', attr, []);
 const orderAsc = (attr: string) => q('orderAsc', attr, []);
 const limit = (n: number) => q('limit', '', [n]);
@@ -61,10 +62,17 @@ export interface AppwriteBackendOptions {
  * unique idempotency index and perform atomic wallet/escrow ledger writes.
  */
 export function createAppwriteBackend(options: AppwriteBackendOptions): WhalechatBackend {
+  const prefix = options.config?.collectionPrefix ?? '';
+  const mergedCollections = { ...defaultAppwriteConfig.collections, ...options.config?.collections };
+  const prefixedCollections = prefix
+    ? Object.fromEntries(
+        Object.entries(mergedCollections).map(([key, value]) => [key, prefix + value]),
+      )
+    : mergedCollections;
   const config: AppwriteConfig = {
     ...defaultAppwriteConfig,
     ...options.config,
-    collections: { ...defaultAppwriteConfig.collections, ...options.config?.collections },
+    collections: prefixedCollections as AppwriteConfig['collections'],
   };
   const { client, userId } = options;
   const db = config.databaseId;
@@ -203,7 +211,7 @@ export function createAppwriteBackend(options: AppwriteBackendOptions): Whalecha
     chat: {
       async listConversations() {
         const res = await client.databases.listDocuments(db, col.conversations, [
-          equal('participantIds', userId),
+          contains('participantIds', userId),
           orderDesc('updatedAt'),
           limit(100),
         ]);

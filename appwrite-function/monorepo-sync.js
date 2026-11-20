@@ -28,15 +28,16 @@
 
 const crypto = require('crypto');
 
+const PREFIX = String(process.env.WC_COLLECTION_PREFIX || '');
 const COLLECTIONS = {
-  users: process.env.WC_COLLECTION_USERS || 'users',
-  wallets: process.env.WC_COLLECTION_WALLETS || 'wallets',
-  conversations: process.env.WC_COLLECTION_CONVERSATIONS || 'conversations',
-  messages: process.env.WC_COLLECTION_MESSAGES || 'messages',
-  products: process.env.WC_COLLECTION_PRODUCTS || 'products',
-  orders: process.env.WC_COLLECTION_ORDERS || 'orders',
-  trades: process.env.WC_COLLECTION_TRADES || 'trades',
-  ledger: process.env.WC_COLLECTION_LEDGER || 'ledger_transactions',
+  users: process.env.WC_COLLECTION_USERS || PREFIX + 'users',
+  wallets: process.env.WC_COLLECTION_WALLETS || PREFIX + 'wallets',
+  conversations: process.env.WC_COLLECTION_CONVERSATIONS || PREFIX + 'conversations',
+  messages: process.env.WC_COLLECTION_MESSAGES || PREFIX + 'messages',
+  products: process.env.WC_COLLECTION_PRODUCTS || PREFIX + 'products',
+  orders: process.env.WC_COLLECTION_ORDERS || PREFIX + 'orders',
+  trades: process.env.WC_COLLECTION_TRADES || PREFIX + 'trades',
+  ledger: process.env.WC_COLLECTION_LEDGER || PREFIX + 'ledger_transactions',
 };
 
 const DATABASE_ID = String(process.env.WC_SYNC_DB || 'whalechat').trim();

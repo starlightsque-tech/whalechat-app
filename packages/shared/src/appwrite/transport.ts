@@ -96,6 +96,8 @@ export interface AppwriteConfig {
   projectId: string;
   databaseId: string;
   functionId: string;
+  /** optional prefix for deployments sharing a database with other apps */
+  collectionPrefix?: string;
   /** collection ids, overridable per environment */
   collections: {
     users: string;

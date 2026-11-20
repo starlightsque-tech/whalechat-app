@@ -42,6 +42,7 @@ export async function createMobileBackend(options: { isOnline: () => boolean }):
       projectId,
       databaseId: process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID ?? 'whalechat',
       functionId: process.env.EXPO_PUBLIC_APPWRITE_FUNCTION_ID ?? 'whalechat-sync',
+      collectionPrefix: process.env.EXPO_PUBLIC_APPWRITE_COLLECTION_PREFIX ?? '',
     },
   });
 }

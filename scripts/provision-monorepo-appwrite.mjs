@@ -18,9 +18,10 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DRY = process.argv.includes('--dry-run');
 
 const endpoint = (process.env.APPWRITE_ENDPOINT || 'https://nyc.cloud.appwrite.io/v1').replace(/\/$/, '');
-const projectId = process.env.APPWRITE_PROJECT_ID || '';
+const projectId = process.env.APPWRITE_PROJECT_ID || '6aff3eda000983f5a975';
 const apiKey = process.env.APPWRITE_API_KEY || '';
-const databaseId = process.env.APPWRITE_DATABASE_ID || 'whalechat';
+const databaseId = process.env.APPWRITE_DATABASE_ID || '6aff488e0006a3fe39e0';
+const PREFIX = String(process.env.WC_COLLECTION_PREFIX ?? 'wc_');
 
 async function loadSchema() {
   const source = await readFile(path.join(ROOT, 'packages/shared/src/appwrite/schema.ts'), 'utf8');
@@ -30,7 +31,11 @@ async function loadSchema() {
   const missing = required.filter((id) => !source.includes(`id: '${id}'`));
   if (missing.length) throw new Error(`Schema is missing collections: ${missing.join(', ')}`);
   const module = await import(pathToFileUrl(path.join(ROOT, 'packages/shared/dist/appwrite/schema.js')));
-  return module.WHALECHAT_COLLECTIONS;
+  return module.WHALECHAT_COLLECTIONS.map((collection) => ({
+    ...collection,
+    baseId: collection.id,
+    id: PREFIX + collection.id,
+  }));
 }
 
 function pathToFileUrl(p) {
@@ -79,7 +84,8 @@ function attrBody(attr) {
     body.min = attr.min ?? (attr.type === 'integer' ? -2147483648 : -1e12);
     body.max = attr.max ?? (attr.type === 'integer' ? 2147483647 : 1e12);
   }
-  if (attr.default !== undefined) body.default = attr.default;
+  // Appwrite rejects defaults on required attributes; every writer supplies them.
+  if (attr.default !== undefined && !attr.required) body.default = attr.default;
   return body;
 }
 
@@ -88,6 +94,8 @@ function attrRoute(type) {
 }
 
 async function ensureDatabase() {
+  const existing = await api('GET', `/databases/${encodeURIComponent(databaseId)}`);
+  if (existing.ok) return console.log(`= database ${databaseId} (existing)`);
   const created = await api('POST', '/databases', { databaseId, name: 'Whalechat' });
   if (created.ok) return console.log(`+ database ${databaseId}`);
   if (created.status === 409) return console.log(`= database ${databaseId}`);
@@ -106,7 +114,7 @@ async function ensureCollection(collection) {
     const created = await api('POST', `/databases/${databaseId}/collections`, {
       collectionId: collection.id,
       name: collection.name,
-      permissions: COLLECTION_PERMISSIONS[collection.id] || [],
+      permissions: COLLECTION_PERMISSIONS[collection.baseId || collection.id] || [],
       documentSecurity: true,
     });
     if (!created.ok && created.status !== 409) {
@@ -134,12 +142,19 @@ async function ensureCollection(collection) {
   const indexIds = await listIds(`/databases/${databaseId}/collections/${collection.id}/indexes`);
   for (const index of collection.indexes) {
     if (indexIds.has(index.key)) continue;
-    const res = await api('POST', `/databases/${databaseId}/collections/${collection.id}/indexes`, {
-      key: index.key,
-      type: index.type,
-      attributes: index.attributes,
-      orders: index.orders ?? index.attributes.map(() => 'ASC'),
-    });
+    let res;
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      res = await api('POST', `/databases/${databaseId}/collections/${collection.id}/indexes`, {
+        key: index.key,
+        type: index.type,
+        attributes: index.attributes,
+        orders: index.orders ?? index.attributes.map(() => 'ASC'),
+      });
+      // Appwrite builds attributes asynchronously; retry "not yet available".
+      if (res.ok || res.status === 409) break;
+      if (res.status !== 400 || !/not yet available/i.test(res.json?.message || '')) break;
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+    }
     if (!res.ok && res.status !== 409) {
       throw new Error(`index ${collection.id}.${index.key} failed: ${res.status} ${res.json?.message ?? ''}`);
     }
