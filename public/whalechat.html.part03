@@ -1094,6 +1094,14 @@ VIEWS.chat = function (parts) {
       </div>
       <button class="btn-icon" data-act="chat-menu" data-id="${other.id}" style="width:36px;height:36px">${ic('more', 18)}</button>
     </div>
+    ${!isContact(u.id, other.id) && other.role !== 'admin' ? `<div class="contact-hint" data-contact-hint="${esc(other.id)}">
+      <span class="contact-hint-ic">${ic('users', 16)}</span>
+      <div class="contact-hint-txt">
+        <b>${esc(other.fullName.split(' ')[0])} is not in your contacts yet.</b>
+        <span>They will be saved automatically the moment you reply.</span>
+      </div>
+      <button class="btn btn-xs btn-primary" data-act="save-contact" data-id="${esc(other.id)}">${ic('plus', 12)} Add contact</button>
+    </div>` : ''}
     <div class="chat-body" id="chatBody">
       ${body}
       ${typing ? `<div class="typing"><i></i><i></i><i></i></div>` : ''}

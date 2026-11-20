@@ -901,6 +901,20 @@ const Remote = {
           this.last = cloneDB(DB);
           saveLocalNow();
         } else {
+          /* first boot after an update: never let a thin server snapshot erase
+             the signed-in account or the contacts saved on this device */
+          try {
+            const sid = SESSION && SESSION.userId;
+            const localUser = sid && DB && Array.isArray(DB.users) ? DB.users.find(u => u.id === sid) : null;
+            if (window.__wcUpgraded && localUser && !(serverDb.users || []).some(u => u.id === sid)) {
+              serverDb.users = (serverDb.users || []).concat([localUser]);
+              const sc = Array.isArray(serverDb.contacts) ? serverDb.contacts : [];
+              const haveIds = new Set(sc.map(c => c && c.id));
+              (DB.contacts || []).forEach(c => { if (c && c.ownerId === sid && !haveIds.has(c.id)) sc.push(c); });
+              serverDb.contacts = sc;
+              setTimeout(() => { try { this.flush(); } catch (e) {} }, 150);
+            }
+          } catch (e) {}
           DB = migrateDB(serverDb);
           this.rev = st.data.rev || 0;
           this.last = cloneDB(DB);
@@ -985,7 +999,31 @@ const Remote = {
            this device rather than replacing the signed-in account with nothing */
         const seed = await this.fetchJSON('/api/state/init', { method: 'POST', body: JSON.stringify({ db: DB, rev: Math.max(1, Number(r.data.rev) || 1) }) });
         if (seed.res.ok) { this.rev = seed.data.rev || r.data.rev; this.last = cloneDB(DB); this.status = 'online'; return; }
+        /* the server would not accept a seed but still reports nobody: keep
+           this device's database rather than wiping every account */
+        this.status = 'online';
+        return;
       }
+
+      /* First boot after an app update: if the server snapshot arrived thinner
+         than this device (a cold instance that read a stale/partial state),
+         merge the signed-in account and their contacts instead of dropping
+         them. A normal, later refresh still follows the server exactly. */
+      let upgradeMerge = false;
+      try {
+        const sessionUser = SESSION ? (DB.users || []).find(u => u.id === SESSION.userId) : null;
+        if (window.__wcUpgraded && sessionUser && !r.data.db.users.some(u => u.id === SESSION.userId)) {
+          r.data.db.users = (r.data.db.users || []).concat([sessionUser]);
+          const serverContacts = Array.isArray(r.data.db.contacts) ? r.data.db.contacts : [];
+          const haveContact = new Set(serverContacts.map(c => c && c.id));
+          (DB.contacts || []).forEach(c => {
+            if (c && c.ownerId === SESSION.userId && !haveContact.has(c.id)) serverContacts.push(c);
+          });
+          r.data.db.contacts = serverContacts;
+          upgradeMerge = true;
+        }
+      } catch (e) {}
+
       this.applying = true;
       DB = migrateDB(r.data.db);
       this.rev = r.data.rev;
@@ -993,6 +1031,10 @@ const Remote = {
       saveLocalNow();
       if (SESSION && !DB.users.some(u => u.id === SESSION.userId)) {
         SESSION = null; localStorage.removeItem(LS_SESSION);
+      }
+      if (upgradeMerge) {
+        this.dirty = true;
+        setTimeout(() => { try { this.flush(); } catch (e) {} }, 80);
       }
       this.status = 'online';
       try { resolvePendingReferrals(); reconcileReferralBonuses(); } catch (e) {}

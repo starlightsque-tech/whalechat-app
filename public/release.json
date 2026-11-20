@@ -1,8 +1,8 @@
 {
-  "version": "3.74.0",
-  "build": "2026-11-20T20:30:34Z",
+  "version": "3.75.0",
+  "build": "2026-11-20T20:38:13Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.74.0 — contacts now behave: saving someone adds them once, to your list only, and you can message them immediately whether or not they saved you back. An incoming conversation is never blocked — opening it saves the sender to your contacts automatically, so their account stays saved until you remove it manually. The 'Add contact' notice is sent once per pair (no more repeat prompts), and a background sync refresh can no longer wipe a contact you just saved. Also fixes the add-on modules binding to the app core (live trade rails, sidebar P/L, chat engine).",
-  "releasedAt": "2026-11-20T20:30:34Z",
+  "notes": "WhaleChat 3.75.0 — a small banner in the chat tells you when the other person is not in your contacts yet and that they are saved automatically when you reply, with an Add contact shortcut. Accounts and contacts are protected across app updates: a cold server instance can never hand the app an empty database (the rolling backup is served instead), and the first sync after an update merges your account and contacts rather than replacing them. Shoppers and vendors can now chat directly when either side has saved the other as a contact or a conversation already exists.",
+  "releasedAt": "2026-11-20T20:38:13Z",
   "minimum": "3.0.0"
 }

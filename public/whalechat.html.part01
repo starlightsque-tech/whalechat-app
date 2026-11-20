@@ -344,6 +344,13 @@ html[data-theme="light"] .topbar{background:rgba(255,255,255,.78)}
   background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.2);color:#fff}
 .story-react button.mine{background:rgba(46,230,201,.3);border-color:var(--accent)}
 .msg .edited{font-size:10px;color:var(--muted-2)}
+.contact-hint{display:flex;align-items:center;gap:9px;margin:8px 12px 0;padding:8px 10px;border-radius:11px;background:rgba(58,160,255,.10);border:1px solid rgba(58,160,255,.26);flex:none}
+.contact-hint-ic{width:28px;height:28px;border-radius:8px;background:rgba(58,160,255,.16);color:#3aa0ff;display:flex;align-items:center;justify-content:center;flex:none}
+.contact-hint-txt{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px;line-height:1.35}
+.contact-hint-txt b{font-size:12px;font-weight:700}
+.contact-hint-txt span{font-size:11px;color:var(--muted)}
+.contact-hint .btn{flex:none;white-space:nowrap}
+@media(max-width:520px){.contact-hint{margin:6px 8px 0;padding:7px 8px}.contact-hint-txt span{font-size:10.5px}}
 .tick{display:inline-flex;color:var(--muted-2)}
 .tick.sending,.tick.queued,.tick.error,.tick[data-state="sending"],.tick[data-state="queued"]{color:var(--muted-2);opacity:.8}
 .tick.sent{color:var(--muted-2)}
@@ -644,6 +651,15 @@ const APP_VERSION = '3.9.10';
 // Set to your permanent sync server to auto-connect from any static host, e.g. 'https://sync.yourdomain.com'
 const DEFAULT_SYNC_SERVER = 'https://whalechat-api.appwrite.network';
 const APP_BUILD = '2026-11-12T05:57:54Z';    // replaced at build time
+/* First boot after a new build: used by the sync layer to merge this device's
+   account instead of accepting a thinner server snapshot as authoritative. */
+let WC_UPGRADED = false;
+try {
+  const _wcLastVer = localStorage.getItem('wc.lastAppVersion') || '';
+  WC_UPGRADED = !!_wcLastVer && _wcLastVer !== APP_VERSION;
+  localStorage.setItem('wc.lastAppVersion', APP_VERSION);
+} catch (e) {}
+try { window.__wcUpgraded = WC_UPGRADED; } catch (e) {}
 const LS_DB = 'whalechat.db.v1';
 const LS_SESSION = 'whalechat.session.v1';
 const LS_THEME = 'whalechat.theme';

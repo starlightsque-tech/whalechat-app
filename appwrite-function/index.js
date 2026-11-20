@@ -26,7 +26,7 @@ const CODES_FILE = 'whalechat-codes';
 const MAIL_FILE = 'whalechat-mail';
 const MAIL_LOG_FILE = 'whalechat-email-log';
 const NOTIF_LOG_LIMIT = 400;
-const VERSION = '3.74.0';
+const VERSION = '3.75.0';
 const crypto = require('crypto');
 /* project-scoped ids: env wins, but a stale/placeholder value never does */
 function isRealId(v) { return typeof v === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._-]{19,}$/.test(v); }
@@ -2700,7 +2700,20 @@ module.exports = async ({ req, res, log, error }) => {
     }
 
     if (path === '/api/state' && method === 'GET') {
-      const st = await readState();
+      let st = await readState();
+      /* A brand-new instance right after a deployment can miss the state file
+         for a moment (the bucket is still warming up). An "empty but valid"
+         answer used to reach the app and replace every account on the device.
+         Serve the rolling backup instead, or refuse — never an empty database. */
+      if (st && st.__emptyRead) {
+        const backup = await readJsonFile(STATE_BACKUP_ID, null);
+        if (backup && backup.db && countUsers(backup) > 0) {
+          st = backup;
+          try { log('state: served rolling backup (' + countUsers(backup) + ' users)'); } catch (e) {}
+        } else {
+          return res.json({ ok: false, error: 'state_warming', message: 'The workspace is warming up. Your account has not been changed.' }, 503, CORS);
+        }
+      }
       /* shares keep moving while the app is closed: one lazy tick per minute
          accrues profit and settles matured plans into the payout balance */
       if (st.db) {
