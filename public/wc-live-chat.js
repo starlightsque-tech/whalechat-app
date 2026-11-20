@@ -598,7 +598,14 @@
         };
         es.onerror = function () {
           state.wsFails += 1;
-          if (state.wsFails >= 2) { try { es.close(); } catch (e) {} state.es = null; startPoll('ably-closed'); }
+          try { es.close(); } catch (e) {}
+          state.es = null;
+          /* an Ably token lives for an hour: fetch a fresh one before giving up */
+          if (state.wsFails < 3) {
+            setTimeout(function () { if (state.transport === 'ably' || state.wsFails < 3) startAbly(cfg); }, Math.min(8000, 600 * state.wsFails));
+          } else {
+            startPoll('ably-closed');
+          }
         };
         scheduleWatchdog();
       })

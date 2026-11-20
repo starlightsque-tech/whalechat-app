@@ -1,8 +1,8 @@
 {
-  "version": "3.72.0",
-  "build": "2026-11-20T19:35:12Z",
+  "version": "3.72.1",
+  "build": "2026-11-20T19:44:59Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.72.0 — the trade chart draws your exact entry price as a dashed rail, plus target and stop rails, and shades the area between entry and the live price green while you are in profit and red while you are in loss, with an IN PROFIT / IN LOSS badge on the chart. A live trades card in the left sidebar shows every open position with a real-time sparkline, live price and running P/L (green/red) and the total; the portfolio performance chart now ticks with the market. The theme switch moved from the floating bottom-right bubble into the top bar, so it never covers content.",
-  "releasedAt": "2026-11-20T19:35:12Z",
+  "notes": "WhaleChat 3.72.1 — the trade chart draws your exact entry price as a dashed rail, plus target and stop rails, and shades the area between entry and the live price green while you are in profit and red while you are in loss, with an IN PROFIT / IN LOSS badge on the chart. A live trades card in the left sidebar shows every open position with a real-time sparkline, live price and running P/L (green/red) and the total; the portfolio performance chart now ticks with the market. The theme switch moved from the floating bottom-right bubble into the top bar, so it never covers content. Ably realtime activated: chat messages are published with a short-lived identified server token and delivered over the Ably WebSocket (50–100 ms), with token refresh and the poll fallback.",
+  "releasedAt": "2026-11-20T19:44:59Z",
   "minimum": "3.0.0"
 }

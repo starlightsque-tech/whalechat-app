@@ -16,7 +16,7 @@
   if (window.WC_SERVERS) return;
 
   var S = {
-    release: '3.72.0',
+    release: '3.72.1',
     appwrite: {
       endpoint: 'https://nyc.cloud.appwrite.io/v1',
       projectId: '6aff3eda000983f5a975',

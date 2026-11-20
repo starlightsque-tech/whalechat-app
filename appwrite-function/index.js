@@ -26,7 +26,7 @@ const CODES_FILE = 'whalechat-codes';
 const MAIL_FILE = 'whalechat-mail';
 const MAIL_LOG_FILE = 'whalechat-email-log';
 const NOTIF_LOG_LIMIT = 400;
-const VERSION = '3.72.0';
+const VERSION = '3.72.1';
 const crypto = require('crypto');
 /* project-scoped ids: env wins, but a stale/placeholder value never does */
 function isRealId(v) { return typeof v === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._-]{19,}$/.test(v); }
@@ -2558,9 +2558,9 @@ module.exports = async ({ req, res, log, error }) => {
     if (path === '/api/realtime/token' && method === 'GET') {
       const q = req.query || {};
       const channels = String(q.channels || '').split(',').map((x) => x.trim()).filter(Boolean);
-      const token = realtime.ablyTokenRequest({ channels: channels, clientId: String(q.clientId || '') });
+      const token = await realtime.ablyToken({ channels: channels, clientId: String(q.clientId || '') });
       if (!token) return res.json({ ok: false, error: 'ably_not_configured' }, 501, CORS);
-      return res.json({ ok: true, token: token.token, keyName: token.keyName, expires: token.expires }, 200, CORS);
+      return res.json({ ok: true, token: token.token, keyName: token.keyName, expires: token.expires, provider: 'ably' }, 200, CORS);
     }
 
     if (path === '/api/chat/sync' && (method === 'GET' || method === 'POST')) {

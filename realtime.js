@@ -151,7 +151,7 @@ async function postJson(url, headers, body, timeoutMs) {
       signal: ctrl.signal
     });
     const text = await res.text();
-    return { ok: res.ok, status: res.status, text: text.slice(0, 300) };
+    return { ok: res.ok, status: res.status, text: text.slice(0, 300), body: text };
   } finally { clearTimeout(timer); }
 }
 
@@ -176,10 +176,15 @@ async function publish(channels, data) {
       if (!out.ok && global.console) console.log('[realtime] pusher publish ' + out.status + ' ' + out.text);
       return out;
     }
-    /* Ably: one batch publish, Basic auth with the server key */
-    const body = JSON.stringify({ name: EVENTS, channels: list, data: frame });
-    const basic = Buffer.from(cfg.keyName + ':' + cfg.secret).toString('base64');
-    const out = await postJson('https://' + cfg.restHost + '/messages', { authorization: 'Basic ' + basic }, body);
+    /* Ably: batch publish as an identified server client. An app configured
+       with "require identified clients" refuses a raw key publish (40161), so
+       the server mints a short-lived publish token and sends it as Bearer. */
+    /* Ably batch-publish shape: channels at the top, message objects inside */
+    const body = JSON.stringify({ channels: list, messages: [{ name: EVENTS, data: frame }] });
+    const token = await ablyServerToken();
+    if (!token) return { ok: false, error: 'ably_token_failed' };
+    const out = await postJson('https://' + cfg.restHost + '/messages',
+      { authorization: 'Bearer ' + Buffer.from(token).toString('base64') }, body);
     if (!out.ok && global.console) console.log('[realtime] ably publish ' + out.status + ' ' + out.text);
     return out;
   } catch (e) {
@@ -196,34 +201,80 @@ function pusherAuth(socketId, channel) {
   return { auth: cfg.key + ':' + sig };
 }
 
-function b64url(buf) {
-  return Buffer.from(buf).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+/* Ably capability strings are canonical: sorted channels, sorted operations,
+   no whitespace. The mac is the HMAC of every field (newline after each,
+   including the last) as the TokenRequest spec requires. */
+function canonicalCapability(capability) {
+  const out = {};
+  Object.keys(capability || {}).sort().forEach(function (channel) {
+    out[channel] = (capability[channel] || []).slice().sort();
+  });
+  return JSON.stringify(out);
 }
 
-/* Ably token request (HS256 JWT-shaped, signed with the key secret). The client
-   exchanges it for a realtime token; capability is limited to subscribe on the
-   requested channels only. */
+function signAblyTokenRequest(cfg, channels, clientId, operations, ttlMs) {
+  const list = (Array.isArray(channels) && channels.length) ? channels : ['*'];
+  const capability = {};
+  list.forEach(function (c) { capability[c] = (operations || ['subscribe']).slice(); });
+  const capabilityText = canonicalCapability(capability);
+  const ttl = Math.max(60000, Number(ttlMs) || 3600000);
+  const timestamp = Date.now();
+  const nonce = crypto.randomBytes(16).toString('hex');
+  const canonical = [cfg.keyName, ttl, capabilityText, clientId || '', timestamp, nonce].join('\n') + '\n';
+  const mac = crypto.createHmac('sha256', cfg.secret).update(canonical).digest('base64');
+  return {
+    keyName: cfg.keyName,
+    ttl: ttl,
+    capability: capabilityText,
+    clientId: clientId || '',
+    timestamp: timestamp,
+    nonce: nonce,
+    mac: mac
+  };
+}
+
+/* A signed TokenRequest (no network). Clients normally receive a real token
+   from /api/realtime/token instead, but this is useful for diagnostics. */
 function ablyTokenRequest(opts) {
   const cfg = ablyConfig();
   if (!cfg) return null;
   const channels = (Array.isArray(opts && opts.channels) ? opts.channels : [])
     .filter(function (c) { return typeof c === 'string' && c.length; })
-    .slice(0, 8);
-  const capability = {};
-  (channels.length ? channels : [adminChannel()]).forEach(function (c) { capability[c] = ['subscribe']; });
-  const header = { typ: 'JWT', alg: 'HS256', kid: cfg.keyName };
-  const now = Math.floor(Date.now() / 1000);
-  const claims = {
-    iat: now,
-    exp: now + 3600,
-    capability: JSON.stringify(capability),
-    clientId: clean((opts && opts.clientId) || ('wc_' + crypto.randomBytes(4).toString('hex')), 80),
-    nonce: crypto.randomBytes(16).toString('hex')
-  };
-  const unsigned = b64url(JSON.stringify(header)) + '.' + b64url(JSON.stringify(claims));
-  const sig = crypto.createHmac('sha256', cfg.secret).update(unsigned).digest('base64')
-    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  return { token: cfg.keyName + ':' + unsigned + '.' + sig, keyName: cfg.keyName, expires: now + 3600 };
+    .slice(0, 12);
+  return signAblyTokenRequest(cfg, channels, clean((opts && opts.clientId) || '', 80), ['subscribe'], 3600000);
+}
+
+/* Exchange a signed TokenRequest for an Ably Token (Basic auth, server only).
+   The browser receives just the short-lived token, never the key secret. */
+async function ablyToken(opts) {
+  const cfg = ablyConfig();
+  if (!cfg) return null;
+  const channels = (Array.isArray(opts && opts.channels) ? opts.channels : [])
+    .filter(function (c) { return typeof c === 'string' && c.length; })
+    .slice(0, 12);
+  const clientId = clean((opts && opts.clientId) || ('wc_' + crypto.randomBytes(4).toString('hex')), 80);
+  const request = signAblyTokenRequest(cfg, channels, clientId, (opts && opts.operations) || ['subscribe'], (opts && opts.ttlMs) || 3600000);
+  const basic = Buffer.from(cfg.keyName + ':' + cfg.secret).toString('base64');
+  const res = await postJson('https://' + cfg.restHost + '/keys/' + encodeURIComponent(cfg.keyName) + '/requestToken',
+    { authorization: 'Basic ' + basic }, request, 6000);
+  if (!res.ok) {
+    if (global.console) console.log('[realtime] ably token ' + res.status + ' ' + res.text);
+    return null;
+  }
+  let json = null;
+  try { json = JSON.parse(res.body); } catch (e) {}
+  if (!json || !json.token) return null;
+  return { token: json.token, keyName: json.keyName || cfg.keyName, expires: Number(json.expires) || (Date.now() + 3600000), capability: json.capability || request.capability, clientId: json.clientId || clientId };
+}
+
+/* One cached publish identity for the server (wildcard capability). */
+let ABLY_SERVER_TOKEN = { token: '', expires: 0 };
+async function ablyServerToken() {
+  if (ABLY_SERVER_TOKEN.token && Date.now() < ABLY_SERVER_TOKEN.expires - 60000) return ABLY_SERVER_TOKEN.token;
+  const t = await ablyToken({ channels: ['*'], clientId: 'wc-server', operations: ['publish', 'subscribe'], ttlMs: 3600000 });
+  if (!t) return '';
+  ABLY_SERVER_TOKEN = { token: t.token, expires: t.expires };
+  return t.token;
 }
 
 /* Convenience: publish one chat message to the people it concerns. */
@@ -271,6 +322,7 @@ module.exports = {
   publishEvent,
   pusherAuth,
   ablyTokenRequest,
+  ablyToken,
   userChannel,
   roomChannel,
   adminChannel,

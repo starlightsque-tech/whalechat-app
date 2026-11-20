@@ -1767,9 +1767,9 @@ async function api(req, res, pathname, query) {
   if (pathname === '/api/realtime/token' && req.method === 'GET') {
     const q = new URL(req.url, 'http://x').searchParams;
     const channels = String(q.get('channels') || '').split(',').map((s) => s.trim()).filter(Boolean);
-    const token = realtime.ablyTokenRequest({ channels: channels, clientId: q.get('clientId') || '' });
+    const token = await realtime.ablyToken({ channels: channels, clientId: q.get('clientId') || '' });
     if (!token) return json(res, 501, { ok: false, error: 'ably_not_configured' });
-    return json(res, 200, { ok: true, token: token.token, keyName: token.keyName, expires: token.expires });
+    return json(res, 200, { ok: true, token: token.token, keyName: token.keyName, expires: token.expires, provider: 'ably' });
   }
 
   /* --- admin SMS desk: send + engage in real time -------------------- */
