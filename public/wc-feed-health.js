@@ -55,6 +55,25 @@
 
   function feed() { try { return window.WCMarketFeed || null; } catch (e) { return null; } }
 
+  /* Brevo lives on the server, not in the price feed — read its configured
+     state once from /api/connections so it gets a real dot too. */
+  var BREVO = { known: false, on: false };
+  function loadBrevo(done) {
+    try {
+      var base = '';
+      try { if (window.WC_BUILD_CONFIG && WC_BUILD_CONFIG.syncServer) base = String(WC_BUILD_CONFIG.syncServer).replace(/\/+$/, ''); } catch (e) {}
+      fetch(base + '/api/connections', { cache: 'no-store', headers: { accept: 'application/json' } })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          var p = (d && d.providers) || {};
+          BREVO.known = true;
+          BREVO.on = !!(p.brevo && p.brevo.configured);
+          if (done) done();
+        })
+        .catch(function () {});
+    } catch (e) {}
+  }
+
   function html(st) {
     var online = navigator.onLine !== false;
     function row(name, key) {
@@ -77,6 +96,10 @@
       '<span class="wc-fh-badge"><i style="width:6px;height:6px;border-radius:50%;background:#2ee6c9;display:inline-block"></i>24/7</span></div>' +
       '<div class="wc-fh-grid">' +
       row('Binance', 'binance') + row('Finnhub', 'finnhub') + row('Twelve Data', 'twelvedata') +
+      (BREVO.known
+        ? '<div class="wc-fh-row">' + dot(BREVO.on, !BREVO.on) +
+          '<div style="min-width:0"><b>Brevo</b><span>' + (BREVO.on ? 'Connected · email + receipts' : 'Standby · add a Brevo key') + '</span></div></div>'
+        : '') +
       '</div>' +
       '<div class="wc-fh-stats">' +
       '<div class="wc-fh-stat"><b>' + Number(st.liveInstruments || 0) + '</b><span>Live instruments</span></div>' +
@@ -124,6 +147,7 @@
   }
 
   styles();
+  loadBrevo(function () { try { mount(); } catch (e) {} });
   setInterval(function () { try { mount(); } catch (e) {} }, 2500);
   document.addEventListener('DOMContentLoaded', mount);
 })();

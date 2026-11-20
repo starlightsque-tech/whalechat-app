@@ -352,6 +352,35 @@ const FINNHUB_KEY = String(process.env.FINNHUB_API_KEY || process.env.FINNHUB_KE
 const TWELVE_KEY = String(process.env.TWELVE_DATA_API_KEY || process.env.TWELVEDATA_API_KEY || process.env.TWELVE_DATA_KEY || process.env.WC_TWELVEDATA_KEY || '').trim();
 const PROXY_CACHE = new Map();
 const PROXY_CACHE_MS = 8000;
+/* 3.66.3 — last known real quote per ticker. The providers cap each call
+   (Finnhub 12/min-ish, Yahoo cooling), so a single request can only price a
+   slice of the catalogue. Remembering every real quote lets later polls fill
+   in the rest of the 100+ stock list instead of showing blanks. */
+const LAST_QUOTES = new Map();
+const LAST_QUOTE_MS = 15 * 60 * 1000;
+function rememberQuotes(quotes) {
+  const now = Date.now();
+  Object.keys(quotes || {}).forEach((k) => {
+    const q = quotes[k];
+    if (q && Number(q.price) > 0) LAST_QUOTES.set(String(k).toUpperCase(), { at: now, q });
+  });
+  if (LAST_QUOTES.size > 2000) {
+    for (const [k, v] of LAST_QUOTES) { if (now - v.at > LAST_QUOTE_MS) LAST_QUOTES.delete(k); }
+  }
+}
+function topUpFromMemory(quotes, list) {
+  let n = 0;
+  const now = Date.now();
+  (list || []).forEach((sym) => {
+    if (quotes[sym]) return;
+    const hit = LAST_QUOTES.get(String(sym).toUpperCase());
+    if (hit && now - hit.at < LAST_QUOTE_MS) {
+      quotes[sym] = Object.assign({}, hit.q, { cached: true, staleMs: now - hit.at });
+      n++;
+    }
+  });
+  return n;
+}
 
 function cacheGet(key) {
   const hit = PROXY_CACHE.get(key);
@@ -717,7 +746,9 @@ async function proxyQuotes(provider, symbols) {
       /* indices/metals have their own sources — never let a same-named stock
          (e.g. Barrick's GOLD) stand in for spot gold */
       const fhList = list.filter((x) => !CNBC_MAP[x] && !SPOT_MAP[x]);
-      const fresh = await finnhubQuotes(fhList, 12);
+      /* 3.66.3: 24 per call (the free tier allows ~60 calls/min, and the
+         client polls every 25 s) so the 100+ stock list fills ~2x faster. */
+      const fresh = await finnhubQuotes(fhList, 24);
       if (Object.keys(fresh).length) { Object.assign(quotes, fresh); used = 'finnhub'; }
     }
     if (TWELVE_KEY) {
@@ -751,12 +782,15 @@ async function proxyQuotes(provider, symbols) {
     }
     /* last resort for stocks when Finnhub is rate-limited / Twelve Data is not
        configured: Yahoo's chart endpoint still returns the real close */
-    const chartMissing = list.filter((x) => !quotes[x]).slice(0, 12);
+    const chartMissing = list.filter((x) => !quotes[x]).slice(0, 24);
     if (chartMissing.length) {
       const cq = await yahooChartQuotes(chartMissing);
       if (Object.keys(cq).length) { Object.assign(quotes, cq); used = used === 'auto' ? 'yahoo' : used; }
     }
   }
+  /* fill the rest of the list with real prices seen in the last 15 minutes */
+  rememberQuotes(quotes);
+  topUpFromMemory(quotes, list);
   cacheSet(key, quotes);
   return { ok: true, provider: used, quotes, at: Date.now(), configured: { finnhub: !!FINNHUB_KEY, twelvedata: !!TWELVE_KEY }, debug: Object.assign({}, LAST_YAHOO, { cnbc: LAST_CNBC, fh: LAST_FH }) };
 }

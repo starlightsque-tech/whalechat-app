@@ -361,7 +361,9 @@
     if (!all.length) return;
     if (force) proxyCursor = 0;
     var batch = [];
-    for (var i = 0; i < 50 && i < all.length; i++) batch.push(all[(proxyCursor + i) % all.length]);
+    /* match the server-side provider cap so every symbol in the batch is
+       actually priced instead of silently dropped */
+    for (var i = 0; i < 24 && i < all.length; i++) batch.push(all[(proxyCursor + i) % all.length]);
     proxyCursor = (proxyCursor + batch.length) % all.length;
     proxyBusy = true;
     proxyDbg.calls++; proxyDbg.lastBatch = batch.length;
