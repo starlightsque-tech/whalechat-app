@@ -305,6 +305,15 @@
         lo = Math.min.apply(null, vals);
         hi = Math.max.apply(null, vals);
       }
+      /* the trade rails must always be on screen: a user watching their entry
+         and live price cannot have either pushed out of the visible band */
+      if (Array.isArray(state.lines)) {
+        state.lines.forEach(function (ln) {
+          var pv = n(ln && ln.price);
+          if (pv > 0) { if (pv < lo) lo = pv; if (pv > hi) hi = pv; }
+        });
+      }
+      if (n(state.price) > 0) { if (state.price < lo) lo = n(state.price); if (state.price > hi) hi = n(state.price); }
       var ref = state.baselineOverride != null ? state.baselineOverride
         : (vis.length ? vis[0].p : state.price);
       if (!isFinite(lo) || !isFinite(hi)) { lo = state.price || 0; hi = (state.price || 1) + 1; }
@@ -388,10 +397,15 @@
           if (!(pv > 0) || pv < lo || pv > hi) return;
           var y = sy(pv);
           g.save();
-          g.setLineDash([5, 4]);
+          if (ln.solid) g.setLineDash([]); else g.setLineDash([5, 4]);
           g.strokeStyle = ln.color || 'rgba(96,165,250,.85)';
-          g.lineWidth = 1.2;
+          g.lineWidth = ln.solid ? (ln.live ? 1.7 : 1.4) : 1.2;
           g.beginPath(); g.moveTo(0, y); g.lineTo(plotW, y); g.stroke();
+          /* a live price rail also gets a small marker at the right edge */
+          if (ln.live) {
+            g.fillStyle = ln.color;
+            g.beginPath(); g.arc(plotW, y, 3, 0, Math.PI * 2); g.fill();
+          }
           g.restore();
           if (ln.title) {
             g.font = '700 9.5px system-ui,-apple-system,sans-serif';

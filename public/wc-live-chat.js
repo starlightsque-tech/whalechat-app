@@ -343,11 +343,15 @@
      instance for every other call), so this is a tight poll of a tiny payload
      rather than a held stream: measured 120-180 ms per answer, which puts a
      received message on screen in well under a second. */
+  var lastActiveAt = Date.now();
   function pollInterval() {
-    /* a background tab has nobody watching it: poll slowly and save battery,
-       but come straight back to fast polling when it is visible again */
-    if (document.hidden) return 2500;
-    if (document.querySelector('.chat-room')) return 550;
+    /* A hidden tab has nobody watching it: poll slowly and save battery.
+       An open chat the user is working in polls fast, because that is the one
+       case where a message must land the moment it is sent. Every other page
+       polls at a calm rate — chat is the only view that needs a hot channel. */
+    if (document.hidden) return 3000;
+    if (document.querySelector('.chat-room') && Date.now() - lastActiveAt < 90000) return 200;
+    if (document.querySelector('.chat-room')) return 900;
     return 1200;
   }
 
@@ -508,7 +512,10 @@
     state.net = navigator.onLine !== false;
     state.seq = Number(readJSON(SEQ_KEY, 0)) || 0;
     window.addEventListener('online', onOnline);
-    window.addEventListener('hashchange', function () { schedule(20); });
+    window.addEventListener('hashchange', function () { lastActiveAt = Date.now(); schedule(20); });
+    ['pointerdown', 'keydown', 'touchstart'].forEach(function (ev) {
+      window.addEventListener(ev, function () { lastActiveAt = Date.now(); }, { passive: true, capture: true });
+    });
     document.addEventListener('focusin', function () { if (state.pollTimer) { clearTimeout(state.pollTimer); schedule(20); } });
     window.addEventListener('offline', function () { state.net = false; });
     document.addEventListener('visibilitychange', function () {

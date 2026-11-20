@@ -1,8 +1,8 @@
 {
-  "version": "3.69.0",
-  "build": "2026-11-20T18:29:55Z",
+  "version": "3.70.0",
+  "build": "2026-11-20T18:45:08Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.69.0 — chat lane: one persistent connection and instant local display, so a message appears the moment it is typed and reaches the other user in a single round trip; offline sending and receiving from a durable outbox; invisible auto-refresh that never interrupts typing, scrolling or an open dialog; sessions are no longer ended by a sync; and a dark/bright switch that stays on.",
-  "releasedAt": "2026-11-20T18:29:55Z",
+  "notes": "WhaleChat 3.70.0 — a hot chat channel inside an open conversation (200 ms poll, ~250 ms send): messages land in well under a second and the bubble is on screen before the network is touched; offline messages queue and drain on reconnect with no loss or duplicates; the stock chart now draws the entry, take-profit, stop-loss and a live price rail, with a running readout of move count and P/L, and the order card counts its moves live without any change to the payout maths.",
+  "releasedAt": "2026-11-20T18:45:08Z",
   "minimum": "3.0.0"
 }

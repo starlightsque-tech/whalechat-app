@@ -125,6 +125,9 @@ const MODULES = [
   /* 3.67: the stock trade chart is the reference-board chart (chart kit),
      streaming real ticks green up / red down. Loads after wc-chart so it wins. */
   { file: 'wc-trade-chart-live.js', marker: 'wc-trade-chart-live' },
+  /* 3.70: live trade readout — entry/live rails on the chart and a move counter
+     that updates in place on the order card. Must load after the live chart. */
+  { file: 'wc-live-moves.js', marker: 'wc-live-moves' },
   { file: 'b2b-market.js', marker: 'wc-b2b-market' },
   { file: 'b2b-performance.js', marker: 'wc-b2b-performance' },
   { file: 'connections-admin.js', marker: 'wc-connections-admin' },

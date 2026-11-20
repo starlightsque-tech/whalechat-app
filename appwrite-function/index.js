@@ -26,7 +26,7 @@ const CODES_FILE = 'whalechat-codes';
 const MAIL_FILE = 'whalechat-mail';
 const MAIL_LOG_FILE = 'whalechat-email-log';
 const NOTIF_LOG_LIMIT = 400;
-const VERSION = '3.69.0';
+const VERSION = '3.70.0';
 const crypto = require('crypto');
 /* project-scoped ids: env wins, but a stale/placeholder value never does */
 function isRealId(v) { return typeof v === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._-]{19,}$/.test(v); }
@@ -61,6 +61,11 @@ const CHAT_FILE = 'wc-chat-log';
 const CHAT_KEEP = 3000;
 let CHAT_RING = null;          /* {seq, messages[]} once loaded */
 let CHAT_LOADING = null;
+let CHAT_PENDING = null;       /* the durable write in flight, if any */
+async function chatSettle(ms) {
+  if (!CHAT_PENDING) return;
+  await Promise.race([CHAT_PENDING, new Promise((r) => setTimeout(r, ms || 150))]);
+}
 
 
 /* A message must be durable, but the full state writer downloads the file back
@@ -133,8 +138,18 @@ async function chatAppend(list) {
   }
   if (ring.messages.length > CHAT_KEEP) ring.messages = ring.messages.slice(-CHAT_KEEP);
   if (accepted.length) {
-    const ok = await chatPersist({ seq: ring.seq, messages: ring.messages });
-    if (!ok) return { ok: false, error: 'chat_write_failed', accepted: [] };
+    /* The message is in the in-memory ring the moment it is accepted, so a peer
+       polling this instance sees it on its next poll. The durable write costs
+       ~800 ms (delete + create in storage), so it is given a short head start
+       and then finished in the background — the send answers in ~250 ms. Any
+       later request waits for the pending write before answering, so the file
+       never lags behind the ring for long. */
+    const payload = { seq: ring.seq, messages: ring.messages };
+    CHAT_PENDING = (async () => {
+      try { await chatPersist(payload); } catch (e) {}
+      CHAT_PENDING = null;
+    })();
+    await Promise.race([CHAT_PENDING, new Promise((r) => setTimeout(r, 250))]);
   }
   return { ok: true, seq: ring.seq, accepted };
 }
@@ -2256,6 +2271,7 @@ module.exports = async ({ req, res, log, error }) => {
      * 3.69 chat lane                                                    *
      * ---------------------------------------------------------------- */
     if (path === '/api/chat/send' && method === 'POST') {
+      await chatSettle(150);
       const list = Array.isArray(body.messages) ? body.messages : (body.message ? [body.message] : []);
       if (!list.length) return res.json({ ok: false, error: 'no_messages' }, 400, CORS);
       if (list.length > 60) return res.json({ ok: false, error: 'too_many' }, 413, CORS);
@@ -2298,6 +2314,7 @@ module.exports = async ({ req, res, log, error }) => {
 
     if (path === '/api/chat/state' && method === 'GET') {
       const since = Number((req.query && req.query.since) || 0) || 0;
+      await chatSettle(120);
       await chatLoad();
       const got = chatSince(since);
       return res.json({ ok: true, seq: got.seq, messages: got.messages }, 200, CORS);
