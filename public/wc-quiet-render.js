@@ -28,7 +28,7 @@
   window.__wcQuietRender = true;
 
   var MIN_GAP = 250;        /* at most one repaint per quarter second */
-  var MAX_DEFER = 1200;     /* never postpone an automatic repaint longer */
+  var MAX_DEFER = 400;      /* never postpone an automatic repaint longer */
   var startedAt = 0;
   var firstDeferredAt = 0;
   var pending = false;
@@ -36,6 +36,7 @@
   var lastPaint = 0;
   var scrollerMemory = null;
   var realRender = null;   /* the app's own render, captured once */
+  var lastHash = '';
 
   function safe(fn, dflt) { try { return fn(); } catch (e) { return dflt; } }
   function g(name) { try { return window[name]; } catch (e) { return undefined; } }
@@ -135,6 +136,7 @@
       var clear = function () { document.documentElement.classList.remove('wc-repainting'); };
       if (typeof requestAnimationFrame === 'function') requestAnimationFrame(clear); else setTimeout(clear, 0);
       lastPaint = Date.now();
+      lastHash = String(location.hash || '');
       startedAt = 0;
     }
   }
@@ -144,11 +146,14 @@
     if (typeof real !== 'function' || real.__wcQuietWrapped) return !!real;
 
     realRender = real;
+    lastHash = String(location.hash || '');
     var wrapped = function (opts) {
       opts = opts || {};
       /* an explicit, user-caused render must be immediate */
       var forced = !!(opts && (opts.force === true || opts.immediate === true || opts.sync === true));
-      if (forced) { pending = false; pendingForce = false; realPaint(true); return; }
+      /* a route change is a user action: it must paint at once, never later */
+      var moved = String(location.hash || '') !== lastHash;
+      if (forced || moved) { pending = false; pendingForce = false; realPaint(forced); return; }
 
       var now = Date.now();
       if (busyNow()) {
