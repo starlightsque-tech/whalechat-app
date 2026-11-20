@@ -71,7 +71,27 @@
   .recovery-key{font-family:Menlo,Consolas,monospace;background:#04101a;border:1px dashed rgba(46,230,201,.5);border-radius:10px;padding:12px;word-break:break-all;font-size:13px;color:var(--accent);user-select:all;margin-top:8px}
   .toast{position:fixed;right:18px;bottom:18px;background:#0b2636;border:1px solid var(--line);border-radius:12px;padding:12px 16px;font-size:12.5px;box-shadow:0 12px 40px rgba(0,0,0,.4);opacity:0;transform:translateY(8px);transition:.2s;z-index:99}
   .toast.show{opacity:1;transform:none}.toast.ok{border-color:rgba(34,197,94,.4)}.toast.err{border-color:rgba(255,92,114,.45)}
-  @media(max-width:900px){.shell{grid-template-columns:1fr}aside{position:relative;height:auto;border-right:0;border-bottom:1px solid var(--line)}aside .brand{margin-bottom:14px}.nav{flex-direction:row;overflow:auto}.nav button{white-space:nowrap;width:auto}main{padding:20px}.grid2{grid-template-columns:1fr}}
+  /* SMS desk */
+  .sms-grid{display:grid;grid-template-columns:320px 1fr;gap:14px;align-items:start}
+  .sms-list{max-height:520px;overflow:auto}
+  .sms-user{display:flex;gap:10px;align-items:center;padding:10px 12px;border-radius:10px;border:1px solid transparent;cursor:pointer}
+  .sms-user:hover{background:var(--panel2)}
+  .sms-user.on{background:rgba(46,230,201,.08);border-color:rgba(46,230,201,.25)}
+  .sms-user .av{width:30px;height:30px;border-radius:50%;background:var(--panel2);display:grid;place-items:center;font-weight:700;font-size:12px;flex:none}
+  .sms-user .who{min-width:0;flex:1}
+  .sms-user .who b{display:block;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sms-user .who small{color:var(--muted);font-size:11px}
+  .sms-dot{width:7px;height:7px;border-radius:50%;background:var(--muted);flex:none}
+  .sms-dot.on{background:#22c55e}
+  .thread{height:360px;overflow:auto;padding:14px;display:flex;flex-direction:column;gap:8px;background:var(--bg);border:1px solid var(--line);border-radius:12px}
+  .bubble{max-width:78%;padding:8px 11px;border-radius:12px;font-size:13px;line-height:1.45;white-space:pre-wrap;word-break:break-word}
+  .bubble.in{background:var(--panel2);align-self:flex-start;border-bottom-left-radius:4px}
+  .bubble.out{background:rgba(46,230,201,.16);align-self:flex-end;border-bottom-right-radius:4px}
+  .bubble .meta{display:block;margin-top:4px;font-size:10px;opacity:.6}
+  .sms-feed{max-height:300px;overflow:auto;font-size:12.5px}
+  .sms-feed .row{padding:8px 0;border-bottom:1px solid var(--line);display:flex;gap:8px;align-items:flex-start}
+  .sms-feed .row:last-child{border-bottom:0}
+  @media(max-width:900px){.shell{grid-template-columns:1fr}aside{position:relative;height:auto;border-right:0;border-bottom:1px solid var(--line)}aside .brand{margin-bottom:14px}.nav{flex-direction:row;overflow:auto}.nav button{white-space:nowrap;width:auto}main{padding:20px}.grid2{grid-template-columns:1fr}.sms-grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -132,6 +152,7 @@
       <button data-view="trading"><span class="dot"></span> Trading</button>
       <button data-view="email"><span class="dot"></span> Email &amp; notifications</button>
       <button data-view="security"><span class="dot"></span> Account security</button>
+      <button data-view="sms"><span class="dot"></span> SMS &amp; engage</button>
     </nav>
     <div class="sidefoot">WhaleChat Admin<br/>v3.57 · Appwrite sync<br/><a href="https://whalechat.appwrite.network" target="_blank" rel="noopener">Open the app ↗</a></div>
   </aside>
@@ -211,6 +232,56 @@
       </div>
 
       <div class="panel"><h2>Session</h2><p class="hint">Sessions expire after 8 hours. Changing the password issues a new token and invalidates older ones.</p><button class="btn danger" id="logout2">Sign out of this device</button></div>
+    </section>
+
+    <section id="view-sms" class="hidden">
+      <div class="cards" id="smsCards"></div>
+
+      <div class="panel">
+        <div class="between"><div><h2>Engage a user</h2><p class="hint">Send a text and (optionally) the same message in the app. Replies appear here live — the user answers in WhaleChat.</p></div>
+          <span class="pill" id="smsLivePill">connecting…</span></div>
+        <div class="sms-grid" style="margin-top:12px">
+          <div class="panel" style="margin:0;padding:8px">
+            <input class="search" id="smsUserSearch" placeholder="Search name, phone or email" style="width:100%;margin-bottom:8px"/>
+            <div class="sms-list" id="smsUserList"><p class="note">Loading accounts…</p></div>
+          </div>
+          <div>
+            <div class="between" style="margin-bottom:8px">
+              <div><b id="smsWith">Pick a user</b><p class="hint" id="smsWithPhone">No recipient selected</p></div>
+              <span class="pill" id="smsPresence">offline</span>
+            </div>
+            <div class="thread" id="smsThread"><p class="note">Select an account on the left to open the conversation.</p></div>
+            <textarea class="inp" id="smsText" rows="3" placeholder="Write a message…" style="width:100%;margin-top:10px;resize:vertical"></textarea>
+            <div class="row" style="margin-top:8px;gap:12px;flex-wrap:wrap;align-items:center">
+              <label class="note" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="smsSendSms" checked/> Send as SMS</label>
+              <label class="note" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="smsInApp" checked/> Also post in the app chat</label>
+              <span class="grow"></span>
+              <button class="btn" id="smsSendBtn">Send now</button>
+            </div>
+            <p class="hint" id="smsSendHint">The recipient sees an in-app message instantly over the realtime lane; the SMS is for when the app is closed.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid2">
+        <div class="panel">
+          <div class="between"><div><h2>Broadcast</h2><p class="hint">Send to every account with a phone number, or only the ones you pick.</p></div><span class="pill" id="smsProviderPill">—</span></div>
+          <label style="margin-top:10px">Audience</label>
+          <select class="inp" id="smsAudience" style="width:100%">
+            <option value="all">Everyone with a phone number</option>
+            <option value="picked">Only the users I picked</option>
+          </select>
+          <label style="margin-top:10px">Message</label>
+          <textarea class="inp" id="smsBroadcastText" rows="3" style="width:100%" placeholder="A text to your users…"></textarea>
+          <label class="note" style="display:flex;gap:6px;align-items:center;margin-top:8px"><input type="checkbox" id="smsBroadcastInApp" checked/> Also post in the app chat (real time)</label>
+          <div class="row" style="margin-top:10px;gap:8px"><button class="btn" id="smsBroadcastBtn">Send broadcast</button><span class="note" id="smsBroadcastStatus"></span></div>
+        </div>
+
+        <div class="panel">
+          <div class="between"><div><h2>Live activity</h2><p class="hint">Sends, delivery reports and replies as they happen.</p></div><button class="btn ghost sm" id="smsReload">Refresh</button></div>
+          <div class="sms-feed" id="smsFeed"><p class="note">Nothing yet.</p></div>
+        </div>
+      </div>
     </section>
   </main>
 </div>
@@ -423,13 +494,14 @@
     if (!b) return;
     if (b.hasAttribute('data-view')) {
       state.view = b.getAttribute('data-view');
-      ['dash', 'users', 'money', 'trading', 'email', 'security'].forEach(function (v) {
+      ['dash', 'users', 'money', 'trading', 'email', 'security', 'sms'].forEach(function (v) {
         $('view-' + v).classList.toggle('hidden', v !== state.view);
       });
       Array.prototype.forEach.call(document.querySelectorAll('.nav button'), function (x) { x.classList.toggle('on', x === b); });
-      var titles = { dash: ['Overview', 'Live snapshot from the WhaleChat sync service.'], users: ['Users', 'Accounts, verification and moderation.'], money: ['Money & orders', 'Deposits, withdrawals and marketplace orders.'], trading: ['Trading', 'Positions and active investment plans.'], email: ['Email & notifications', 'Brevo delivery audit and in-app notification log.'], security: ['Account security', 'Change the admin email, password and recovery key.'] };
+      var titles = { dash: ['Overview', 'Live snapshot from the WhaleChat sync service.'], users: ['Users', 'Accounts, verification and moderation.'], money: ['Money & orders', 'Deposits, withdrawals and marketplace orders.'], trading: ['Trading', 'Positions and active investment plans.'], email: ['Email & notifications', 'Brevo delivery audit and in-app notification log.'], security: ['Account security', 'Change the admin email, password and recovery key.'], sms: ['SMS & engage', 'Text a user, talk to them inside the app, and watch replies arrive live.'] };
       $('pageTitle').textContent = titles[state.view][0]; $('pageSub').textContent = titles[state.view][1];
       if (state.view === 'email') loadEmailAudit();
+      if (state.view === 'sms') loadSmsDesk();
       return;
     }
     if (b.hasAttribute('data-verify')) {
@@ -627,6 +699,286 @@
   }
   ['pointerdown', 'keydown', 'mousemove', 'touchstart'].forEach(function (ev) { document.addEventListener(ev, resetIdle, { passive: true }); });
   resetIdle();
+
+  /* ------------------------------ SMS desk ---------------------------- */
+  var sms = { users: [], selected: '', messages: [], picked: {}, online: [], provider: null, live: 'off', ws: null, es: null, timer: null, retry: 0, lastAt: 0, feed: [] };
+
+  function smsApi(path, opts) {
+    opts = opts || {};
+    return fetch(API + path, Object.assign({ cache: 'no-store' }, opts, {
+      headers: Object.assign({ 'content-type': 'application/json', 'x-admin-token': state.token || '' }, opts.headers || {})
+    }));
+  }
+  async function smsJson(path, opts) {
+    try { var r = await smsApi(path, opts); return await r.json(); }
+    catch (e) { return { ok: false, error: e.message }; }
+  }
+  function smsPhone(u) { return String((u && u.phone) || '').replace(/[^\d+]/g, ''); }
+  function smsInitials(u) { var n = (u && (u.fullName || u.username || u.phone)) || '?'; return n.trim().slice(0, 2).toUpperCase(); }
+  function smsOnline(id) { return sms.online.indexOf(id) >= 0; }
+
+  function renderSmsCards(d) {
+    var withPhone = sms.users.length;
+    var online = sms.online.length;
+    var smsOk = d && d.configured;
+    var prov = d && d.provider && d.provider.enabled ? d.provider.provider : 'poll fallback';
+    $('smsCards').innerHTML = [
+      ['Accounts with a phone', withPhone, 'textable today'],
+      ['Online right now', online, 'presence from the lane'],
+      ['SMS provider', smsOk ? 'Telesign' : 'Not configured', smsOk ? 'texts will deliver' : 'in-app only'],
+      ['Realtime', prov, prov === 'poll fallback' ? 'polling every 4 s' : 'hosted websocket']
+    ].map(function (c) {
+      return '<div class="card"><p class="note">' + esc(c[0]) + '</p><b style="font-size:26px">' + esc(c[1]) + '</b><p class="hint">' + esc(c[2]) + '</p></div>';
+    }).join('');
+    $('smsProviderPill').textContent = prov;
+    $('smsSendSms').disabled = !smsOk;
+    if (!smsOk) $('smsSendSms').checked = false;
+    $('smsLivePill').textContent = sms.live === 'off' ? 'offline' : (sms.live === 'poll' ? 'live · poll' : 'live · ' + sms.live);
+    $('smsLivePill').className = 'pill ' + (sms.live === 'off' ? 'warn' : 'ok');
+  }
+
+  function renderSmsUsers() {
+    var q = ($('smsUserSearch').value || '').toLowerCase().trim();
+    var list = sms.users.filter(function (u) {
+      if (!q) return true;
+      return (String(u.fullName || '') + ' ' + String(u.phone || '') + ' ' + String(u.id || '')).toLowerCase().indexOf(q) >= 0;
+    });
+    $('smsUserList').innerHTML = list.length ? list.map(function (u) {
+      return '<div class="sms-user' + (sms.selected === u.id ? ' on' : '') + '" data-sms-user="' + esc(u.id) + '">' +
+        '<input type="checkbox" data-sms-pick="' + esc(u.id) + '"' + (sms.picked[u.id] ? ' checked' : '') + ' style="flex:none"/>' +
+        '<div class="av">' + esc(smsInitials(u)) + '</div>' +
+        '<div class="who"><b>' + esc(u.fullName || u.username || u.id) + '</b><small>' + esc(u.phone || 'no phone') + '</small></div>' +
+        '<span class="sms-dot' + (smsOnline(u.id) ? ' on' : '') + '"></span></div>';
+    }).join('') : '<p class="note">No account matches.</p>';
+  }
+
+  function renderThread() {
+    var box = $('smsThread');
+    if (!sms.selected) { box.innerHTML = '<p class="note">Select an account on the left to open the conversation.</p>'; return; }
+    var u = sms.users.filter(function (x) { return x.id === sms.selected; })[0] || { id: sms.selected, fullName: sms.selected };
+    $('smsWith').textContent = u.fullName || u.username || u.id;
+    $('smsWithPhone').textContent = u.phone ? ('+' + smsPhone(u)) : 'No phone on this account — in-app only';
+    $('smsPresence').textContent = smsOnline(u.id) ? 'online' : 'offline';
+    $('smsPresence').className = 'pill ' + (smsOnline(u.id) ? 'ok' : '');
+    var adminId = (state.admin && state.admin.id) || '';
+    var rows = sms.messages.filter(function (m) { return m && m.chatId === sms.chatId; });
+    if (!rows.length) { box.innerHTML = '<p class="note">No messages yet. Write one below — it lands on their screen in under a second.</p>'; return; }
+    box.innerHTML = rows.map(function (m) {
+      var mine = m.from === adminId;
+      return '<div class="bubble ' + (mine ? 'out' : 'in') + '">' + esc(m.text || '') +
+        '<span class="meta">' + (mine ? 'Admin' : 'User') + ' · ' + when(m.createdAt) + (m.channel === 'sms' ? ' · SMS' : '') + '</span></div>';
+    }).join('');
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function smsFeedRow(html) {
+    var feed = $('smsFeed');
+    var row = document.createElement('div');
+    row.className = 'row';
+    row.innerHTML = html;
+    if (feed.querySelector('.note')) feed.innerHTML = '';
+    feed.insertBefore(row, feed.firstChild);
+    while (feed.children.length > 60) feed.removeChild(feed.lastChild);
+  }
+
+  async function loadSmsDesk() {
+    var d = await smsJson('/api/telesign/inbox?t=' + Date.now());
+    if (!d || !d.ok) {
+      $('smsUserList').innerHTML = '<p class="note">' + esc((d && (d.error || d.message)) || 'Could not load accounts') + '</p>';
+      return;
+    }
+    sms.users = d.users || [];
+    sms.online = d.online || [];
+    sms.provider = d.provider || null;
+    sms.messages = d.messages || [];
+    renderSmsCards(d);
+    renderSmsUsers();
+    if (sms.selected) loadThread(sms.selected);
+    (d.campaigns || []).slice(0, 12).forEach(function (c) {
+      var key = 'c' + (c.at || 0) + (c.message || '').slice(0, 12);
+      if (sms.feed.indexOf(key) >= 0) return;
+      sms.feed.push(key);
+      smsFeedRow('<span class="pill">' + esc(c.kind || 'sms') + '</span><div><b>' + esc((c.message || '').slice(0, 90)) + '</b><br/><span class="note">' + esc(c.sent != null ? (c.sent + ' sent') : '') + ' · ' + when(c.at) + '</span></div>');
+    });
+    connectSmsLive(d);
+  }
+
+  async function loadThread(userId) {
+    sms.selected = userId;
+    renderSmsUsers();
+    var d = await smsJson('/api/telesign/thread', { method: 'POST', body: JSON.stringify({ token: state.token, userId: userId }) });
+    if (d && d.ok) {
+      sms.chatId = d.chatId;
+      sms.messages = d.messages || [];
+      if (sms.online.indexOf(userId) < 0 && d.online) sms.online.push(userId);
+      renderThread();
+    } else {
+      renderThread();
+    }
+  }
+
+  async function smsSend() {
+    var text = ($('smsText').value || '').trim();
+    if (!text) return toast('Write a message first', 'err');
+    if (!sms.selected) return toast('Pick a user on the left', 'err');
+    var btn = $('smsSendBtn');
+    btn.disabled = true; btn.textContent = 'Sending…';
+    var useSms = $('smsSendSms').checked;
+    var inApp = $('smsInApp').checked;
+    var body = { token: state.token, userId: sms.selected, message: text, inApp: inApp };
+    var res;
+    if (useSms && $('smsSendSms').disabled === false) {
+      res = await smsJson('/api/telesign/sms', { method: 'POST', body: JSON.stringify(body) });
+    } else {
+      res = await smsJson('/api/telesign/engage', { method: 'POST', body: JSON.stringify({ token: state.token, userId: sms.selected, userIds: [sms.selected], message: text, inApp: true, sms: false }) });
+    }
+    btn.disabled = false; btn.textContent = 'Send now';
+    if (!res || !res.ok) return toast((res && (res.message || res.error)) || 'Send failed', 'err');
+    $('smsText').value = '';
+    smsFeedRow('<span class="pill ok">sent</span><div><b>' + esc(text.slice(0, 90)) + '</b><br/><span class="note">to ' + esc(sms.selected) + ' · ' + when(Date.now()) + (res.inApp || inApp ? ' · in-app' : '') + (res.status ? ' · SMS ' + esc(res.status) : '') + '</span></div>');
+    toast(inApp ? 'Message delivered to the app, SMS queued' : 'SMS queued', 'ok');
+    setTimeout(function () { loadThread(sms.selected); }, 500);
+  }
+
+  async function smsBroadcast() {
+    var text = ($('smsBroadcastText').value || '').trim();
+    if (!text) return toast('Write the broadcast first', 'err');
+    var ids;
+    if ($('smsAudience').value === 'picked') {
+      ids = Object.keys(sms.picked).filter(function (k) { return sms.picked[k]; });
+      if (!ids.length) return toast('Pick at least one user', 'err');
+    } else {
+      ids = sms.users.map(function (u) { return u.id; });
+    }
+    var inApp = $('smsBroadcastInApp').checked;
+    if (!confirm('Send this to ' + ids.length + ' account(s)?')) return;
+    var btn = $('smsBroadcastBtn');
+    btn.disabled = true;
+    var sent = 0, failed = 0;
+    for (var i = 0; i < ids.length; i += 20) {
+      var batch = ids.slice(i, i + 20);
+      $('smsBroadcastStatus').textContent = 'Sending ' + Math.min(i + 20, ids.length) + ' of ' + ids.length + '…';
+      var res = await smsJson('/api/telesign/engage', { method: 'POST', body: JSON.stringify({ token: state.token, userIds: batch, message: text, inApp: inApp, sms: true }) });
+      if (res && res.ok) sent += Number(res.sent) || 0; else failed += batch.length;
+      await new Promise(function (r) { setTimeout(r, 250); });
+    }
+    btn.disabled = false;
+    $('smsBroadcastStatus').textContent = sent + ' sent' + (failed ? ' · ' + failed + ' failed' : '');
+    smsFeedRow('<span class="pill ok">broadcast</span><div><b>' + esc(text.slice(0, 90)) + '</b><br/><span class="note">' + sent + ' sent · ' + when(Date.now()) + '</span></div>');
+    toast('Broadcast finished', 'ok');
+  }
+
+  /* live delivery: hosted websocket when configured, otherwise the poll */
+  function stopSmsLive() {
+    if (sms.ws) { try { sms.ws.close(); } catch (e) {} sms.ws = null; }
+    if (sms.es) { try { sms.es.close(); } catch (e) {} sms.es = null; }
+    clearInterval(sms.timer); sms.timer = null;
+  }
+
+  function smsLiveFrame(payload) {
+    if (!payload || typeof payload !== 'object') return;
+    sms.lastAt = Date.now();
+    if (payload.kind === 'sms' || payload.kind === 'engage') {
+      smsFeedRow('<span class="pill ok">' + esc(payload.kind) + '</span><div><b>' + esc(String(payload.message || '').slice(0, 90)) + '</b><br/><span class="note">' + esc(payload.userId || payload.phone || '') + ' · ' + when(payload.at || Date.now()) + '</span></div>');
+      if (sms.selected && payload.userId === sms.selected) setTimeout(function () { loadThread(sms.selected); }, 300);
+    }
+    if (payload.kind === 'message' && payload.message) {
+      var m = payload.message;
+      var mine = (state.admin && state.admin.id) || '';
+      if (m.to === mine || m.from === mine) {
+        if (sms.selected && m.chatId === sms.chatId) { sms.messages.push(m); renderThread(); }
+        else smsFeedRow('<span class="pill">reply</span><div><b>' + esc((m.text || '').slice(0, 90)) + '</b><br/><span class="note">' + esc(m.from === mine ? 'you' : m.from) + ' · ' + when(m.createdAt) + '</span></div>');
+      }
+    }
+  }
+
+  async function connectSmsLive(inbox) {
+    stopSmsLive();
+    var cfgRes = await smsJson('/api/realtime/config?t=' + Date.now());
+    var cfg = cfgRes && cfgRes.ok ? cfgRes : null;
+    if (cfg && cfg.enabled && cfg.provider === 'pusher') {
+      var ch = (cfg.channelPrefix || 'wc') + '-admin';
+      var full = 'private-' + ch;
+      var ws = new WebSocket('wss://' + (cfg.wsHost || ('ws-' + cfg.cluster + '.pusher.com')) + '/app/' + cfg.key + '?protocol=7&client=wc-admin&version=8.4.0&flash=false');
+      sms.ws = ws;
+      sms.live = 'pusher';
+      ws.onmessage = async function (ev) {
+        var msg = null; try { msg = JSON.parse(ev.data); } catch (e) { return; }
+        sms.lastAt = Date.now();
+        if (msg.event === 'pusher:connection_established') {
+          var data = {}; try { data = JSON.parse(msg.data); } catch (e) {}
+          var auth = await smsJson(cfg.authEndpoint || '/api/realtime/auth', { method: 'POST', body: JSON.stringify({ socket_id: data.socket_id, channel_name: full }) });
+          try { ws.send(JSON.stringify({ event: 'pusher:subscribe', data: { channel: full, auth: auth && auth.auth } })); } catch (e) {}
+          return;
+        }
+        if (msg.event === 'pusher:ping') { try { ws.send(JSON.stringify({ event: 'pusher:pong', data: {} })); } catch (e) {} return; }
+        if (msg.event === 'wc') { var p = null; try { p = JSON.parse(msg.data); } catch (e) {} smsLiveFrame(p); }
+      };
+      ws.onclose = function () { sms.ws = null; sms.live = 'poll'; startSmsPoll(); };
+      ws.onerror = function () {};
+      renderSmsCards({ configured: inbox && inbox.configured, provider: cfg });
+      return;
+    }
+    if (cfg && cfg.enabled && cfg.provider === 'ably') {
+      var channels = [(cfg.channelPrefix || 'wc') + '-admin'];
+      var tok = await smsJson((cfg.tokenEndpoint || '/api/realtime/token') + '?channels=' + encodeURIComponent(channels.join(',')) + '&clientId=admin');
+      if (tok && tok.token) {
+        var es = new EventSource('https://' + (cfg.realtimeHost || 'realtime.ably.io') + '/sse?channels=' + encodeURIComponent(channels.join(',')) + '&v=1.2&accessToken=' + encodeURIComponent(tok.token));
+        sms.es = es; sms.live = 'ably';
+        es.onmessage = function (ev) {
+          var frame = null; try { frame = JSON.parse(ev.data); } catch (e) { return; }
+          if (frame && frame.name === (cfg.event || 'wc')) { var p = null; try { p = typeof frame.data === 'string' ? JSON.parse(frame.data) : frame.data; } catch (e) {} smsLiveFrame(p); }
+        };
+        es.onerror = function () { sms.live = 'poll'; stopSmsLive(); startSmsPoll(); };
+        renderSmsCards({ configured: inbox && inbox.configured, provider: cfg });
+        return;
+      }
+    }
+    sms.live = 'poll';
+    startSmsPoll();
+  }
+
+  function startSmsPoll() {
+    clearInterval(sms.timer);
+    sms.live = 'poll';
+    $('smsLivePill').textContent = 'live · poll';
+    sms.timer = setInterval(async function () {
+      if (!$('view-sms') || $('view-sms').classList.contains('hidden')) return;
+      var before = sms.messages.length;
+      var d = await smsJson('/api/telesign/inbox?t=' + Date.now());
+      if (!d || !d.ok) return;
+      sms.online = d.online || [];
+      renderSmsCards(d);
+      if (sms.selected) {
+        var t = await smsJson('/api/telesign/thread', { method: 'POST', body: JSON.stringify({ token: state.token, userId: sms.selected }) });
+        if (t && t.ok) {
+          var grew = (t.messages || []).length > before;
+          sms.messages = t.messages || [];
+          sms.chatId = t.chatId;
+          renderThread();
+          if (grew) { var last = sms.messages[sms.messages.length - 1]; if (last) smsFeedRow('<span class="pill">reply</span><div><b>' + esc((last.text || '').slice(0, 90)) + '</b><br/><span class="note">' + when(last.createdAt) + '</span></div>'); }
+        }
+      }
+    }, 4000);
+  }
+
+  document.addEventListener('click', function (e) {
+    var t = e.target;
+    if (t && t.hasAttribute && t.hasAttribute('data-sms-pick')) {
+      var id = t.getAttribute('data-sms-pick');
+      sms.picked[id] = !!t.checked;
+      return;
+    }
+    var row = t && t.closest ? t.closest('[data-sms-user]') : null;
+    if (row) loadThread(row.getAttribute('data-sms-user'));
+  });
+  document.addEventListener('input', function (e) {
+    if (!e.target) return;
+    if (e.target.id === 'smsUserSearch') renderSmsUsers();
+  });
+  $('smsSendBtn').onclick = smsSend;
+  $('smsBroadcastBtn').onclick = smsBroadcast;
+  $('smsReload').onclick = loadSmsDesk;
 
   /* ------------------------------- boot ------------------------------- */
   (async function boot() {

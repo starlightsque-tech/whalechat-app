@@ -1,5 +1,24 @@
 # WhaleChat 3.54.0 — web app + mobile apps
 
+> **3.71 · realtime chat + admin SMS desk**
+>
+> * **Chat lane transports.** The browser lane now tries, in order: **SSE** on the app's own
+>   Node server (`/api/chat/stream`, 10–40 ms on a warm server), a **hosted WebSocket**
+>   (Pusher Channels or Ably — 50–100 ms on the Appwrite deployment, where a Function cannot
+>   hold SSE open), and finally the original tiny poll. The poll stays armed as a safety net.
+> * **One person's action reaches another person's screen.** Messages, typing, read receipts
+>   and presence all travel the same personal channel; the receiver paints the bubble with the
+>   chat open, closed, or coming back online. The durable offline outbox and lane ledger are
+>   unchanged.
+> * **Admin → SMS & engage.** A new page in the admin console texts a user (Telesign) and can
+>   mirror the same message into the in-app conversation, so the user answers inside WhaleChat
+>   and the reply appears on the panel live. Broadcasts report per-recipient delivery.
+>
+> Configure a provider on the sync server / Appwrite Function (either one, optional):
+> `PUSHER_APP_ID`, `PUSHER_KEY`, `PUSHER_SECRET`, `PUSHER_CLUSTER` **or** `ABLY_API_KEY`.
+> With none set the lane still works: SSE where available, poll everywhere else.
+
+
 WhaleChat is a social + marketplace + wallet product built as a single-page app with a
 Node sync server and native Android/iOS shells.
 

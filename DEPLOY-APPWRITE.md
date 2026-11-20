@@ -230,3 +230,45 @@ fallback). Status badges in the admin panel therefore move from **Accepted** to
 
 Admin panel → **Email & notifications → Delivery webhook → Connect webhook**
 creates or re-checks the Brevo webhook through `/api/admin/webhook-setup`.
+
+## 7. Realtime chat (3.71)
+
+A chat message reaches the other device by the fastest road this deployment can hold:
+
+| Deployment | Transport | Typical latency |
+| --- | --- | --- |
+| Node server (`server.js`) | SSE `/api/chat/stream` | 10–40 ms |
+| Appwrite site + Function | Pusher Channels or Ably (WebSocket) | 50–100 ms |
+| Anything, always | existing `/api/chat/state` poll | 200 ms–1 s |
+
+An Appwrite Function cannot hold a response open, so the cloud deployment needs a hosted
+provider for the lowest latency. Create one and set its keys on the **Function variables**
+(`scripts/deploy-appwrite-function.mjs` forwards them automatically when present):
+
+* **Pusher Channels** — `PUSHER_APP_ID`, `PUSHER_KEY`, `PUSHER_SECRET`, `PUSHER_CLUSTER` (default `mt1`)
+* **Ably** — `ABLY_API_KEY` (`keyName:keySecret`)
+
+```bash
+APPWRITE_API_KEY=... PUSHER_APP_ID=... PUSHER_KEY=... PUSHER_SECRET=... \
+  npm run deploy:appwrite:function
+curl https://whalechat-api.appwrite.network/api/realtime/config
+```
+
+With no keys, `/api/realtime/config` answers `provider: "sse", enabled: false` and the lane
+keeps the poll. Secrets never reach the browser: the client receives only the public key and
+subscribes to `private-` channels authorised by `/api/realtime/auth` (or Ably's token request).
+
+**Channels** — `wc-user-<userId>` (delivery + typing + read + presence), `wc-room-<chatId>`
+(conversation events) and `wc-admin` (admin desk: SMS sends, replies, delivery).
+
+## 8. Admin console (SMS & engage)
+
+The admin console is its own Appwrite Site (`whalechat-admin`), deployed from `admin-panel/`:
+
+```bash
+APPWRITE_API_KEY=... npm run deploy:appwrite:admin
+```
+
+Open **SMS & engage** to text one user or an audience, post the same message into the in-app
+chat, watch replies arrive live, and see per-recipient delivery. The page uses the hosted
+provider when configured and falls back to a 4-second inbox poll otherwise.

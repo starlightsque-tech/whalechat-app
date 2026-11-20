@@ -64,6 +64,9 @@ const shares = new ShareService({
 /* 3.64: configured servers (Appwrite nyc, Telesign, Brevo, market feeds).
    Secrets stay in the environment; only public ids reach the browser. */
 const serverConfig = require('./server-config');
+/* 3.71: hosted WebSocket provider (Pusher Channels / Ably) for chat delivery.
+   Unconfigured here means the lane stays on this server's SSE stream. */
+const realtime = require('./realtime');
 let telesign = null;
 try { telesign = require('./telesign'); } catch (e) { console.error('[telesign] module unavailable:', e.message); }
 let appwriteOrders = null;
@@ -936,6 +939,75 @@ function chatMessagesSince(since) {
   return { seq: chatRing.seq, messages: chatRing.messages.filter((m) => Number(m.seq) > s) };
 }
 
+/* --- lane events: typing, read receipts and presence ---------------------
+   They ride the same subscriber set as messages but their own short ring, so a
+   test of "is the other person typing" never has to touch the state document. */
+const chatEventRing = { seq: 0, events: [] };
+const CHAT_EVENT_KEEP = 600;
+const adminSmsSubs = new Set();
+function chatEventPush(ev) {
+  if (!ev) return;
+  chatEventRing.seq += 1;
+  ev.seq = chatEventRing.seq;
+  ev.at = Number(ev.at) || Date.now();
+  chatEventRing.events.push(ev);
+  if (chatEventRing.events.length > CHAT_EVENT_KEEP) chatEventRing.events = chatEventRing.events.slice(-CHAT_EVENT_KEEP);
+  for (const sub of chatRing.subs) { try { sub(); } catch (e) {} }
+}
+function chatEventsSince(since, userId, room) {
+  const s = Number(since) || 0;
+  const events = chatEventRing.events.filter((e) => {
+    if (Number(e.seq) <= s) return false;
+    if (!userId && !room) return true;
+    if (e.type === 'typing') return (userId && (e.to === userId || e.from === userId)) || (room && e.chatId === room);
+    if (e.type === 'read') return (userId && (e.to === userId || e.by === userId)) || (room && (e.messages || []).some((m) => m.chatId === room));
+    if (e.type === 'presence') return true;
+    return true;
+  });
+  return { seq: chatEventRing.seq, events: events };
+}
+/* Push accepted lane messages to the hosted provider (no-op when unconfigured). */
+function routeRealtime(accepted) {
+  try {
+    if (!realtime.configured().enabled || !accepted || !accepted.length) return;
+    const ids = new Set(accepted.map((a) => a && a.id).filter(Boolean));
+    for (const m of chatRing.messages) {
+      if (!ids.has(m.id)) continue;
+      realtime.publishMessage(m).catch(() => {});
+      ids.delete(m.id);
+    }
+  } catch (e) {}
+}
+/* An admin SMS also lands in the app chat, so the user can answer it inside
+   WhaleChat and the answer reaches the admin desk in real time. */
+function adminChatAppend(admin, user, text, body) {
+  if (!user || !user.id) return null;
+  const adminId = admin.id || (store.db.users || []).filter((u) => u && u.role === 'admin').map((u) => u.id)[0] || 'usr_admin';
+  const chatId = [String(user.id), String(adminId)].sort().join('__');
+  const msg = {
+    id: 'msg_sms_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    chatId: chatId,
+    from: adminId,
+    to: String(user.id),
+    type: 'text',
+    text: String(text || '').slice(0, 4000),
+    createdAt: Date.now(),
+    status: 'sent',
+    channel: 'sms',
+    readBy: []
+  };
+  chatAppendMessages([msg]);
+  routeRealtime([{ id: msg.id }]);
+  for (const sub of adminSmsSubs) { try { sub(JSON.stringify({ kind: 'chat', message: msg, at: Date.now() })); } catch (e) {} }
+  try {
+    const db = store.db;
+    db.notifications = Array.isArray(db.notifications) ? db.notifications : [];
+    db.notifications.unshift({ id: 'nt_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), userId: user.id, title: 'Message from WhaleChat', body: String(text || '').slice(0, 140), link: '#/chat/' + adminId, icon: 'chat', read: false, createdAt: Date.now() });
+    if (db.notifications.length > 400) db.notifications.length = 400;
+  } catch (e) {}
+  return { chatId: chatId, message: msg };
+}
+
 function adminRequired(res) {
   return json(res, 401, { ok: false, error: 'admin_session_required', message: 'Confirm your admin password to continue' });
 }
@@ -1266,7 +1338,7 @@ async function api(req, res, pathname, query) {
   }
 
   if (pathname === '/api/health' && req.method === 'GET') {
-    return json(res, 200, { ok: true, app: 'whalechat', version: readJSON(path.join(PUBLIC_DIR, 'version.json'), {}).version || null, build: (readJSON(path.join(PUBLIC_DIR, 'version.json'), {}).build) || BUILD, uptimeSec: Math.floor((Date.now() - STARTED) / 1000), rev: store.rev, users: (store.db && store.db.users) ? store.db.users.length : 0, clients: clients.size, push: !!webpush, publicUrl: PUBLIC_URL || null, storage: pool ? 'postgres' : 'file', storageDetail: { connected: pgState.connected, attempts: pgState.attempts, lastError: pgState.lastError || null, lastConnectAt: pgState.lastConnectAt || null, lastWriteAt: pgState.lastWriteAt || null, lastAdopt: pgState.lastAdopt, retryInMs: pgRetryTimer ? pgRetryDelay : 0 }, email: !!(email && email.configured()), market: market.status() });
+    return json(res, 200, { ok: true, app: 'whalechat', version: readJSON(path.join(PUBLIC_DIR, 'version.json'), {}).version || null, build: (readJSON(path.join(PUBLIC_DIR, 'version.json'), {}).build) || BUILD, uptimeSec: Math.floor((Date.now() - STARTED) / 1000), rev: store.rev, users: (store.db && store.db.users) ? store.db.users.length : 0, clients: clients.size, push: !!webpush, publicUrl: PUBLIC_URL || null, storage: pool ? 'postgres' : 'file', stream: true, realtime: realtime.configured(), storageDetail: { connected: pgState.connected, attempts: pgState.attempts, lastError: pgState.lastError || null, lastConnectAt: pgState.lastConnectAt || null, lastWriteAt: pgState.lastWriteAt || null, lastAdopt: pgState.lastAdopt, retryInMs: pgRetryTimer ? pgRetryDelay : 0 }, email: !!(email && email.configured()), market: market.status() });
   }
   if (pathname === '/api/state' && req.method === 'GET') return json(res, 200, { rev: store.rev, db: store.db, updatedAt: store.updatedAt });
   if (pathname === '/api/state/init' && req.method === 'POST') {
@@ -1529,6 +1601,8 @@ async function api(req, res, pathname, query) {
       ok: true,
       ...serverConfig.publicConfig(),
       configured: serverConfig.configured(),
+      realtime: realtime.publicConfig(),
+      chat: { stream: true, sse: '/api/chat/stream', poll: '/api/chat/state', send: '/api/chat/send' },
       telesign: telesign ? telesign.status() : { configured: false },
       appwriteOrders: appwriteOrders ? appwriteOrders.configured() : false
     });
@@ -1616,12 +1690,145 @@ async function api(req, res, pathname, query) {
     const list = Array.isArray(body.messages) ? body.messages : (body.message ? [body.message] : []);
     if (!list.length) return json(res, 400, { ok: false, error: 'no_messages' });
     if (list.length > 60) return json(res, 413, { ok: false, error: 'too_many' });
-    return json(res, 200, chatAppendMessages(list));
+    const out = chatAppendMessages(list);
+    /* Fan the accepted messages out to the hosted WebSocket provider so the
+       peer's screen paints in 50-100 ms; the SSE/poll lanes stay authoritative. */
+    routeRealtime(out.accepted || []);
+    return json(res, 200, out);
   }
   if (pathname === '/api/chat/state' && req.method === 'GET') {
-    const since = Number(new URL(req.url, 'http://x').searchParams.get('since') || 0) || 0;
+    const q = new URL(req.url, 'http://x').searchParams;
+    const since = Number(q.get('since') || 0) || 0;
+    const evSince = Number(q.get('evSince') || 0) || 0;
+    const userId = String(q.get('userId') || '');
+    const room = String(q.get('chatId') || '');
     const got = chatMessagesSince(since);
-    return json(res, 200, { ok: true, seq: got.seq, messages: got.messages });
+    const messages = userId ? got.messages.filter((m) => m.from === userId || m.to === userId) : got.messages;
+    const evs = chatEventsSince(evSince, userId, room);
+    return json(res, 200, { ok: true, seq: got.seq, messages: messages, events: evs.events, evSeq: evs.seq });
+  }
+  if (pathname === '/api/chat/events' && req.method === 'GET') {
+    const q = new URL(req.url, 'http://x').searchParams;
+    const since = Number(q.get('since') || 0) || 0;
+    return json(res, 200, chatEventsSince(since, q.get('userId') || '', q.get('chatId') || ''));
+  }
+  if (pathname === '/api/chat/typing' && req.method === 'POST') {
+    const body = await readBody(req);
+    const ev = { type: 'typing', from: String(body.from || ''), to: String(body.to || ''), chatId: String(body.chatId || ''), typing: body.typing !== false };
+    if (!ev.from || (!ev.to && !ev.chatId)) return json(res, 400, { ok: false, error: 'from_required' });
+    chatEventPush(ev);
+    realtime.publishEvent('typing', ev).catch(() => {});
+    return json(res, 200, { ok: true });
+  }
+  if (pathname === '/api/chat/read' && req.method === 'POST') {
+    const body = await readBody(req);
+    const ids = Array.isArray(body.ids) ? body.ids.map(String).slice(0, 200) : [];
+    const reader = String(body.userId || '');
+    if (!ids.length || !reader) return json(res, 400, { ok: false, error: 'ids_and_user_required' });
+    const updates = [];
+    for (const m of chatRing.messages) {
+      if (ids.indexOf(m.id) < 0) continue;
+      m.readBy = Array.isArray(m.readBy) ? m.readBy : [];
+      if (m.readBy.indexOf(reader) < 0) m.readBy.push(reader);
+      m.status = 'seen';
+      updates.push({ id: m.id, status: 'seen', readBy: m.readBy, chatId: m.chatId, from: m.from, to: m.to, seq: m.seq });
+    }
+    if (updates.length) {
+      chatSaveSoon();
+      const ev = { type: 'read', by: reader, ids: ids, messages: updates };
+      chatEventPush(ev);
+      realtime.publishEvent('read', { from: reader, chatId: updates[0].chatId, ids: ids }).catch(() => {});
+      for (const sub of chatRing.subs) { try { sub(); } catch (e) {} }
+    }
+    return json(res, 200, { ok: true, updated: updates.length });
+  }
+  if (pathname === '/api/chat/presence' && req.method === 'POST') {
+    const body = await readBody(req);
+    const ev = { type: 'presence', userId: String(body.userId || ''), online: body.online !== false, at: Date.now() };
+    if (!ev.userId) return json(res, 400, { ok: false, error: 'userId_required' });
+    chatEventPush(ev);
+    realtime.publishEvent('presence', { from: ev.userId, online: ev.online }).catch(() => {});
+    return json(res, 200, { ok: true });
+  }
+
+  /* --- hosted realtime provider (Pusher / Ably) --------------------- */
+  if (pathname === '/api/realtime/config' && req.method === 'GET') {
+    return json(res, 200, realtime.publicConfig());
+  }
+  if (pathname === '/api/realtime/auth' && req.method === 'POST') {
+    const body = await readBody(req);
+    const socketId = String(body.socket_id || body.socketId || '');
+    const channel = String(body.channel_name || body.channel || '');
+    if (!socketId || !channel) return json(res, 400, { ok: false, error: 'socket_and_channel_required' });
+    const auth = realtime.pusherAuth(socketId, channel);
+    if (!auth) return json(res, 501, { ok: false, error: 'pusher_not_configured' });
+    return json(res, 200, auth);
+  }
+  if (pathname === '/api/realtime/token' && req.method === 'GET') {
+    const q = new URL(req.url, 'http://x').searchParams;
+    const channels = String(q.get('channels') || '').split(',').map((s) => s.trim()).filter(Boolean);
+    const token = realtime.ablyTokenRequest({ channels: channels, clientId: q.get('clientId') || '' });
+    if (!token) return json(res, 501, { ok: false, error: 'ably_not_configured' });
+    return json(res, 200, { ok: true, token: token.token, keyName: token.keyName, expires: token.expires });
+  }
+
+  /* --- admin SMS desk: send + engage in real time -------------------- */
+  if (pathname === '/api/admin/sms/send' && req.method === 'POST') {
+    const admin = adminAuth.currentAdmin();
+    if (!admin) return adminRequired(res);
+    const body = await readBody(req);
+    const text = String(body.message || body.text || '').trim();
+    if (!text) return json(res, 400, { ok: false, error: 'message_required' });
+    const userId = String(body.userId || '');
+    const db = store.db || {};
+    const user = (db.users || []).find((u) => u && String(u.id) === userId);
+    const phone = String(body.phone || (user && user.phone) || '').replace(/[^\d+]/g, '');
+    const wantSms = body.sms !== false && !!(telesign && telesign.configured && telesign.configured());
+    if (wantSms && !/^\+?\d{8,15}$/.test(phone)) return json(res, 400, { ok: false, error: 'invalid_phone_number' });
+    if (!wantSms && !userId) return json(res, 400, { ok: false, error: 'userId_required' });
+    const to = phone ? (phone.charAt(0) === '+' ? phone : '+' + phone) : '';
+    const out = {};
+    if (wantSms) {
+      try {
+        Object.assign(out, await telesign.sendSms({ phone: to, message: text, buttonLabel: body.buttonLabel, buttonUrl: body.buttonUrl }));
+      } catch (e) {
+        return json(res, 502, { ok: false, error: 'telesign_send_failed', message: e.message, code: e.telesignCode });
+      }
+    } else {
+      out.status = 'in_app_only';
+    }
+    (db.smsCampaigns = db.smsCampaigns || []).unshift({ id: 'sms_' + Date.now().toString(36), at: Date.now(), kind: wantSms ? 'single' : 'in-app', to: to || null, userId: userId || null, message: text, by: admin.id, status: out.status || 'queued', referenceId: out.referenceId || null });
+    db.smsCampaigns = db.smsCampaigns.slice(0, 100);
+    let chat = null;
+    if (userId && body.inApp !== false) chat = adminChatAppend(admin, user, text, body);
+    persist();
+    broadcast('change', { rev: store.rev, source: 'admin-sms', at: Date.now() });
+    realtime.publish(realtime.adminChannel(), { kind: 'sms', at: Date.now(), userId: userId || null, phone: to, message: text, status: out.status || 'sent', chatId: chat ? chat.chatId : null, inApp: !!chat }).catch(() => {});
+    return json(res, 200, Object.assign({ ok: true, to: to || null, userId: userId || null, chatId: chat ? chat.chatId : null, inApp: !!chat }, out));
+  }
+  if (pathname === '/api/admin/sms/stream' && req.method === 'GET') {
+    const admin = adminAuth.currentAdmin();
+    if (!admin) return adminRequired(res);
+    res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', connection: 'keep-alive', 'access-control-allow-origin': '*', 'x-accel-buffering': 'no' });
+    res.write('event: hello\ndata: ' + JSON.stringify({ ok: true, provider: realtime.configured(), at: Date.now() }) + '\n\n');
+    const feed = (frame) => { try { res.write(frame); } catch (e) {} };
+    const onSms = (payload) => feed('event: sms\ndata: ' + JSON.stringify(payload) + '\n\n');
+    adminSmsSubs.add(onSms);
+    const ping = setInterval(() => feed(': ping\n\n'), 20000);
+    req.on('close', () => { clearInterval(ping); adminSmsSubs.delete(onSms); });
+    const recent = ((store.db && store.db.smsCampaigns) || []).slice(0, 25);
+    feed('event: log\ndata: ' + JSON.stringify({ campaigns: recent }) + '\n\n');
+    return;
+  }
+  if (pathname === '/api/admin/sms/inbox' && req.method === 'GET') {
+    const admin = adminAuth.currentAdmin();
+    if (!admin) return adminRequired(res);
+    const q = new URL(req.url, 'http://x').searchParams;
+    const since = Number(q.get('since') || 0) || 0;
+    const adminIds = new Set(((store.db && store.db.users) || []).filter((u) => u && u.role === 'admin').map((u) => u.id));
+    const rows = chatRing.messages.filter((m) => Number(m.createdAt) > since && (adminIds.has(m.to) || adminIds.has(m.from))).slice(-200);
+    const users = ((store.db && store.db.users) || []).filter((u) => u && u.phone).map((u) => ({ id: u.id, fullName: u.fullName || u.username || '', phone: u.phone, banned: !!u.banned }));
+    return json(res, 200, { ok: true, messages: rows, users });
   }
   if (pathname === '/api/chat/sync' && (req.method === 'GET' || req.method === 'POST')) {
     const q = new URL(req.url, 'http://x').searchParams;
@@ -1648,23 +1855,40 @@ async function api(req, res, pathname, query) {
     return;
   }
   if (pathname === '/api/chat/stream' && req.method === 'GET') {
+    const q = new URL(req.url, 'http://x').searchParams;
     res.writeHead(200, {
       'content-type': 'text/event-stream; charset=utf-8',
-      'cache-control': 'no-store',
+      'cache-control': 'no-store, no-transform',
       connection: 'keep-alive',
+      'x-accel-buffering': 'no',
       'access-control-allow-origin': '*'
     });
-    let since = Number(new URL(req.url, 'http://x').searchParams.get('since') || 0) || 0;
+    const userId = String(q.get('userId') || '');
+    const room = String(q.get('chatId') || '');
+    let since = Number(q.get('since') || 0) || 0;
+    let evSince = Number(q.get('evSince') || 0) || 0;
+    /* Only events about this person leave the server on a personal stream. */
+    const mine = (m) => !userId || m.from === userId || m.to === userId || (room && m.chatId === room);
     const send = () => {
       const got = chatMessagesSince(since);
-      if (!got.messages.length) return;
+      const list = got.messages.filter(mine);
+      if (!list.length) return;
       since = got.seq;
-      try { res.write('data: ' + JSON.stringify({ seq: got.seq, messages: got.messages }) + '\n\n'); } catch (e) {}
+      try { res.write('event: messages\ndata: ' + JSON.stringify({ seq: got.seq, messages: list, at: Date.now() }) + '\n\n'); } catch (e) {}
     };
+    const sendEvents = () => {
+      const got = chatEventsSince(evSince, userId, room);
+      if (!got.events.length) return;
+      evSince = got.seq;
+      try { res.write('event: events\ndata: ' + JSON.stringify({ seq: got.seq, events: got.events }) + '\n\n'); } catch (e) {}
+    };
+    try { res.write('event: hello\ndata: ' + JSON.stringify({ ok: true, seq: since, provider: realtime.configured(), at: Date.now() }) + '\n\n'); } catch (e) {}
     chatRing.subs.add(send);
+    chatRing.subs.add(sendEvents);
     send();
-    const ping = setInterval(() => { try { res.write(': ping\n\n'); } catch (e) {} }, 20000);
-    req.on('close', () => { clearInterval(ping); chatRing.subs.delete(send); });
+    sendEvents();
+    const ping = setInterval(() => { try { res.write(': ping\n\n'); } catch (e) {} }, 15000);
+    req.on('close', () => { clearInterval(ping); chatRing.subs.delete(send); chatRing.subs.delete(sendEvents); });
     return;
   }
 

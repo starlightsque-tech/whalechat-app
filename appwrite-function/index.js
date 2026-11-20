@@ -26,7 +26,7 @@ const CODES_FILE = 'whalechat-codes';
 const MAIL_FILE = 'whalechat-mail';
 const MAIL_LOG_FILE = 'whalechat-email-log';
 const NOTIF_LOG_LIMIT = 400;
-const VERSION = '3.70.0';
+const VERSION = '3.71.0';
 const crypto = require('crypto');
 /* project-scoped ids: env wins, but a stale/placeholder value never does */
 function isRealId(v) { return typeof v === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._-]{19,}$/.test(v); }
@@ -218,6 +218,78 @@ function chatSince(since) {
   return { seq: ring.seq, messages };
 }
 
+/* --- lane events: typing / read / presence (best effort, in-memory) -------
+   Ephemeral by nature: a lost typing indicator is harmless, and keeping it out
+   of storage means a keystroke never triggers a delete+create of a file. */
+const CHAT_EVENTS = { seq: 0, events: [] };
+const CHAT_EVENTS_KEEP = 400;
+function chatEventPush(ev) {
+  if (!ev) return;
+  CHAT_EVENTS.seq += 1;
+  ev.seq = CHAT_EVENTS.seq;
+  ev.at = Number(ev.at) || Date.now();
+  CHAT_EVENTS.events.push(ev);
+  if (CHAT_EVENTS.events.length > CHAT_EVENTS_KEEP) CHAT_EVENTS.events = CHAT_EVENTS.events.slice(-CHAT_EVENTS_KEEP);
+}
+function chatEventsSince(since, userId, room) {
+  const s = Number(since) || 0;
+  const events = CHAT_EVENTS.events.filter((e) => {
+    if (Number(e.seq) <= s) return false;
+    if (!userId && !room) return true;
+    if (e.type === 'typing') return (userId && (e.to === userId || e.from === userId)) || (room && e.chatId === room);
+    if (e.type === 'read') return (userId && (e.to === userId || e.by === userId)) || (room && (e.messages || []).some((m) => m.chatId === room));
+    return true;
+  });
+  return { seq: CHAT_EVENTS.seq, events };
+}
+/* Publish accepted lane messages to the hosted provider so a peer paints in
+   50-100 ms even though this Function cannot hold a stream open. */
+function routeRealtime(accepted) {
+  try {
+    if (!realtime.configured().enabled || !accepted || !accepted.length) return;
+    const ids = new Set(accepted.map((a) => a && a.id).filter(Boolean));
+    const ring = CHAT_RING;
+    if (!ring) return;
+    for (const m of ring.messages) {
+      if (!ids.has(m.id)) continue;
+      realtime.publishMessage(m).catch(() => {});
+      ids.delete(m.id);
+    }
+  } catch (e) {}
+}
+/* One admin message in the app chat (the user can answer it in WhaleChat). */
+async function adminChatSend(st, admin, user, text, meta) {
+  if (!user || !user.id) return null;
+  const adminId = admin.id || ((st.db.users || []).filter((u) => u && u.role === 'admin')[0] || {}).id || 'usr_admin';
+  const chatId = [String(user.id), String(adminId)].sort().join('__');
+  const msg = {
+    id: 'msg_sms_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    chatId: chatId,
+    from: String(adminId),
+    to: String(user.id),
+    type: 'text',
+    text: String(text || '').slice(0, 4000),
+    createdAt: Date.now(),
+    status: 'sent',
+    channel: (meta && meta.channel) || 'sms',
+    readBy: []
+  };
+  await chatAppend([msg]);
+  routeRealtime([{ id: msg.id }]);
+  st.db.notifications = Array.isArray(st.db.notifications) ? st.db.notifications : [];
+  st.db.notifications.unshift({
+    id: 'nt_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    userId: String(user.id), title: (meta && meta.title) || 'Message from WhaleChat',
+    body: String(text || '').slice(0, 140), link: '#/chat/' + adminId, icon: 'chat', read: false, createdAt: Date.now()
+  });
+  if (st.db.notifications.length > 400) st.db.notifications.length = 400;
+  await realtime.publish(realtime.adminChannel(), {
+    kind: 'sms', at: Date.now(), userId: String(user.id), chatId: chatId,
+    message: String(text || '').slice(0, 400), via: (meta && meta.channel) || 'in-app'
+  }).catch(() => {});
+  return { chatId: chatId, message: msg };
+}
+
 /* -------------------------------------------------------------------------
    Admin SMS: one message, an optional link "button", many recipients.
 
@@ -278,6 +350,9 @@ const { MarketService } = require('./market');
 const { createMarketData } = require('./market-data');
 const { SpotService } = require('./spot');
 const { createB2BAlertWatcher } = require('./b2b-alerts');
+/* 3.71 · hosted realtime provider (Pusher Channels / Ably). Optional: with no
+   keys configured the lane falls back to the poll, which is unchanged. */
+const realtime = require('./realtime');
 
 const CORS = {
   'access-control-allow-origin': '*',
@@ -2138,7 +2213,7 @@ module.exports = async ({ req, res, log, error }) => {
       const st = await readState();
       let mailOk = false;
       try { const mc = await readMailConfig(); mailOk = !!(mc.brevoKey || mc.resendKey); } catch (e) {}
-      return res.json({ ok: true, app: 'whalechat', version: VERSION, provider: 'appwrite-function', stream: false, rev: st.rev || 0, users: (st.db && st.db.users) ? st.db.users.length : 0, storage: 'appwrite', email: mailOk }, 200, CORS);
+      return res.json({ ok: true, app: 'whalechat', version: VERSION, provider: 'appwrite-function', stream: false, realtime: realtime.configured(), rev: st.rev || 0, users: (st.db && st.db.users) ? st.db.users.length : 0, storage: 'appwrite', email: mailOk }, 200, CORS);
     }
 
     /* ---------------------------------------------------------------- *
@@ -2157,6 +2232,8 @@ module.exports = async ({ req, res, log, error }) => {
         },
         market: { binanceWs: process.env.BINANCE_WS || 'wss://data-stream.binance.vision/stream' },
         reconciliation: { tolerancePct: offlineSync.TOLERANCE },
+        realtime: realtime.publicConfig(),
+        chat: { stream: false, sse: null, poll: '/api/chat/state', events: '/api/chat/events', send: '/api/chat/send' },
         features: {
           telesign: !!(TELESIGN_ID && TELESIGN_KEY),
           brevo: !!(process.env.BREVO_API_KEY),
@@ -2240,10 +2317,20 @@ module.exports = async ({ req, res, log, error }) => {
         const out = await telesignSendOne(phone, composed.text);
         const log = await readJsonFile(SMS_LOG_FILE, { entries: [] });
         log.entries = log.entries || [];
-        log.entries.unshift({ at: Date.now(), kind: 'test', to: smsMask(phone), by: admin.id, message: composed.text, button: composed.hasButton ? composed.url : '', ok: true, referenceId: out.referenceId, status: out.status });
+        log.entries.unshift({ at: Date.now(), kind: body.userId ? 'user' : 'test', to: smsMask(phone), userId: body.userId || null, by: admin.id, message: composed.text, button: composed.hasButton ? composed.url : '', ok: true, referenceId: out.referenceId, status: out.status });
         log.entries = log.entries.slice(0, 300);
         await writeJsonFile(SMS_LOG_FILE, 'wc-sms-log.json', log);
-        return res.json({ ok: true, to: smsMask(phone), referenceId: out.referenceId, status: out.status, hasButton: composed.hasButton, preview: composed.text }, 200, CORS);
+        /* an SMS from the admin desk also opens (or continues) the in-app
+           conversation, so the user can answer inside WhaleChat and the reply
+           reaches the panel live */
+        let chat = null;
+        if (body.userId && body.inApp !== false) {
+          const st2 = await readState();
+          const user = ((st2.db && st2.db.users) || []).find((u) => u && String(u.id) === String(body.userId));
+          if (user) { chat = await adminChatSend(st2, admin, user, composed.text, { channel: 'sms' }); await saveState(st2); }
+        }
+        await realtime.publish(realtime.adminChannel(), { kind: 'sms', at: Date.now(), userId: body.userId || null, phone: smsMask(phone), message: composed.text, status: out.status, chatId: chat ? chat.chatId : null, inApp: !!chat }).catch(() => {});
+        return res.json({ ok: true, to: smsMask(phone), referenceId: out.referenceId, status: out.status, hasButton: composed.hasButton, preview: composed.text, userId: body.userId || null, chatId: chat ? chat.chatId : null, inApp: !!chat }, 200, CORS);
       } catch (e) {
         return res.json({ ok: false, error: 'telesign_send_failed', message: e.message, code: e.telesignCode, trial: !!e.trial }, 502, CORS);
       }
@@ -2305,6 +2392,89 @@ module.exports = async ({ req, res, log, error }) => {
       }, 200, CORS);
     }
 
+    /* ---------------------------------------------------------------- *
+     * Admin SMS desk 3.71: talk to one user, or engage the audience in     *
+     * real time. Every send can also land in the app chat so the user can  *
+     * answer it; the reply shows up on the panel through the realtime      *
+     * provider (or the log poll when none is configured).                  *
+     * ---------------------------------------------------------------- */
+    if (path === '/api/telesign/engage' && method === 'POST') {
+      const st = await readState();
+      const admin = isAdminRequest(req, body, st, req.query || {});
+      if (!admin) return res.json({ ok: false, error: 'admin_session_required' }, 401, CORS);
+      const text = String(body.message || body.text || '').trim();
+      if (!text) return res.json({ ok: false, error: 'message_required' }, 400, CORS);
+      const ids = Array.isArray(body.userIds) ? body.userIds.map(String) : [];
+      const single = body.userId ? [String(body.userId)] : ids;
+      const inApp = body.inApp !== false;
+      const sendSms = body.sms !== false;
+      const composed = smsCompose(body);
+      const targets = ((st.db && st.db.users) || []).filter((u) => u && !u.banned && single.indexOf(String(u.id)) >= 0 && (inApp || u.phone));
+      if (!targets.length) return res.json({ ok: false, error: 'no_recipients' }, 400, CORS);
+      const results = [];
+      for (const user of targets) {
+        const row = { userId: user.id, name: user.fullName || user.username || '', phone: user.phone ? smsMask('+' + String(user.phone).replace(/[^\d]/g, '')) : '', sms: null, chatId: null };
+        if (sendSms && user.phone && TELESIGN_ID && TELESIGN_KEY) {
+          const phone = '+' + String(user.phone).replace(/[^\d]/g, '');
+          if (/^\+\d{8,15}$/.test(phone)) {
+            try {
+              const out = await telesignSendOne(phone, composed.text);
+              row.sms = { ok: true, status: out.status, referenceId: out.referenceId };
+            } catch (e) { row.sms = { ok: false, error: e.message }; }
+          } else row.sms = { ok: false, error: 'invalid_phone_number' };
+        } else if (sendSms) row.sms = { ok: false, error: TELESIGN_ID && TELESIGN_KEY ? 'no_phone_on_account' : 'telesign_not_configured' };
+        if (inApp) {
+          const chat = await adminChatSend(st, admin, user, text, { channel: row.sms && row.sms.ok ? 'sms' : 'in-app' });
+          row.chatId = chat ? chat.chatId : null;
+        }
+        results.push(row);
+        await new Promise((r) => setTimeout(r, 30));
+      }
+      const log = await readJsonFile(SMS_LOG_FILE, { entries: [] });
+      log.entries = log.entries || [];
+      log.entries.unshift({
+        at: Date.now(), kind: 'engage', by: admin.id,
+        recipients: targets.length, sent: results.filter((r) => r.sms && r.sms.ok).length,
+        inApp: inApp, message: composed.text, preview: composed.text,
+        results: results.slice(0, 60)
+      });
+      log.entries = log.entries.slice(0, 300);
+      await writeJsonFile(SMS_LOG_FILE, 'wc-sms-log.json', log);
+      await saveState(st);
+      const entry = { kind: 'engage', at: Date.now(), recipients: targets.length, message: composed.text, results: results.slice(0, 30) };
+      await realtime.publish(realtime.adminChannel(), entry).catch(() => {});
+      return res.json({ ok: true, recipients: targets.length, sent: log.entries[0].sent, results }, 200, CORS);
+    }
+
+    if (path === '/api/telesign/thread' && method === 'POST') {
+      const st = await readState();
+      const admin = isAdminRequest(req, body, st, req.query || {});
+      if (!admin) return res.json({ ok: false, error: 'admin_session_required' }, 401, CORS);
+      const user = ((st.db && st.db.users) || []).find((u) => u && String(u.id) === String(body.userId || ''));
+      if (!user) return res.json({ ok: false, error: 'user_not_found' }, 404, CORS);
+      const chatId = [String(user.id), String(admin.id)].sort().join('__');
+      const ring = await chatLoad();
+      const messages = ring.messages.filter((m) => m.chatId === chatId).slice(-200);
+      return res.json({ ok: true, user: { id: user.id, name: user.fullName || user.username || '', phone: user.phone || '' }, chatId: chatId, messages, online: CHAT_EVENTS.events.some((e) => e.type === 'presence' && e.userId === user.id && e.online && Date.now() - e.at < 120000) }, 200, CORS);
+    }
+
+    if (path === '/api/telesign/inbox' && method === 'GET') {
+      const st = await readState();
+      const admin = isAdminRequest(req, body, st, req.query || {});
+      if (!admin) return res.json({ ok: false, error: 'admin_session_required' }, 401, CORS);
+      const ring = await chatLoad();
+      const adminIds = new Set(((st.db && st.db.users) || []).filter((u) => u && u.role === 'admin').map((u) => u.id));
+      const messages = ring.messages.filter((m) => adminIds.has(m.from) || adminIds.has(m.to)).slice(-200);
+      const users = ((st.db && st.db.users) || []).filter((u) => u && !u.banned && u.phone).map((u) => ({ id: u.id, fullName: u.fullName || u.username || '', phone: u.phone }));
+      const log = await readJsonFile(SMS_LOG_FILE, { entries: [] });
+      return res.json({
+        ok: true, provider: realtime.configured(),
+        configured: !!(TELESIGN_ID && TELESIGN_KEY), configuredSms: !!(TELESIGN_ID && TELESIGN_KEY),
+        users, messages, campaigns: (log.entries || []).slice(0, 40),
+        online: users.filter((u) => CHAT_EVENTS.events.some((e) => e.type === 'presence' && e.userId === u.id && e.online && Date.now() - e.at < 120000)).map((u) => u.id)
+      }, 200, CORS);
+    }
+
     if (path === '/api/telesign/log' && method === 'GET') {
       const st = await readState();
       const admin = isAdminRequest(req, body, st, req.query || {});
@@ -2330,7 +2500,67 @@ module.exports = async ({ req, res, log, error }) => {
       if (!list.length) return res.json({ ok: false, error: 'no_messages' }, 400, CORS);
       if (list.length > 60) return res.json({ ok: false, error: 'too_many' }, 413, CORS);
       const out = await chatAppend(list);
+      if (out && out.ok) routeRealtime(out.accepted);
       return res.json(out, out.ok ? 200 : 502, CORS);
+    }
+
+    /* ---- lane events + hosted provider config (3.71) ------------------ */
+    if (path === '/api/chat/events' && method === 'GET') {
+      const q = req.query || {};
+      const out = chatEventsSince(Number(q.since || 0) || 0, String(q.userId || ''), String(q.chatId || ''));
+      return res.json(Object.assign({ ok: true }, out), 200, CORS);
+    }
+    if (path === '/api/chat/typing' && method === 'POST') {
+      const ev = { type: 'typing', from: String(body.from || ''), to: String(body.to || ''), chatId: String(body.chatId || ''), typing: body.typing !== false };
+      if (!ev.from) return res.json({ ok: false, error: 'from_required' }, 400, CORS);
+      chatEventPush(ev);
+      realtime.publishEvent('typing', ev).catch(() => {});
+      return res.json({ ok: true }, 200, CORS);
+    }
+    if (path === '/api/chat/read' && method === 'POST') {
+      const ids = Array.isArray(body.ids) ? body.ids.map(String).slice(0, 200) : [];
+      const reader = String(body.userId || '');
+      if (!ids.length || !reader) return res.json({ ok: false, error: 'ids_and_user_required' }, 400, CORS);
+      const ring = await chatLoad();
+      const updates = [];
+      for (const m of ring.messages) {
+        if (ids.indexOf(m.id) < 0) continue;
+        m.readBy = Array.isArray(m.readBy) ? m.readBy : [];
+        if (m.readBy.indexOf(reader) < 0) m.readBy.push(reader);
+        m.status = 'seen';
+        updates.push({ id: m.id, status: 'seen', readBy: m.readBy, chatId: m.chatId, from: m.from, to: m.to, seq: m.seq });
+      }
+      if (updates.length) {
+        await chatPersist({ seq: ring.seq, messages: ring.messages });
+        chatEventPush({ type: 'read', by: reader, ids: ids, messages: updates });
+        realtime.publishEvent('read', { from: reader, chatId: updates[0].chatId, ids: ids }).catch(() => {});
+      }
+      return res.json({ ok: true, updated: updates.length }, 200, CORS);
+    }
+    if (path === '/api/chat/presence' && method === 'POST') {
+      const ev = { type: 'presence', userId: String(body.userId || ''), online: body.online !== false, at: Date.now() };
+      if (!ev.userId) return res.json({ ok: false, error: 'userId_required' }, 400, CORS);
+      chatEventPush(ev);
+      realtime.publishEvent('presence', { from: ev.userId, online: ev.online }).catch(() => {});
+      return res.json({ ok: true }, 200, CORS);
+    }
+    if (path === '/api/realtime/config' && method === 'GET') {
+      return res.json(realtime.publicConfig(), 200, CORS);
+    }
+    if (path === '/api/realtime/auth' && method === 'POST') {
+      const socketId = String(body.socket_id || body.socketId || '');
+      const channel = String(body.channel_name || body.channel || '');
+      if (!socketId || !channel) return res.json({ ok: false, error: 'socket_and_channel_required' }, 400, CORS);
+      const auth = realtime.pusherAuth(socketId, channel);
+      if (!auth) return res.json({ ok: false, error: 'pusher_not_configured' }, 501, CORS);
+      return res.json(auth, 200, CORS);
+    }
+    if (path === '/api/realtime/token' && method === 'GET') {
+      const q = req.query || {};
+      const channels = String(q.channels || '').split(',').map((x) => x.trim()).filter(Boolean);
+      const token = realtime.ablyTokenRequest({ channels: channels, clientId: String(q.clientId || '') });
+      if (!token) return res.json({ ok: false, error: 'ably_not_configured' }, 501, CORS);
+      return res.json({ ok: true, token: token.token, keyName: token.keyName, expires: token.expires }, 200, CORS);
     }
 
     if (path === '/api/chat/sync' && (method === 'GET' || method === 'POST')) {
@@ -2368,13 +2598,19 @@ module.exports = async ({ req, res, log, error }) => {
     }
 
     if (path === '/api/chat/state' && method === 'GET') {
-      const since = Number((req.query && req.query.since) || 0) || 0;
+      const q = req.query || {};
+      const since = Number(q.since || 0) || 0;
+      const evSince = Number(q.evSince || 0) || 0;
+      const userId = String(q.userId || '');
+      const room = String(q.chatId || '');
       /* the ring already holds an accepted message, so a poll answers from it
          immediately instead of waiting for the durable write to land */
       chatRefreshBg();
       await chatLoad();
       const got = chatSince(since);
-      return res.json({ ok: true, seq: got.seq, messages: got.messages }, 200, CORS);
+      const messages = userId ? got.messages.filter((m) => m.from === userId || m.to === userId) : got.messages;
+      const evs = chatEventsSince(evSince, userId, room);
+      return res.json({ ok: true, seq: got.seq, messages: messages, events: evs.events, evSeq: evs.seq }, 200, CORS);
     }
 
     if (path === '/api/orders/offline/push' && method === 'POST') {

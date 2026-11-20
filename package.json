@@ -1,8 +1,8 @@
 {
   "name": "whalechat",
-  "version": "3.70.0",
+  "version": "3.71.0",
   "private": true,
-  "description": "WhaleChat — chat, marketplace and wallet. Web app + sync server + Android/iOS shells.",
+  "description": "WhaleChat \u2014 chat, marketplace and wallet. Web app + sync server + Android/iOS shells.",
   "main": "server.js",
   "engines": {
     "node": ">=18"
@@ -31,12 +31,13 @@
     "verify:connections": "node scripts/verify-connections.js",
     "deploy:appwrite:db": "node scripts/deploy-appwrite-collections.mjs",
     "deploy:appwrite:function": "node scripts/deploy-appwrite-function.mjs",
-    "deploy:appwrite:all": "node scripts/deploy-appwrite-collections.mjs && node scripts/deploy-appwrite-function.mjs && node scripts/deploy-appwrite.mjs",
+    "deploy:appwrite:all": "node scripts/deploy-appwrite-collections.mjs && node scripts/deploy-appwrite-function.mjs && node scripts/deploy-appwrite.mjs && node scripts/deploy-appwrite-admin.mjs",
     "test:offline-trading": "node scripts/test-offline-trading.mjs",
     "test:chat-e2e": "node scripts/test-chat-e2e.mjs",
     "test:chat-e2e:live": "WC_E2E_BASE=https://whalechat-api.appwrite.network node scripts/test-chat-e2e.mjs",
     "test:live-trades": "node scripts/test-live-trades.mjs",
-    "test:370": "node scripts/test-370.mjs"
+    "test:370": "node scripts/test-370.mjs",
+    "deploy:appwrite:admin": "node scripts/deploy-appwrite-admin.mjs"
   },
   "dependencies": {
     "web-push": "^3.6.7",
