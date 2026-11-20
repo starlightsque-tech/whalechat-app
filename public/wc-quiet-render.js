@@ -56,10 +56,37 @@
     return Date.now() - (window.__wcLastScrollAt || 0) < 180;
   }
   function busyNow() { return typingNow() || dialogOpen() || scrollingNow(); }
+  /* Admin console pages are read-and-edit screens: an automatic repaint is
+     never worth losing the reader's place or the field they are editing.
+     Only a route change or an action the admin just took repaints them. */
+  function adminRoute() {
+    return /^#\/admin(\/|$)/i.test(String(location_hash()));
+  }
+  function location_hash() { return (typeof location !== 'undefined' && location.hash) || ''; }
+  var lastUserAction = 0;
+  ['pointerdown', 'touchstart', 'keydown', 'input', 'change'].forEach(function (ev) {
+    window.addEventListener(ev, function () { lastUserAction = Date.now(); }, { passive: true, capture: true });
+  });
+  function adminBusy() {
+    if (!adminRoute()) return false;
+    return Date.now() - lastUserAction > 4000;
+  }
 
   ['scroll', 'wheel', 'touchmove'].forEach(function (ev) {
     window.addEventListener(ev, function () { window.__wcLastScrollAt = Date.now(); }, { passive: true, capture: true });
   });
+
+  function nodeKey(el) {
+    var parts = [];
+    var cur = el;
+    while (cur && cur !== document.body && parts.length < 24) {
+      var idx = 0, sib = cur;
+      while ((sib = sib.previousElementSibling)) idx++;
+      parts.unshift(String(cur.tagName || '') + ':' + idx);
+      cur = cur.parentElement;
+    }
+    return parts.join('/');
+  }
 
   function snapshot() {
     var content = document.getElementById('content');
@@ -71,8 +98,22 @@
       chatY: chat ? chat.scrollTop : 0,
       chatAtEnd: chat ? (chat.scrollHeight - chat.scrollTop - chat.clientHeight) < 60 : false,
       focusId: null, selStart: null, selEnd: null, value: null, tag: null,
-      modalCount: document.querySelectorAll('.modal-backdrop:not(.hidden), .modal.open').length
+      modalCount: document.querySelectorAll('.modal-backdrop:not(.hidden), .modal.open').length,
+      nested: []
     };
+    /* every scrolled panel inside the app (admin tables, lists, cards), keyed
+       by its position in the DOM so a repaint puts the reader back exactly
+       where they were — not only the page-level #content pane */
+    try {
+      var host = document.getElementById('app') || document.body;
+      var nodes = host.querySelectorAll('*');
+      for (var i = 0; i < nodes.length && i < 4000; i++) {
+        var el = nodes[i];
+        if (!el || el.scrollTop <= 0) continue;
+        if (el.scrollHeight <= el.clientHeight + 2) continue;
+        snap.nested.push({ key: nodeKey(el), top: el.scrollTop, left: el.scrollLeft });
+      }
+    } catch (e) {}
     if (ae && ae.id && /^(INPUT|TEXTAREA)$/.test(String(ae.tagName || '').toUpperCase())) {
       snap.focusId = ae.id;
       snap.tag = ae.tagName;
@@ -90,6 +131,21 @@
     try { if (typeof window.scrollTo === 'function') window.scrollTo(0, snap.winY); } catch (e) {}
     if (content && snap.contentY) content.scrollTop = snap.contentY;
     if (chat) chat.scrollTop = snap.chatAtEnd ? chat.scrollHeight : snap.chatY;
+    if (snap.nested && snap.nested.length) {
+      try {
+        var host = document.getElementById('app') || document.body;
+        var nodes = host.querySelectorAll('*');
+        var want = {};
+        snap.nested.forEach(function (n) { want[n.key] = n; });
+        for (var i = 0; i < nodes.length && i < 4000; i++) {
+          var el = nodes[i];
+          if (!el || !want[nodeKey(el)]) continue;
+          var n = want[nodeKey(el)];
+          if (n.top) el.scrollTop = n.top;
+          if (n.left) el.scrollLeft = n.left;
+        }
+      } catch (e) {}
+    }
     if (snap.focusId) {
       var field = document.getElementById(snap.focusId);
       if (field) {
@@ -154,6 +210,15 @@
       /* a route change is a user action: it must paint at once, never later */
       var moved = String(location.hash || '') !== lastHash;
       if (forced || moved) { pending = false; pendingForce = false; realPaint(forced); return; }
+
+      /* admin console: a timer/sync-driven repaint must not move the page,
+         steal the cursor or interrupt a form — wait for the admin's next
+         action or route change instead */
+      if (adminBusy()) {
+        pending = false;
+        pendingForce = false;
+        return;
+      }
 
       var now = Date.now();
       if (busyNow()) {
@@ -237,6 +302,7 @@
   window.WCQuietRender = {
     busy: function () { return busyNow(); },
     force: function () { pending = false; realPaint(true); },
-    pending: function () { return pending; }
+    pending: function () { return pending; },
+    adminBusy: function () { return adminBusy(); }
   };
 })();

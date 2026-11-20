@@ -17,9 +17,12 @@ the same module bundled in `appwrite-function/smtp.js`.
 
 ## 2. SMS / OTP
 
-Create an API key in Brevo → **SMTP & API → API keys** (`xkeysib-…`) and set
-`BREVO_API_KEY`. Add an approved SMS sender in Brevo → **SMS** and set
-`BREVO_SMS_SENDER` (max 11 alphanumeric characters).
+SMS notifications and OTP are sent through **Telesign** first. Set
+`TELESIGN_CUSTOMER_ID` and `TELESIGN_API_KEY` (and optionally
+`TELESIGN_SENDER_ID`). If Telesign is absent or a send fails, WhaleChat falls
+back to Brevo transactional SMS: create an API key in Brevo → **SMTP & API →
+API keys** (`xkeysib-…`), set `BREVO_API_KEY`, add an approved SMS sender in
+Brevo → **SMS** and set `BREVO_SMS_SENDER` (max 11 characters).
 
 The OTP flow:
 
@@ -41,4 +44,4 @@ BREVO_SMTP_USER=you@example.com BREVO_SMTP_KEY=xsmtpsib-... \
 ```
 
 `GET /api/email/status` reports `provider: "brevo-smtp"` when the relay is in
-use, and `GET /api/telesign/status` reports `provider: "brevo"` for SMS.
+use, and `GET /api/telesign/status` reports `provider: "telesign"` (or `brevo` when the fallback is active).

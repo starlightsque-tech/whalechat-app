@@ -26,7 +26,7 @@ const CODES_FILE = 'whalechat-codes';
 const MAIL_FILE = 'whalechat-mail';
 const MAIL_LOG_FILE = 'whalechat-email-log';
 const NOTIF_LOG_LIMIT = 400;
-const VERSION = '3.77.0';
+const VERSION = '3.78.0';
 const crypto = require('crypto');
 const smtpClient = require('./smtp');
 /* project-scoped ids: env wins, but a stale/placeholder value never does */
@@ -40,7 +40,7 @@ const SMS_CODES_FILE = 'wc-sms-codes';
 const BREVO_KEY = String(process.env.BREVO_API_KEY || '').trim();
 const BREVO_SMS_SENDER = String(process.env.BREVO_SMS_SENDER || process.env.BREVO_SENDER_NAME || 'WhaleChat').trim();
 function smsReady() { return !!((TELESIGN_ID && TELESIGN_KEY) || BREVO_KEY); }
-function smsProvider() { return BREVO_KEY ? 'brevo' : ((TELESIGN_ID && TELESIGN_KEY) ? 'telesign' : 'none'); }
+function smsProvider() { return (TELESIGN_ID && TELESIGN_KEY) ? 'telesign' : (BREVO_KEY ? 'brevo' : 'none'); }
 
 
 /* =========================================================================
@@ -352,8 +352,8 @@ async function brevoSendOne(phone, text) {
   };
 }
 async function telesignSendOne(phone, text) {
-  /* Brevo is the default SMS provider; Telesign stays the fallback */
-  if (BREVO_KEY) return brevoSendOne(phone, text);
+  /* Telesign is the SMS notification provider; Brevo stays the fallback */
+  if (!(TELESIGN_ID && TELESIGN_KEY)) return brevoSendOne(phone, text);
   const base = (process.env.TELESIGN_BASE_API || 'https://rest-ww.telesign.com/v1').replace(/\/+$/, '');
   const auth = 'Basic ' + Buffer.from(TELESIGN_ID + ':' + TELESIGN_KEY).toString('base64');
   const form = { phone_number: phone, message: text, message_type: 'ARN' };
@@ -2359,7 +2359,7 @@ module.exports = async ({ req, res, log, error }) => {
       if (!/^\+\d{8,15}$/.test(phone)) return res.json({ ok: false, error: 'invalid_phone_number' }, 400, CORS);
 
       /* ---- Brevo OTP path (no Telesign account needed) ---- */
-      if (BREVO_KEY) {
+      if (!(TELESIGN_ID && TELESIGN_KEY)) {
         const store = await readJsonFile(SMS_CODES_FILE, { codes: {} });
         store.codes = store.codes || {};
         const now2 = Date.now();

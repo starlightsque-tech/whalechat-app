@@ -97,10 +97,10 @@ through the **Brevo SMTP relay** (the primary transport in 3.77):
 | `MAIL_FROM` | a verified Brevo sender address |
 | `BREVO_API_KEY` | optional HTTP-API fallback + SMS API key |
 
-SMS notifications and OTP use **Brevo transactional SMS** with the same
-`BREVO_API_KEY`. Set `BREVO_SMS_SENDER` to a sender approved in Brevo. If
-Telesign credentials are also present they are used as the fallback provider.
-Admin → SMS in the app sends through whichever provider is configured.
+SMS notifications and OTP use **Telesign** (`TELESIGN_CUSTOMER_ID`,
+`TELESIGN_API_KEY`, optional `TELESIGN_SENDER_ID`). Brevo transactional SMS
+(`BREVO_API_KEY` + `BREVO_SMS_SENDER`) remains a fallback when Telesign is not
+configured or a Telesign send fails. Admin → SMS uses Telesign first.
 
 On an Appwrite Function deployment the email/SMS code runs inside
 `appwrite-function`; redeploy it after setting the variables:

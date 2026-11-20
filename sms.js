@@ -39,17 +39,19 @@ function apiKey() {
 function sender() {
   return String(process.env.BREVO_SMS_SENDER || process.env.BREVO_SENDER_NAME || base.DEFAULTS.brevo.senderName || 'WhaleChat').trim();
 }
-/* Brevo is the requested provider. Telesign is only used when no Brevo API
-   key exists, so the same account that sends mail also sends SMS/OTP. */
-function telesignOn() {
-  return !apiKey() && !!(telesign && telesign.configured && telesign.configured());
+/* SMS notifications + OTP use Telesign first (the requested notification
+   provider). Brevo transactional SMS remains a fallback when Telesign is not
+   configured or a Telesign send fails. Email is always Brevo SMTP. */
+function telesignBaseOn() {
+  return !!(telesign && telesign.configured && telesign.configured());
 }
+function telesignOn() { return telesignBaseOn(); }
 function configured() {
-  return !!apiKey() || !!(telesign && telesign.configured && telesign.configured());
+  return telesignBaseOn() || !!apiKey();
 }
 function provider() {
+  if (telesignBaseOn()) return 'telesign';
   if (apiKey()) return 'brevo';
-  if (telesign && telesign.configured && telesign.configured()) return 'telesign';
   return 'none';
 }
 
@@ -156,7 +158,14 @@ async function brevoSend(phone, content) {
 
 /* --------------------------------------------------------- verification */
 async function startVerification(input) {
-  if (telesignOn()) return telesign.startVerification(input);
+  if (telesignOn()) {
+    try { return await telesign.startVerification(input); }
+    catch (e) {
+      /* Telesign refused (trial restriction, outage, unverified number):
+         fall through to Brevo SMS when a key is available */
+      if (!apiKey()) throw e;
+    }
+  }
   load();
   if (!apiKey()) throw Object.assign(new Error('sms_not_configured'), { status: 501 });
   const phone = normalizePhone(input && input.phone);
@@ -195,7 +204,15 @@ async function startVerification(input) {
 }
 
 async function checkVerification(input) {
-  if (telesignOn()) return telesign.checkVerification(input);
+  if (telesignOn()) {
+    try {
+      const out = await telesign.checkVerification(input);
+      return out;
+    } catch (e) {
+      /* a code issued by the Brevo fallback is checked locally below */
+      if (!apiKey()) throw e;
+    }
+  }
   load();
   const phone = normalizePhone(input && input.phone);
   if (!phone) throw Object.assign(new Error('invalid_phone_number'), { status: 400 });
@@ -223,7 +240,12 @@ async function checkVerification(input) {
 
 /* ------------------------------------------------------------ plain SMS */
 async function sendSms(input) {
-  if (telesignOn()) return telesign.sendSms(input);
+  if (telesignOn()) {
+    try { return await telesign.sendSms(input); }
+    catch (e) {
+      if (!apiKey()) throw e;
+    }
+  }
   if (!apiKey()) throw Object.assign(new Error('sms_not_configured'), { status: 501 });
   const phone = normalizePhone(input && input.phone);
   if (!phone) throw Object.assign(new Error('invalid_phone_number'), { status: 400 });
@@ -234,7 +256,12 @@ async function sendSms(input) {
 }
 
 async function sendBulk(input) {
-  if (telesignOn()) return telesign.sendBulk(input);
+  if (telesignOn()) {
+    try { return await telesign.sendBulk(input); }
+    catch (e) {
+      if (!apiKey()) throw e;
+    }
+  }
   if (!apiKey()) throw Object.assign(new Error('sms_not_configured'), { status: 501 });
   const composed = composeMessage(input);
   if (!composed.text) throw Object.assign(new Error('message_required'), { status: 400 });
@@ -279,7 +306,7 @@ function status() {
   load();
   if (telesign && telesign.status) {
     const st = telesign.status();
-    if (st.configured) return Object.assign(st, { provider: 'telesign' });
+    if (st.configured) return Object.assign(st, { provider: 'telesign', fallback: apiKey() ? 'brevo' : 'none' });
   }
   return {
     configured: !!apiKey(),
