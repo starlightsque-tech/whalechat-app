@@ -20,7 +20,9 @@ if [ -n "$LOGIN_EMAIL" ]; then
   adb shell input text "$LOGIN_PASSWORD" || true
   sleep 1
   adb shell input keyevent 66 || true
-  sleep 15
+  sleep 1
+  adb shell input tap 160 438 || true
+  sleep 18
   adb exec-out screencap -p > step-after-login.png || true
   adb shell am start -a android.intent.action.VIEW -d "https://whalechat.appwrite.network/whalechat.html${TARGET_HASH:-#/invest/market}" app.whalechat.mobile || true
   sleep 12
