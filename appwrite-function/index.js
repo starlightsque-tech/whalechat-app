@@ -204,17 +204,6 @@ async function sendCodeEmail(to, code, purposeLabel) {
   await appendMailLog({ type: 'verification', to, subject, code, purpose: purposeLabel, status: res.ok ? 'sent' : 'failed', provider: res.provider, messageId: res.messageId, error: res.error, from: cfg.from });
   return res.ok;
 }
-async function sendCodeEmail(to, code, purposeLabel) {
-  const cfg = await readMailConfig();
-  const subject = 'Your WhaleChat verification code: ' + code;
-  const html = '<div style="font-family:system-ui,sans-serif;background:#04101a;color:#e9f4f9;padding:28px;border-radius:14px">' +
-    '<h2 style="margin:0 0 8px">WhaleChat verification</h2>' +
-    '<p style="color:#8ba4b6">Use this code to verify ' + purposeLabel + '. It expires in 15 minutes.</p>' +
-    '<div style="font-size:32px;letter-spacing:10px;font-weight:800;color:#2ee6c9;background:#0b1d29;border:1px dashed #2ee6c9;border-radius:12px;padding:16px;text-align:center;margin:18px 0">' + code + '</div>' +
-    '<p style="color:#8ba4b6;font-size:12px">If you did not request this, ignore this email and never share the code.</p></div>';
-  const text = 'Your WhaleChat verification code is ' + code + ' (valid 15 minutes).';
-  return sendMail(cfg, to, subject, html, text);
-}
 async function apiRaw(url, opts) {
   try {
     const r = await fetch(url, opts);
