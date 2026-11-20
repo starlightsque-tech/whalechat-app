@@ -643,6 +643,13 @@
     setInterval(syncOutbox, 2000);
     setInterval(watchChat, 400);
     window.addEventListener('online', function () { syncOutbox(); watchChat(); });
+    /* the service worker wakes the outbox when the browser reconnects */
+    try {
+      navigator.serviceWorker && navigator.serviceWorker.addEventListener('message', function (e) {
+        var t = e && e.data && e.data.type;
+        if (t === 'WC_CHAT_OUTBOX' || t === 'wc-sync-now') syncOutbox();
+      });
+    } catch (e) {}
     window.addEventListener('hashchange', function () { setTimeout(watchChat, 60); });
     window.addEventListener('focus', function () { watchChat(); });
     window.addEventListener('wc:chat-opened', function () { watchChat(); });

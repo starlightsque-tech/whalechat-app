@@ -159,6 +159,16 @@ self.addEventListener('sync', (event) => {
   })());
 });
 
+/* chat Outbox (3.73): the page drains IndexedDB; the worker wakes it as soon as
+   the browser regains connectivity, even if the tab was in the background. */
+self.addEventListener('sync', (event) => {
+  if (event.tag !== 'wc-chat-outbox') return;
+  event.waitUntil((async () => {
+    const all = await self.clients.matchAll({ includeUncontrolled: true, type: 'window' });
+    all.forEach((c) => c.postMessage({ type: 'WC_CHAT_OUTBOX' }));
+  })());
+});
+
 self.addEventListener('periodicsync', (event) => {
   if (event.tag !== 'wc-offline-trades') return;
   event.waitUntil((async () => {
