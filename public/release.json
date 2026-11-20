@@ -1,8 +1,8 @@
 {
-  "version": "3.65.0",
+  "version": "3.65.2",
   "build": "2026-11-19T20:56:35Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.65.0 — Telesign SMS OTP on the signup and login screens (server-signed only: the browser never sees a Telesign credential), phone verification required before an account is created when SMS is configured, plus passwordless 'Sign in with SMS code'. Backend runs on the Appwrite NYC project (function whalechat-sync, database 6aff488e0006a3fe39e0, bucket 6aff48620020a44c714f) with the full /api/* surface tunnelled through Appwrite execution parameters; offline reconciliation, native charts, device IndexedDB and the installed-app gate from 3.64.0 are unchanged.",
+  "notes": "WhaleChat 3.65.2 - adds ADB install/emulator scripts and a CI emulator smoke test that installs the APK, launches the live app and captures a screenshot artifact.",
   "releasedAt": "2026-11-19T20:56:35Z",
   "minimum": "3.0.0"
 }

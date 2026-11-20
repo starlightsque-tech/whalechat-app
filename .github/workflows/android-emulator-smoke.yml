@@ -1,0 +1,54 @@
+name: Android emulator smoke test
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'whalechat-release.apk'
+      - '.github/workflows/android-emulator-smoke.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  emulator:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Locate APK
+        run: |
+          set -e
+          APK="$(ls whalechat-release.apk files/*.apk public/*.apk 2>/dev/null | head -1 || true)"
+          if [ -z "$APK" ]; then
+            echo "No APK in the repo. Run the 'Build signed Android APK' workflow first, or add whalechat-release.apk." >&2
+            exit 1
+          fi
+          echo "APK_PATH=$APK" >> "$GITHUB_ENV"
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run APK on emulator and capture screenshot
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          script: |
+            adb install -r -d "$APK_PATH"
+            adb shell monkey -p app.whalechat.mobile -c android.intent.category.LAUNCHER 1
+            sleep 15
+            adb exec-out screencap -p > whalechat-emulator.png
+            adb shell dumpsys activity activities | grep -i whalechat || true
+
+      - name: Upload emulator screenshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: whalechat-emulator-screenshot
+          path: whalechat-emulator.png
+          if-no-files-found: error
