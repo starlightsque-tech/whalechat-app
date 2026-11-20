@@ -42,3 +42,5 @@ apps/*/dist-offline/
 apps/mobile/.expo/
 *.tsbuildinfo
 .turbo/
+
+packages/*/dist/
