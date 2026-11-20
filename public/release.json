@@ -1,8 +1,8 @@
 {
-  "version": "3.68.0",
-  "build": "2026-11-20T16:56:24Z",
+  "version": "3.69.0",
+  "build": "2026-11-20T18:29:55Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.68.0 — admin SMS desk: send Telesign text messages to one number or to every account, with an embeddable link button (label + link) that recipients tap to open the app, plus a live preview and a send log. Keeps 3.67.0: quiet offline mode, offline message delivery, keyboard-safe composer and the real-time green-up / red-down trade chart.",
-  "releasedAt": "2026-11-20T16:56:24Z",
+  "notes": "WhaleChat 3.69.0 — chat lane: one persistent connection and instant local display, so a message appears the moment it is typed and reaches the other user in a single round trip; offline sending and receiving from a durable outbox; invisible auto-refresh that never interrupts typing, scrolling or an open dialog; sessions are no longer ended by a sync; and a dark/bright switch that stays on.",
+  "releasedAt": "2026-11-20T18:29:55Z",
   "minimum": "3.0.0"
 }

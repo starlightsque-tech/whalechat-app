@@ -851,6 +851,91 @@ function isAdmin(db, adminId) {
 function adminFor(adminId) {
   return adminAuth.isAdminRequest(adminId) ? adminAuth.currentAdmin() : null;
 }
+
+/* =========================================================================
+   Chat lane (3.69) — a small, fast road for messages
+   -------------------------------------------------------------------------
+   Messages used to ride on the whole state document. Here they get their own
+   tiny log with a monotonic sequence, an SSE stream for devices that can hold
+   one open, and a long poll for everything else. Delivery is one round trip.
+   ========================================================================= */
+const CHAT_KEEP = 4000;
+const chatRing = { seq: 0, messages: [], loaded: false, subs: new Set() };
+const CHAT_LOG_FILE = path.join(DATA_DIR, 'chat-log.json');
+
+function chatLoadSync() {
+  if (chatRing.loaded) return chatRing;
+  chatRing.loaded = true;
+  try {
+    const raw = JSON.parse(fs.readFileSync(CHAT_LOG_FILE, 'utf8'));
+    if (raw && Array.isArray(raw.messages)) {
+      chatRing.messages = raw.messages;
+      chatRing.seq = Number(raw.seq) || raw.messages.length || 0;
+    }
+  } catch (e) { /* first boot: empty log */ }
+  return chatRing;
+}
+let chatSaveTimer = null;
+function chatSaveSoon() {
+  if (chatSaveTimer) return;
+  chatSaveTimer = setTimeout(() => {
+    chatSaveTimer = null;
+    try { writeJSONAtomic(CHAT_LOG_FILE, { seq: chatRing.seq, messages: chatRing.messages }); } catch (e) {}
+  }, 400);
+}
+function chatNormalize(m, seq) {
+  if (!m || !m.id || !m.chatId) return null;
+  return {
+    id: String(m.id).slice(0, 60),
+    chatId: String(m.chatId).slice(0, 120),
+    from: String(m.from || '').slice(0, 60),
+    to: String(m.to || '').slice(0, 60),
+    type: /^(text|image|video|audio)$/.test(String(m.type || '')) ? m.type : 'text',
+    text: String(m.text == null ? '' : m.text).slice(0, 4000),
+    mediaId: m.mediaId ? String(m.mediaId).slice(0, 80) : null,
+    dur: Number(m.dur) || null,
+    createdAt: Number(m.createdAt) || Date.now(),
+    status: String(m.status || 'sent').slice(0, 20),
+    forwarded: !!m.forwarded,
+    deleted: !!m.deleted,
+    readBy: Array.isArray(m.readBy) ? m.readBy.slice(0, 50) : [],
+    seq: Number(seq) || 0
+  };
+}
+function chatAppendMessages(list) {
+  chatLoadSync();
+  const have = new Map(chatRing.messages.map((m) => [m.id, m]));
+  const accepted = [];
+  for (const raw of (list || [])) {
+    const m = chatNormalize(raw, 0);
+    if (!m) continue;
+    const cur = have.get(m.id);
+    if (cur) {
+      if (m.status) cur.status = m.status;
+      if (m.readBy && m.readBy.length > (cur.readBy || []).length) cur.readBy = m.readBy;
+      if (m.deleted) cur.deleted = true;
+      accepted.push({ id: cur.id, status: cur.status, seq: cur.seq, duplicate: true });
+      continue;
+    }
+    chatRing.seq += 1;
+    m.seq = chatRing.seq;
+    chatRing.messages.push(m);
+    have.set(m.id, m);
+    accepted.push({ id: m.id, status: m.status, seq: m.seq });
+  }
+  if (chatRing.messages.length > CHAT_KEEP) chatRing.messages = chatRing.messages.slice(-CHAT_KEEP);
+  if (accepted.length) {
+    chatSaveSoon();
+    for (const sub of chatRing.subs) { try { sub(); } catch (e) {} }
+  }
+  return { ok: true, seq: chatRing.seq, accepted };
+}
+function chatMessagesSince(since) {
+  chatLoadSync();
+  const s = Number(since) || 0;
+  return { seq: chatRing.seq, messages: chatRing.messages.filter((m) => Number(m.seq) > s) };
+}
+
 function adminRequired(res) {
   return json(res, 401, { ok: false, error: 'admin_session_required', message: 'Confirm your admin password to continue' });
 }
@@ -1523,6 +1608,64 @@ async function api(req, res, pathname, query) {
     if (!adminAuth.currentAdmin()) return adminRequired(res);
     const list = ((store.db && store.db.smsCampaigns) || []).slice(0, 30);
     return json(res, 200, { ok: true, campaigns: list, status: telesign ? telesign.status() : { configured: false } });
+  }
+
+  /* --- chat lane: tiny payload, one round trip ----------------------- */
+  if (pathname === '/api/chat/send' && req.method === 'POST') {
+    const body = await readBody(req);
+    const list = Array.isArray(body.messages) ? body.messages : (body.message ? [body.message] : []);
+    if (!list.length) return json(res, 400, { ok: false, error: 'no_messages' });
+    if (list.length > 60) return json(res, 413, { ok: false, error: 'too_many' });
+    return json(res, 200, chatAppendMessages(list));
+  }
+  if (pathname === '/api/chat/state' && req.method === 'GET') {
+    const since = Number(new URL(req.url, 'http://x').searchParams.get('since') || 0) || 0;
+    const got = chatMessagesSince(since);
+    return json(res, 200, { ok: true, seq: got.seq, messages: got.messages });
+  }
+  if (pathname === '/api/chat/sync' && (req.method === 'GET' || req.method === 'POST')) {
+    const q = new URL(req.url, 'http://x').searchParams;
+    const since = Number(q.get('since') || 0) || 0;
+    const wait = Math.min(25, Math.max(0, Number(q.get('wait') || 0) || 0));
+    const first = chatMessagesSince(since);
+    if (first.messages.length || !wait) {
+      return json(res, 200, { ok: true, seq: first.seq, messages: first.messages, waited: 0 });
+    }
+    let done = false;
+    const started = Date.now();
+    const tick = () => { const got = chatMessagesSince(since); if (got.messages.length) finish(); };
+    const finish = () => {
+      if (done) return;
+      done = true;
+      chatRing.subs.delete(tick);
+      clearTimeout(timer);
+      const got = chatMessagesSince(since);
+      try { json(res, 200, { ok: true, seq: got.seq, messages: got.messages, waited: Date.now() - started }); } catch (e) {}
+    };
+    const timer = setTimeout(finish, wait * 1000);
+    chatRing.subs.add(tick);
+    req.on('close', () => { done = true; chatRing.subs.delete(tick); clearTimeout(timer); });
+    return;
+  }
+  if (pathname === '/api/chat/stream' && req.method === 'GET') {
+    res.writeHead(200, {
+      'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-store',
+      connection: 'keep-alive',
+      'access-control-allow-origin': '*'
+    });
+    let since = Number(new URL(req.url, 'http://x').searchParams.get('since') || 0) || 0;
+    const send = () => {
+      const got = chatMessagesSince(since);
+      if (!got.messages.length) return;
+      since = got.seq;
+      try { res.write('data: ' + JSON.stringify({ seq: got.seq, messages: got.messages }) + '\n\n'); } catch (e) {}
+    };
+    chatRing.subs.add(send);
+    send();
+    const ping = setInterval(() => { try { res.write(': ping\n\n'); } catch (e) {} }, 20000);
+    req.on('close', () => { clearInterval(ping); chatRing.subs.delete(send); });
+    return;
   }
 
   /* --- offline trade reconciliation ---------------------------------- */

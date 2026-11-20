@@ -86,7 +86,11 @@ const MODULES = [
   /* 3.67: quiet offline UI, durable offline message queue, fast delivery and
      the keyboard-safe chat composer. Must load after the offline modules. */
   { file: 'wc-chat-flow.js', marker: 'wc-chat-flow' },
+  /* 3.69: the chat lane — persistent connection, instant local echo, offline outbox */
+  { file: 'wc-live-chat.js', marker: 'wc-live-chat' },
   { file: 'admin-auth.js', marker: 'wc-admin-auth' },
+  /* 3.69: a session is only ever ended by the user, never by a sync */
+  { file: 'wc-stay-signed-in.js', marker: 'wc-stay-signed-in' },
   { file: 'subscriptions.js', marker: 'wc-subs' },
   { file: 'tawk-control.js', marker: 'wc-tawk-control' },
   /* 3.66.1: ONE chart design for every chart in the app (reference board).
@@ -148,7 +152,12 @@ const MODULES = [
   { file: 'wc-admin-sms.js', marker: 'wc-admin-sms' },
   /* 3.57: account dashboard, email verification, PIN reset and offline charts.
      Must stay last so its VIEWS/App patches win over earlier modules. */
-  { file: 'wc-build-357.js', marker: 'wc-build-357' }
+  { file: 'wc-build-357.js', marker: 'wc-build-357' },
+  /* 3.69: a working dark/bright switch, authoritative over view-mode */
+  { file: 'wc-theme.js', marker: 'wc-theme' },
+  /* 3.69: repaints are invisible — no scroll jump, no lost typing, no focus loss.
+     Must be last so it wraps the final render(). */
+  { file: 'wc-quiet-render.js', marker: 'wc-quiet-render' }
 ];
 try {
   let page = fs.readFileSync(APP, 'utf8');

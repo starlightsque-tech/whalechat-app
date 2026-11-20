@@ -120,7 +120,9 @@
       document.querySelectorAll('.wc-pending-badge').forEach(function (el) { el.remove(); });
     };
     sweep();
-    setInterval(sweep, 900);
+    /* a notice that is already gone cannot be read by the user: sweep faster
+       than the app can repaint one back in */
+    setInterval(sweep, 250);
     window.addEventListener('offline', sweep);
   }
 

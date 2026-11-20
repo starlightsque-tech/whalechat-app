@@ -26,7 +26,7 @@ const CODES_FILE = 'whalechat-codes';
 const MAIL_FILE = 'whalechat-mail';
 const MAIL_LOG_FILE = 'whalechat-email-log';
 const NOTIF_LOG_LIMIT = 400;
-const VERSION = '3.68.0';
+const VERSION = '3.69.0';
 const crypto = require('crypto');
 /* project-scoped ids: env wins, but a stale/placeholder value never does */
 function isRealId(v) { return typeof v === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._-]{19,}$/.test(v); }
@@ -35,6 +35,108 @@ const TELESIGN_ID = String(process.env.TELESIGN_CUSTOMER_ID || (TELSIGN_BASIC.in
 const TELESIGN_KEY = String(process.env.TELESIGN_API_KEY || (TELSIGN_BASIC.indexOf(':') > 0 ? TELSIGN_BASIC.slice(TELSIGN_BASIC.indexOf(':') + 1) : '')).trim();
 const TELESIGN_SENDER = String(process.env.TELESIGN_SENDER_ID || '').trim();
 const SMS_LOG_FILE = 'wc-sms-log';
+
+
+/* =========================================================================
+   Chat lane (3.69) — messages travel on their own, tiny payload
+   -------------------------------------------------------------------------
+   The state document is megabytes; a message is a few hundred bytes. Sending
+   a message used to mean uploading and re-downloading that whole document,
+   which is where the multi-second chat delay came from.
+
+   The lane keeps chat messages in one small side file (wc-chat-log) with a
+   monotonic sequence number:
+
+     POST /api/chat/send    {messages:[...]}      -> append, return seq
+     GET  /api/chat/sync    ?since=N&wait=20      -> long-poll, returns new
+     GET  /api/chat/state   ?since=N              -> immediate, no wait
+
+   A warm instance answers its own senders instantly from an in-memory ring;
+   another instance's messages are picked up from the file within ~400 ms
+   while the request is held open. Because every request returns the moment
+   there is something to deliver, the client can keep one connection open and
+   see a message arrive in one round trip.
+   ========================================================================= */
+const CHAT_FILE = 'wc-chat-log';
+const CHAT_KEEP = 3000;
+let CHAT_RING = null;          /* {seq, messages[]} once loaded */
+let CHAT_LOADING = null;
+
+async function chatLoad() {
+  if (CHAT_RING) return CHAT_RING;
+  if (CHAT_LOADING) return CHAT_LOADING;
+  CHAT_LOADING = (async () => {
+    const doc = await readJsonFile(CHAT_FILE, null);
+    const messages = (doc && Array.isArray(doc.messages)) ? doc.messages : [];
+    CHAT_RING = { seq: Number((doc && doc.seq) || messages.length || 0) || 0, messages };
+    CHAT_LOADING = null;
+    return CHAT_RING;
+  })();
+  return CHAT_LOADING;
+}
+
+function chatNormalize(m, seq) {
+  if (!m || !m.id || !m.chatId) return null;
+  return {
+    id: String(m.id).slice(0, 60),
+    chatId: String(m.chatId).slice(0, 120),
+    from: String(m.from || '').slice(0, 60),
+    to: String(m.to || '').slice(0, 60),
+    type: /^(text|image|video|audio)$/.test(String(m.type || '')) ? m.type : 'text',
+    text: String(m.text == null ? '' : m.text).slice(0, 4000),
+    mediaId: m.mediaId ? String(m.mediaId).slice(0, 80) : null,
+    dur: Number(m.dur) || null,
+    createdAt: Number(m.createdAt) || Date.now(),
+    status: String(m.status || 'sent').slice(0, 20),
+    forwarded: !!m.forwarded,
+    deleted: !!m.deleted,
+    readBy: Array.isArray(m.readBy) ? m.readBy.slice(0, 50) : [],
+    seq: Number(seq) || 0
+  };
+}
+
+async function chatAppend(list) {
+  const ring = await chatLoad();
+  const have = new Set(ring.messages.map((m) => m.id));
+  const accepted = [];
+  for (const raw of (list || [])) {
+    const m = chatNormalize(raw, 0);
+    if (!m) continue;
+    if (have.has(m.id)) {
+      /* an update (delivered / seen / deleted) rather than a new message */
+      const cur = ring.messages.find((x) => x.id === m.id);
+      if (cur) {
+        if (m.status) cur.status = m.status;
+        if (m.readBy && m.readBy.length > (cur.readBy || []).length) cur.readBy = m.readBy;
+        if (m.deleted) cur.deleted = true;
+        accepted.push({ id: cur.id, status: cur.status, seq: cur.seq, duplicate: true });
+      }
+      continue;
+    }
+    ring.seq += 1;
+    m.seq = ring.seq;
+    ring.messages.push(m);
+    have.add(m.id);
+    accepted.push({ id: m.id, status: m.status, seq: m.seq });
+  }
+  if (ring.messages.length > CHAT_KEEP) ring.messages = ring.messages.slice(-CHAT_KEEP);
+  if (accepted.length) {
+    const ok = await writeJsonFile(CHAT_FILE, 'wc-chat-log.json', { seq: ring.seq, messages: ring.messages });
+    if (!ok) return { ok: false, error: 'chat_write_failed', accepted: [] };
+  }
+  return { ok: true, seq: ring.seq, accepted };
+}
+
+function chatSince(since) {
+  const ring = CHAT_RING;
+  if (!ring) return { seq: Number(since) || 0, messages: [] };
+  const s = Number(since) || 0;
+  const messages = ring.messages.filter((m) => Number(m.seq) > s).map((m) => {
+    /* a message deleted by its author is not delivered to the other side */
+    return Object.assign({}, m);
+  });
+  return { seq: ring.seq, messages };
+}
 
 /* -------------------------------------------------------------------------
    Admin SMS: one message, an optional link "button", many recipients.
@@ -2135,6 +2237,54 @@ module.exports = async ({ req, res, log, error }) => {
         entries: (log.entries || []).slice(0, 40),
         usersWithPhone: ((st.db && st.db.users) || []).filter((u) => u && !u.banned && u.phone).length
       }, 200, CORS);
+    }
+
+
+    /* ---------------------------------------------------------------- *
+     * 3.69 chat lane                                                    *
+     * ---------------------------------------------------------------- */
+    if (path === '/api/chat/send' && method === 'POST') {
+      const list = Array.isArray(body.messages) ? body.messages : (body.message ? [body.message] : []);
+      if (!list.length) return res.json({ ok: false, error: 'no_messages' }, 400, CORS);
+      if (list.length > 60) return res.json({ ok: false, error: 'too_many' }, 413, CORS);
+      const out = await chatAppend(list);
+      return res.json(out, out.ok ? 200 : 502, CORS);
+    }
+
+    if (path === '/api/chat/sync' && (method === 'GET' || method === 'POST')) {
+      const since = Number((req.query && req.query.since) || body.since || 0) || 0;
+      const wait = Math.min(25, Math.max(0, Number((req.query && req.query.wait) || body.wait || 0) || 0));
+      await chatLoad();
+      let got = chatSince(since);
+      if (got.messages.length || !wait) {
+        return res.json({ ok: true, seq: got.seq, messages: got.messages, waited: 0 }, 200, CORS);
+      }
+      /* hold the connection open until something exists (or the wait ends) */
+      const started = Date.now();
+      let lastRead = 0;
+      while (Date.now() - started < wait * 1000) {
+        await new Promise((r) => setTimeout(r, 300));
+        /* another instance may have written: re-read the file now and then */
+        if (Date.now() - lastRead > 700) {
+          lastRead = Date.now();
+          const doc = await readJsonFile(CHAT_FILE, null);
+          if (doc && Array.isArray(doc.messages) && Number(doc.seq) >= (CHAT_RING ? CHAT_RING.seq : 0)) {
+            CHAT_RING = { seq: Number(doc.seq) || CHAT_RING.seq, messages: doc.messages };
+          }
+        }
+        got = chatSince(since);
+        if (got.messages.length) {
+          return res.json({ ok: true, seq: got.seq, messages: got.messages, waited: Date.now() - started }, 200, CORS);
+        }
+      }
+      return res.json({ ok: true, seq: got.seq, messages: [], waited: Date.now() - started }, 200, CORS);
+    }
+
+    if (path === '/api/chat/state' && method === 'GET') {
+      const since = Number((req.query && req.query.since) || 0) || 0;
+      await chatLoad();
+      const got = chatSince(since);
+      return res.json({ ok: true, seq: got.seq, messages: got.messages }, 200, CORS);
     }
 
     if (path === '/api/orders/offline/push' && method === 'POST') {
