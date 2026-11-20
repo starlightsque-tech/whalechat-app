@@ -30,15 +30,48 @@
   if (window.__wcStaySignedIn) return;
   window.__wcStaySignedIn = true;
 
-  var SESSION_KEY = 'whalechat.session';
+  /* 3.77: the live key is `whalechat.session.v1` — the old value here was
+     missing the `.v1` suffix, so the "is the user really signed out?" guard
+     answered "yes" on every tick and never repaired a dropped session. */
+  var SESSION_KEY = 'whalechat.session.v1';
+  var KEEP_KEY = 'wc.session.keep.v1';       /* last session this device held */
   var BACKUP_KEY = 'wc_session_backup_v1';
   var LOCAL_USER_KEY = 'wc.session.user.v1';
   var explicitSignOut = false;
+  var lastKnownSession = null;
 
   function safe(fn, dflt) { try { return fn(); } catch (e) { return dflt; } }
   function g(name) { try { return window[name]; } catch (e) { return undefined; } }
   function db() { return safe(function () { return g('DB') || null; }, null); }
   function sessionOf() { return safe(function () { return g('SESSION') || null; }, null); }
+
+  /* the session this device last held, kept outside the app's own keys so a
+     sync race cannot erase it */
+  function rememberSession() {
+    var S = sessionOf();
+    if (S && S.userId) {
+      lastKnownSession = S;
+      safe(function () { localStorage.setItem(KEEP_KEY, JSON.stringify(S)); });
+    }
+    return S;
+  }
+  function keptSession() {
+    if (lastKnownSession) return lastKnownSession;
+    return safe(function () { return JSON.parse(localStorage.getItem(KEEP_KEY) || 'null'); }, null);
+  }
+  /* put the session back after a sync dropped it (never after a real sign-out) */
+  function adoptSession() {
+    if (explicitSignOut) return false;
+    if (sessionOf()) return true;
+    var S = keptSession();
+    if (!S || !S.userId) return false;
+    var d = db();
+    if (!d || !Array.isArray(d.users) || !d.users.some(function (u) { return u && u.id === S.userId; })) return false;
+    safe(function () { g('SESSION'); window.SESSION = S; });
+    safe(function () { localStorage.setItem(SESSION_KEY, JSON.stringify(S)); });
+    safe(function () { if (typeof window.render === 'function') window.render(); });
+    return true;
+  }
 
   /* --------------------------------------------------------- user backup */
   /* the signed-in account record, kept on this device, so the session can be
@@ -105,8 +138,9 @@
         var orig = R[name];
         if (typeof orig !== 'function') return;
         R[name] = function () {
+          safe(rememberSession);                 /* snapshot before the merge */
           var out = orig.apply(this, arguments);
-          var after = function () { safe(repairSession); safe(watchUser); };
+          var after = function () { safe(adoptSession); safe(repairSession); safe(watchUser); };
           if (out && typeof out.then === 'function') return out.then(function (v) { after(); return v; }, function (e) { after(); throw e; });
           after();
           return out;
@@ -128,13 +162,14 @@
       var d = db();
       if (!d || !Array.isArray(d.users)) return;
       if (explicitSignOut) return;
-      if (!localStorage.getItem(SESSION_KEY)) return;     /* they really signed out */
+      if (!localStorage.getItem(SESSION_KEY) && !keptSession()) return;  /* they really signed out */
+      safe(adoptSession);
       var S = sessionOf();
       if (S && S.userId) {
         if (!d.users.some(function (u) { return u && u.id === S.userId; })) safe(repairSession);
         safe(watchUser);
       }
-    }, 4000);
+    }, 1500);
     safe(function () { window.addEventListener('beforeunload', function () { clearInterval(guard); }); });
   }
 
@@ -144,7 +179,8 @@
     var orig = A.logout;
     A.logout = function () {
       explicitSignOut = true;
-      safe(function () { localStorage.removeItem(LOCAL_USER_KEY); });
+      lastKnownSession = null;
+      safe(function () { localStorage.removeItem(LOCAL_USER_KEY); localStorage.removeItem(KEEP_KEY); try { sessionStorage.removeItem(BACKUP_KEY); } catch (e) {} });
       return orig.apply(this, arguments);
     };
     A.logout.__wcStay = true;
@@ -158,11 +194,13 @@
       var b = !!safe(function () { return g('Remote'); }, null);
       if (b) install(); else b = false;
       if ((!a || !b) && tries++ < 60) return setTimeout(bind, 300);
+      safe(rememberSession);
+      safe(adoptSession);
       safe(repairSession);
       safe(watchUser);
     })();
     /* the app may return from an update reload with the session dropped */
-    setTimeout(function () { safe(repairSession); }, 1500);
+    setTimeout(function () { safe(adoptSession); safe(repairSession); }, 1500);
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
