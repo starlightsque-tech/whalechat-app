@@ -2303,7 +2303,7 @@ App.ltTp = async function (id, ds) {
       const r = await Remote.fetchJSON('/api/market/trade/take-profit', {
         method: 'POST',
         body: JSON.stringify({ userId: me().id, tradeId: t.id })
-      }, 8000);
+      }, 30000);
       if (r.res && r.res.ok && r.data && r.data.ok) {
         await Remote.refresh(true);
         toast(`Profit taken — ${usd(coinsToUsd(Number(r.data.profit) || 0))} credited. Trade continues`, 'ok');

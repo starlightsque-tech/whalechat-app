@@ -604,7 +604,7 @@
         if (!ok) return;
       }
       try {
-        const r = await api('/api/bots/subscribe', { method: 'POST', body: JSON.stringify({ userId: uidNow(), tierId: id, duration }) }, 25000);
+        const r = await api('/api/bots/subscribe', { method: 'POST', body: JSON.stringify({ userId: uidNow(), tierId: id, duration }) }, 45000);
         if (!r.res || !r.res.ok || !r.data || !r.data.ok) return tmsg((r.data && r.data.error) || 'Subscription failed', 'err');
         await Remote.refresh(true);
         await load(true);
@@ -643,7 +643,7 @@
       try {
         const r = await api('/api/bots/start', { method: 'POST', body: JSON.stringify({
           userId: uidNow(), tierId, topupCoins: topup, minTradeCoins: minTrade, maxTradeCoins: maxTrade, durationMinutes: duration
-        }) }, 25000);
+        }) }, 45000);
         if (!r.res || !r.res.ok || !r.data || !r.data.ok) return tmsg((r.data && r.data.error) || 'Could not start bot', 'err');
         await Remote.refresh(true);
         await load(true);
@@ -683,7 +683,7 @@
         if (!ok) return;
       }
       try {
-        const r = await api('/api/bots/stop', { method: 'POST', body: JSON.stringify({ userId: uidNow() }) }, 25000);
+        const r = await api('/api/bots/stop', { method: 'POST', body: JSON.stringify({ userId: uidNow() }) }, 45000);
         if (!r.res || !r.res.ok || !r.data || !r.data.ok) return tmsg((r.data && r.data.error) || 'Could not stop bot', 'err');
         await Remote.refresh(true); await load(true);
         tmsg('Bot stopped — capital and profit remain in the bot balances', 'ok');
@@ -786,7 +786,7 @@
       if (alreadyHere) {
         /* billed elsewhere already — just make sure the engine knows about it */
         try {
-          await api('/api/bots/auto-secure/subscribe', { method: 'POST', body: JSON.stringify({ userId: uidNow(), activateOnly: true }) }, 25000);
+          await api('/api/bots/auto-secure/subscribe', { method: 'POST', body: JSON.stringify({ userId: uidNow(), activateOnly: true }) }, 45000);
           await load(true);
         } catch (e) {}
         tmsg('Auto Secure is already subscribed — synced across every page', 'ok');
@@ -801,7 +801,7 @@
         if (!ok) return;
       }
       try {
-        const r = await api('/api/bots/auto-secure/subscribe', { method: 'POST', body: JSON.stringify({ userId: uidNow() }) }, 25000);
+        const r = await api('/api/bots/auto-secure/subscribe', { method: 'POST', body: JSON.stringify({ userId: uidNow() }) }, 45000);
         if (!r.res || !r.res.ok || !r.data || !r.data.ok) return tmsg((r.data && r.data.error) || 'Subscription failed', 'err');
         await Remote.refresh(true);
         await load(true);

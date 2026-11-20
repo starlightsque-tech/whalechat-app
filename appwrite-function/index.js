@@ -26,7 +26,7 @@ const CODES_FILE = 'whalechat-codes';
 const MAIL_FILE = 'whalechat-mail';
 const MAIL_LOG_FILE = 'whalechat-email-log';
 const NOTIF_LOG_LIMIT = 400;
-const VERSION = '3.65.0';
+const VERSION = '3.65.2';
 const crypto = require('crypto');
 /* project-scoped ids: env wins, but a stale/placeholder value never does */
 function isRealId(v) { return typeof v === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._-]{19,}$/.test(v); }
@@ -37,6 +37,7 @@ const WC_DB_ID = isRealId(process.env.APPWRITE_DATABASE_ID) ? String(process.env
 const offlineSync = require('./offline-sync');
 const { ShareService } = require('./shares');
 const { BotService } = require('./bots');
+const { MarketService } = require('./market');
 
 const CORS = {
   'access-control-allow-origin': '*',
@@ -608,6 +609,47 @@ async function spotQuotes(symbols) {
   return out;
 }
 
+async function coinbaseQuotes(symbols) {
+  const list = (symbols || []).map(x => String(x || '').toUpperCase().replace('/', '')).filter(x => /^[A-Z0-9]{2,10}USDT$/.test(x)).slice(0, 20);
+  const out = {};
+  await Promise.all(list.map(async (sym) => {
+    const base = sym.replace(/USDT$/, '');
+    const r = await apiRaw('https://api.coinbase.com/v2/prices/' + encodeURIComponent(base) + '-USD/spot');
+    if (r.ok && r.json && r.json.data && Number(r.json.data.amount) > 0) {
+      const price = Number(r.json.data.amount);
+      out[sym] = normQuote(price, price, { source: 'coinbase', at: Date.now() });
+    }
+  }));
+  return out;
+}
+
+async function binanceQuotes(symbols) {
+  const list = (symbols || []).map(x => String(x || '').toUpperCase().replace('/', '')).filter(x => /^[A-Z0-9]{5,20}USDT$/.test(x)).slice(0, 40);
+  if (!list.length) return {};
+  const out = {};
+  const url = 'https://data-api.binance.vision/api/v3/ticker/24hr?symbols=' + encodeURIComponent(JSON.stringify(list));
+  const r = await apiRaw(url);
+  if (r.ok && Array.isArray(r.json)) {
+    for (const x of r.json) {
+      const sym = String(x.symbol || '').toUpperCase();
+      const price = Number(x.lastPrice);
+      if (!sym || !(price > 0)) continue;
+      out[sym] = normQuote(price, Number(x.prevClosePrice) || price, { open: Number(x.openPrice), high: Number(x.highPrice), low: Number(x.lowPrice), vol: Number(x.volume), at: Date.now(), source: 'binance' });
+    }
+    return out;
+  }
+  const alt = await apiRaw('https://api.binance.com/api/v3/ticker/24hr?symbols=' + encodeURIComponent(JSON.stringify(list)));
+  if (alt.ok && Array.isArray(alt.json)) {
+    for (const x of alt.json) {
+      const sym = String(x.symbol || '').toUpperCase();
+      const price = Number(x.lastPrice);
+      if (!sym || !(price > 0)) continue;
+      out[sym] = normQuote(price, Number(x.prevClosePrice) || price, { open: Number(x.openPrice), high: Number(x.highPrice), low: Number(x.lowPrice), vol: Number(x.volume), at: Date.now(), source: 'binance' });
+    }
+  }
+  return out;
+}
+
 async function proxyQuotes(provider, symbols) {
   const list = Array.from(new Set((symbols || []).map((x) => String(x || '').trim()).filter(Boolean))).slice(0, 60);
   if (!list.length) return { ok: false, error: 'symbols_required' };
@@ -616,7 +658,10 @@ async function proxyQuotes(provider, symbols) {
   if (cached) return { ok: true, cached: true, provider, quotes: cached, at: Date.now() };
   let quotes = {};
   let used = provider;
-  if (provider === 'twelvedata') {
+  if (provider === 'binance') {
+    quotes = await binanceQuotes(list);
+    used = 'binance';
+  } else if (provider === 'twelvedata') {
     quotes = await twelvedataQuotes(list);
     used = 'twelvedata';
   } else if (provider === 'finnhub') {
@@ -626,6 +671,17 @@ async function proxyQuotes(provider, symbols) {
     quotes = await yahooQuotes(list);
     used = 'yahoo';
   } else {
+    /* 0 · Binance public ticker for crypto pairs (no secret required) */
+    const cryptoMissing = list.filter((x) => /USDT$/i.test(x));
+    if (cryptoMissing.length) {
+      const bq = await binanceQuotes(cryptoMissing);
+      if (Object.keys(bq).length) { Object.assign(quotes, bq); used = 'binance'; }
+      const stillMissing = cryptoMissing.filter((x) => !quotes[x]);
+      if (stillMissing.length) {
+        const cb = await coinbaseQuotes(stillMissing);
+        if (Object.keys(cb).length) { Object.assign(quotes, cb); used = used === 'binance' ? 'hybrid' : 'coinbase'; }
+      }
+    }
     /* 1 · Finnhub (mapped to OANDA for FX and to index/commodity ETFs), 2 ·
        Twelve Data, 3 · Yahoo only if it is not currently rate-limiting us */
     if (FINNHUB_KEY) {
@@ -682,15 +738,73 @@ const BOT_DEFAULT_SETTINGS = {
   winPct: 4, lossPct: 6, leverage: 5, tradeFeePct: 0.5,
   autoSecurePriceUsd: 20, autoSecureCycle: 'monthly'
 };
-function botServiceFor(st) {
+function tickerRow(st, ticker) {
+  const t = String(ticker || '').toUpperCase();
+  return (st.db.stocks || []).find((x) => x && String(x.ticker).toUpperCase() === t) || null;
+}
+async function hydrateLiveQuotes(st, svc, onlyTickers) {
+  let symbols = Array.isArray(onlyTickers) ? onlyTickers.slice() : [];
+  if (!symbols.length) {
+    const open = new Set((st.db.trades || []).filter(t => t && t.status === 'Open' && t.type === 'live').map(t => t.ticker));
+    symbols = Array.from(open);
+  }
+  const pairs = [];
+  for (const ticker of symbols) {
+    const row = tickerRow(st, ticker);
+    if (!row) continue;
+    const providerSym = String(row.finnhubSymbol || row.ticker).replace(/^BINANCE:/i, '').replace(/^OANDA:/i, '').replace('_', '/');
+    pairs.push({ ticker: String(ticker).toUpperCase(), sym: providerSym });
+  }
+  if (!pairs.length) return 0;
+  try {
+    const out = await proxyQuotes('auto', pairs.map(p => p.sym));
+    const quotes = (out && out.quotes) || {};
+    let n = 0;
+    for (const p of pairs) {
+      let q = quotes[p.sym] || quotes[p.sym.toUpperCase()];
+      if (!q) {
+        const foundKey = Object.keys(quotes).find(k => k.toUpperCase() === p.sym.toUpperCase());
+        if (foundKey) q = quotes[foundKey];
+      }
+      if (q && Number(q.price) > 0) {
+        svc.quotes[p.ticker] = Object.assign({}, q, { price: Number(q.price), prevClose: Number(q.prevClose) || Number(q.price), updatedAt: Date.now(), real: true });
+        const row = tickerRow(st, p.ticker);
+        if (row) { row.price = Number(q.price); row.prevClose = Number(q.prevClose) || row.price; row.updatedAt = Date.now(); }
+        n++;
+      }
+    }
+    return n;
+  } catch (e) { return 0; }
+}
+function marketServiceFor(st) {
+  const svc = new MarketService({
+    dataDir: '/tmp',
+    getDb: () => st.db,
+    persist: () => {},
+    broadcast: () => {}
+  });
+  for (const row of (st.db.stocks || [])) {
+    if (!row || !row.ticker) continue;
+    const px = Number(row.price) || 0;
+    if (px > 0) svc.quotes[String(row.ticker).toUpperCase()] = {
+      price: px, prevClose: Number(row.prevClose) || px,
+      open: Number(row.open) || px, dayHigh: Number(row.high) || px,
+      dayLow: Number(row.low) || px, updatedAt: Date.now(), real: true
+    };
+  }
+  return svc;
+}
+function botServiceFor(st, marketSvc) {
   return new BotService({
     getDb: () => st.db,
     persist: () => {},
     broadcast: () => {},
+    market: marketSvc,
     getQuote: (ticker) => {
       try {
         const row = (st.db.stocks || []).find((x) => x && String(x.ticker).toUpperCase() === String(ticker).toUpperCase());
-        return row && Number(row.price) > 0 ? { price: Number(row.price) } : null;
+        const px = row && Number(row.price) > 0 ? Number(row.price) : (marketSvc && marketSvc.quotes[String(ticker).toUpperCase()] || {}).price;
+        return px > 0 ? { price: px } : null;
       } catch (e) { return null; }
     }
   });
@@ -714,7 +828,9 @@ function botCatchUp(svc, st) {
 async function botsRoute(req, res, mode, fn) {
   const st = await readState();
   if (!st.db) return res.json({ ok: false, error: 'not_initialised' }, 409, CORS);
-  const svc = botServiceFor(st);
+  const marketSvc = marketServiceFor(st);
+  try { await hydrateLiveQuotes(st, marketSvc, null); } catch (e) {}
+  const svc = botServiceFor(st, marketSvc);
   try { svc.ensureDefaults(st.db); } catch (e) {}
   let ticked = false;
   if (mode !== 'read' || botTickDue(st)) { try { botCatchUp(svc, st); ticked = true; } catch (e) {} }
@@ -1054,6 +1170,60 @@ module.exports = async ({ req, res, log, error }) => {
         botsTrades, sharesTicked, wcChanged,
         sessions: (st.db.botSessions || []).filter((x) => x && x.status === 'running').length
       }, ok ? 200 : 502, CORS);
+    }
+
+    /* ---------------- live trade close / take profit / secured profits ---------------- */
+    if (path === '/api/market/trade/take-profit' && method === 'POST') {
+      const st = await readState();
+      if (!st.db) return res.json({ ok: false, error: 'not_initialised' }, 409, CORS);
+      const trade = (st.db.trades || []).find(t => t && t.id === String(body.tradeId || '') && t.userId === String(body.userId || '') && t.status === 'Open');
+      if (!trade) return res.json({ ok: false, error: 'That trade is not open' }, 200, CORS);
+      const svc = marketServiceFor(st);
+      await hydrateLiveQuotes(st, svc, [trade.ticker]);
+      try {
+        const out = svc.takeProfitTrade(String(body.userId || ''), String(body.tradeId || ''));
+        const ok = await saveState(st);
+        if (!ok) return res.json({ ok: false, error: 'storage_write_failed' }, 502, CORS);
+        return res.json(out, 200, CORS);
+      } catch (e) { return res.json({ ok: false, error: e.message, message: e.message }, 200, CORS); }
+    }
+    if (path === '/api/market/trade/close' && method === 'POST') {
+      const st = await readState();
+      if (!st.db) return res.json({ ok: false, error: 'not_initialised' }, 409, CORS);
+      const trade = (st.db.trades || []).find(t => t && t.id === String(body.tradeId || '') && t.userId === String(body.userId || '') && t.status === 'Open');
+      if (!trade) return res.json({ ok: false, error: 'That trade is not open' }, 200, CORS);
+      const svc = marketServiceFor(st);
+      await hydrateLiveQuotes(st, svc, [trade.ticker]);
+      try {
+        const out = svc.closeTradeManual(String(body.userId || ''), String(body.tradeId || ''), String(body.action || '') === 'sl' ? 'Stop Loss Hit' : 'Stopped by user');
+        const ok = await saveState(st);
+        if (!ok) return res.json({ ok: false, error: 'storage_write_failed' }, 502, CORS);
+        return res.json(out, 200, CORS);
+      } catch (e) { return res.json({ ok: false, error: e.message, message: e.message }, 200, CORS); }
+    }
+    if (path === '/api/market/secure-profit/claim-all' && method === 'POST') {
+      const st = await readState();
+      if (!st.db) return res.json({ ok: false, error: 'not_initialised' }, 409, CORS);
+      const svc = marketServiceFor(st);
+      await hydrateLiveQuotes(st, svc, (st.db.trades || []).filter(t => t && t.status === 'Open').map(t => t.ticker));
+      try {
+        const out = svc.claimAllSecuredProfits(String(body.userId || ''));
+        const ok = await saveState(st);
+        if (!ok) return res.json({ ok: false, error: 'storage_write_failed' }, 502, CORS);
+        return res.json(out, 200, CORS);
+      } catch (e) { return res.json({ ok: false, error: e.message, message: e.message }, 200, CORS); }
+    }
+    if (path === '/api/market/secure-profit/claim' && method === 'POST') {
+      const st = await readState();
+      if (!st.db) return res.json({ ok: false, error: 'not_initialised' }, 409, CORS);
+      const svc = marketServiceFor(st);
+      await hydrateLiveQuotes(st, svc, (st.db.trades || []).filter(t => t && t.status === 'Open').map(t => t.ticker));
+      try {
+        const out = svc.claimSecuredProfit(String(body.userId || ''), String(body.tradeId || ''), String(body.profitId || ''));
+        const ok = await saveState(st);
+        if (!ok) return res.json({ ok: false, error: 'storage_write_failed' }, 502, CORS);
+        return res.json(out, 200, CORS);
+      } catch (e) { return res.json({ ok: false, error: e.message, message: e.message }, 200, CORS); }
     }
 
     /* ------------------------------ bots ---------------------------------- */

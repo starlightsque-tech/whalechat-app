@@ -223,7 +223,7 @@
     var u = user(); if (!u) return { skipped: true };
     try {
       var path = (function (p) { try { return Remote.url(p); } catch (e) { return p; } })('/api/bots/auto-secure/subscribe');
-      var r = await Remote.fetchJSON(path, { method: 'POST', body: JSON.stringify({ userId: u.id }) }, 25000);
+      var r = await Remote.fetchJSON(path, { method: 'POST', body: JSON.stringify({ userId: u.id }) }, 45000);
       try { if (window.WC_BOTS) window.WC_BOTS.state = null; } catch (e) {}
       return r && (r.data || r) || { ok: true };
     } catch (e) {
