@@ -694,7 +694,10 @@
   function seedCache() {
     var d = db();
     if (!d || !Array.isArray(d.messages) || !d.messages.length) return;
-    putMessages(d.messages.slice(-2500));
+    /* the device archive is the source of truth: keep every message, not a
+       rolling window, so a server refresh or reinstall of the UI cannot erase
+       history that exists on this device */
+    putMessages(d.messages);
   }
 
   function watchChat() {
