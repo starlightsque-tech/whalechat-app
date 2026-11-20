@@ -574,7 +574,10 @@
         if (!list.length) return 0;
         putMessages(list);
         var u = meUser();
-        if (u) list.forEach(function (m) { if (m.to === u.id && m.status === 'sent' && !hasMessage(m.id)) markDelivered({ $id: m.id, toId: m.to, status: 'sent' }); });
+        if (u) list.forEach(function (m) {
+          /* tell the sender these reached this device (throttled per message) */
+          if (m.to === u.id && m.status === 'sent') markDelivered({ $id: m.id, toId: m.to, status: 'sent' });
+        });
         var added = 0;
         try {
           if (window.WCLiveChat && typeof window.WCLiveChat.apply === 'function') added = window.WCLiveChat.apply(list);
@@ -660,11 +663,12 @@
     });
   }
 
-  var tries = 0;
+  /* the app can sit on a splash or the login screen for a while: keep waiting
+     (cheaply) until an account and the local database exist, then bind once. */
   (function waitForApp() {
     if (state.started) return;
     if (meUser() && db()) { bind(); return; }
-    if (tries++ < 60) setTimeout(waitForApp, 500);
+    setTimeout(waitForApp, 1000);
   })();
 
   window.WCChatEngine = {
