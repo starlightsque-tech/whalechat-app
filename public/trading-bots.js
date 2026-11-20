@@ -181,22 +181,23 @@
     const areaPath = capPath + ' L' + xAt(pts.length - 1).toFixed(1) + ' ' + (topY + topH) + ' L' + xAt(0).toFixed(1) + ' ' + (topY + topH) + ' Z';
 
     const lastPnl = pts[pts.length - 1].pnl;
-    const pnlColor = lastPnl >= 0 ? '#22c55e' : '#ef4444';
+    const pnlColor = lastPnl >= 0 ? '#31e0a0' : '#ff5d6c';
     const capUp = pts[pts.length - 1].cap >= pts[0].cap;
-    const capColor = capUp ? '#22c55e' : '#ef4444';
+    const capColor = capUp ? '#31e0a0' : '#ff5d6c';
     const zeroY = yPnl(0).toFixed(1);
     const fmt = (v) => (Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(2));
     const tLabel = (ms) => { try { return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; } };
 
     const line = (segs, w) =>
-      (segs.up ? `<path d="${segs.up}" fill="none" stroke="#22c55e" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round"/>` : '') +
-      (segs.down ? `<path d="${segs.down}" fill="none" stroke="#ef4444" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round"/>` : '');
+      (segs.up ? `<path d="${segs.up}" fill="none" stroke="#31e0a0" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round"/>` : '') +
+      (segs.down ? `<path d="${segs.down}" fill="none" stroke="#ff5d6c" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round"/>` : '');
 
     return `<svg class="bot-perf-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Bot capital and cumulative profit chart, green while rising and red while falling">
       <defs><linearGradient id="botCapFill" x1="0" y1="0" x2="0" y2="1">
         <stop offset="0%" stop-color="${capColor}" stop-opacity=".26"/><stop offset="100%" stop-color="${capColor}" stop-opacity="0"/>
       </linearGradient></defs>
       <line x1="6" y1="${topY + topH}" x2="${W - 38}" y2="${topY + topH}" stroke="rgba(255,255,255,.07)"/>
+      <line x1="6" y1="${yCap(alloc).toFixed(1)}" x2="${W - 38}" y2="${yCap(alloc).toFixed(1)}" stroke="rgba(255,255,255,.18)" stroke-dasharray="4 4"/>
       <text x="6" y="8" class="bot-perf-lbl">Allocated capital (USD)</text>
       <text x="${W - 6}" y="8" text-anchor="end" class="bot-perf-val">$${fmt(pts[pts.length - 1].cap * 0.5)}</text>
       <path d="${areaPath}" fill="url(#botCapFill)"/>
@@ -1153,7 +1154,7 @@
       padding:3px 8px;border-radius:99px;border:1px solid var(--border);color:var(--muted);white-space:nowrap}
     .bot-badge i{width:6px;height:6px;border-radius:50%;background:var(--muted);display:inline-block}
     .bot-badge.on{color:var(--success);border-color:rgba(34,197,94,.35);background:rgba(34,197,94,.10)}
-    .bot-badge.on i{background:#22c55e;animation:wbotPulse 1.3s ease-in-out infinite}
+    .bot-badge.on i{background:#31e0a0;animation:wbotPulse 1.3s ease-in-out infinite}
     .bot-badge.paused{color:var(--warn);border-color:rgba(255,176,32,.35);background:rgba(255,176,32,.10)}
     .bot-badge.paused i{background:var(--warn)}
     @keyframes wbotPulse{0%,100%{opacity:.35;transform:scale(.8)}50%{opacity:1;transform:scale(1.25)}}

@@ -125,6 +125,21 @@
 
   function mount(host, ticker) {
     if (!host) return;
+    /* 3.66.1: B2B investing chart uses the shared chart kit (reference design) */
+    try {
+      if (window.WCChartKit && WCChartKit.mount) {
+        host.innerHTML = '';
+        host.classList.add('wck-host');
+        var kernel = WCChartKit.mount(host, {
+          symbol: ticker, data: [], price: priceOf(ticker) || 0,
+          height: 300, range: '1D', mode: 'line', lines: []
+        });
+        instances[ticker] = { kit: kernel, host: host, buy: 0, sell: 0 };
+        applyLines(instances[ticker]);
+        refresh(ticker);
+        return;
+      }
+    } catch (e) {}
     loadLWC().then(function (LWC) {
       var h = holdingsOf(me2()).filter(function (x) { return x.ticker === ticker; })[0] || { ticker: ticker, units: 0, avg: priceOf(ticker) };
       var tg = targetsOf(me2(), h);
@@ -160,8 +175,18 @@
     });
   }
 
+  function usdShort(v) { return '$' + (Number(v) || 0).toFixed(2); }
+
   function applyLines(inst) {
-    if (!inst || !inst.series) return;
+    if (!inst) return;
+    if (inst.kit) {
+      var arr = [];
+      if (Number(inst.buy) > 0) arr.push({ price: Number(inst.buy), color: '#ff5d6c', title: 'Buy · ' + usdShort(inst.buy) });
+      if (Number(inst.sell) > 0) arr.push({ price: Number(inst.sell), color: '#31e0a0', title: 'Sell · ' + usdShort(inst.sell) });
+      try { inst.kit.setLines(arr); } catch (e) {}
+      return;
+    }
+    if (!inst.series) return;
     if (inst.buyLine) { try { inst.series.removePriceLine(inst.buyLine); } catch (e) {} inst.buyLine = null; }
     if (inst.sellLine) { try { inst.series.removePriceLine(inst.sellLine); } catch (e) {} inst.sellLine = null; }
     if (inst.buy > 0) {
@@ -178,7 +203,15 @@
     getHistory(ticker).then(function (rows) {
       var data = seriesData(rows, ticker);
       if (!data.length) return;
-      try { inst.series.setData(data); inst.chart.timeScale().fitContent(); } catch (e) {}
+      if (inst.kit) {
+        try {
+          inst.kit.setData(data.map(function (d) { return { t: (d.time || 0) * 1000, p: Number(d.value) }; }));
+          var lastV = Number(data[data.length - 1].value) || priceOf(ticker) || 0;
+          inst.kit.setPrice(lastV);
+        } catch (e) {}
+      } else {
+        try { inst.series.setData(data); inst.chart.timeScale().fitContent(); } catch (e) {}
+      }
       var h = holdingsOf(me2()).filter(function (x) { return x.ticker === ticker; })[0];
       if (h) {
         var tg = targetsOf(me2(), h);
@@ -227,7 +260,7 @@
     if (document.getElementById('b2b-perf-style')) return;
     var st = document.createElement('style'); st.id = 'b2b-perf-style';
     st.textContent = [
-      '#b2bPerfChart{width:100%;height:430px;min-height:240px;margin-top:10px;background:#fff;border-radius:10px;overflow:hidden}',
+      '#b2bPerfChart{width:100%;min-height:240px;margin-top:10px;background:transparent;border-radius:16px;overflow:hidden}',
       '.b2b-perf-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-top:10px}',
       '.b2b-perf-stats span{display:block;font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted-2);font-weight:700}',
       '.b2b-perf-stats b{font-size:12.5px;font-variant-numeric:tabular-nums}',

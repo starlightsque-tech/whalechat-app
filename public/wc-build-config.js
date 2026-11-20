@@ -18,5 +18,6 @@ window.WC_BUILD_CONFIG = {
   realtimeChannel: 'stocks-live',
   emailFunction: 'https://whalechat-api.appwrite.network/api/email/send',
   siteUrl: 'https://whalechat.appwrite.network',
+  streaming: false,
   build: '3.66.0'
 };

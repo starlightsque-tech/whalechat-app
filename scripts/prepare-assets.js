@@ -86,6 +86,10 @@ const MODULES = [
   { file: 'admin-auth.js', marker: 'wc-admin-auth' },
   { file: 'subscriptions.js', marker: 'wc-subs' },
   { file: 'tawk-control.js', marker: 'wc-tawk-control' },
+  /* 3.66.1: ONE chart design for every chart in the app (reference board).
+     Must load before trade-chart / pro-chart / bots / invest UI so their
+     renderers can delegate to it. */
+  { file: 'wc-chart-kit.js', marker: 'wc-chart-kit' },
   { file: 'trade-chart.js', marker: 'wc-trade-chart' },
   { file: 'live-trade.js', marker: 'wc-live-trade' },
   { file: 'live-candles.js', marker: 'wc-live-candles' },

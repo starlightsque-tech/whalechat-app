@@ -162,6 +162,21 @@
      cards where the app already renders an inline chart string.            */
   TC.svg = function (values, opts) {
     opts = opts || {};
+    /* 3.66.1: every compact chart (WC investing plans, ROI progress, portfolio
+       strips, B2B cards) renders through the shared chart kit so the whole app
+       uses the reference design: green above the baseline, red below, soft
+       gradient fill, dashed reference line. */
+    try {
+      if (window.WCChartKit && WCChartKit.svg) {
+        return WCChartKit.svg(values, {
+          width: opts.width || 320,
+          height: opts.height || 88,
+          weight: opts.weight || 1.9,
+          fill: opts.fill,
+          baseline: opts.baseline
+        }).replace('class="wtc-spark wck-spark"', 'class="wtc-spark wck-spark wci-chart"');
+      }
+    } catch (e) {}
     var W = opts.width || 320;
     var H = opts.height || 88;
     var pad = opts.pad == null ? 2 : opts.pad;
@@ -649,8 +664,73 @@
   };
 
   TC.Chart = Chart;
+
+  /* ------------------------------------------------------------------------
+     3.66.1 — the shared chart kit is the renderer for every live chart.
+     It gives the stock trade chart AND the portfolio chart the reference
+     design (header price + WC, 1D/1W/1M/1Y/ALL, Line/Candles, split green/red
+     series, WC price axis, pinned last price) while keeping the entry/TP/SL
+     price lines and the position P&L the trading screens rely on.
+     ---------------------------------------------------------------------- */
+  function kitRange(tf) {
+    var t = String(tf || '1D').toLowerCase();
+    if (t === '1w' || t === '7d') return '1W';
+    if (t === '1m' || t === '30d') return '1M';
+    if (t === '1y' || t === '365d') return '1Y';
+    if (t === 'all' || t === 'max') return 'ALL';
+    return '1D';
+  }
+  function mountKit(host, opts) {
+    var K = window.WCChartKit;
+    if (!K || !K.mount) return null;
+    opts = opts || {};
+    var pts = Array.isArray(opts.points) ? opts.points : [];
+    var pos = (opts.positions && opts.positions[0]) || null;
+    var kernel = K.mount(host, {
+      data: pts,
+      price: pts.length ? (pts[pts.length - 1].value != null ? pts[pts.length - 1].value : pts[pts.length - 1].p) : 0,
+      symbol: opts.symbol || '',
+      baseline: opts.baseline != null ? opts.baseline : undefined,
+      lines: opts.lines || [],
+      position: pos ? { units: Number(pos.qty || pos.quantity || 1) || 1, cost: (Number(pos.entry) || 0) * (Number(pos.qty || pos.quantity || 1) || 1) } : null,
+      height: opts.height || 300,
+      range: kitRange(opts.tf),
+      mode: opts.mode === 'candles' ? 'candles' : 'line',
+      decimals: 2
+    });
+    if (!kernel) return null;
+    var adapter = {
+      __wcKit: true,
+      host: host,
+      get points() { return kernel.points ? kernel.points() : pts.length; },
+      update: function (p) { try { kernel.update(p); } catch (e) {} },
+      setData: function (d) {
+        try {
+          kernel.setData(d || []);
+          if (!d || !d.length) return;
+          var lv = d[d.length - 1].value != null ? d[d.length - 1].value : d[d.length - 1].p;
+          kernel.setPrice(lv);
+        } catch (e) {}
+      },
+      setLines: function (l) { try { kernel.setLines(l || []); } catch (e) {} },
+      setPositions: function (l) { try { kernel.setPositions(l || []); } catch (e) {} },
+      setBaseline: function (v) { try { kernel.setBaseline(v); } catch (e) {} },
+      setSymbol: function (s) { try { kernel.setSymbol(s); } catch (e) {} },
+      setMode: function (m) { try { kernel.setMode(m === 'candles' ? 'candles' : 'line'); } catch (e) {} },
+      render: function () {},
+      schedule: function () {},
+      resize: function () {},
+      destroy: function () { try { kernel.destroy(); } catch (e) {} }
+    };
+    return adapter;
+  }
+
   TC.mount = function (host, opts) {
     if (!host) return null;
+    try {
+      var kit = mountKit(host, opts);
+      if (kit) return kit;
+    } catch (e) {}
     try { return new Chart(host, opts); } catch (e) {
       try {
         host.innerHTML = '<div style="padding:18px;color:' + MUTED + ';font-size:12px">Chart unavailable</div>';

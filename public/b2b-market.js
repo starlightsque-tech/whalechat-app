@@ -246,6 +246,25 @@
     host.setAttribute('data-wc-tv', String(t).toUpperCase());
     host.setAttribute('data-wc-tv-kind', kind || '');
     host.setAttribute('data-wc-tv-exchange', exchangeOf(t));
+    /* 3.66.1: the marketplace chart is the shared reference chart, not an
+       external TradingView embed — same design as every other chart. */
+    if (window.WCChartKit && WCChartKit.mount) {
+      try {
+        var pts = hist(t).map(function (d) { return { t: Number(d.x) || Date.now(), p: Number(d.p) }; });
+        var px = M.price(t) || (pts.length ? pts[pts.length - 1].p : 0);
+        var firstPx = pts.length ? pts[0].p : px;
+        host.innerHTML = '';
+        if (host.__wcKit) { try { host.__wcKit.destroy(); } catch (e) {} host.__wcKit = null; }
+        host.__wcKit = WCChartKit.mount(host, {
+          symbol: String(t).toUpperCase(), data: pts, price: px,
+          changePct: firstPx > 0 ? ((px - firstPx) / firstPx) * 100 : 0,
+          height: 270, range: '1D', mode: 'line'
+        });
+        var sub0 = document.getElementById('b2bmTvSub');
+        if (sub0) sub0.textContent = 'Live market data · WhaleChat feed';
+        return;
+      } catch (e) {}
+    }
     if (window.WC_TV) window.WC_TV.mount(host, t, kind, exchangeOf(t));
     var title = document.getElementById('b2bmTvTitle');
     if (title) title.textContent = String(t).replace('USDT', '/USDT') + ' · live chart';
@@ -296,7 +315,7 @@
           '<div class="tiny muted">' + esc(x.kind) + ' · ' + esc(x.t.replace('USDT', '/USDT')) + (h ? ' · holding ' + Number(h.units).toFixed(6) : '') + '</div>' +
           '<div class="b2bm-row"><b data-b2bm-price="' + esc(x.t) + '">' + (q.price > 0 ? money(q.price) : '—') + '</b>' +
             '<i class="' + ((q.changePct || 0) >= 0 ? 'up' : 'down') + '" data-b2bm-chg="' + esc(x.t) + '">' + pct(q.changePct) + '</i></div>' +
-          '<svg viewBox="0 0 140 40" class="b2bm-spark" preserveAspectRatio="none"><polyline data-b2bm-spark="' + esc(x.t) + '" points="' + sp.points + '" fill="none" stroke="' + (sp.up ? '#22c55e' : '#ef4444') + '" stroke-width="1.5"/></svg>' +
+          '<svg viewBox="0 0 140 40" class="b2bm-spark" preserveAspectRatio="none"><polyline data-b2bm-spark="' + esc(x.t) + '" points="' + sp.points + '" fill="none" stroke="' + (sp.up ? '#31e0a0' : '#ff5d6c') + '" stroke-width="1.5"/></svg>' +
           '<div class="b2bm-actions">' +
             '<a class="btn btn-xs btn-primary" href="#/investment/b2b/buy?asset=' + encodeURIComponent(x.t) + '">Buy</a>' +
             '<a class="btn btn-xs btn-ghost" href="#/investment/b2b/sell?asset=' + encodeURIComponent(x.t) + '">Sell</a>' +

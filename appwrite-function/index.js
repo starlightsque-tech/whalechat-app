@@ -803,9 +803,21 @@ async function hydrateLiveQuotes(st, svc, onlyTickers) {
         if (foundKey) q = quotes[foundKey];
       }
       if (q && Number(q.price) > 0) {
-        svc.quotes[p.ticker] = Object.assign({}, q, { price: Number(q.price), prevClose: Number(q.prevClose) || Number(q.price), updatedAt: Date.now(), real: true });
+        const at = Date.now();
+        svc.quotes[p.ticker] = Object.assign({}, q, { price: Number(q.price), prevClose: Number(q.prevClose) || Number(q.price), updatedAt: at, real: true });
+        /* 3.66.1: a hydrated real quote must also be recorded as a real tick,
+           otherwise status() reports realTickers:0 / source:'offline' while the
+           prices on screen are live — which is exactly what turned the
+           account-page provider dots grey and printed "no tick yet". */
+        svc.lastReal[p.ticker] = Number(q.price);
+        svc.lastRealTime[p.ticker] = at;
+        svc.lastRealAt = at;
+        svc.lastTickAt = at;
+        if (q.source === 'twelvedata') svc.lastTwelveAt = at;
+        else if (q.source === 'binance' || q.source === 'coinbase') svc.lastBinanceAt = at;
+        else svc.lastFinnhubAt = at;
         const row = tickerRow(st, p.ticker);
-        if (row) { row.price = Number(q.price); row.prevClose = Number(q.prevClose) || row.price; row.updatedAt = Date.now(); }
+        if (row) { row.price = Number(q.price); row.prevClose = Number(q.prevClose) || row.price; row.updatedAt = at; }
         n++;
       }
     }
@@ -819,6 +831,19 @@ function marketServiceFor(st) {
     persist: () => {},
     broadcast: () => {}
   });
+  /* 3.66.1: the service was created with its default 'simulated' config, so
+     every status block claimed hasKey:false / source:'offline' / 'no-finnhub'
+     even though FINNHUB_KEY is set in the function environment and the proxy
+     was returning real prices. Adopt the environment keys here. */
+  try {
+    const cfgKey = FINNHUB_KEY || TWELVE_KEY || '';
+    svc.config = {
+      mode: cfgKey ? 'hybrid' : 'simulated',
+      apiKey: FINNHUB_KEY || '',
+      refreshSec: 15,
+      twelvedataKey: TWELVE_KEY || ''
+    };
+  } catch (e) {}
   for (const row of (st.db.stocks || [])) {
     if (!row || !row.ticker) continue;
     const px = Number(row.price) || 0;
@@ -1473,6 +1498,62 @@ module.exports = async ({ req, res, log, error }) => {
     /* --------------------------- market data ------------------------------ */
     if (path === '/api/market/keys') {
       return res.json({ ok: true, proxy: true, finnhub: !!FINNHUB_KEY, twelvedata: !!TWELVE_KEY, binance: true }, 200, CORS);
+    }
+
+    /* 3.66.1: the admin key screen calls these. In the Function edition the
+       provider secrets live in the function environment, so we report status
+       and refuse writes with an explicit reason instead of 404-ing. */
+    if (path === '/api/connections' && method === 'GET') {
+      const mask = (k) => (k ? (String(k).slice(0, 4) + '••••' + String(k).slice(-4)) : '');
+      return res.json({
+        ok: true,
+        managed: 'function-env',
+        providers: {
+          finnhub: { configured: !!FINNHUB_KEY, apiKey: mask(FINNHUB_KEY), label: 'Finnhub' },
+          twelvedata: { configured: !!TWELVE_KEY, apiKey: mask(TWELVE_KEY), label: 'Twelve Data' },
+          binance: { configured: true, label: 'Binance' },
+          brevo: { configured: !!process.env.BREVO_API_KEY, label: 'Brevo' }
+        }
+      }, 200, CORS);
+    }
+
+    if (path === '/api/connections' && method === 'POST') {
+      return res.json({
+        ok: false,
+        managed: 'function-env',
+        error: 'env_managed',
+        message: 'Provider keys are stored in the WhaleChat function environment, not the app database. Set FINNHUB_API_KEY / TWELVE_DATA_API_KEY / BREVO_API_KEY on the function.'
+      }, 200, CORS);
+    }
+
+    if (path === '/api/connections/test' && method === 'POST') {
+      const which = String((body && body.which) || (req.query && req.query.which) || 'all').toLowerCase();
+      const out = { ok: true, results: {} };
+      try {
+        if (which === 'all' || which === 'finnhub' || which === 'twelvedata') {
+          const probe = await proxyQuotes('auto', ['AAPL', 'TSLA']);
+          out.results.finnhub = {
+            configured: !!FINNHUB_KEY,
+            ok: !!(probe.quotes && (probe.quotes.AAPL || probe.quotes.TSLA)),
+            price: (probe.quotes && (probe.quotes.AAPL || {}).price) || null
+          };
+          out.results.twelvedata = { configured: !!TWELVE_KEY, ok: !!TWELVE_KEY && probe.provider === 'twelvedata' };
+        }
+        if (which === 'all' || which === 'binance') {
+          const b = await binanceQuotes(['BTCUSDT', 'ETHUSDT']);
+          out.results.binance = { configured: true, ok: !!(b && b.BTCUSDT), price: (b && b.BTCUSDT && b.BTCUSDT.price) || null };
+        }
+        if (which === 'all' || which === 'brevo') {
+          out.results.brevo = { configured: !!process.env.BREVO_API_KEY, ok: !!process.env.BREVO_API_KEY };
+        }
+      } catch (e) { out.ok = false; out.error = e.message; }
+      return res.json(out, 200, CORS);
+    }
+
+    /* no server-side SSE in the Function edition: answer cleanly so the client
+       stops retrying instead of logging a 404 forever */
+    if (path === '/api/market/stream') {
+      return res.json({ ok: true, stream: false, mode: 'poll', reason: 'appwrite_function_has_no_sse' }, 200, CORS);
     }
 
     if (path === '/api/market/proxy' && method === 'GET') {

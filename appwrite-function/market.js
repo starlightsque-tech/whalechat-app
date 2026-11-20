@@ -1203,8 +1203,15 @@ class MarketService {
   }
 
   /* ------------------------- real-data status --------------------------- */
+  /* any configured provider key counts — Twelve Data alone is enough for a
+     live feed, and before 3.66.1 that made source() claim 'offline' forever */
+  hasProviderKey() {
+    return !!(this.config.apiKey || this.config.twelvedataKey);
+  }
+
   fallbackReason() {
-    if (this.config.mode !== 'hybrid' || !this.config.apiKey) return 'no-finnhub';
+    if (!this.hasProviderKey()) return 'no-finnhub';
+    if (this.config.mode !== 'hybrid' && !this.config.twelvedataKey) return 'no-finnhub';
     if (Date.now() < this.rateLimitedUntil) return 'rate-limit';
     return '';
   }
@@ -1215,14 +1222,15 @@ class MarketService {
   }
 
   source() {
-    return (this.config.mode === 'hybrid' && this.config.apiKey) ? 'live' : 'offline';
+    return (this.config.mode === 'hybrid' && this.hasProviderKey()) ? 'live' : 'offline';
   }
 
   status() {
     return {
       mode: this.config.mode,
       refreshSec: this.config.refreshSec,
-      hasKey: !!this.config.apiKey,
+      hasKey: this.hasProviderKey(),
+      hasTwelveData: !!this.config.twelvedataKey,
       marketOpen: true,
       alwaysOpen: true,
       source: this.source(),

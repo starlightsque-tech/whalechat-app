@@ -155,6 +155,13 @@
   /* live push stream: the server sends changed quotes every 400 ms */
   function startStream() {
     if (typeof EventSource === 'undefined') return;
+    /* 3.66.1: the Appwrite Function has no SSE endpoint; the module polls
+       instead. Without this guard EventSource reconnected forever and every
+       page logged a 404/stream error. */
+    try {
+      if (window.WC_BUILD_CONFIG && WC_BUILD_CONFIG.streaming === false) return;
+      if (window.WC_NO_SSE === true) return;
+    } catch (e) {}
     try { if (MK.es) MK.es.close(); } catch (e) {}
     let es;
     try { es = new EventSource(apiPath('/api/market/stream')); } catch (e) { return; }

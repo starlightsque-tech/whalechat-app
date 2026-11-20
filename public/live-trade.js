@@ -1272,6 +1272,34 @@ LT.autoSecureStrip = function () {
   };
   LT.bindAutoSecure();
 
+/* 3.66.1: the portfolio performance card renders the shared reference chart
+   panel (header price + WC, 1D/1W/1M/1Y/ALL, Line/Candles, split green/red).
+   The kit owns the drawing and re-mounts itself if this card repaints. */
+function kitPortfolio(series, tf, hasPerf) {
+  try {
+    if (window.WCChartKit && WCChartKit.autoHtml) {
+      const vals = (series || []).map((v) => Number(v) || 0).filter((v) => isFinite(v));
+      const count = vals.length;
+      const step = { '1D': 6e4, '1W': 6e5, '1M': 18e5, '3M': 54e5, '1Y': 216e5, ALL: 216e5 }[tf] || 6e4;
+      const now = Date.now();
+      const pts = vals.map((v, i) => ({ t: now - (count - 1 - i) * step, p: v }));
+      const last = count ? vals[count - 1] : 0;
+      const first = count ? vals[0] : 0;
+      return WCChartKit.autoHtml({
+        data: pts,
+        price: last,
+        changePct: first > 0 ? ((last - first) / first) * 100 : 0,
+        height: 240,
+        range: 'ALL',
+        mode: 'line',
+        emptyHint: 'Start a trade, buy stock or run a bot to see performance'
+      }, 'inv-chart-kit');
+    }
+  } catch (e) {}
+  return hasPerf ? INV.lineChart(series, { h: 150 })
+    : '<div class="inv-empty">' + ic('trend', 26) + '<p class="small muted">Start a trade, buy stock or run a bot to see performance.</p><a href="#/invest/market" class="btn btn-sm btn-primary">Explore market</a></div>';
+}
+
 LT.dash = function (params) {
   const u = me();
   const s = LT.summary(u.id);
@@ -1330,7 +1358,7 @@ LT.dash = function (params) {
       ${INV.seg(tf)}
     </div>
     <div class="inv-chart" id="ltDashChart" data-ltd-chart="${tf}">
-      ${hasPerf ? INV.lineChart(series, { h: 150 }) : `<div class="inv-empty">${ic('trend', 26)}<p class="small muted">Start a trade, buy stock or run a bot to see performance.</p><a href="#/invest/market" class="btn btn-sm btn-primary">Explore market</a></div>`}
+      ${kitPortfolio(series, tf, hasPerf)}
     </div>
     ${s.botActive ? `<div class="tiny center ${s.botPnl >= 0 ? 'up' : 'down'}" style="margin-top:5px" data-lt-bot-line>
       ${ic('trend', 11)} ${esc(s.botTier || 'Trading bot')} · ${usd(s.botValue)} equity · ${s.botPnl >= 0 ? '+' : '−'}${usd(Math.abs(s.botPnl))} · ${s.botTrades} trade${s.botTrades === 1 ? '' : 's'}${s.botStatus === 'running' ? ' · live' : ''}
