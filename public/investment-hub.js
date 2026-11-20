@@ -649,9 +649,30 @@
         '</div></div>';
     }).join('');
 
+    /* Sell-only Auto Buy/Sell: after buying manually, a user can set just a
+       sell target and let the server sell the whole holding when it is reached. */
+    var autoCard = '';
+    if (picked && holdings.length) {
+      var hold = holdings[0];
+      var al = (a.b2bAlerts || []).find(function (x) { return x.ticker === picked; }) || {};
+      var qq = b2bQuote(picked) || {};
+      var lp = Number(qq.price) || Number(hold.price) || 0;
+      var subbed = !!(window.WC_SUBS && WC_SUBS.autoSubscribed && WC_SUBS.autoSubscribed(u));
+      autoCard = '<div class="card"><div class="between"><div class="card-title" style="margin:0">Auto sell target</div>' +
+          (window.WC_SUBS && WC_SUBS.badge ? WC_SUBS.badge('autobuysell') : '') + '</div>' +
+        '<div class="tiny muted" style="margin:4px 0 8px">You already hold ' + b2bUnits(hold.units) + ' ' + escH(picked) + '. Set only a sell price, tick <b>Use Auto Buy/Sell</b> and the server sells your whole holding automatically once the live price reaches or exceeds your target — even while the app is closed.</div>' +
+        '<div class="field"><label class="label">Sell target (USD)</label>' +
+          '<input class="input" id="ihB2bAutoSellPrice" type="number" step="0.0001" min="0" value="' + (Number(al.sell) > 0 ? Number(al.sell) : '') + '" placeholder="' + (lp > 0 ? (lp * 1.05).toFixed(4) : '') + '"/>' +
+          '<div class="tiny muted mt6">Live price ' + (lp > 0 ? money(lp) : '—') + ' · target must be above it</div></div>' +
+        '<label class="row" style="gap:8px;align-items:center;font-size:12px;margin-top:6px"><input type="checkbox" id="ihB2bAutoSellOn" checked/> <b>Use Auto Buy/Sell</b> to sell this holding automatically</label>' +
+        '<button class="btn btn-primary" data-act="ih-b2b-auto-sell" data-t="' + escH(picked) + '" style="width:100%;margin-top:8px">' + (al.auto ? 'Update auto sell target' : 'Arm Auto Sell') + '</button>' +
+        (al.auto && window.WC_SUBS && WC_SUBS.autoStatusText ? '<div class="tiny" style="margin-top:6px">' + WC_SUBS.autoStatusText(al) + '</div>' : '') +
+        (subbed ? '' : '<div class="tiny warn" style="margin-top:6px">Subscribe to Auto Buy/Sell (' + (window.WC_SUBS ? money(WC_SUBS.price('autobuysell')) : '') + ' / month) to arm this target.</div>') +
+        '</div>';
+    }
     return b2bHead(u, 'Sell assets', 'Proceeds are credited to your B2B profit balance; your principal returns to capital.', '#/investment/b2b') +
       (picked ? '' : '<div class="card"><div class="tiny muted">Showing every open holding. Tap a row on the dashboard to sell one asset at a time.</div></div>') +
-      rows;
+      autoCard + rows;
   }
 
   /* ---- 4. asset lists (multi-select buy) --------------------------------- */
@@ -1246,6 +1267,28 @@
       else { ex = { id: nowId('al_'), ticker: t, buy: buy, sell: sell, email: byEmail, buyHit: false, sellHit: false, createdAt: Date.now() }; a.b2bAlerts.push(ex); }
       if (autoOpts && WC_SUBS.applyAuto) WC_SUBS.applyAuto(ex, autoOpts);
       save(); toastH('Price alert saved' + (ex.auto ? ' · Auto Buy/Sell ON for ' + t : '') + (byEmail ? ' · email enabled' : ''), 'ok'); render();
+    };
+    App.ihB2bAutoSell = function (id, ds) {
+      var u = me(); var a = account(u);
+      var t = String((ds && ds.t) || '').toUpperCase();
+      var price = Number((document.getElementById('ihB2bAutoSellPrice') || {}).value) || 0;
+      var onEl = document.getElementById('ihB2bAutoSellOn');
+      var on = onEl ? !!onEl.checked : true;
+      if (!(price > 0)) return toastH('Enter a sell target price', 'err');
+      if (!(window.WC_SUBS && WC_SUBS.autoSubscribed && WC_SUBS.autoSubscribed(u))) return toastH('Subscribe to Auto Buy/Sell first — open Tools', 'err');
+      var q = b2bQuote(t) || {};
+      var lp = Number(q.price) || 0;
+      if (lp > 0 && price <= lp) return toastH('The sell target must be above the live price (' + money(lp) + ')', 'err');
+      var ex = (a.b2bAlerts || []).find(function (x) { return x.ticker === t; });
+      if (!ex) { ex = { id: nowId('al_'), ticker: t, buy: 0, sell: price, email: true, buyHit: false, sellHit: false, createdAt: Date.now() }; a.b2bAlerts.push(ex); }
+      ex.sell = price;
+      /* only the sell side is configured: keep any existing holding and let the
+         server sell the whole position when the target is reached */
+      ex.buy = Number(ex.buy) || 0;
+      if (window.WC_SUBS && WC_SUBS.applyAuto) WC_SUBS.applyAuto(ex, { auto: on, amount: Number(ex.autoAmount) || 0, repeat: false });
+      save();
+      toastH(on ? 'Auto Sell armed — your ' + t + ' holding sells at ' + money(price) + ' or above' : 'Auto Sell target saved but switched off', 'ok');
+      render();
     };
     App.ihB2bAlertClear = function (id, ds) {
       var u = me(); var a = account(u); var t = String((ds && ds.t) || '').toUpperCase();

@@ -794,9 +794,16 @@ const Remote = {
   setStoredBase(v) {
     try { v ? localStorage.setItem(LS_SERVER, v) : localStorage.removeItem(LS_SERVER); } catch (e) {}
   },
-  url(p) { return (this.base || '') + p; },
+  url(p) {
+    /* never fall back to the page origin on a static host: the Appwrite site
+       has no /api/* and answers with a router_path_not_found JSON, which used
+       to surface as a bare "not_found" toast on take-profit / subscribe */
+    let base = this.base || '';
+    try { if (!base && typeof DEFAULT_SYNC_SERVER !== 'undefined' && DEFAULT_SYNC_SERVER) base = DEFAULT_SYNC_SERVER; } catch (e) {}
+    return base + p;
+  },
 
-  async fetchJSON(pathname, opts = {}, timeout = 7000) {
+  async fetchJSON(pathname, opts = {}, timeout = 15000) {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeout);
     try {
@@ -826,7 +833,13 @@ const Remote = {
       }
       // An explicit sync server always wins (the Appwrite site is static)
       if (DEFAULT_SYNC_SERVER) {
-        const ok = await this.connect(DEFAULT_SYNC_SERVER, { silent: true, initFromLocal: true });
+        /* Appwrite Functions cold-start: a single fast probe can time out on
+           the first request of the day, so retry once before giving up */
+        let ok = await this.connect(DEFAULT_SYNC_SERVER, { silent: true, initFromLocal: true });
+        if (!ok) {
+          await new Promise((r) => setTimeout(r, 1800));
+          ok = await this.connect(DEFAULT_SYNC_SERVER, { silent: true, initFromLocal: true });
+        }
         if (ok) return true;
         this.status = 'offline';
         return false;
@@ -848,7 +861,7 @@ const Remote = {
          server URL was previously probed against the old/empty base and always
          failed with “Not a WhaleChat server” / “Failed to fetch” */
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 6000);
+      const timer = setTimeout(() => ctrl.abort(), 15000);
       let health = null;
       try {
         const res = await fetch(base + '/api/health', { signal: ctrl.signal, cache: 'no-store' });

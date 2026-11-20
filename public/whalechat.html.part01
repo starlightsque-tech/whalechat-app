@@ -639,7 +639,7 @@ html[data-theme="light"] .profile-banner>img{opacity:.10}
 let COIN_USD = 0.5;                 // 1 Whale Coin = $0.50 (admin-editable in Trade Guide settings)
 const APP_VERSION = '3.9.10';
 // Set to your permanent sync server to auto-connect from any static host, e.g. 'https://sync.yourdomain.com'
-const DEFAULT_SYNC_SERVER = 'https://nyc.cloud.appwrite.io/v1/functions/whalechat-sync';
+const DEFAULT_SYNC_SERVER = 'https://whalechat-api.appwrite.network';
 const APP_BUILD = '2026-11-12T05:57:54Z';    // replaced at build time
 const LS_DB = 'whalechat.db.v1';
 const LS_SESSION = 'whalechat.session.v1';

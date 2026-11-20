@@ -1,8 +1,8 @@
 {
-  "version": "3.65.2",
-  "build": "2026-11-19T20:56:35Z",
+  "version": "3.66.0",
+  "build": "2026-11-20T14:05:20Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.65.2 - adds ADB install/emulator scripts and a CI emulator smoke test that installs the APK, launches the live app and captures a screenshot artifact.",
-  "releasedAt": "2026-11-19T20:56:35Z",
+  "notes": "WhaleChat 3.66.0 — fixes the sync-server URL that caused \"Failed to fetch\"/\"not_found\" on take-profit and subscribe, live provider quotes/candles on every stock page, any-amount bot capital top-ups, server-side Auto Buy/Sell (including sell-only targets) and spot TP/SL.",
+  "releasedAt": "2026-11-20T14:05:20Z",
   "minimum": "3.0.0"
 }

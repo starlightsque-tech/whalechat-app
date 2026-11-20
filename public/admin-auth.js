@@ -24,7 +24,7 @@
   }
   function token() { var t = read(); return t ? t.token : ''; }
   function clear() { try { sessionStorage.removeItem(KEY); } catch (e) {} }
-  function apiUrl(p) { try { if (typeof Remote !== 'undefined' && Remote && Remote.enabled && Remote.url) return Remote.url(p); } catch (e) {} return p; }
+  function apiUrl(p) { try { if (typeof Remote !== 'undefined' && Remote && Remote.url) return Remote.url(p); } catch (e) {} return p; }
   function isApi(url) { try { return /\/api\//.test(typeof url === 'string' ? url : (url && url.url) || ''); } catch (e) { return false; } }
 
   function withToken(init) {

@@ -278,7 +278,7 @@
     if (!S.record(id)) return { ok: false, error: 'not subscribed' };
     if (!opts.skipPin && !(await pinOk('Turn off tool', 'This stops future billing. Paid time is not refunded.'))) return { ok: false, error: 'cancelled' };
     var u = user();
-    if (typeof Remote !== 'undefined' && Remote && Remote.enabled && def(id) && def(id).bot) {
+    if (typeof Remote !== 'undefined' && Remote && Remote.url && def(id) && def(id).bot) {
       try {
         var p = (function (x) { try { return Remote.url(x); } catch (e) { return x; } })('/api/bots/auto-secure/toggle');
         await Remote.fetchJSON(p, { method: 'POST', body: JSON.stringify({ userId: u.id, enabled: false }) }, 20000);

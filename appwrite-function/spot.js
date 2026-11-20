@@ -1,0 +1,487 @@
+'use strict';
+/* =========================================================================
+   WhaleChat Spot Stocks — buy / sell real Finnhub-priced stock positions
+   -------------------------------------------------------------------------
+   • A user buys a position at the current live Finnhub market price. The
+     total cost is deducted from the WC wallet immediately and the position
+     is stored with symbol, entry price, quantity, invested capital and
+     optional Take Profit / Stop Loss targets.
+   • On close (manual, TP or SL) the user is paid the admin-configured profit
+     rate for that stock, locked when the position was opened, applied to the
+     position's current value (capital + live market gain):
+       profit payout = (invested capital + market gain) × profit rate / 100
+       total credit  = invested capital + profit payout
+     Live Finnhub prices feed the market gain and TP/SL; the admin rate is the
+     multiplier that turns that value into the user's profit.
+   • A background worker checks every open position once per second against
+     the shared backend quote cache. The critical section below is fully
+     synchronous, and a position is removed before the payout is credited,
+     so a manual sell racing a TP/SL tick can never credit twice.
+   • Admins set a profit rate (%) per stock in Admin → Stocks. The rate is
+     locked on each position at purchase and paid exactly on close; the real
+     Finnhub feed keeps streaming for display and TP/SL level checks.
+   ========================================================================= */
+
+const crypto = require('crypto');
+
+const COINS_PER_USD = 2;                 // 1 WC = $0.50
+
+function invAcct(u) {
+  if (!u) return null;
+  if (!u.investAcct) u.investAcct = { usd: 0, payout: 0, wcBalance: 0, portfolios: { stock: 0, wc: 0, b2b: 0, bot: 0 } };
+  const a = u.investAcct;
+  if (!a.portfolios) a.portfolios = { stock: 0, wc: 0, b2b: 0, bot: 0 };
+  return a;
+}
+function pf(u, key) { const a = invAcct(u); return round(Number(a && a.portfolios && a.portfolios[key]) || 0, 2); }
+function setPf(u, key, v) { const a = invAcct(u); a.portfolios[key] = round(Number(v) || 0, 2); return a.portfolios[key]; }
+const MAX_PCT = 500;                     // admin profit-rate cap (%)
+const round = (v, n) => Math.round((Number(v) || 0) * Math.pow(10, n)) / Math.pow(10, n);
+function nid(prefix) { return prefix + Date.now().toString(36) + crypto.randomBytes(3).toString('hex'); }
+
+class SpotService {
+  constructor(opts) {
+    this.getDb = opts.getDb;
+    this.persist = opts.persist || (() => {});
+    this.broadcast = opts.broadcast || (() => {});
+    this.getQuote = opts.getQuote || (() => null);
+    this.timer = null;
+    this.running = false;
+    this.busy = false;
+    this.lastError = '';
+    this.lastTickAt = 0;
+    this.settledTotal = 0;
+  }
+
+  /* ------------------------------- helpers -------------------------------- */
+  ensureDefaults(db) {
+    if (!db) return false;
+    let changed = false;
+    if (!Array.isArray(db.holdings)) { db.holdings = []; changed = true; }
+    if (!Array.isArray(db.trades)) { db.trades = []; changed = true; }
+    return changed;
+  }
+
+  user(db, userId) {
+    return (db.users || []).find((u) => u && u.id === String(userId || '')) || null;
+  }
+
+  stock(db, ticker) {
+    const t = String(ticker || '').toUpperCase();
+    return (db.stocks || []).find((s) => s && String(s.ticker).toUpperCase() === t) || null;
+  }
+
+  paused(db, ticker) {
+    const t = String(ticker || '').toUpperCase();
+    const inv = db.invest || {};
+    if (inv.paused && inv.paused[t]) return true;
+    const s = this.stock(db, ticker);
+    return !!(s && s.paused);
+  }
+
+  classOf(db, ticker) {
+    const s = this.stock(db, ticker);
+    return (s && s.assetClass) || 'us';
+  }
+
+  /** Admin-controlled asset-class visibility (Admin → Stocks → Asset classes). */
+  classEnabled(db, ticker) {
+    const inv = (db && db.invest) || {};
+    const classes = inv.classes || {};
+    return classes[this.classOf(db, ticker)] !== false;
+  }
+
+  livePrice(ticker) {
+    let q = null;
+    try { q = this.getQuote(String(ticker || '').toUpperCase()); } catch (e) { q = null; }
+    const p = q && Number(q.price);
+    return p > 0 ? round(p, 6) : 0;
+  }
+
+  /* Admin profit rate (%) for one stock. Read from the synced catalogue so
+     admins can edit it in Admin → Stocks and every device sees the same value. */
+  adminPct(db, ticker) {
+    const s = this.stock(db, ticker);
+    let n = Number(s && s.profitPct);
+    if (!Number.isFinite(n) || n < 0) {
+      /* inherit the admin's bulk rate for this market type */
+      const cls = (s && s.assetClass) || 'us';
+      const rates = (db.invest && db.invest.classRates) || {};
+      n = Number(rates[cls]);
+    }
+    if (!Number.isFinite(n) || n < 0) return 0;
+    return Math.min(MAX_PCT, round(n, 4));
+  }
+
+  /** Live Finnhub price (display/TP-SL only) + the locked profit rate. */
+  pricing(db, ticker) {
+    const live = this.livePrice(ticker);
+    const pct = this.adminPct(db, ticker);
+    return { live, pct, exec: live };
+  }
+
+  /** Profit rate locked on a position; falls back to the stock's current rate. */
+  rateFor(db, h) {
+    const locked = Number(h && h.profitPct);
+    if (Number.isFinite(locked) && locked >= 0) return Math.min(MAX_PCT, round(locked, 4));
+    return this.adminPct(db, h && h.ticker);
+  }
+
+  /** Payout on close = capital + (capital + market gain) × admin rate.
+      e.g. capital 100, gain 1.2, rate 10% → profit 10.12, credit 110.12. */
+  payoutFor(investedCoins, ratePct, marketGainCoins) {
+    const basis = Math.max(0, Number(investedCoins) || 0);
+    const gain = Number(marketGainCoins) || 0;
+    const base = Math.max(0, basis + gain);
+    const profit = round(base * (Math.max(0, Number(ratePct) || 0) / 100), 2);
+    return {
+      costBasis: round(basis, 2),
+      marketGain: round(gain, 2),
+      baseCoins: round(base, 2),
+      profitCoins: profit,
+      payoutCoins: round(basis + profit, 2)
+    };
+  }
+
+  holding(db, userId, ticker) {
+    const t = String(ticker || '').toUpperCase();
+    return (db.holdings || []).find((h) => h && h.userId === String(userId || '') && String(h.ticker).toUpperCase() === t && Number(h.shares) > 1e-9) || null;
+  }
+
+  notify(db, userId, title, body, icon) {
+    db.notifications = db.notifications || [];
+    db.notifications.unshift({ id: nid('nt_'), userId, title, body, link: '#/invest/orders', icon: icon || 'trend', read: false, createdAt: Date.now() });
+    if (db.notifications.length > 400) db.notifications.length = 400;
+  }
+
+  tx(db, userId, label, coins, type, meta) {
+    db.txs = db.txs || [];
+    db.txs.unshift({ id: nid('tx_'), userId, type: type || 'spot', label, coins: round(coins, 2), meta: meta || {}, createdAt: Date.now() });
+    if (db.txs.length > 2000) db.txs.length = 2000;
+  }
+
+  changed(source) {
+    try { this.persist(); } catch (e) {}
+    try { this.broadcast('change', { rev: null, source: source || 'spot', at: Date.now() }); } catch (e) {}
+  }
+
+  positionView(h, priceOverride) {
+    const db = this.getDb && this.getDb();
+    const live = priceOverride != null ? Number(priceOverride) : this.livePrice(h.ticker);
+    const shares = Number(h.shares) || 0;
+    const entry = Number(h.avgPrice) || 0;
+    const invested = Number(h.investedCoins) || round(shares * entry * COINS_PER_USD, 2);
+    const ratePct = this.rateFor(db, h);
+    const marketGain = round(shares * ((live || entry) - entry) * COINS_PER_USD, 2);
+    const locked = this.payoutFor(invested, ratePct, marketGain);
+    const marketValueCoins = round(shares * (live || entry) * COINS_PER_USD, 2);
+    return {
+      id: h.id, userId: h.userId, ticker: h.ticker,
+      symbol: h.ticker, entryPrice: entry, quantity: shares, shares,
+      investedCoins: invested, investedUsd: round(invested * 0.5, 2),
+      livePrice: live, marketPriceUsd: live, marketValueCoins, marketGainCoins: marketGain,
+      valueCoins: locked.payoutCoins,
+      profitPct: ratePct, adminProfitPct: ratePct,
+      profitCoins: locked.profitCoins,
+      payoutCoins: locked.payoutCoins,
+      payoutBaseCoins: locked.baseCoins,
+      pnlCoins: locked.profitCoins,
+      pnlPct: ratePct,
+      takeProfitPrice: Number(h.takeProfitPrice) || 0,
+      stopLossPrice: Number(h.stopLossPrice) || 0,
+      openedAt: h.createdAt || h.entryAt || null, updatedAt: h.updatedAt || null
+    };
+  }
+
+  positions(db, userId) {
+    return (db.holdings || [])
+      .filter((h) => h && h.userId === String(userId || '') && Number(h.shares) > 1e-9)
+      .map((h) => this.positionView(h));
+  }
+
+  /* --------------------------------- buy ---------------------------------- */
+  buy(opts) {
+    const db = this.getDb && this.getDb();
+    if (!db) throw new Error('Database not ready');
+    this.ensureDefaults(db);
+    const userId = String(opts.userId || '');
+    const u = this.user(db, userId);
+    if (!u) throw new Error('User not found');
+    const ticker = String(opts.ticker || '').toUpperCase();
+    const s = this.stock(db, ticker);
+    if (!s) throw new Error('That stock is not listed');
+    if (this.paused(db, ticker)) throw new Error(`${ticker} trading is paused by an administrator`);
+    if (!this.classEnabled(db, ticker)) throw new Error('This asset type is currently turned off by an administrator');
+
+    const { live, pct, exec } = this.pricing(db, ticker);
+    if (!(live > 0) || !(exec > 0)) throw new Error('Waiting for a live market price — try again in a moment');
+    /* execution is the raw live Finnhub price; the admin rate only affects payout */
+
+    let amountUsd = Number(opts.amountUsd);
+    if (!(amountUsd > 0) && Number(opts.amountCoins) > 0) amountUsd = Number(opts.amountCoins) * 0.5;
+    let shares = Number(opts.shares);
+    if (!(shares > 0) && amountUsd > 0) shares = amountUsd / exec;
+    if (!(shares > 0)) throw new Error('Enter an investment amount (USD) or a number of shares');
+    if (!(amountUsd > 0)) amountUsd = shares * exec;
+
+    shares = round(shares, 8);
+    if (!(shares > 0)) throw new Error('Quantity is too small');
+    const investedUsd = round(shares * exec, 6);
+    const investedCoins = round(investedUsd * COINS_PER_USD, 2);
+    if (!(investedCoins > 0)) throw new Error('Investment is too small');
+    /* buy from Trade capital first, then from Leftover capital */
+    const availUsd = pf(u, 'stock');
+    const acct = u.investAcct || {};
+    const leftUsd = Math.max(0, Number(acct.stockLeftover) || 0);
+    if (availUsd + leftUsd + 1e-9 < investedUsd) {
+      throw new Error(`Not enough balance — this purchase needs $${investedUsd.toFixed(2)} (capital $${availUsd.toFixed(2)} + leftover $${leftUsd.toFixed(2)})`);
+    }
+    const fromCapital = Math.min(availUsd, investedUsd);
+    const fromLeftover = round(Math.max(0, investedUsd - fromCapital), 6);
+
+    const tp = Number(opts.tpPrice) || 0;
+    const sl = Number(opts.slPrice) || 0;
+    if (tp > 0 && tp <= exec) throw new Error('Take Profit must be above the current market price');
+    if (sl > 0 && sl >= exec) throw new Error('Stop Loss must be below the current market price');
+
+    /* --- critical section: fully synchronous, no awaits ------------------- */
+    setPf(u, 'stock', availUsd - fromCapital);
+    if (fromLeftover > 0) acct.stockLeftover = round(Math.max(0, leftUsd - fromLeftover), 2);
+
+    const now = Date.now();
+    let h = this.holding(db, userId, ticker);
+    if (h) {
+      const prevShares = Number(h.shares) || 0;
+      const nextShares = round(prevShares + shares, 8);
+      const prevInvested = Number(h.investedCoins) || round(prevShares * (Number(h.avgPrice) || 0) * COINS_PER_USD, 2);
+      h.avgPrice = round((prevShares * (Number(h.avgPrice) || 0) + investedUsd) / nextShares, 8);
+      h.shares = nextShares;
+      h.investedCoins = round(prevInvested + investedCoins, 2);
+      h.investedUsd = round((Number(h.investedCoins) || 0) * 0.5, 2);
+      h.adminProfitPct = pct;
+      h.profitPct = pct;
+      h.marketPriceUsd = live;
+      h.updatedAt = now;
+      if (tp > 0) h.takeProfitPrice = round(tp, 6);
+      if (sl > 0) h.stopLossPrice = round(sl, 6);
+      h.lastBuyAt = now;
+    } else {
+      h = {
+        id: nid('hd'), userId, ticker, name: s.name || ticker,
+        shares, avgPrice: exec,
+        investedCoins, investedUsd: round(investedUsd, 2),
+        takeProfitPrice: tp > 0 ? round(tp, 6) : 0,
+        stopLossPrice: sl > 0 ? round(sl, 6) : 0,
+        adminProfitPct: pct, profitPct: pct, marketPriceUsd: live,
+        kind: 'spot', status: 'open',
+        createdAt: now, updatedAt: now
+      };
+      db.holdings.push(h);
+    }
+
+    const order = {
+      id: nid('tr'), userId, ticker, name: s.name || ticker,
+      side: 'buy', type: 'spot', status: 'Completed',
+      shares, priceUsd: exec, marketPriceUsd: live,
+      adminProfitPct: pct, profitPct: pct, payoutPct: pct, coins: investedCoins, feeCoins: 0,
+      takeProfitPrice: h.takeProfitPrice || 0, stopLossPrice: h.stopLossPrice || 0,
+      plUsd: 0, plCoins: 0, createdAt: now
+    };
+    db.trades.unshift(order);
+    if (db.trades.length > 3000) db.trades.length = 3000;
+
+    this.tx(db, userId, `Bought ${shares.toFixed(6)} ${ticker} @ $${exec.toFixed(4)}`, -investedCoins, 'spot-buy', {
+      orderId: order.id, ticker, shares, priceUsd: exec, marketPriceUsd: live, adminProfitPct: pct
+    });
+    this.notify(db, userId, 'Buy order filled',
+      `${shares.toFixed(6)} ${ticker} bought at $${exec.toFixed(4)} · $${investedUsd.toFixed(2)} paid (capital $${fromCapital.toFixed(2)}${fromLeftover > 0 ? ' + leftover $' + fromLeftover.toFixed(2) : ''}). On close this position pays a locked ${pct}% profit ($${round(investedUsd * pct / 100, 2).toFixed(2)}).`,
+      'trend');
+    /* ---------------------------------------------------------------------- */
+
+    this.changed('spot-buy');
+    return { ok: true, order, position: this.positionView(h, live), balance: pf(u, 'stock'), stockUsd: pf(u, 'stock'), leftoverUsd: Number(acct.stockLeftover) || 0, fromCapital, fromLeftover };
+  }
+
+  /* --------------------------------- sell --------------------------------- */
+  /* reason: 'Manual sell' | 'Take Profit Hit' | 'Stop Loss Hit' */
+  sell(opts) {
+    const db = this.getDb && this.getDb();
+    if (!db) throw new Error('Database not ready');
+    this.ensureDefaults(db);
+    const userId = String(opts.userId || '');
+    const u = this.user(db, userId);
+    if (!u) throw new Error('User not found');
+    const ticker = String(opts.ticker || '').toUpperCase();
+    const h = this.holding(db, userId, ticker);
+    if (!h) throw new Error('No open position for ' + ticker);
+
+    const price = this.livePrice(ticker);
+    if (!(price > 0)) throw new Error('Waiting for a live market price — try again in a moment');
+
+    const requested = Number(opts.shares);
+    const totalShares = Number(h.shares) || 0;
+    const shares = requested > 0 && requested < totalShares - 1e-9 ? round(requested, 8) : totalShares;
+    if (!(shares > 0)) throw new Error('Nothing to sell');
+
+    const entry = Number(h.avgPrice) || 0;
+    const totalInvested = Number(h.investedCoins) || round(totalShares * entry * COINS_PER_USD, 2);
+    /* basis for the shares being sold (whole position = full invested capital) */
+    const soldBasis = shares >= totalShares - 1e-9
+      ? totalInvested
+      : round(totalInvested * (shares / totalShares), 2);
+    const ratePct = this.rateFor(db, h);
+    const marketGain = round(shares * (price - entry) * COINS_PER_USD, 2);
+    const locked = this.payoutFor(soldBasis, ratePct, marketGain);
+    const payout = locked.payoutCoins;
+    const costBasis = locked.costBasis;
+    const plCoins = locked.profitCoins;
+    const reason = String(opts.reason || 'Manual sell');
+
+    /* --- critical section: remove/trim the position BEFORE crediting ----- */
+    const idx = db.holdings.findIndex((x) => x && x.id === h.id);
+    if (idx < 0) throw new Error('That position is already closed');
+    const prevHolding = Object.assign({}, h);
+    const prevBalance = pf(u, 'stock');
+    try {
+      if (shares >= totalShares - 1e-9) {
+        db.holdings.splice(idx, 1);
+      } else {
+        h.shares = round(totalShares - shares, 8);
+        h.investedCoins = round((Number(h.investedCoins) || 0) * (h.shares / totalShares), 2);
+        h.investedUsd = round((Number(h.investedCoins) || 0) * 0.5, 2);
+        h.updatedAt = Date.now();
+      }
+      setPf(u, 'stock', prevBalance + round(payout * 0.5, 2));
+
+      const now = Date.now();
+      const order = {
+        id: nid('tr'), userId, ticker, name: (this.stock(db, ticker) || {}).name || ticker,
+        side: 'sell', type: 'spot', status: 'Completed',
+        shares, priceUsd: price, marketPriceUsd: price,
+        entryPriceUsd: entry, payoutPct: ratePct, marketGainCoins: marketGain,
+        coins: payout, feeCoins: 0,
+        plUsd: round(plCoins * 0.5, 2), plCoins,
+        closeReason: reason,
+        openedAt: h.createdAt || null, createdAt: now, closedAt: now
+      };
+      db.trades.unshift(order);
+      if (db.trades.length > 3000) db.trades.length = 3000;
+
+      this.tx(db, userId, `${reason} · sold ${shares.toFixed(6)} ${ticker} · ${ratePct}% profit paid`, payout, 'spot-sell', {
+        orderId: order.id, ticker, shares, marketPriceUsd: price, entryPriceUsd: entry, profitPct: ratePct, plCoins, reason
+      });
+      this.notify(db, userId,
+        reason === 'Take Profit Hit' ? 'Take Profit Hit — position closed' : reason === 'Stop Loss Hit' ? 'Stop Loss Hit — position closed' : 'Sell order filled',
+        `${shares.toFixed(6)} ${ticker} closed. ${payout.toFixed(2)} WC credited (capital ${costBasis.toFixed(2)} WC + ${ratePct}% of capital+gain = +${plCoins.toFixed(2)} WC profit). Live market price was $${price.toFixed(4)}.`,
+        'check');
+      this.settledTotal += 1;
+      this.changed('spot-sell');
+      return { ok: true, order, payout, plCoins, profitPct: ratePct, balance: pf(u, 'stock'), stockUsd: pf(u, 'stock'), reason };
+    } catch (e) {
+      /* roll back so a failed bookkeeping step can never lose the position */
+      setPf(u, 'stock', prevBalance);
+      if (idx >= 0 && !db.holdings.some((x) => x && x.id === prevHolding.id)) db.holdings.splice(idx, 0, prevHolding);
+      throw e;
+    }
+    /* ---------------------------------------------------------------------- */
+  }
+
+  /* ------------------------------- TP / SL -------------------------------- */
+  setTargets(opts) {
+    const db = this.getDb && this.getDb();
+    if (!db) throw new Error('Database not ready');
+    this.ensureDefaults(db);
+    const userId = String(opts.userId || '');
+    const ticker = String(opts.ticker || '').toUpperCase();
+    const h = this.holding(db, userId, ticker);
+    if (!h) throw new Error('No open position for ' + ticker);
+    const tp = Number(opts.tpPrice) || 0;
+    const sl = Number(opts.slPrice) || 0;
+    const entry = Number(h.avgPrice) || 0;
+    if (tp > 0 && tp <= entry) throw new Error('Take Profit must be above the entry price');
+    if (sl > 0 && sl >= entry) throw new Error('Stop Loss must be below the entry price');
+    h.takeProfitPrice = tp > 0 ? round(tp, 6) : 0;
+    h.stopLossPrice = sl > 0 ? round(sl, 6) : 0;
+    h.updatedAt = Date.now();
+    this.changed('spot-targets');
+    return { ok: true, position: this.positionView(h) };
+  }
+
+  /* ------------------------------- admin ---------------------------------- */
+  setAdminProfitPct(db, ticker, pct) {
+    const s = this.stock(db, ticker);
+    if (!s) throw new Error('Stock not found');
+    const n = Number(pct);
+    if (!Number.isFinite(n) || n < 0 || n > MAX_PCT) throw new Error(`Profit rate must be between 0 and ${MAX_PCT}%`);
+    s.profitPct = round(n, 4);
+    s.updatedAt = Date.now();
+    this.changed('spot-admin-pct');
+    return { ok: true, ticker: s.ticker, profitPct: s.profitPct };
+  }
+
+  /* ------------------------------ worker ---------------------------------- */
+  settle() {
+    if (this.busy) return 0;
+    const db = this.getDb && this.getDb();
+    if (!db || !Array.isArray(db.holdings) || !db.holdings.length) return 0;
+    this.busy = true;
+    this.lastTickAt = Date.now();
+    let closed = 0;
+    try {
+      /* snapshot ids only: the critical sections below re-read current state */
+      const candidates = (db.holdings || [])
+        .filter((h) => h && (Number(h.takeProfitPrice) > 0 || Number(h.stopLossPrice) > 0))
+        .map((h) => ({ userId: h.userId, ticker: h.ticker, tp: Number(h.takeProfitPrice) || 0, sl: Number(h.stopLossPrice) || 0 }));
+      for (const c of candidates) {
+        const price = this.livePrice(c.ticker);
+        if (!(price > 0)) continue;
+        /* skip if the position disappeared (manual sell won the race) */
+        if (!this.holding(db, c.userId, c.ticker)) continue;
+        let reason = '';
+        if (c.tp > 0 && price >= c.tp) reason = 'Take Profit Hit';
+        else if (c.sl > 0 && price <= c.sl) reason = 'Stop Loss Hit';
+        if (!reason) continue;
+        try {
+          this.sell({ userId: c.userId, ticker: c.ticker, reason });
+          closed += 1;
+          console.log(`[spot] ${reason} · ${c.ticker} · user ${c.userId} · live $${price}`);
+        } catch (e) {
+          /* already closed by another path — never retried, never double-paid */
+          if (!/No open position|already closed/.test(e.message)) this.lastError = e.message;
+        }
+      }
+    } finally {
+      this.busy = false;
+    }
+    return closed;
+  }
+
+  startTimers() {
+    if (this.running) return;
+    this.running = true;
+    this.timer = setInterval(() => {
+      try { this.settle(); } catch (e) { this.lastError = e.message; console.error('[spot] settle failed:', e.message); }
+    }, 1000);
+    if (this.timer.unref) this.timer.unref();
+    console.log('[spot] TP/SL worker started (1s scan)');
+  }
+
+  stopTimers() {
+    this.running = false;
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
+  }
+
+  status() {
+    const db = this.getDb && this.getDb();
+    return {
+      running: this.running,
+      openPositions: db ? (db.holdings || []).filter((h) => h && Number(h.shares) > 1e-9).length : 0,
+      settled: this.settledTotal,
+      lastTickAt: this.lastTickAt,
+      lastError: this.lastError
+    };
+  }
+}
+
+module.exports = { SpotService, COINS_PER_USD, MAX_PCT };

@@ -40,7 +40,7 @@
   /* feed detection: any connected provider switches the full list on */
   function pollFeeds() {
     var base = '';
-    try { if (typeof Remote !== 'undefined' && Remote && Remote.enabled) base = Remote.base || ''; } catch (e) {}
+    try { if (typeof Remote !== 'undefined' && Remote && Remote.url) base = Remote.base || ''; } catch (e) {}
     /* an installed offline app still owns a full catalogue — that is "on" */
     function local() {
       try { return !!(typeof DB !== 'undefined' && DB && Array.isArray(DB.stocks) && DB.stocks.length); } catch (e) { return false; }

@@ -10,7 +10,7 @@
   'use strict';
   if (window.__wcSharesAdminExtra) return; window.__wcSharesAdminExtra = true;
 
-  function url(p) { try { if (typeof Remote !== 'undefined' && Remote && Remote.enabled && Remote.url) return Remote.url(p); } catch (e) {} return p; }
+  function url(p) { try { if (typeof Remote !== 'undefined' && Remote && Remote.url) return Remote.url(p); } catch (e) {} return p; }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   function $(id) { return document.getElementById(id); }
   function note(m, t) { try { if (typeof toast === 'function') toast(m, t || 'ok'); } catch (e) {} }

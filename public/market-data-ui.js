@@ -10,7 +10,7 @@
   if (typeof window === 'undefined' || window.__wcMarketDataUi) return;
   window.__wcMarketDataUi = true;
 
-  function url(p) { try { if (typeof Remote !== 'undefined' && Remote && Remote.enabled && Remote.url) return Remote.url(p); } catch (e) {} return p; }
+  function url(p) { try { if (typeof Remote !== 'undefined' && Remote && Remote.url) return Remote.url(p); } catch (e) {} return p; }
   function adminId() { try { var u = me(); return u && u.id; } catch (e) { return ''; } }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   function toastMsg(m, t) { try { if (typeof toast === 'function') toast(m, t || 'ok'); } catch (e) {} }

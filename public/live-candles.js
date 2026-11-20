@@ -53,7 +53,7 @@
   }
 
   function apiPath(p) {
-    try { if (typeof Remote !== 'undefined' && Remote && Remote.enabled) return Remote.url(p); } catch (e) {}
+    try { if (typeof Remote !== 'undefined' && Remote && Remote.url) return Remote.url(p); } catch (e) {}
     return p;
   }
   function getJSON(pathname, timeout) {

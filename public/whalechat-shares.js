@@ -36,7 +36,7 @@
     return Math.max(1, m) + 'm left';
   }
   function tmsg(msg, type) { if (typeof toast === 'function') toast(msg, type || 'ok'); }
-  function apiPath(p) { try { if (typeof Remote !== 'undefined' && Remote && Remote.enabled) return Remote.url(p); } catch (e) {} return p; }
+  function apiPath(p) { try { if (typeof Remote !== 'undefined' && Remote && Remote.url) return Remote.url(p); } catch (e) {} return p; }
   async function api(pathname, opts, timeout) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeout || 20000);

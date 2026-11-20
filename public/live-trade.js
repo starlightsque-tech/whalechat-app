@@ -2298,7 +2298,7 @@ App.ltTp = async function (id, ds) {
   if (!t || t.status !== 'Open') return toast('This trade is already closed', 'err');
   if (!(LT.calc(t).pnlCoins > 0)) return toast('No profit to take yet', 'err');
   /* the backend skim is atomic; fall back to the local bookkeeping offline */
-  if (typeof Remote !== 'undefined' && Remote && Remote.enabled) {
+  if (typeof Remote !== 'undefined' && Remote && Remote.url) {
     try {
       const r = await Remote.fetchJSON('/api/market/trade/take-profit', {
         method: 'POST',
@@ -2322,7 +2322,7 @@ App.ltClaimAllProfits = async function () {
     const ok = await confirmDialog({ title: 'Claim all secured profits?', body: `${list.length} entries totalling ${usd(total)} USD will be credited to your stock Profit balance.`, ok: 'Claim all' });
     if (!ok) return;
   }
-  if (typeof Remote !== 'undefined' && Remote && Remote.enabled) {
+  if (typeof Remote !== 'undefined' && Remote && Remote.url) {
     try {
       const r = await Remote.fetchJSON('/api/market/secure-profit/claim-all', {
         method: 'POST', body: JSON.stringify({ userId: me().id })
@@ -2360,7 +2360,7 @@ App.ltClaimProfit = async function (id, ds) {
   const rec = t && (t.securedProfits || []).find((x) => x && x.id === profitId);
   if (!t || !rec) return toast('That secured profit was not found', 'err');
   if (rec.claimed) return toast('This profit has already been claimed', 'err');
-  if (typeof Remote !== 'undefined' && Remote && Remote.enabled) {
+  if (typeof Remote !== 'undefined' && Remote && Remote.url) {
     try {
       const r = await Remote.fetchJSON('/api/market/secure-profit/claim', {
         method: 'POST',
@@ -2388,7 +2388,7 @@ App.ltClaimProfit = async function (id, ds) {
 };
 
 async function ltManualClose(t, action, reason) {
-  if (typeof Remote !== 'undefined' && Remote && Remote.enabled) {
+  if (typeof Remote !== 'undefined' && Remote && Remote.url) {
     try {
       const r = await Remote.fetchJSON('/api/market/trade/close', {
         method: 'POST',

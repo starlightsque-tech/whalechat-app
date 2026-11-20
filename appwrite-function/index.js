@@ -38,6 +38,9 @@ const offlineSync = require('./offline-sync');
 const { ShareService } = require('./shares');
 const { BotService } = require('./bots');
 const { MarketService } = require('./market');
+const { createMarketData } = require('./market-data');
+const { SpotService } = require('./spot');
+const { createB2BAlertWatcher } = require('./b2b-alerts');
 
 const CORS = {
   'access-control-allow-origin': '*',
@@ -794,6 +797,82 @@ function marketServiceFor(st) {
   }
   return svc;
 }
+/* -------------------------------------------------------------------------
+   Real provider market data (Binance klines / Finnhub / Twelve Data)
+   ------------------------------------------------------------------------- */
+function providerSymbolFor(st, ticker) {
+  const t = String(ticker || '').toUpperCase().trim();
+  if (!t) return '';
+  const row = (st && st.db && st.db.stocks || []).find((x) => x && (String(x.ticker).toUpperCase() === t || String(x.displayTicker || '').toUpperCase() === t));
+  const raw = row && row.finnhubSymbol ? String(row.finnhubSymbol) : t;
+  return raw.replace(/^BINANCE:/i, '').replace(/^OANDA:/i, '').replace(/^FOREXCOM:/i, '').replace(/_/g, '').replace(/\//g, '');
+}
+let _marketData = null;
+function marketDataFor() {
+  if (_marketData) return _marketData;
+  _marketData = createMarketData({
+    connections: {
+      stored: () => ({
+        finnhub: { apiKey: FINNHUB_KEY },
+        binance: {},
+        marketData: { twelvedata: { apiKey: TWELVE_KEY }, binance: {} }
+      })
+    },
+    log: () => {}
+  });
+  return _marketData;
+}
+
+/* Spot stock book (manual buy/sell + TP/SL) */
+function spotServiceFor(st, svc) {
+  return new SpotService({
+    getDb: () => st.db,
+    persist: () => {},
+    broadcast: () => {},
+    getQuote: (ticker) => {
+      const t = String(ticker || '').toUpperCase();
+      const q = svc && svc.quotes && svc.quotes[t];
+      if (q && Number(q.price) > 0) return q;
+      const row = (st.db.stocks || []).find((x) => x && String(x.ticker).toUpperCase() === t);
+      return row && Number(row.price) > 0 ? { price: Number(row.price), prevClose: Number(row.prevClose) || Number(row.price) } : null;
+    }
+  });
+}
+
+/* Hydrate quotes for everything the Auto Buy/Sell watcher and spot TP/SL need. */
+function autoWatchTickers(db) {
+  const out = new Set();
+  (db.users || []).forEach((u) => {
+    const a = u && u.investAcct || {};
+    (a.b2bAlerts || []).forEach((al) => { if (al && al.auto && al.ticker) out.add(String(al.ticker).toUpperCase()); });
+    Object.keys(a.b2b || {}).forEach((t) => out.add(String(t).toUpperCase()));
+  });
+  (db.holdings || []).forEach((h) => { if (h && h.ticker) out.add(String(h.ticker).toUpperCase()); });
+  return Array.from(out).slice(0, 60);
+}
+async function b2bTick(st, svc) {
+  try {
+    const db = st.db;
+    if (!db) return false;
+    const hasAlerts = (db.users || []).some((u) => u && u.investAcct && Array.isArray(u.investAcct.b2bAlerts) && u.investAcct.b2bAlerts.some((a) => a && a.auto));
+    if (!hasAlerts) return false;
+    const tickers = autoWatchTickers(db);
+    if (tickers.length) await hydrateLiveQuotes(st, svc, tickers);
+    const watcher = createB2BAlertWatcher({
+      getDb: () => st.db,
+      persist: () => {},
+      broadcast: () => {},
+      quotes: () => (svc && svc.quotes) || {},
+      email: null,
+      appUrl: () => process.env.PUBLIC_URL || 'https://whalechat.appwrite.network',
+      everyMs: 15000
+    });
+    watcher.run();
+    db.b2bAutoLastAt = Date.now();
+    return true;
+  } catch (e) { return false; }
+}
+
 function botServiceFor(st, marketSvc) {
   return new BotService({
     getDb: () => st.db,
@@ -1015,6 +1094,12 @@ module.exports = async ({ req, res, log, error }) => {
         }
       } catch (e) {}
       try { if (wcSweep(st.db, 60000)) changed = true; } catch (e) {}
+      try {
+        const ms = marketServiceFor(st);
+        if (await b2bTick(st, ms)) changed = true;
+        const hts = Array.from(new Set((st.db.holdings || []).map((h) => h && h.ticker).filter(Boolean)));
+        if (hts.length) { await hydrateLiveQuotes(st, ms, hts); if (spotServiceFor(st, ms).settle()) changed = true; }
+      } catch (e) {}
       if (changed) await saveState(st);
       return res.json({ ok: true, engine: 'cron', rev: st.rev || 0, at: Date.now() }, 200, CORS);
     }
@@ -1164,10 +1249,17 @@ module.exports = async ({ req, res, log, error }) => {
         botsTrades = botCatchUp(b, st);
       } catch (e) {}
       try { wcChanged = wcSweep(st.db, 0); } catch (e) {}
+      let b2bTicked = false, spotClosed = 0;
+      try {
+        const ms = marketServiceFor(st);
+        b2bTicked = await b2bTick(st, ms);
+        const hts = Array.from(new Set((st.db.holdings || []).map((h) => h && h.ticker).filter(Boolean)));
+        if (hts.length) { await hydrateLiveQuotes(st, ms, hts); spotClosed = spotServiceFor(st, ms).settle(); }
+      } catch (e) {}
       const ok = await saveState(st);
       return res.json({
         ok: !!ok, engine: 'tick', rev: st.rev || 0, at: Date.now(),
-        botsTrades, sharesTicked, wcChanged,
+        botsTrades, sharesTicked, wcChanged, b2bTicked, spotClosed,
         sessions: (st.db.botSessions || []).filter((x) => x && x.status === 'running').length
       }, ok ? 200 : 502, CORS);
     }
@@ -1372,6 +1464,137 @@ module.exports = async ({ req, res, log, error }) => {
         counts, listed: stocks.length, realTickers: 0,
         source: 'appwrite', marketOpen: true, alwaysOpen: true
       }, 200, CORS);
+    }
+
+    /* -------- live provider quotes / candles / history (charts) --------- */
+    if (path === '/api/market/quotes' && (method === 'GET' || method === 'POST')) {
+      const st = await readState();
+      const svc = marketServiceFor(st);
+      const q = Object.assign({}, req.query || {}, body || {});
+      let raw = String(q.tickers || q.symbols || '');
+      try { raw = decodeURIComponent(raw); } catch (e) {}
+      let list = raw.split(',').map((x) => x.trim()).filter(Boolean);
+      if (!list.length) list = (st.db.stocks || []).filter((x) => x && x.ticker).map((x) => x.ticker).slice(0, 60);
+      await hydrateLiveQuotes(st, svc, list.slice(0, 60));
+      return res.json(svc.snapshot(), 200, CORS);
+    }
+
+    if (path === '/api/market/quote') {
+      const st = await readState();
+      const q = Object.assign({}, req.query || {}, body || {});
+      const sym = String(q.symbol || q.ticker || '').trim();
+      if (!sym) return res.json({ ok: false, error: 'symbol_required' }, 400, CORS);
+      try {
+        const quote = await marketDataFor().quote(providerSymbolFor(st, sym));
+        return res.json({ ok: true, quote }, 200, CORS);
+      } catch (e) {
+        const svc = marketServiceFor(st);
+        await hydrateLiveQuotes(st, svc, [sym]);
+        const live = svc.quotes[String(sym).toUpperCase()];
+        return res.json({ ok: !!live, quote: live || null, error: live ? undefined : e.message }, 200, CORS);
+      }
+    }
+
+    if (path === '/api/market/candles') {
+      const st = await readState();
+      const q = Object.assign({}, req.query || {}, body || {});
+      const sym = providerSymbolFor(st, String(q.symbol || q.ticker || ''));
+      const tf = String(q.tf || q.interval || '1H');
+      if (!sym) return res.json({ ok: false, error: 'symbol_required', candles: [] }, 400, CORS);
+      try {
+        const out = await marketDataFor().candles(sym, tf);
+        return res.json(Object.assign({ ok: true }, out), 200, CORS);
+      } catch (e) {
+        return res.json({ ok: false, error: e.message, candles: [] }, 200, CORS);
+      }
+    }
+
+    if (path === '/api/market/history') {
+      const st = await readState();
+      const q = Object.assign({}, req.query || {}, body || {});
+      let raw = String(q.tickers || q.ticker || '');
+      try { raw = decodeURIComponent(raw); } catch (e) {}
+      const tickers = raw.split(',').map((x) => x.trim()).filter(Boolean).slice(0, 24);
+      const limit = Math.max(20, Math.min(2000, Number(q.limit) || 600));
+      const history = {};
+      /* real OHLC from the providers, transformed into the tick ring the app
+         charts consume — never a made-up series */
+      await Promise.all(tickers.map(async (t) => {
+        const up = String(t).toUpperCase();
+        history[up] = [];
+        try {
+          const c = await marketDataFor().candles(providerSymbolFor(st, t), '1m');
+          const bars = (c && c.candles) || [];
+          history[up] = bars.map((b) => ({ t: Number(b.time) * 1000, p: Number(b.close), real: true, source: c.source || 'provider' })).filter((x) => x.p > 0).slice(-limit);
+        } catch (e) {}
+        if (!history[up].length) {
+          const row = (st.db.stocks || []).find((x) => x && String(x.ticker).toUpperCase() === up);
+          const log = row && Array.isArray(row.priceLog) ? row.priceLog : [];
+          if (log.length) history[up] = log.slice(-limit);
+          const svc = marketServiceFor(st);
+          if (!history[up].length && svc.history[up]) history[up] = svc.history[up].slice(-limit);
+        }
+      }));
+      return res.json({ ok: true, at: Date.now(), source: 'provider', history }, 200, CORS);
+    }
+
+    if (path === '/api/market/symbols') {
+      return res.json({ ok: true, symbols: marketDataFor().symbols(String((req.query || {}).type || 'crypto')) }, 200, CORS);
+    }
+    if (path === '/api/market/symbol-search') {
+      const q = String((req.query || {}).q || '');
+      try { return res.json({ ok: true, results: await marketDataFor().search(q) }, 200, CORS); }
+      catch (e) { return res.json({ ok: true, results: [] }, 200, CORS); }
+    }
+
+    /* -------- spot stocks: manual buy / sell / take-profit / stop -------- */
+    if (path === '/api/market/spot/buy' && method === 'POST') {
+      const st = await readState();
+      if (!st.db) return res.json({ ok: false, error: 'not_initialised' }, 409, CORS);
+      const svc = marketServiceFor(st);
+      const ticker = String(body.ticker || '');
+      await hydrateLiveQuotes(st, svc, [ticker]);
+      try {
+        const out = spotServiceFor(st, svc).buy(body);
+        const ok = await saveState(st);
+        if (!ok) return res.json({ ok: false, error: 'storage_write_failed' }, 502, CORS);
+        return res.json(Object.assign({ ok: true }, out), 200, CORS);
+      } catch (e) { return res.json({ ok: false, error: e.message, message: e.message }, 200, CORS); }
+    }
+    if (path === '/api/market/spot/sell' && method === 'POST') {
+      const st = await readState();
+      if (!st.db) return res.json({ ok: false, error: 'not_initialised' }, 409, CORS);
+      const svc = marketServiceFor(st);
+      await hydrateLiveQuotes(st, svc, [String(body.ticker || '')]);
+      try {
+        const out = spotServiceFor(st, svc).sell(Object.assign({ reason: 'Manual sell' }, body));
+        const ok = await saveState(st);
+        if (!ok) return res.json({ ok: false, error: 'storage_write_failed' }, 502, CORS);
+        return res.json(Object.assign({ ok: true }, out), 200, CORS);
+      } catch (e) { return res.json({ ok: false, error: e.message, message: e.message }, 200, CORS); }
+    }
+    if (path === '/api/market/spot/tpsl' && method === 'POST') {
+      const st = await readState();
+      if (!st.db) return res.json({ ok: false, error: 'not_initialised' }, 409, CORS);
+      const svc = marketServiceFor(st);
+      await hydrateLiveQuotes(st, svc, [String(body.ticker || '')]);
+      try {
+        const out = spotServiceFor(st, svc).setTargets(body);
+        const ok = await saveState(st);
+        if (!ok) return res.json({ ok: false, error: 'storage_write_failed' }, 502, CORS);
+        return res.json(Object.assign({ ok: true }, out), 200, CORS);
+      } catch (e) { return res.json({ ok: false, error: e.message, message: e.message }, 200, CORS); }
+    }
+    if (path === '/api/market/spot/positions') {
+      const st = await readState();
+      const svc = marketServiceFor(st);
+      const spot = spotServiceFor(st, svc);
+      const userId = String((req.query || {}).userId || '');
+      const tickers = (st.db.holdings || []).filter((h) => h && (!userId || h.userId === userId)).map((h) => h.ticker);
+      await hydrateLiveQuotes(st, svc, tickers);
+      /* TP / SL targets are checked against the fresh provider quotes */
+      try { if (spot.settle()) await saveState(st); } catch (e) {}
+      return res.json({ ok: true, positions: spot.positions(st.db, userId), status: spot.status() }, 200, CORS);
     }
 
     if (path === '/api/market/trading-status') {

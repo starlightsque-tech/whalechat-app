@@ -2,7 +2,7 @@
   "expo": {
     "name": "WhaleChat",
     "slug": "whalechat",
-    "version": "3.65.2",
+    "version": "3.66.0",
     "orientation": "portrait",
     "scheme": "whalechat",
     "userInterfaceStyle": "dark",
@@ -44,5 +44,6 @@
     "plugins": [
       "expo-asset"
     ]
-  }
+  },
+  "version": "3.66.0"
 }

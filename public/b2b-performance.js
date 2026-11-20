@@ -23,7 +23,7 @@
 
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
   function money(v) { return '$' + (Math.round((Number(v) || 0) * 100) / 100).toFixed(2); }
-  function apiPath(p) { try { if (typeof Remote !== 'undefined' && Remote && Remote.enabled && Remote.url) return Remote.url(p); } catch (e) {} return p; }
+  function apiPath(p) { try { if (typeof Remote !== 'undefined' && Remote && Remote.url) return Remote.url(p); } catch (e) {} return p; }
   function me2() { try { return me(); } catch (e) { return null; } }
 
   function loadLWC() {

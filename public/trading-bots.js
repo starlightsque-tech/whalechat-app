@@ -27,7 +27,7 @@
   function cycleText(c) { return CYCLE_TEXT[c] || 'month'; }
   function when(ms) { try { return new Date(ms).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch (e) { return '—'; } }
   function tmsg(msg, type) { if (typeof toast === 'function') toast(msg, type || 'ok'); }
-  function apiPath(p) { try { if (typeof Remote !== 'undefined' && Remote && Remote.enabled) return Remote.url(p); } catch (e) {} return p; }
+  function apiPath(p) { try { if (typeof Remote !== 'undefined' && Remote && Remote.url) return Remote.url(p); } catch (e) {} return p; }
   async function api(pathname, opts, timeout) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeout || 20000);
@@ -700,8 +700,8 @@
           <div><span>Stock trading balance</span><b>${money((B.state && B.state.balance)*0.5)}</b></div>
         </div>
         <div class="field" style="margin-top:12px"><label class="label">Top-up amount (USD)</label>
-          <div class="input-wrap"><span class="inv-prefix">$</span><input class="input" id="botTopupUsd" type="number" min="0.5" step="0.01" placeholder="10.00"/></div>
-          <div class="tiny muted" style="margin-top:4px">1 WC = $0.50</div></div>`,
+          <div class="input-wrap"><span class="inv-prefix">$</span><input class="input" id="botTopupUsd" type="number" min="0.01" step="0.01" placeholder="10.00"/></div>
+          <div class="tiny muted" style="margin-top:4px">Any amount — taken from your bot allocation first, then your stock trading balance. 1 WC = $0.50</div></div>`,
         `<button class="btn btn-ghost" data-close style="flex:1">Cancel</button><button class="btn btn-primary" id="botTopupSend" style="flex:1">Send top-up</button>`), { locked: false });
       const btn = document.getElementById('botTopupSend');
       if (btn) btn.onclick = async () => {

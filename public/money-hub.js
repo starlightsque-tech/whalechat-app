@@ -42,7 +42,7 @@
   }
   (function primePrices() {
     try {
-      var url = (typeof Remote !== 'undefined' && Remote.enabled) ? Remote.url('/api/market/quotes') : '/api/market/quotes';
+      var url = (typeof Remote !== 'undefined' && Remote && Remote.url) ? Remote.url('/api/market/quotes') : '/api/market/quotes';
       fetch(url).then(function (r) { return r.json(); }).then(function (d) {
         var q = (d && (d.quotes || d)) || {};
         var list = Array.isArray(q) ? q : Object.keys(q).map(function (k) { var x = q[k] || {}; if (!x.symbol) x.symbol = k; return x; });
@@ -258,7 +258,7 @@
 
   async function botTransferProfit(u, amountUsd) {
     var uid = u.id;
-    var res = await fetch((typeof Remote !== 'undefined' && Remote.enabled) ? Remote.url('/api/bots/transfer') : '/api/bots/transfer', {
+    var res = await fetch((typeof Remote !== 'undefined' && Remote && Remote.url) ? Remote.url('/api/bots/transfer') : '/api/bots/transfer', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ userId: uid, source: 'profit', amountUsd: amountUsd })
     });

@@ -11,12 +11,12 @@ window.WC_BUILD_CONFIG = {
   appwriteProjectId: '6aff3eda000983f5a975',
   databaseId: '6aff488e0006a3fe39e0',
   bucketId: '6aff48620020a44c714f',
-  syncServer: 'https://nyc.cloud.appwrite.io/v1/functions/whalechat-sync',
-  stockProxy: 'https://nyc.cloud.appwrite.io/v1/functions/whalechat-sync/api/market/proxy',
-  stockProxyFunction: 'https://nyc.cloud.appwrite.io/v1/functions/stock-proxy/executions',
+  syncServer: 'https://whalechat-api.appwrite.network',
+  stockProxy: 'https://whalechat-api.appwrite.network/api/market/proxy',
+  stockProxyFunction: '',
   stockProxyFunctionId: 'stock-proxy',
   realtimeChannel: 'stocks-live',
-  emailFunction: 'https://nyc.cloud.appwrite.io/v1/functions/whalechat-sync/api/email/send',
+  emailFunction: 'https://whalechat-api.appwrite.network/api/email/send',
   siteUrl: 'https://whalechat.appwrite.network',
-  build: '3.65.0'
+  build: '3.66.0'
 };

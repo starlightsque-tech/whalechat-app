@@ -599,7 +599,7 @@
       if (key) body.apiKey = key;
       try {
         var url = '/api/market/binance/config';
-        if (typeof Remote !== 'undefined' && Remote && Remote.enabled && Remote.url) url = Remote.url(url);
+        if (typeof Remote !== 'undefined' && Remote && Remote.url) url = Remote.url(url);
         var r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
         var d = await r.json();
         if (!d.ok) return tmsg(d.error || 'Could not save', 'err');

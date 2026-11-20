@@ -489,11 +489,19 @@ class BotService {
     if (!(topupUsd > 0) && Number(opts.topupCoins) > 0) topupUsd = Number(opts.topupCoins) * 0.5;
     topupUsd = round(topupUsd, 2);
     if (topupUsd > 0) {
+      /* Bot capital can be topped up with ANY amount: spend the reserved bot
+         allocation first, then draw the remainder straight from the user's
+         stock trading balance (portfolios.stock = stock cash). */
       const availUsd = pf(u, 'bot');
-      if (topupUsd > availUsd) throw nextError(`Top-up is higher than your available bot capital allocation ($${availUsd.toFixed(2)})`);
-      setPf(u, 'bot', availUsd - topupUsd);
+      const stockUsd = pf(u, 'stock');
+      const totalUsd = round(availUsd + stockUsd, 2);
+      if (topupUsd > totalUsd + 1e-9) throw nextError(`Top-up is higher than your available balance ($${totalUsd.toFixed(2)})`);
+      const fromBot = Math.min(availUsd, topupUsd);
+      const fromStock = round(topupUsd - fromBot, 2);
+      if (fromBot > 0) setPf(u, 'bot', round(availUsd - fromBot, 2));
+      if (fromStock > 0) setPf(u, 'stock', round(stockUsd - fromStock, 2));
       account.capitalCoins = round((Number(account.capitalCoins) || 0) + topupUsd * COINS_PER_USD, 2);
-      this.event(db, userId, 'topup', `Bot capital top-up · $${topupUsd.toFixed(2)} USD from bot capital allocation`, topupUsd, { source: 'portfolio' });
+      this.event(db, userId, 'topup', `Bot capital top-up · $${topupUsd.toFixed(2)} USD ($${fromBot.toFixed(2)} allocation + $${fromStock.toFixed(2)} stock balance)`, topupUsd, { source: 'portfolio' });
     }
 
     const minCapital = Math.max(1, Number(this.settings().minCapitalCoins) || 5);
@@ -542,12 +550,18 @@ class BotService {
     if (!(amountUsd > 0) && Number(opts.amountCoins) > 0) amountUsd = Number(opts.amountCoins) * 0.5;
     amountUsd = round(amountUsd, 2);
     if (!(amountUsd > 0)) throw nextError('Enter a top-up amount');
+    /* any amount, from the bot allocation first and then the stock balance */
     const availUsd = pf(u, 'bot');
-    if (amountUsd > availUsd) throw nextError(`Top-up is higher than your bot capital allocation ($${availUsd.toFixed(2)})`);
-    setPf(u, 'bot', availUsd - amountUsd);
+    const stockUsd = pf(u, 'stock');
+    const totalUsd = round(availUsd + stockUsd, 2);
+    if (amountUsd > totalUsd + 1e-9) throw nextError(`Top-up is higher than your available balance ($${totalUsd.toFixed(2)})`);
+    const fromBot = Math.min(availUsd, amountUsd);
+    const fromStock = round(amountUsd - fromBot, 2);
+    if (fromBot > 0) setPf(u, 'bot', round(availUsd - fromBot, 2));
+    if (fromStock > 0) setPf(u, 'stock', round(stockUsd - fromStock, 2));
     const account = this.accountFor(db, userId);
     account.capitalCoins = round((Number(account.capitalCoins) || 0) + amountUsd * COINS_PER_USD, 2);
-    this.event(db, userId, 'topup', `Top-up from bot capital allocation · $${amountUsd.toFixed(2)} USD`, amountUsd, { source: 'portfolio' });
+    this.event(db, userId, 'topup', `Top-up · $${amountUsd.toFixed(2)} USD ($${fromBot.toFixed(2)} allocation + $${fromStock.toFixed(2)} stock balance)`, amountUsd, { source: 'portfolio' });
     this.notify(db, userId, 'Bot capital topped up', `$${amountUsd.toFixed(2)} USD added to the bot trading capital balance.`, 'wallet');
     this.changed('bot-topup');
     return { ok: true, account, balance: pf(u, 'stock'), stockUsd: pf(u, 'stock') };

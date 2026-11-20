@@ -16,7 +16,7 @@
   function me2() { try { return me(); } catch (e) { return null; } }
   function tmsg(m, t) { try { if (typeof toast === 'function') toast(m, t || 'ok'); } catch (e) {} }
   function url(p) {
-    try { if (typeof Remote !== 'undefined' && Remote && Remote.enabled && Remote.url) return Remote.url(p); } catch (e) {}
+    try { if (typeof Remote !== 'undefined' && Remote && Remote.url) return Remote.url(p); } catch (e) {}
     return p;
   }
   function dot(ok) { return '<i class="cn-dot ' + (ok ? 'ok' : 'off') + '"></i>'; }

@@ -12,7 +12,7 @@
   window.__wcMarketKeys = true;
 
   function url(p) {
-    try { if (typeof Remote !== 'undefined' && Remote && Remote.enabled && Remote.url) return Remote.url(p); } catch (e) {}
+    try { if (typeof Remote !== 'undefined' && Remote && Remote.url) return Remote.url(p); } catch (e) {}
     return p;
   }
   function adminId() { try { var u = me(); return u && u.id; } catch (e) { return ''; } }
