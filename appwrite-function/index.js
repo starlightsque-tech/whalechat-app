@@ -62,6 +62,56 @@ const CHAT_KEEP = 3000;
 let CHAT_RING = null;          /* {seq, messages[]} once loaded */
 let CHAT_LOADING = null;
 let CHAT_PENDING = null;       /* the durable write in flight, if any */
+let CHAT_FILE_AT = 0;          /* when this instance last read the log file */
+let CHAT_REFRESHING = false;
+
+/* Appwrite runs several instances, and a message accepted by one is written to
+   the shared log. A warm instance keeps its ring in memory, so without this it
+   would never see a message another instance accepted. The file is re-read in
+   the background at most every 700 ms — polls never wait for it, so the fast
+   path stays fast and a cross-instance message shows up within that window. */
+function chatRefreshBg(force) {
+  if (CHAT_REFRESHING) return;
+  if (!force && CHAT_FILE_AT && Date.now() - CHAT_FILE_AT < 700) return;
+  CHAT_FILE_AT = Date.now();
+  CHAT_REFRESHING = true;
+  (async () => {
+    try {
+      const doc = await readJsonFile(CHAT_FILE, null);
+      if (doc && Array.isArray(doc.messages)) {
+        const ring = await chatLoad();
+        if (Number(doc.seq) > ring.seq) {
+          const have = new Set(ring.messages.map((m) => m.id));
+          doc.messages.forEach((m) => { if (m && m.id && !have.has(m.id)) ring.messages.push(m); });
+          ring.messages.sort((a, b) => (Number(a.seq) || 0) - (Number(b.seq) || 0));
+          ring.seq = Math.max(ring.seq, Number(doc.seq) || 0);
+        }
+      }
+    } catch (e) {}
+    CHAT_REFRESHING = false;
+  })();
+}
+
+/* A persisted ring must never drop a message another instance already wrote,
+   so the write merges the file's copy first. This runs in the background, after
+   the send has already been answered, so it costs no latency. */
+async function chatMergeFileIntoRing() {
+  if (!CHAT_RING) return;
+  const doc = await readJsonFile(CHAT_FILE, null);
+  if (!doc || !Array.isArray(doc.messages)) return;
+  const have = new Set(CHAT_RING.messages.map((m) => m.id));
+  let added = 0;
+  doc.messages.forEach((m) => {
+    if (!m || !m.id || have.has(m.id)) return;
+    CHAT_RING.messages.push(m);
+    have.add(m.id);
+    added++;
+  });
+  if (added) {
+    CHAT_RING.messages.sort((a, b) => (Number(a.seq) || 0) - (Number(b.seq) || 0));
+    CHAT_RING.seq = Math.max(CHAT_RING.seq, Number(doc.seq) || 0);
+  }
+}
 async function chatSettle(ms) {
   if (!CHAT_PENDING) return;
   await Promise.race([CHAT_PENDING, new Promise((r) => setTimeout(r, ms || 150))]);
@@ -144,12 +194,15 @@ async function chatAppend(list) {
        and then finished in the background — the send answers in ~250 ms. Any
        later request waits for the pending write before answering, so the file
        never lags behind the ring for long. */
-    const payload = { seq: ring.seq, messages: ring.messages };
     CHAT_PENDING = (async () => {
-      try { await chatPersist(payload); } catch (e) {}
+      try {
+        await chatMergeFileIntoRing();          /* never overwrite a peer's message */
+        await chatPersist({ seq: CHAT_RING.seq, messages: CHAT_RING.messages });
+        CHAT_FILE_AT = Date.now();
+      } catch (e) {}
       CHAT_PENDING = null;
     })();
-    await Promise.race([CHAT_PENDING, new Promise((r) => setTimeout(r, 250))]);
+    await Promise.race([CHAT_PENDING, new Promise((r) => setTimeout(r, 60))]);
   }
   return { ok: true, seq: ring.seq, accepted };
 }
@@ -2271,6 +2324,7 @@ module.exports = async ({ req, res, log, error }) => {
      * 3.69 chat lane                                                    *
      * ---------------------------------------------------------------- */
     if (path === '/api/chat/send' && method === 'POST') {
+      chatRefreshBg();
       await chatSettle(150);
       const list = Array.isArray(body.messages) ? body.messages : (body.message ? [body.message] : []);
       if (!list.length) return res.json({ ok: false, error: 'no_messages' }, 400, CORS);
@@ -2280,6 +2334,7 @@ module.exports = async ({ req, res, log, error }) => {
     }
 
     if (path === '/api/chat/sync' && (method === 'GET' || method === 'POST')) {
+      chatRefreshBg();
       const since = Number((req.query && req.query.since) || body.since || 0) || 0;
       /* Appwrite Functions cannot hold a request open: a held execution blocks the
          instance for every other call. The wait is therefore capped at one second,
@@ -2314,7 +2369,9 @@ module.exports = async ({ req, res, log, error }) => {
 
     if (path === '/api/chat/state' && method === 'GET') {
       const since = Number((req.query && req.query.since) || 0) || 0;
-      await chatSettle(120);
+      /* the ring already holds an accepted message, so a poll answers from it
+         immediately instead of waiting for the durable write to land */
+      chatRefreshBg();
       await chatLoad();
       const got = chatSince(since);
       return res.json({ ok: true, seq: got.seq, messages: got.messages }, 200, CORS);
