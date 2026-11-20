@@ -884,7 +884,10 @@ function marketServiceFor(st) {
     if (px > 0) svc.quotes[String(row.ticker).toUpperCase()] = {
       price: px, prevClose: Number(row.prevClose) || px,
       open: Number(row.open) || px, dayHigh: Number(row.high) || px,
-      dayLow: Number(row.low) || px, updatedAt: Date.now(), real: true
+      dayLow: Number(row.low) || px, updatedAt: Date.now(),
+      /* a stored catalogue price is NOT a live tick — never label it real or
+         the app shows a days-old price as if it were trading right now */
+      real: false, seeded: true
     };
   }
   return svc;
