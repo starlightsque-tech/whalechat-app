@@ -1,0 +1,33 @@
+{
+  "expo": {
+    "name": "WhaleChat",
+    "slug": "whalechat",
+    "version": "3.57.5",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "app.whalechat.mobile"
+    },
+    "android": {
+      "package": "app.whalechat.mobile",
+      "adaptiveIcon": {
+        "backgroundColor": "#04101a"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "webUrl": "https://whalechat.appwrite.network/whalechat.html",
+      "eas": {
+        "projectId": "3f36eb52-0c8f-4635-9643-c57581ce0ceb"
+      }
+    },
+    "owner": "whalechat",
+    "scheme": "whalechat",
+    "backgroundColor": "#04101a"
+  }
+}
