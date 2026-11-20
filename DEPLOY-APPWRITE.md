@@ -83,17 +83,36 @@ curl -X POST https://<render-host>/api/appwrite/sync \
   -H "x-admin-token: <admin session>"
 ```
 
-## 4. Email verification codes
+## 4. Brevo SMTP verification codes, email and SMS
 
-Sign-up and password reset send a 6-digit code. Configure any one provider:
+Sign-up, password reset and transaction PIN reset send a 6-digit code by email
+through the **Brevo SMTP relay** (the primary transport in 3.77):
 
-* `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` (Outlook/Microsoft 365)
-* `RESEND_API_KEY`
-* `BREVO_API_KEY`
+| Variable | Value |
+| --- | --- |
+| `BREVO_SMTP_HOST` | `smtp-relay.brevo.com` |
+| `BREVO_SMTP_PORT` | `587` (STARTTLS) or `465` (TLS) |
+| `BREVO_SMTP_USER` | your Brevo account login |
+| `BREVO_SMTP_KEY` | the SMTP key from Brevo → SMTP & API → SMTP |
+| `MAIL_FROM` | a verified Brevo sender address |
+| `BREVO_API_KEY` | optional HTTP-API fallback + SMS API key |
 
-If none is configured the app shows the code on screen (clearly labelled) so
-account creation and password reset never dead-end. Configure mail to have the
-code delivered to the user's inbox.
+SMS notifications and OTP use **Brevo transactional SMS** with the same
+`BREVO_API_KEY`. Set `BREVO_SMS_SENDER` to a sender approved in Brevo. If
+Telesign credentials are also present they are used as the fallback provider.
+Admin → SMS in the app sends through whichever provider is configured.
+
+On an Appwrite Function deployment the email/SMS code runs inside
+`appwrite-function`; redeploy it after setting the variables:
+
+```bash
+APPWRITE_API_KEY=... BREVO_SMTP_USER=... BREVO_SMTP_KEY=... \
+BREVO_API_KEY=... BREVO_SMS_SENDER=WhaleChat \
+npm run deploy:appwrite:function
+```
+
+If no mail provider is configured the app shows the code on screen (clearly
+labelled) so account creation never dead-ends.
 
 ## 5. Notes
 

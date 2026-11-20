@@ -206,6 +206,7 @@
       changePct: opts.changePct,
       decimals: opts.decimals,
       lines: Array.isArray(opts.lines) ? opts.lines.slice() : [],
+      markers: Array.isArray(opts.markers) ? opts.markers.slice() : [],
       lastDir: 0,
       symbol: opts.symbol || '',
       baselineOverride: opts.baseline != null ? n(opts.baseline) : null
@@ -310,6 +311,12 @@
       if (Array.isArray(state.lines)) {
         state.lines.forEach(function (ln) {
           var pv = n(ln && ln.price);
+          if (pv > 0) { if (pv < lo) lo = pv; if (pv > hi) hi = pv; }
+        });
+      }
+      if (Array.isArray(state.markers)) {
+        state.markers.forEach(function (mk) {
+          var pv = n(mk && mk.price);
           if (pv > 0) { if (pv < lo) lo = pv; if (pv > hi) hi = pv; }
         });
       }
@@ -451,6 +458,57 @@
             g.fillStyle = ln.color || '#60a5fa';
             g.fillText(ln.title, 9, y);
           }
+        });
+      }
+
+      /* ---- move markers: where each counted price move happened ---- */
+      if (Array.isArray(state.markers) && state.markers.length && vis.length >= 2) {
+        var markerList = state.markers.slice(-40);
+        markerList.forEach(function (mk) {
+          var pv = n(mk && mk.price);
+          if (!(pv > 0) || pv < lo || pv > hi) return;
+          var mt = Number(mk && mk.t) || 0;
+          var mi = -1, best = Infinity;
+          if (mt > 0) {
+            for (var vi = 0; vi < vis.length; vi++) {
+              var d = Math.abs((Number(vis[vi].t) || 0) - mt);
+              if (d < best) { best = d; mi = vi; }
+            }
+          }
+          if (mi < 0) return;
+          var mx = sx(mi, vis.length), my = sy(pv);
+          var col = mk.color || '#2ee6c9';
+          g.save();
+          g.setLineDash([2, 3]);
+          g.strokeStyle = col;
+          g.globalAlpha = 0.55;
+          g.lineWidth = 1;
+          g.beginPath(); g.moveTo(mx, top); g.lineTo(mx, top + plotH); g.stroke();
+          g.globalAlpha = 1;
+          g.setLineDash([]);
+          g.fillStyle = col;
+          g.beginPath(); g.arc(mx, my, 3, 0, Math.PI * 2); g.fill();
+          var lbl2 = String(mk.label || '');
+          var sub2 = String(mk.sub || '');
+          if (lbl2) {
+            g.font = '800 9px system-ui,-apple-system,sans-serif';
+            var lw2 = g.measureText(lbl2).width + 10;
+            var bx = Math.min(Math.max(2, mx - lw2 / 2), plotW - lw2 - 2);
+            var by = top + 2;
+            g.fillStyle = 'rgba(8,18,26,.92)';
+            roundRect(g, bx, by, lw2, 14, 4); g.fill();
+            g.fillStyle = col; g.textBaseline = 'middle';
+            g.fillText(lbl2, bx + 5, by + 7);
+            if (sub2) {
+              g.font = '700 8.5px system-ui,-apple-system,sans-serif';
+              var sw2 = g.measureText(sub2).width + 10;
+              g.fillStyle = 'rgba(8,18,26,.92)';
+              roundRect(g, bx, by + 15, sw2, 13, 4); g.fill();
+              g.fillStyle = 'rgba(233,244,249,.86)';
+              g.fillText(sub2, bx + 5, by + 21.5);
+            }
+          }
+          g.restore();
         });
       }
 
@@ -653,6 +711,7 @@
       setRange: onRange,
       setMode: onMode,
       setLines: function (lines) { state.lines = Array.isArray(lines) ? lines.slice() : []; schedule(); return api; },
+      setMarkers: function (markers) { state.markers = Array.isArray(markers) ? markers.slice() : []; schedule(); return api; },
       setBaseline: function (v) { state.baselineOverride = (v != null && n(v) > 0) ? n(v) : null; paintHeader(); schedule(); return api; },
       setSymbol: function (sym) { state.symbol = String(sym || ''); return api; },
       setPositions: function (list) {

@@ -44,7 +44,7 @@
   value('DB_READY', function () { return read('DB_READY'); });
 
   /* stable objects the add-ons patch or read */
-  ['App', 'VIEWS', 'AFTER', 'Remote', 'INV', 'LT', 'COMPOSE', 'TYPING', 'Presence', 'Media', 'WC_SERVERS'].forEach(function (name) {
+  ['App', 'VIEWS', 'AFTER', 'Remote', 'INV', 'LT', 'COMPOSE', 'TYPING', 'Presence', 'Media', 'WC_SERVERS', 'ADMIN_NAV', 'NOTIFY', 'CHATS'].forEach(function (name) {
     var ref = read(name);
     if (ref !== undefined) {
       try { window[name] = ref; } catch (e) {}

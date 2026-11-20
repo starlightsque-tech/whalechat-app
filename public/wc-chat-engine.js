@@ -553,6 +553,85 @@
   }
 
   /* ===================================================================== *
+   * 3b · RECONNECT — upload the whole local chat database (never clear it)
+   * ===================================================================== */
+  /* Every message this account authored on this device that is not yet on the
+     server is queued again. This is the "phone was offline for an hour, then
+     came back" path: the outbox may have been lost with a tab, but the message
+     is still in the app database, so it is rebuilt from there. Nothing is ever
+     deleted locally. */
+  function localUnsynced() {
+    var u = meUser(), d = db();
+    if (!u || !d || !Array.isArray(d.messages)) return [];
+    return d.messages.filter(function (m) {
+      return m && m.id && m.from === u.id && !m.deleted && !m.docId;
+    }).slice(-600);
+  }
+
+  function uploadBatch(list) {
+    if (!list.length || !navigator.onLine) return Promise.resolve(0);
+    var base = serverBase();
+    if (!base) return Promise.resolve(0);
+    var sent = 0;
+    var chain = Promise.resolve();
+    for (var i = 0; i < list.length; i += 40) {
+      var chunk = list.slice(i, i + 40).map(function (m) {
+        return {
+          id: m.id, chatId: m.chatId, from: m.from, to: m.to, type: m.type || 'text',
+          text: m.text || '', mediaId: m.mediaId || null, dur: m.dur || null,
+          createdAt: m.createdAt, status: 'sent', readBy: []
+        };
+      });
+      chain = chain.then(function (rows) {
+        return fetch(base + '/api/chat/send', {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ messages: rows, device: 'wc-bulk-sync' })
+        }).then(function (r) {
+          if (!r.ok) return 0;
+          rows.forEach(function (m) {
+            sent++;
+            updateLocal(m.id, { status: 'sent', docId: m.id });
+            paintTick(m.id, 'sent');
+          });
+          return rows.length;
+        }).catch(function () { return 0; });
+      }.bind(null, chunk));
+    }
+    return chain.then(function () { return sent; });
+  }
+
+  function syncLocalDatabase() {
+    if (!navigator.onLine) return Promise.resolve(0);
+    var list = localUnsynced();
+    if (!list.length) return Promise.resolve(0);
+    dispatch('wc-chat-db-sync', { count: list.length });
+    return outboxAll().then(function (rows) {
+      var queued = {};
+      (rows || []).forEach(function (r) { queued[r.id] = 1; });
+      var chain = Promise.resolve();
+      list.forEach(function (m) {
+        if (queued[m.id]) return;
+        chain = chain.then(function () {
+          return outboxPut({
+            id: m.id, chatId: m.chatId, doc: toDoc(m),
+            attempts: 0, nextAt: 0, createdAt: nowMs()
+          });
+        });
+      });
+      return chain;
+    }).then(function () {
+      return syncOutbox();
+    }).then(function () {
+      /* also deliver through the app's own chat lane, so a device that cannot
+         write the Appwrite collection still reaches the other side */
+      return uploadBatch(list);
+    }).then(function (n) {
+      dispatch('wc-chat-db-synced', { uploaded: n });
+      return n;
+    }).catch(function () { return 0; });
+  }
+
+  /* ===================================================================== *
    * 4 · HISTORY — cache first, then the last 100 documents
    * ===================================================================== */
   function fetchHistory(chatId) {
@@ -635,6 +714,7 @@
     seedCache();
     watchChat();
     syncOutbox();
+    syncLocalDatabase();
     startRealtime().catch(function () {
       /* no realtime: keep the proven lane alive rather than a dead chat */
       if (window.WCLiveChat && WCLiveChat.setExternal) WCLiveChat.setExternal(false);
@@ -642,7 +722,15 @@
 
     setInterval(syncOutbox, 2000);
     setInterval(watchChat, 400);
-    window.addEventListener('online', function () { syncOutbox(); watchChat(); });
+    window.addEventListener('online', function () {
+      /* back online: push the local database first, then drain the queue and
+         pull anything the peer sent while this device was away */
+      syncLocalDatabase().then(function () { syncOutbox(); });
+      watchChat();
+      if (window.Remote && window.Remote.enabled) {
+        try { window.Remote.refresh(true); window.Remote.dirty = true; setTimeout(function () { window.Remote.flush(); }, 400); } catch (e) {}
+      }
+    });
     /* the service worker wakes the outbox when the browser reconnects */
     try {
       navigator.serviceWorker && navigator.serviceWorker.addEventListener('message', function (e) {
@@ -695,6 +783,8 @@
       return m;
     },
     sync: syncOutbox,
+    syncDatabase: syncLocalDatabase,
+    unsynced: localUnsynced,
     pending: countOutbox,
     history: loadChat,
     fetchHistory: fetchHistory,

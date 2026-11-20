@@ -26,8 +26,9 @@ const CODES_FILE = 'whalechat-codes';
 const MAIL_FILE = 'whalechat-mail';
 const MAIL_LOG_FILE = 'whalechat-email-log';
 const NOTIF_LOG_LIMIT = 400;
-const VERSION = '3.76.0';
+const VERSION = '3.77.0';
 const crypto = require('crypto');
+const smtpClient = require('./smtp');
 /* project-scoped ids: env wins, but a stale/placeholder value never does */
 function isRealId(v) { return typeof v === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._-]{19,}$/.test(v); }
 const TELSIGN_BASIC = String(process.env.TELESIGN_BASIC || '').trim();
@@ -35,6 +36,11 @@ const TELESIGN_ID = String(process.env.TELESIGN_CUSTOMER_ID || (TELSIGN_BASIC.in
 const TELESIGN_KEY = String(process.env.TELESIGN_API_KEY || (TELSIGN_BASIC.indexOf(':') > 0 ? TELSIGN_BASIC.slice(TELSIGN_BASIC.indexOf(':') + 1) : '')).trim();
 const TELESIGN_SENDER = String(process.env.TELESIGN_SENDER_ID || '').trim();
 const SMS_LOG_FILE = 'wc-sms-log';
+const SMS_CODES_FILE = 'wc-sms-codes';
+const BREVO_KEY = String(process.env.BREVO_API_KEY || '').trim();
+const BREVO_SMS_SENDER = String(process.env.BREVO_SMS_SENDER || process.env.BREVO_SENDER_NAME || 'WhaleChat').trim();
+function smsReady() { return !!((TELESIGN_ID && TELESIGN_KEY) || BREVO_KEY); }
+function smsProvider() { return (TELESIGN_ID && TELESIGN_KEY) ? 'telesign' : (BREVO_KEY ? 'brevo' : 'none'); }
 
 
 /* =========================================================================
@@ -322,7 +328,32 @@ function smsCompose(input) {
 function smsMask(phone) {
   return String(phone).replace(/^(\+\d{2})\d+(\d{2})$/, '$1******$2');
 }
+async function brevoSendOne(phone, text) {
+  if (!BREVO_KEY) throw Object.assign(new Error('brevo_sms_not_configured'), { status: 501 });
+  const r = await apiRaw('https://api.brevo.com/v3/transactionalSMS/sms', {
+    method: 'POST',
+    headers: { 'api-key': BREVO_KEY, accept: 'application/json', 'content-type': 'application/json' },
+    body: JSON.stringify({
+      sender: BREVO_SMS_SENDER.slice(0, 11),
+      recipient: String(phone).replace(/^\+/, ''),
+      content: String(text || '').slice(0, 1400),
+      type: 'transactional',
+      tag: 'whalechat'
+    })
+  });
+  if (!r.ok) {
+    const why = (r.json && (r.json.message || r.json.error)) || ('Brevo SMS HTTP ' + r.status);
+    throw Object.assign(new Error(why), { status: r.status });
+  }
+  return {
+    provider: 'brevo',
+    referenceId: String((r.json && (r.json.reference || r.json.messageId)) || ''),
+    status: 'QUEUED'
+  };
+}
 async function telesignSendOne(phone, text) {
+  /* Brevo is the default SMS provider; Telesign stays the fallback */
+  if (!(TELESIGN_ID && TELESIGN_KEY)) return brevoSendOne(phone, text);
   const base = (process.env.TELESIGN_BASE_API || 'https://rest-ww.telesign.com/v1').replace(/\/+$/, '');
   const auth = 'Basic ' + Buffer.from(TELESIGN_ID + ':' + TELESIGN_KEY).toString('base64');
   const form = { phone_number: phone, message: text, message_type: 'ARN' };
@@ -653,6 +684,10 @@ async function readMailConfig() {
     from: String(saved.from || process.env.MAIL_FROM || 'whalechat1@gmail.com').trim(),
     fromName: String(saved.fromName || process.env.MAIL_FROM_NAME || 'WhaleChat').trim(),
     webhookKey: String(saved.webhookKey || process.env.BREVO_WEBHOOK_KEY || '').trim(),
+    smtpHost: String(saved.smtpHost || process.env.BREVO_SMTP_HOST || 'smtp-relay.brevo.com').trim(),
+    smtpPort: Number(saved.smtpPort || process.env.BREVO_SMTP_PORT || 587),
+    smtpUser: String(saved.smtpUser || process.env.BREVO_SMTP_USER || '').trim(),
+    smtpKey: String(saved.smtpKey || process.env.BREVO_SMTP_KEY || process.env.BREVO_SMTP_PASS || '').trim(),
     webhookId: saved.webhookId || null,
     updatedAt: saved.updatedAt || 0
   };
@@ -660,6 +695,8 @@ async function readMailConfig() {
 
 function mailProviders(cfg) {
   const list = [];
+  /* the requested transport: Brevo SMTP relay with the SMTP key */
+  if (cfg && cfg.smtpUser && cfg.smtpKey) list.push('brevo-smtp');
   if (cfg && cfg.brevoKey) list.push('brevo');
   if (cfg && cfg.resendKey) list.push('resend');
   if (cfg && cfg.sendgridKey) list.push('sendgrid');
@@ -672,6 +709,20 @@ function mailProviders(cfg) {
 }
 
 async function deliverOne(provider, cfg, to, subject, html, text) {
+  if (provider === 'brevo-smtp') {
+    try {
+      const out = await smtpClient.sendMail({
+        host: cfg.smtpHost, port: cfg.smtpPort, secure: Number(cfg.smtpPort) === 465,
+        user: cfg.smtpUser, pass: cfg.smtpKey
+      }, {
+        from: cfg.from, fromName: cfg.fromName || 'WhaleChat',
+        to, subject, html, text
+      });
+      return { ok: true, provider: 'brevo-smtp', messageId: out.messageId || '', error: '' };
+    } catch (e) {
+      return { ok: false, provider: 'brevo-smtp', messageId: '', error: String(e.message || e).slice(0, 300) };
+    }
+  }
   if (provider === 'brevo') {
     const r = await apiRaw('https://api.brevo.com/v3/smtp/email', {
       method: 'POST', headers: { 'api-key': cfg.brevoKey, 'content-type': 'application/json' },
@@ -2264,7 +2315,7 @@ module.exports = async ({ req, res, log, error }) => {
     if (path === '/api/health' || path === '/') {
       const st = await readState();
       let mailOk = false;
-      try { const mc = await readMailConfig(); mailOk = !!(mc.brevoKey || mc.resendKey); } catch (e) {}
+      try { const mc = await readMailConfig(); mailOk = !!((mc.smtpUser && mc.smtpKey) || mc.brevoKey || mc.resendKey); } catch (e) {}
       return res.json({ ok: true, app: 'whalechat', version: VERSION, provider: 'appwrite-function', stream: false, realtime: realtime.configured(), rev: st.rev || 0, users: (st.db && st.db.users) ? st.db.users.length : 0, storage: 'appwrite', email: mailOk }, 200, CORS);
     }
 
@@ -2288,22 +2339,63 @@ module.exports = async ({ req, res, log, error }) => {
         chat: { stream: false, sse: null, poll: '/api/chat/state', events: '/api/chat/events', send: '/api/chat/send' },
         features: {
           telesign: !!(TELESIGN_ID && TELESIGN_KEY),
+          sms: smsReady(),
+          smsProvider: smsProvider(),
+          brevoSmtp: !!(process.env.BREVO_SMTP_USER && (process.env.BREVO_SMTP_KEY || process.env.BREVO_SMTP_PASS)),
           brevo: !!(process.env.BREVO_API_KEY),
+          brevoSmtp: !!(process.env.BREVO_SMTP_USER && (process.env.BREVO_SMTP_KEY || process.env.BREVO_SMTP_PASS)),
           appwriteEmail: true
         }
       }, 200, CORS);
     }
 
     if (path === '/api/telesign/status' && method === 'GET') {
-      return res.json({ ok: true, configured: !!(TELESIGN_ID && TELESIGN_KEY) }, 200, CORS);
+      return res.json({ ok: true, configured: smsReady(), provider: smsProvider(), sender: smsProvider() === 'brevo' ? BREVO_SMS_SENDER : TELESIGN_SENDER }, 200, CORS);
     }
 
     if ((path === '/api/telesign/start' || path === '/api/telesign/verify') && method === 'POST') {
-      const cid = TELESIGN_ID;
-      const key = TELESIGN_KEY;
-      if (!cid || !key) return res.json({ ok: false, error: 'telesign_not_configured' }, 501, CORS);
+      if (!smsReady()) return res.json({ ok: false, error: 'sms_not_configured' }, 501, CORS);
       const phone = '+' + String(body.phone || '').replace(/[^\d]/g, '');
       if (!/^\+\d{8,15}$/.test(phone)) return res.json({ ok: false, error: 'invalid_phone_number' }, 400, CORS);
+
+      /* ---- Brevo OTP path (no Telesign account needed) ---- */
+      if (!(TELESIGN_ID && TELESIGN_KEY)) {
+        const store = await readJsonFile(SMS_CODES_FILE, { codes: {} });
+        store.codes = store.codes || {};
+        const now2 = Date.now();
+        if (path === '/api/telesign/start') {
+          const last = Number((store.codes[phone] || {}).sentAt) || 0;
+          if (now2 - last < 60000) return res.json({ ok: false, error: 'code_already_sent', retryAfterMs: 60000 - (now2 - last) }, 429, CORS);
+          const code = String(crypto.randomInt(100000, 1000000));
+          const template = String(body.template || 'Your WhaleChat code is $$CODE$$. It expires in 5 minutes.').replace(/\$\$CODE\$\$/g, code);
+          try {
+            const out = await brevoSendOne(phone, template);
+            const referenceId = out.referenceId || ('brevo:' + crypto.randomBytes(8).toString('hex'));
+            store.codes[phone] = { hash: await sha256('wc::' + phone + '::' + code), referenceId, sentAt: now2, exp: now2 + 5 * 60000, tries: 0 };
+            for (const k of Object.keys(store.codes)) if (Number(store.codes[k].exp) < now2) delete store.codes[k];
+            await writeJsonFile(SMS_CODES_FILE, 'wc-sms-codes.json', store);
+            return res.json({ ok: true, referenceId, expiresInMs: 300000, status: 'PENDING', provider: 'brevo' }, 200, CORS);
+          } catch (e) {
+            return res.json({ ok: false, error: 'brevo_sms_send_failed', message: e.message, status: e.status || 502 }, 502, CORS);
+          }
+        }
+        const rec2 = store.codes[phone];
+        if (!rec2) return res.json({ ok: false, error: 'no_pending_code' }, 404, CORS);
+        if (Number(rec2.exp) < now2) { delete store.codes[phone]; await writeJsonFile(SMS_CODES_FILE, 'wc-sms-codes.json', store); return res.json({ ok: false, error: 'code_expired' }, 410, CORS); }
+        const given = await sha256('wc::' + phone + '::' + String(body.code || '').trim());
+        if (given === rec2.hash) {
+          delete store.codes[phone];
+          await writeJsonFile(SMS_CODES_FILE, 'wc-sms-codes.json', store);
+          return res.json({ ok: true, verified: true, status: 'VALID', provider: 'brevo' }, 200, CORS);
+        }
+        rec2.tries = (Number(rec2.tries) || 0) + 1;
+        if (rec2.tries >= 5) { delete store.codes[phone]; await writeJsonFile(SMS_CODES_FILE, 'wc-sms-codes.json', store); return res.json({ ok: true, verified: false, status: 'TOO_MANY_ATTEMPTS' }, 200, CORS); }
+        await writeJsonFile(SMS_CODES_FILE, 'wc-sms-codes.json', store);
+        return res.json({ ok: true, verified: false, status: 'INVALID', attemptsLeft: 5 - rec2.tries }, 200, CORS);
+      }
+
+      const cid = TELESIGN_ID;
+      const key = TELESIGN_KEY;
       const auth = 'Basic ' + Buffer.from(cid + ':' + key).toString('base64');
       const base = (process.env.TELESIGN_BASE_API || 'https://rest-ww.telesign.com/v1').replace(/\/+$/, '');
       const codes = await readJsonFile('wc-telesign-codes', { codes: {} });
@@ -2357,7 +2449,7 @@ module.exports = async ({ req, res, log, error }) => {
      * user with a phone number, and an optional link "button".           *
      * ---------------------------------------------------------------- */
     if (path === '/api/telesign/sms' && method === 'POST') {
-      if (!TELESIGN_ID || !TELESIGN_KEY) return res.json({ ok: false, error: 'telesign_not_configured' }, 501, CORS);
+      if (!smsReady()) return res.json({ ok: false, error: 'sms_not_configured' }, 501, CORS);
       const st = await readState();
       const admin = isAdminRequest(req, body, st, req.query || {});
       if (!admin) return res.json({ ok: false, error: 'admin_session_required' }, 401, CORS);
@@ -2389,7 +2481,7 @@ module.exports = async ({ req, res, log, error }) => {
     }
 
     if (path === '/api/telesign/broadcast' && method === 'POST') {
-      if (!TELESIGN_ID || !TELESIGN_KEY) return res.json({ ok: false, error: 'telesign_not_configured' }, 501, CORS);
+      if (!smsReady()) return res.json({ ok: false, error: 'sms_not_configured' }, 501, CORS);
       const st = await readState();
       const admin = isAdminRequest(req, body, st, req.query || {});
       if (!admin) return res.json({ ok: false, error: 'admin_session_required' }, 401, CORS);
@@ -2521,7 +2613,7 @@ module.exports = async ({ req, res, log, error }) => {
       const log = await readJsonFile(SMS_LOG_FILE, { entries: [] });
       return res.json({
         ok: true, provider: realtime.configured(),
-        configured: !!(TELESIGN_ID && TELESIGN_KEY), configuredSms: !!(TELESIGN_ID && TELESIGN_KEY),
+        configured: smsReady(), configuredSms: smsReady(), provider: smsProvider(),
         users, messages, campaigns: (log.entries || []).slice(0, 40),
         online: users.filter((u) => CHAT_EVENTS.events.some((e) => e.type === 'presence' && e.userId === u.id && e.online && Date.now() - e.at < 120000)).map((u) => u.id)
       }, 200, CORS);
@@ -2534,8 +2626,9 @@ module.exports = async ({ req, res, log, error }) => {
       const log = await readJsonFile(SMS_LOG_FILE, { entries: [] });
       return res.json({
         ok: true,
-        configured: !!(TELESIGN_ID && TELESIGN_KEY),
-        senderId: TELESIGN_SENDER || null,
+        configured: smsReady(),
+        provider: smsProvider(),
+        senderId: smsProvider() === 'brevo' ? BREVO_SMS_SENDER : (TELESIGN_SENDER || null),
         entries: (log.entries || []).slice(0, 40),
         usersWithPhone: ((st.db && st.db.users) || []).filter((u) => u && !u.banned && u.phone).length
       }, 200, CORS);

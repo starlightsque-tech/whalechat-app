@@ -915,10 +915,18 @@ const Remote = {
               setTimeout(() => { try { this.flush(); } catch (e) {} }, 150);
             }
           } catch (e) {}
+          /* never let a server snapshot drop offline messages: union local
+             chat into the snapshot, then push the union back on reconnect */
+          const serverBeforeMerge = cloneDB(serverDb);
+          const preservedChat = mergeLocalChatInto(serverDb);
           DB = migrateDB(serverDb);
           this.rev = st.data.rev || 0;
-          this.last = cloneDB(DB);
+          this.last = preservedChat ? serverBeforeMerge : cloneDB(DB);
           saveLocalNow();
+          if (preservedChat) {
+            this.dirty = true;
+            setTimeout(() => { try { this.flush(); } catch (e) {} }, 250);
+          }
         }
       }
       try { resolvePendingReferrals(); reconcileReferralBonuses(); } catch (e) {}
@@ -1025,10 +1033,16 @@ const Remote = {
       } catch (e) {}
 
       this.applying = true;
+      const refreshBeforeMerge = cloneDB(r.data.db);
+      const preservedOnRefresh = mergeLocalChatInto(r.data.db);
       DB = migrateDB(r.data.db);
       this.rev = r.data.rev;
-      this.last = cloneDB(DB);
+      this.last = preservedOnRefresh ? refreshBeforeMerge : cloneDB(DB);
       saveLocalNow();
+      if (preservedOnRefresh) {
+        this.dirty = true;
+        setTimeout(() => { try { this.flush(); } catch (e) {} }, 120);
+      }
       if (SESSION && !DB.users.some(u => u.id === SESSION.userId)) {
         SESSION = null; localStorage.removeItem(LS_SESSION);
       }
@@ -1054,6 +1068,43 @@ const Remote = {
 const SYNC_COLLECTIONS = ['users', 'vendors', 'companyProducts', 'products', 'orders', 'deposits', 'withdrawals', 'messages', 'statuses', 'notifications', 'contacts', 'blocks', 'txs', 'referrals', 'purchases', 'refunds', 'vendorApplications', 'audit', 'portfolioAudit', 'botAccounts', 'botEvents', 'stocks', 'holdings', 'trades', 'watchlist', 'alerts', 'traffic'];
 
 function cloneDB(db) { try { return JSON.parse(JSON.stringify(db)); } catch (e) { return db; } }
+/* Offline-first chat: a server snapshot must never erase a message this device
+   already holds (sent while offline, or received and not yet mirrored).
+   Messages are unioned by id; the local copy wins only when it carries newer
+   delivery state or an edit. Called before every DB replacement. */
+function mergeLocalChatInto(target) {
+  if (!target || typeof DB === 'undefined' || !DB) return 0;
+  const server = Array.isArray(target.messages) ? target.messages : (target.messages = []);
+  const local = Array.isArray(DB.messages) ? DB.messages : [];
+  const byId = new Map();
+  server.forEach(m => { if (m && m.id) byId.set(m.id, m); });
+  let added = 0;
+  local.forEach(m => {
+    if (!m || !m.id) return;
+    const cur = byId.get(m.id);
+    if (!cur) { server.push(m); byId.set(m.id, m); added++; return; }
+    /* keep the more advanced delivery state and the newest edit */
+    const localNewer = Number(m.editedAt || 0) > Number(cur.editedAt || 0);
+    const localAhead = (m.status && m.status !== 'sent' && cur.status === 'sent') ||
+      (Array.isArray(m.readBy) && m.readBy.length > (Array.isArray(cur.readBy) ? cur.readBy.length : 0));
+    if (localNewer || localAhead) {
+      const merged = Object.assign({}, cur, m);
+      if (Array.isArray(cur.readBy) && Array.isArray(m.readBy)) {
+        merged.readBy = Array.from(new Set(cur.readBy.concat(m.readBy)));
+      }
+      const i = server.findIndex(x => x && x.id === m.id);
+      if (i >= 0) server[i] = merged;
+      byId.set(m.id, merged);
+    }
+  });
+  if (added) server.sort((a, b) => (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0));
+  /* chat metadata (archive/mute/read markers) follows the same rule */
+  try {
+    target.chatsMeta = target.chatsMeta || {};
+    Object.keys(DB.chatsMeta || {}).forEach(k => { if (!target.chatsMeta[k]) target.chatsMeta[k] = DB.chatsMeta[k]; });
+  } catch (e) {}
+  return added;
+}
 function migrateDB(db) {
   if (!db) return DB;
   const out = Object.assign(blankDB(), db);

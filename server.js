@@ -67,8 +67,9 @@ const serverConfig = require('./server-config');
 /* 3.71: hosted WebSocket provider (Pusher Channels / Ably) for chat delivery.
    Unconfigured here means the lane stays on this server's SSE stream. */
 const realtime = require('./realtime');
+/* 3.77 · unified SMS/OTP: Brevo transactional SMS, Telesign as fallback */
 let telesign = null;
-try { telesign = require('./telesign'); } catch (e) { console.error('[telesign] module unavailable:', e.message); }
+try { telesign = require('./sms'); } catch (e) { console.error('[sms] module unavailable:', e.message); }
 let appwriteOrders = null;
 try { appwriteOrders = require('./appwrite-orders'); } catch (e) { console.error('[appwrite-orders] module unavailable:', e.message); }
 const { createReconciler } = require('./offline-orders');
@@ -1990,14 +1991,20 @@ async function api(req, res, pathname, query) {
       let cur = {};
       try { cur = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) {}
       if (body.brevoKey) cur.brevoKey = String(body.brevoKey).trim();
+      if (body.smtpKey) cur.smtpKey = String(body.smtpKey).trim();
+      if (body.smtpUser) cur.smtpUser = String(body.smtpUser).trim();
+      if (body.smtpHost) cur.smtpHost = String(body.smtpHost).trim();
+      if (body.smtpPort) cur.smtpPort = Number(body.smtpPort) || 587;
       if (body.from) cur.from = String(body.from).trim();
       if (body.fromName) cur.fromName = String(body.fromName).trim();
       if (body.resendKey) cur.resendKey = String(body.resendKey).trim();
       cur.updatedAt = new Date().toISOString();
       writeJSONAtomic(file, cur);
+      if (cur.smtpKey) process.env.BREVO_SMTP_KEY = cur.smtpKey;
+      if (cur.smtpUser) process.env.BREVO_SMTP_USER = cur.smtpUser;
       if (cur.brevoKey) process.env.BREVO_API_KEY = cur.brevoKey;
       if (cur.from) process.env.MAIL_FROM = cur.from;
-      return json(res, 200, { ok: true, configured: email.configured(), from: cur.from || null });
+      return json(res, 200, { ok: true, configured: email.configured(), provider: email.status().provider, from: cur.from || null });
     } catch (e) { return json(res, 500, { ok: false, error: e.message }); }
   }
   if (pathname === '/api/reload' && req.method === 'POST') {

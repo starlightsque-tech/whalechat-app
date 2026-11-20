@@ -4,7 +4,8 @@
    Sends one real B2B alert email through the exact code path the price-alert
    watcher uses (email.js → template 'b2bAlert' → Brevo transactional API).
 
-     BREVO_API_KEY=xkeysib-... npm run test:brevo -- --to=you@example.com
+     BREVO_SMTP_USER=you@example.com BREVO_SMTP_KEY=xsmtpsib-... \
+       npm run test:brevo -- --to=you@example.com
 
    Nothing is committed: the key is read from the environment only. */
 'use strict';
@@ -19,8 +20,8 @@ const to = arg('to', '');
 const from = arg('from', process.env.MAIL_FROM || 'whalechat1@gmail.com');
 const ticker = arg('ticker', 'BTCUSDT');
 
-if (!process.env.BREVO_API_KEY) {
-  console.error('BREVO_API_KEY is not set in this environment.');
+if (!process.env.BREVO_SMTP_KEY && !process.env.BREVO_SMTP_PASS && !process.env.BREVO_API_KEY) {
+  console.error('Set BREVO_SMTP_KEY (+ BREVO_SMTP_USER) or BREVO_API_KEY first.');
   process.exit(2);
 }
 if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) {
@@ -41,8 +42,8 @@ const email = require('../email');
   console.log('from       ', from);
   console.log('to         ', to);
 
-  if (st && st.provider !== 'brevo') {
-    console.error('\nBrevo was not selected — check BREVO_API_KEY / MAIL_FROM.');
+  if (st && st.provider !== 'brevo-smtp' && st.provider !== 'brevo-api' && st.provider !== 'smtp') {
+    console.error('\nBrevo was not selected — check BREVO_SMTP_USER / BREVO_SMTP_KEY / MAIL_FROM.');
     process.exit(1);
   }
 

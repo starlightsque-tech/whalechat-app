@@ -1,9 +1,9 @@
 /* =========================================================================
-   WhaleChat · admin SMS desk  (wc-admin-sms)  ·  3.68.0
+   WhaleChat · admin SMS desk  (wc-admin-sms)  ·  3.77.0
    -------------------------------------------------------------------------
    Adds one admin page — Admin → SMS — that sends text messages through
-   Telesign (the server signs the request, the API key never reaches the
-   browser):
+   Brevo transactional SMS (default) or Telesign (fallback). The provider key
+   never reaches the browser; the server signs every request:
 
      · message body written in the panel
      · an optional BUTTON: a label + a link the admin pastes in. A plain SMS
@@ -113,7 +113,7 @@
   function logHtml() {
     var log = state.log;
     if (!log) return '<div class="tiny muted">Loading…</div>';
-    var rows = log.entries || [];
+    var rows = log.entries || log.campaigns || [];
     if (!rows.length) return '<div class="sms-empty">Nothing sent yet.</div>';
     return '<table class="sms-table"><thead><tr><th>When</th><th>Type</th><th>Reached</th><th>Button</th><th>Message</th></tr></thead><tbody>' +
       rows.map(function (r) {
@@ -135,13 +135,13 @@
     var reach = (cfg && Number(cfg.usersWithPhone)) || 0;
     return '' +
       '<div class="page-head"><div><div class="section-title" style="margin:0">SMS messages</div>' +
-        '<div class="tiny muted">Send a text through Telesign — with a link button users can tap to open the app</div></div></div>' +
+        '<div class="tiny muted">Send a text through Brevo SMS — with a link button users can tap to open the app</div></div></div>' +
 
       '<div id="smsFlash" class="sms-flash"></div>' +
 
       '<div class="card"><div class="between" style="align-items:center;flex-wrap:wrap;gap:10px">' +
-        '<div><div class="card-title" style="margin:0 0 4px">Telesign</div>' +
-          '<div class="small muted">' + (configured ? 'Connected — messages are signed by the server' : 'Not connected — add the Telesign customer id and API key to the server environment') + '</div></div>' +
+        '<div><div class="card-title" style="margin:0 0 4px">' + esc((cfg && cfg.provider) === 'telesign' ? 'Telesign' : 'Brevo SMS') + '</div>' +
+          '<div class="small muted">' + (configured ? 'Connected — messages are signed by the server' : 'Not connected — add BREVO_API_KEY (and an approved BREVO_SMS_SENDER) to the server environment') + '</div></div>' +
         pill(configured, 'Live', 'Off') +
       '</div>' +
       '<div class="tiny muted mt10">' + esc(reach) + ' account' + (reach === 1 ? '' : 's') + ' with a phone number can be reached.</div></div>' +
@@ -232,7 +232,7 @@
     return get('/api/telesign/log').then(function (d) {
       if (d && d.ok) {
         state.log = d;
-        state.status = d;
+        state.status = (d.status && typeof d.status === 'object') ? d.status : d;
       }
       var host = el('smsLog');
       if (host) host.innerHTML = logHtml();

@@ -59,6 +59,37 @@
     return safe(function () { return (L.open(u.id) || []).filter(Boolean); }, []) || [];
   }
 
+  /* open trade first; otherwise the latest closed trade on this symbol so the
+     move history stays visible on the chart after the trade ends */
+  function tradeForTicker(ticker) {
+    var t = openTrades().filter(function (x) { return String(x.ticker || '').toUpperCase() === ticker; })[0];
+    if (t) return t;
+    var L = LT(), u = meUser();
+    if (!L || !u || typeof L.closed !== 'function') return null;
+    return safe(function () {
+      return (L.closed(u.id) || []).filter(function (x) { return String(x.ticker || '').toUpperCase() === ticker; })[0] || null;
+    }, null);
+  }
+
+  /* every counted move, with the profit it took and who took it (manual /
+     Auto Secure / Take Profit level). These are the app's own records — the
+     chart never calculates money, it only draws what LT already booked. */
+  function markersFor(t) {
+    var L = LT();
+    if (!t || !L || typeof L.moveList !== 'function') return [];
+    return safe(function () { return L.moveList(t) || []; }, []).map(function (m) {
+      var auto = m.by === 'auto-secure' || m.by === 'auto-tp';
+      return {
+        t: Number(m.at) || 0,
+        price: Number(m.price) || 0,
+        label: m.to > m.from ? 'M' + m.from + '–' + m.to : 'M' + m.from,
+        sub: '+' + money(m.amount),
+        color: m.by === 'auto-tp' ? '#f5b544' : (m.by === 'auto-secure' ? '#a78bfa' : '#2ee6c9'),
+        kind: auto ? 'auto' : 'manual'
+      };
+    }).filter(function (m) { return m.price > 0; });
+  }
+
   function quoteOf(ticker) {
     var inv = INV();
     if (!inv || typeof inv.quote !== 'function') return null;
@@ -127,38 +158,45 @@
   function hudFor(t) {
     var L = LT();
     if (!t || !L || typeof L.calc !== 'function') return '';
-    var p = safe(function () { return L.calc(t); }, null);
-    if (!p) return '';
-    var entry = num(t.entryPrice), price = num(p.price);
+    var live = t.status === 'Open';
+    var p = live ? safe(function () { return L.calc(t); }, null) : null;
+    if (live && !p) return '';
+    var entry = num(t.entryPrice);
+    var price = live ? num(p.price) : num(t.exitPrice) || entry;
     var rising = price >= entry;
-    var dir = String(t.side || '').toLowerCase() === 'short' ? 'Fall' : 'Rise';
-    var pnl = num(p.pnlCoins);
+    var dir = String(t.direction || '').toLowerCase() === 'fall' || String(t.side || '').toLowerCase() === 'short' ? 'Fall' : 'Rise';
+    var pnl = live ? num(p.pnlCoins) : num(t.pnlCoins);
+    var payout = live ? num(p.payoutCoins) : num(t.payoutCoins);
     var moves = safe(function () { return L.totalMovesOf(t); }, 0);
+    var mt = safe(function () { return L.moveTotals(t); }, null);
+    var taken = mt ? num(mt.tot.all) : 0;
+    var autoTakes = mt ? (mt.list || []).filter(function (m) { return m.by === 'auto-secure' || m.by === 'auto-tp'; }).length : 0;
     return '<div class="wc-lm-hud">' +
       '<span class="wc-lm-dir ' + (dir === 'Fall' ? 'fall' : 'rise') + '">' + dir + '</span>' +
       '<span class="wc-lm-k">Entry</span><b>$' + px(entry) + '</b>' +
-      '<span class="wc-lm-k">Now</span><b class="' + (rising ? 'up' : 'down') + '">$' + px(price) +
+      '<span class="wc-lm-k">' + (live ? 'Now' : 'Exit') + '</span><b class="' + (rising ? 'up' : 'down') + '">$' + px(price) +
         ' ' + (rising ? '▲' : '▼') + '</b>' +
       '<span class="wc-lm-k">Moves</span><b class="wc-lm-moves">' + moves + '</b>' +
-      '<span class="wc-lm-k">P/L</span><b class="' + (pnl >= 0 ? 'up' : 'down') + '">' +
+      '<span class="wc-lm-k">Profit</span><b class="' + (pnl >= 0 ? 'up' : 'down') + '">' +
         (pnl >= 0 ? '+' : '−') + money(Math.abs(pnl)) + ' USD</b>' +
-      '<span class="wc-lm-k">(' + signed(p.pnlPct) + '%)</span>' +
+      '<span class="wc-lm-k">Payout</span><b>$' + money(payout) + '</b>' +
+      (taken > 0 ? '<span class="wc-lm-k">Taken</span><b class="up">+' + money(taken) + '</b>' : '') +
+      (autoTakes > 0 ? '<span class="wc-lm-k">Auto-takes</span><b>' + autoTakes + '</b>' : '') +
+      (live ? '<span class="wc-lm-k">(' + signed(p.pnlPct) + '%)</span>' : '<span class="wc-lm-k">' + (t.closeReason ? String(t.closeReason) : 'Closed') + '</span>') +
       '</div>';
   }
 
   function refreshCharts() {
-    var trades = openTrades();
-    var byTicker = {};
-    trades.forEach(function (t) { if (t && t.ticker) byTicker[String(t.ticker).toUpperCase()] = t; });
     document.querySelectorAll('[data-wc-live-chart]').forEach(function (el) {
       var ticker = String(el.getAttribute('data-wc-live-chart') || '').toUpperCase();
       var host = el.querySelector('[data-wc-live-host]');
-      var t = byTicker[ticker];
+      var t = tradeForTicker(ticker);
       var q = quoteOf(ticker);
       var price = q ? num(q.price) : 0;
 
       if (t && host && host.__api) {
         try { host.__api.setLines(railsFor(t, price)); } catch (e) {}
+        try { if (host.__api.setMarkers) host.__api.setMarkers(markersFor(t)); } catch (e) {}
       }
 
       /* the readout */

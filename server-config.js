@@ -64,7 +64,13 @@ const DEFAULTS = {
   brevo: {
     apiKey: String(process.env.BREVO_API_KEY || '').trim(),
     senderEmail: String(process.env.BREVO_SENDER_EMAIL || 'no-reply@whalechat.app').trim(),
-    senderName: String(process.env.BREVO_SENDER_NAME || 'WhaleChat').trim()
+    senderName: String(process.env.BREVO_SENDER_NAME || 'WhaleChat').trim(),
+    /* SMTP relay: the SMTP key is the password, the Brevo login is the user */
+    smtpHost: String(process.env.BREVO_SMTP_HOST || 'smtp-relay.brevo.com').trim(),
+    smtpPort: Number(process.env.BREVO_SMTP_PORT || 587),
+    smtpUser: String(process.env.BREVO_SMTP_USER || '').trim(),
+    smtpKey: String(process.env.BREVO_SMTP_KEY || process.env.BREVO_SMTP_PASS || '').trim(),
+    smsSender: String(process.env.BREVO_SMS_SENDER || process.env.BREVO_SENDER_NAME || 'WhaleChat').trim()
   },
 
   market: {
@@ -102,7 +108,10 @@ function publicConfig() {
     reconciliation: { tolerancePct: DEFAULTS.reconciliation.tolerancePct },
     features: {
       telesign: !!(DEFAULTS.telesign.customerId && DEFAULTS.telesign.apiKey),
-      brevo: !!DEFAULTS.brevo.apiKey,
+      brevo: !!(DEFAULTS.brevo.apiKey || (DEFAULTS.brevo.smtpUser && DEFAULTS.brevo.smtpKey)),
+      brevoSmtp: !!(DEFAULTS.brevo.smtpUser && DEFAULTS.brevo.smtpKey),
+      brevoSms: !!(DEFAULTS.brevo.apiKey),
+      sms: !!(DEFAULTS.brevo.apiKey || (DEFAULTS.telesign.customerId && DEFAULTS.telesign.apiKey)),
       appwriteEmail: !!DEFAULTS.appwrite.projectId
     }
   };
