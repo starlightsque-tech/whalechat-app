@@ -137,9 +137,20 @@
     writeJSON(LEDGER_KEY, out);
   }
 
+  /* only a conversation between two accounts this device knows about belongs in
+     the transcript; anything else is stale or not ours */
+  function known(m, d) {
+    if (!m || !m.chatId || !d || !Array.isArray(d.users)) return false;
+    if (String(m.chatId).indexOf('__') < 0) return false;
+    return d.users.some(function (u) { return u && u.id === m.from; }) &&
+      d.users.some(function (u) { return u && u.id === m.to; });
+  }
+
   function mergeIntoDB(msgs) {
     var d = db();
     if (!d || !Array.isArray(d.messages) || !msgs || !msgs.length) return 0;
+    msgs = msgs.filter(function (m) { return known(m, d); });
+    if (!msgs.length) return 0;
     var have = {};
     d.messages.forEach(function (m) { if (m && m.id) have[m.id] = 1; });
     var added = 0;
@@ -310,8 +321,9 @@
     });
     var act = activeChat();
     var painted = 0;
+    var dNow = db();
     (msgs || []).forEach(function (m) {
-      if (act && m.chatId === act) {
+      if (act && m.chatId === act && known(m, dNow)) {
         if (appendBubble(m)) painted++;
       }
     });
