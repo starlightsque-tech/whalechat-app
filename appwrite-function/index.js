@@ -357,6 +357,8 @@ const PROXY_CACHE_MS = 8000;
    slice of the catalogue. Remembering every real quote lets later polls fill
    in the rest of the 100+ stock list instead of showing blanks. */
 const LAST_QUOTES = new Map();
+let TD_CURSOR = 0;
+let LAST_TD_AT = 0;
 const LAST_QUOTE_MS = 15 * 60 * 1000;
 function rememberQuotes(quotes) {
   const now = Date.now();
@@ -752,12 +754,26 @@ async function proxyQuotes(provider, symbols) {
       if (Object.keys(fresh).length) { Object.assign(quotes, fresh); used = 'finnhub'; }
     }
     if (TWELVE_KEY) {
-      /* Twelve Data's free plan allows 8 credits/min (1 per symbol): spend
-         only a couple per call and let the rotation cover the long tail */
-      const missing = list.filter((x) => !quotes[x]).slice(0, 2);
+      /* Twelve Data's free plan allows 8 credits/min (1 credit per symbol).
+         Spend two per call: unpriced symbols first, and when the batch is
+         already covered keep a slow rotation going so the provider keeps
+         proving it is connected (its dot reads real ticks, not a flag). */
+      let tdList = list.filter((x) => !quotes[x]);
+      if (!tdList.length) {
+        const all = list.length ? list : [];
+        const start = (Number(TD_CURSOR) || 0) % Math.max(1, all.length);
+        tdList = all.slice(start, start + 2);
+        if (tdList.length < 2 && all.length) tdList = tdList.concat(all.slice(0, 2 - tdList.length));
+      }
+      const missing = tdList.slice(0, 2);
       if (missing.length) {
         const more = await twelvedataQuotes(missing);
-        if (Object.keys(more).length) { Object.assign(quotes, more); used = 'hybrid'; }
+        if (Object.keys(more).length) {
+          Object.assign(quotes, more);
+          used = 'hybrid';
+          TD_CURSOR = (Number(TD_CURSOR) || 0) + missing.length;
+          LAST_TD_AT = Date.now();
+        }
       }
     }
     const fxMissing = list.filter((x) => !quotes[x]);
