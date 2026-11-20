@@ -121,14 +121,23 @@ function createMarketData(opts) {
       return { source: 'twelvedata', candles: d.values.slice().reverse().map((r) => ({ time: Math.floor(Date.parse(r.datetime.replace(' ', 'T') + 'Z') / 1000), open: +r.open, high: +r.high, low: +r.low, close: +r.close, volume: +(r.volume || 0) })) };
     }
     if (k === 'stocks' && c.finnhub.apiKey) {
-      const res = { '1m': '1', '5m': '5', '15m': '15', '1H': '60', '4H': '60', '1D': 'D' }[tf];
-      const to = Math.floor(Date.now() / 1000), from = to - (tf === '1D' ? 400 * 86400 : tf === '1m' ? 2 * 86400 : tf === '4H' ? 60 * 86400 : 20 * 86400);
-      const d = await getJSON('https://finnhub.io/api/v1/stock/candle?symbol=' + sym + '&resolution=' + res + '&from=' + from + '&to=' + to + '&token=' + encodeURIComponent(c.finnhub.apiKey));
-      if (d.s !== 'ok') throw new Error('no candles (Finnhub plan may not include candles)');
-      setHealth('finnhub', true);
-      let list = d.t.map((t, i) => ({ time: t, open: d.o[i], high: d.h[i], low: d.l[i], close: d.c[i], volume: d.v[i] }));
-      if (tf === '4H') list = aggregate(list, 14400);
-      return { source: 'finnhub', candles: list };
+      try {
+        const res = { '1m': '1', '5m': '5', '15m': '15', '1H': '60', '4H': '60', '1D': 'D' }[tf];
+        const to = Math.floor(Date.now() / 1000), from = to - (tf === '1D' ? 400 * 86400 : tf === '1m' ? 2 * 86400 : tf === '4H' ? 60 * 86400 : 20 * 86400);
+        const d = await getJSON('https://finnhub.io/api/v1/stock/candle?symbol=' + sym + '&resolution=' + res + '&from=' + from + '&to=' + to + '&token=' + encodeURIComponent(c.finnhub.apiKey));
+        if (d.s !== 'ok') throw new Error('no candles (Finnhub plan may not include candles)');
+        setHealth('finnhub', true);
+        let list = d.t.map((t, i) => ({ time: t, open: d.o[i], high: d.h[i], low: d.l[i], close: d.c[i], volume: d.v[i] }));
+        if (tf === '4H') list = aggregate(list, 14400);
+        return { source: 'finnhub', candles: list };
+      } catch (e) {
+        /* Finnhub's free plan has no /stock/candle — fall through to the
+           public Yahoo chart endpoint so the chart is never blank */
+      }
+    }
+    if (k === 'stocks' || k === 'forex') {
+      const y = await yahooCandles(sym, tf);
+      if (y && y.candles && y.candles.length) return y;
     }
     return null;
   }
@@ -141,6 +150,24 @@ function createMarketData(opts) {
     });
     return out;
   }
+  async function yahooCandles(sym, tf) {
+    const iv = { '1m': '1m', '5m': '5m', '15m': '15m', '1H': '1h', '4H': '1h', '1D': '1d' }[tf] || '1h';
+    const range = tf === '1D' ? '6mo' : tf === '1m' ? '5d' : '1mo';
+    const symY = /^[A-Z]{6}$/.test(sym) && !/USDT$/.test(sym) ? sym.slice(0, 3) + sym.slice(3) + '=X' : sym;
+    const url = 'https://query1.finance.yahoo.com/v8/finance/chart/' + encodeURIComponent(symY) + '?interval=' + iv + '&range=' + range;
+    try {
+      const d = await getJSON(url, { 'user-agent': 'Mozilla/5.0 (compatible; WhaleChat/1.0)' });
+      const r = d && d.chart && d.chart.result && d.chart.result[0];
+      const q = r && r.indicators && r.indicators.quote && r.indicators.quote[0];
+      if (!r || !q) return null;
+      let candles = (r.timestamp || []).map((t, i) => ({ time: t, open: q.open[i], high: q.high[i], low: q.low[i], close: q.close[i], volume: q.volume[i] || 0 }))
+        .filter((c) => c && Number(c.close) > 0);
+      if (tf === '4H') candles = aggregate(candles, 14400);
+      if (!candles.length) return null;
+      return { source: 'yahoo', candles };
+    } catch (e) { return null; }
+  }
+
   async function candles(symbol, tf) {
     const sym = String(symbol || '').toUpperCase().replace(/[^A-Z0-9.]/g, '');
     if (!TFS[tf]) tf = '1H';
