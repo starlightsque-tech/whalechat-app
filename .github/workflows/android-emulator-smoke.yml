@@ -64,37 +64,24 @@ jobs:
 
       - name: Run APK on emulator and capture screenshot
         uses: reactivecircus/android-emulator-runner@v2
+        env:
+          APK_PATH: ${{ env.APK_PATH }}
+          WAIT_SECONDS: ${{ env.WAIT_SECONDS }}
+          LOGIN_EMAIL: ${{ inputs.login_email }}
+          LOGIN_PASSWORD: ${{ inputs.login_password }}
+          TARGET_HASH: ${{ inputs.target_hash }}
         with:
           api-level: 30
           target: google_apis
           arch: x86_64
           disable-animations: true
-          script: |
-            adb install -r -d "$APK_PATH"
-            adb shell monkey -p app.whalechat.mobile -c android.intent.category.LAUNCHER 1
-            sleep 12
-            if [ -n "${{ inputs.login_email }}" ]; then
-              adb shell input tap 174 101 || true
-              sleep 3
-              adb shell input tap 160 255 || true
-              adb shell input text "${{ inputs.login_email }}" || true
-              sleep 1
-              adb shell input tap 160 330 || true
-              adb shell input text "${{ inputs.login_password }}" || true
-              sleep 1
-              adb shell input keyevent 66 || true
-              sleep 14
-              adb shell am start -a android.intent.action.VIEW -d "https://whalechat.appwrite.network/whalechat.html${{ inputs.target_hash }}" app.whalechat.mobile || true
-              sleep 10
-            else
-              sleep "$WAIT_SECONDS"
-            fi
-            adb exec-out screencap -p > whalechat-emulator.png
-            adb shell dumpsys activity activities | grep -i whalechat || true
+          script: bash scripts/emulator-market-shot.sh
 
       - name: Upload emulator screenshot
         uses: actions/upload-artifact@v4
         with:
           name: whalechat-emulator-screenshot
-          path: whalechat-emulator.png
+          path: |
+            whalechat-emulator.png
+            step-*.png
           if-no-files-found: error
