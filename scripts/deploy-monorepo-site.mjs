@@ -26,7 +26,7 @@ const KEY = String(process.env.APPWRITE_API_KEY || '').trim();
 const SITE_ID = String(process.env.APPWRITE_SITE_ID || 'whalechat').trim().toLowerCase().replace(/[^a-z0-9-]/g, '-');
 const DB_ID = String(process.env.APPWRITE_DATABASE_ID || '6aff488e0006a3fe39e0').trim();
 const PREFIX = String(process.env.WC_COLLECTION_PREFIX ?? 'wc_');
-const DOMAIN = String(process.env.WC_DEPLOY_DOMAIN || '').trim();
+const DOMAIN = String(process.env.WC_DEPLOY_DOMAIN || (SITE_ID + '.appwrite.network')).trim();
 
 if (!PROJECT || !KEY) {
   console.error('[deploy] Missing APPWRITE_PROJECT_ID / APPWRITE_API_KEY.');
@@ -127,25 +127,44 @@ function packageDist() {
 
 async function bindDomain() {
   if (!DOMAIN) return;
-  // Appwrite's own <site>.appwrite.network hostname is assigned automatically;
-  // attempting to add it as a custom domain can 400/409. Verify it instead.
-  if (DOMAIN === SITE_ID + '.appwrite.network') {
-    console.log('[deploy] using the Appwrite-assigned hostname:', DOMAIN);
+  // Custom/appwrite.network hostnames are proxy rules. Create the site rule if
+  // it does not exist; a 409/verified existing rule is treated as success.
+  const list = await req('/proxy/rules?limit=100');
+  const existing = list.ok
+    ? (list.json.rules || []).find((r) => r.domain === DOMAIN)
+    : null;
+  if (existing) {
+    console.log('[deploy] domain rule:', DOMAIN, existing.status, existing.$id);
     return;
   }
-  const list = await req('/sites/' + encodeURIComponent(SITE_ID) + '/domains');
-  const exists = list.ok && (list.json?.domains || []).some((d) => d.domain === DOMAIN);
-  if (exists) {
-    console.log('[deploy] domain already attached:', DOMAIN);
-    return;
-  }
-  const made = await req('/sites/' + encodeURIComponent(SITE_ID) + '/domains', {
+  const made = await req('/proxy/rules/site', {
     method: 'POST',
     headers: Object.assign({ 'content-type': 'application/json' }, headers),
-    body: JSON.stringify({ domain: DOMAIN }),
+    body: JSON.stringify({ domain: DOMAIN, siteId: SITE_ID }),
   });
-  if (!made.ok) console.warn('[deploy] domain bind warning:', made.status, made.json?.message || made.text);
-  else console.log('[deploy] domain bound:', DOMAIN);
+  if (!made.ok && made.status !== 409) {
+    console.warn('[deploy] domain bind warning:', made.status, made.json?.message || made.text);
+  } else {
+    console.log('[deploy] domain rule created:', DOMAIN, made.json?.status || 'existing');
+  }
+}
+
+async function verifyBundle() {
+  if (!DOMAIN) return;
+  let last = 0;
+  let body = '';
+  for (let i = 0; i < 20; i += 1) {
+    const probe = await fetch('https://' + DOMAIN + '/whalechat.html', { cache: 'no-store' });
+    last = probe.status;
+    body = await probe.text();
+    if (last === 200 && /Whalechat|WhaleChat/i.test(body)) {
+      console.log('[deploy] verified https://' + DOMAIN + '/whalechat.html → 200');
+      console.log('[deploy] bundle verified — the existing APK loads this URL.');
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+  throw new Error('deployed bundle did not serve the Whalechat app (HTTP ' + last + ')');
 }
 
 (async () => {
@@ -177,16 +196,7 @@ async function bindDomain() {
   }
 
   await bindDomain();
-
-  if (DOMAIN) {
-    const probe = await fetch('https://' + DOMAIN + '/whalechat.html', { cache: 'no-store' });
-    console.log('[deploy] verify https://' + DOMAIN + '/whalechat.html →', probe.status);
-    const body = await probe.text();
-    if (probe.status !== 200 || !/Whalechat|WhaleChat/i.test(body)) {
-      throw new Error('deployed bundle did not serve the Whalechat app (HTTP ' + probe.status + ')');
-    }
-    console.log('[deploy] bundle verified — the existing APK loads this URL.');
-  }
+  await verifyBundle();
 })().catch((e) => {
   console.error('[deploy] error:', e.message);
   process.exit(1);
