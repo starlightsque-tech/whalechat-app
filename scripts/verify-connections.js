@@ -10,7 +10,7 @@
    ========================================================================= */
 'use strict';
 const CFG = {
-  sync: process.env.WC_SYNC_URL || 'https://nyc.cloud.appwrite.io/v1/functions/whalechat-sync',
+  sync: process.env.WC_SYNC_URL || 'https://whalechat-api.appwrite.network',
   exec: process.env.WC_EXEC_URL || 'https://nyc.cloud.appwrite.io/v1/functions/whalechat-sync/executions',
   project: process.env.APPWRITE_PROJECT_ID || '6aff3eda000983f5a975',
   site: process.env.WC_SITE_URL || 'https://whalechat.appwrite.network'
