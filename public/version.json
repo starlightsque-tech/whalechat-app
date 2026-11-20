@@ -2,7 +2,7 @@
   "version": "3.77.0",
   "build": "2026-11-20T22:12:55Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.77.0 \u2014 Brevo SMTP relay is now the primary mail transport (SMTP key + Brevo login) for sign-up verification codes, transactional email and receipts, with Brevo transactional SMS and OTP as the default text channel and Telesign as fallback. Admin \u2192 SMS is wired to the same provider. Offline-first chat now unions local messages into every server refresh, re-uploads the device's chat database on reconnect, and never clears an offline message. The stock trade chart draws a marker at every counted move with the profit taken and who took it (manual / Auto Secure / Take Profit), using the existing move, payout and auto-take maths.",
+  "notes": "WhaleChat 3.77.0 — Brevo SMTP relay is now the primary mail transport (SMTP key + Brevo login) for sign-up verification codes, transactional email and receipts, with Brevo transactional SMS and OTP as the default text channel and Telesign as fallback. Admin → SMS is wired to the same provider. Offline-first chat now unions local messages into every server refresh, re-uploads the device's chat database on reconnect, and never clears an offline message. The stock trade chart draws a marker at every counted move with the profit taken and who took it (manual / Auto Secure / Take Profit), using the existing move, payout and auto-take maths.",
   "releasedAt": "2026-11-20T22:12:55Z",
   "minimum": "3.0.0"
 }

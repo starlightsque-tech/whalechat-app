@@ -39,15 +39,17 @@ function apiKey() {
 function sender() {
   return String(process.env.BREVO_SMS_SENDER || process.env.BREVO_SENDER_NAME || base.DEFAULTS.brevo.senderName || 'WhaleChat').trim();
 }
+/* Brevo is the requested provider. Telesign is only used when no Brevo API
+   key exists, so the same account that sends mail also sends SMS/OTP. */
 function telesignOn() {
-  return !!(telesign && telesign.configured && telesign.configured());
+  return !apiKey() && !!(telesign && telesign.configured && telesign.configured());
 }
 function configured() {
-  return telesignOn() || !!apiKey();
+  return !!apiKey() || !!(telesign && telesign.configured && telesign.configured());
 }
 function provider() {
-  if (telesignOn()) return 'telesign';
   if (apiKey()) return 'brevo';
+  if (telesign && telesign.configured && telesign.configured()) return 'telesign';
   return 'none';
 }
 
