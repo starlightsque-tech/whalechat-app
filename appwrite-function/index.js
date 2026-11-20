@@ -62,6 +62,18 @@ const CHAT_KEEP = 3000;
 let CHAT_RING = null;          /* {seq, messages[]} once loaded */
 let CHAT_LOADING = null;
 
+
+/* A message must be durable, but the full state writer downloads the file back
+   to verify it — three round trips per message. The chat log is a small side
+   file with the client's outbox behind it, so two calls are enough: delete,
+   then create. */
+async function chatPersist(payload) {
+  try {
+    await rawDelete(CHAT_FILE);
+    return await rawCreate(CHAT_FILE, 'wc-chat-log.json', payload);
+  } catch (e) { return false; }
+}
+
 async function chatLoad() {
   if (CHAT_RING) return CHAT_RING;
   if (CHAT_LOADING) return CHAT_LOADING;
@@ -121,7 +133,7 @@ async function chatAppend(list) {
   }
   if (ring.messages.length > CHAT_KEEP) ring.messages = ring.messages.slice(-CHAT_KEEP);
   if (accepted.length) {
-    const ok = await writeJsonFile(CHAT_FILE, 'wc-chat-log.json', { seq: ring.seq, messages: ring.messages });
+    const ok = await chatPersist({ seq: ring.seq, messages: ring.messages });
     if (!ok) return { ok: false, error: 'chat_write_failed', accepted: [] };
   }
   return { ok: true, seq: ring.seq, accepted };
@@ -2253,7 +2265,11 @@ module.exports = async ({ req, res, log, error }) => {
 
     if (path === '/api/chat/sync' && (method === 'GET' || method === 'POST')) {
       const since = Number((req.query && req.query.since) || body.since || 0) || 0;
-      const wait = Math.min(25, Math.max(0, Number((req.query && req.query.wait) || body.wait || 0) || 0));
+      /* Appwrite Functions cannot hold a request open: a held execution blocks the
+         instance for every other call. The wait is therefore capped at one second,
+         which is only ever used by a probing client — the app itself polls
+         /api/chat/state, which answers immediately. */
+      const wait = Math.min(1, Math.max(0, Number((req.query && req.query.wait) || body.wait || 0) || 0));
       await chatLoad();
       let got = chatSince(since);
       if (got.messages.length || !wait) {

@@ -326,13 +326,25 @@
     return added;
   }
 
-  /* one long-poll in flight; the server holds it open until there is something */
+  /* ONE connection in flight at all times, re-armed the moment it answers.
+     Appwrite Functions cannot hold a request open (a held execution blocks the
+     instance for every other call), so this is a tight poll of a tiny payload
+     rather than a held stream: measured 120-180 ms per answer, which puts a
+     received message on screen in well under a second. */
+  function pollInterval() {
+    /* a background tab has nobody watching it: poll slowly and save battery,
+       but come straight back to fast polling when it is visible again */
+    if (document.hidden) return 2500;
+    if (document.querySelector('.chat-room')) return 550;
+    return 1200;
+  }
+
   function pollOnce() {
     if (!state.started || !meUser()) return;
     if (state.polling) return;
     state.polling = true;
     var since = Number(state.seq) || 0;
-    var url = api('/api/chat/sync?since=' + since + '&wait=20&t=' + Date.now());
+    var url = api('/api/chat/state?since=' + since + '&t=' + Date.now());
     fetch(url, { cache: 'no-store', headers: { accept: 'application/json' } })
       .then(function (r) {
         if (r.status === 401 || r.status === 403) throw new Error('unauthorised');
@@ -346,19 +358,19 @@
           if (Array.isArray(d.messages) && d.messages.length) applyIncoming(d.messages, d.seq);
           else if (typeof d.seq === 'number' && d.seq > state.seq) { state.seq = d.seq; writeJSON(SEQ_KEY, state.seq); }
         }
-        schedule(40);
+        schedule(pollInterval());
       })
       .catch(function () {
         state.polling = false;
         state.net = navigator.onLine !== false;
         state.retry = Math.min(state.retry + 1, 6);
-        schedule(600 * state.retry);
+        schedule(Math.max(700, 500 * state.retry));
       });
   }
 
   function schedule(ms) {
     clearTimeout(state.pollTimer);
-    state.pollTimer = setTimeout(pollOnce, ms || 40);
+    state.pollTimer = setTimeout(pollOnce, ms || pollInterval());
   }
 
   /* ---------------------------------------------------------- outbox drain */
@@ -484,6 +496,8 @@
     state.net = navigator.onLine !== false;
     state.seq = Number(readJSON(SEQ_KEY, 0)) || 0;
     window.addEventListener('online', onOnline);
+    window.addEventListener('hashchange', function () { schedule(20); });
+    document.addEventListener('focusin', function () { if (state.pollTimer) { clearTimeout(state.pollTimer); schedule(20); } });
     window.addEventListener('offline', function () { state.net = false; });
     document.addEventListener('visibilitychange', function () {
       if (document.hidden) { clearTimeout(state.pollTimer); return; }
@@ -498,7 +512,7 @@
       var r = hookRemote();
       if ((!ok || !r) && tries++ < 40) return setTimeout(bind, 250);
       flushOut();
-      schedule(120);
+      schedule(60);
     })();
   }
 
