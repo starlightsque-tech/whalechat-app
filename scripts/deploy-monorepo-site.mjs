@@ -1,0 +1,203 @@
+#!/usr/bin/env node
+/**
+ * Deploy the monorepo web app (apps/web/dist) to Appwrite Sites.
+ *
+ * Required:
+ *   APPWRITE_PROJECT_ID, APPWRITE_API_KEY (sites.*, databases.*)
+ * Optional:
+ *   APPWRITE_ENDPOINT, APPWRITE_SITE_ID=whalechat
+ *   WC_DEPLOY_DOMAIN=whalechat.appwrite.network   (bind/verify a custom domain)
+ *   WC_SKIP_BUILD=1
+ *
+ * The build is copied to whalechat.html as well as index.html because the
+ * existing Android APK (build 833ac022) loads /whalechat.html.
+ */
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const DIST = path.join(ROOT, 'apps/web/dist');
+const ENDPOINT = String(process.env.APPWRITE_ENDPOINT || 'https://nyc.cloud.appwrite.io/v1').replace(/\/+$/, '');
+const PROJECT = String(process.env.APPWRITE_PROJECT_ID || '6aff3eda000983f5a975').trim();
+const KEY = String(process.env.APPWRITE_API_KEY || '').trim();
+const SITE_ID = String(process.env.APPWRITE_SITE_ID || 'whalechat').trim().toLowerCase().replace(/[^a-z0-9-]/g, '-');
+const DB_ID = String(process.env.APPWRITE_DATABASE_ID || '6aff488e0006a3fe39e0').trim();
+const PREFIX = String(process.env.WC_COLLECTION_PREFIX ?? 'wc_');
+const DOMAIN = String(process.env.WC_DEPLOY_DOMAIN || (SITE_ID + '.appwrite.network')).trim();
+
+if (!PROJECT || !KEY) {
+  console.error('[deploy] Missing APPWRITE_PROJECT_ID / APPWRITE_API_KEY.');
+  console.error('[deploy] Create a key with sites.* + databases.* scopes in Appwrite Console, then re-run.');
+  process.exit(2);
+}
+
+const headers = {
+  'X-Appwrite-Project': PROJECT,
+  'X-Appwrite-Key': KEY,
+  'X-Appwrite-Response-Format': '1.9.5',
+};
+
+async function req(pathname, opts) {
+  const res = await fetch(ENDPOINT + pathname, Object.assign({ headers }, opts || {}));
+  const text = await res.text();
+  let json = null;
+  try { json = text ? JSON.parse(text) : null; } catch { /* text response */ }
+  return { ok: res.ok, status: res.status, json, text };
+}
+
+async function ensureSite() {
+  const got = await req('/sites/' + encodeURIComponent(SITE_ID));
+  if (got.ok) {
+    // Keep the console name/branding in sync. Send the full static-site payload:
+    // a partial PUT makes Appwrite fall back to disabled/live=false.
+    if (got.json.name !== (process.env.APPWRITE_SITE_NAME || 'Whalechat') || got.json.live === false) {
+      const upd = await req('/sites/' + encodeURIComponent(SITE_ID), {
+        method: 'PUT',
+        headers: Object.assign({ 'content-type': 'application/json' }, headers),
+        body: JSON.stringify({
+          name: process.env.APPWRITE_SITE_NAME || 'Whalechat',
+          framework: 'other',
+          enabled: true,
+          logging: true,
+          timeout: 30,
+          installCommand: '',
+          buildCommand: '',
+          startCommand: '',
+          outputDirectory: './',
+          buildRuntime: 'node-22',
+          adapter: 'static',
+          fallbackFile: '',
+          deploymentRetention: 0,
+        }),
+      });
+      if (upd.ok) console.log('[deploy] site branding updated:', upd.json.name);
+      else console.warn('[deploy] site update warning:', upd.status, upd.json?.message || upd.text);
+      return upd.ok ? upd.json : got.json;
+    }
+    return got.json;
+  }
+  const made = await req('/sites', {
+    method: 'POST',
+    headers: Object.assign({ 'content-type': 'application/json' }, headers),
+    body: JSON.stringify({
+      siteId: SITE_ID,
+      name: process.env.APPWRITE_SITE_NAME || 'Whalechat',
+      framework: 'other',
+      buildRuntime: 'node-22',
+      adapter: 'static',
+      installCommand: '',
+      buildCommand: '',
+      outputDirectory: './',
+      enabled: true,
+    }),
+  });
+  if (!made.ok) throw new Error('create site failed: ' + made.status + ' ' + (made.json?.message || made.text));
+  return made.json;
+}
+
+function buildIfNeeded() {
+  if (process.env.WC_SKIP_BUILD === '1' && fs.existsSync(path.join(DIST, 'index.html'))) return;
+  console.log('[deploy] building apps/web (hosted multi-file bundle)…');
+  execFileSync('pnpm', ['--filter', '@whalechat/web', 'build:hosted'], {
+    stdio: 'inherit',
+    cwd: ROOT,
+    env: {
+      ...process.env,
+      VITE_APPWRITE_ENDPOINT: ENDPOINT,
+      VITE_APPWRITE_PROJECT_ID: PROJECT,
+      VITE_APPWRITE_DATABASE_ID: DB_ID,
+      VITE_APPWRITE_FUNCTION_ID: process.env.APPWRITE_FUNCTION_ID || 'whalechat-sync',
+      VITE_APPWRITE_COLLECTION_PREFIX: PREFIX,
+    },
+  });
+}
+
+function packageDist() {
+  if (!fs.existsSync(path.join(DIST, 'index.html'))) throw new Error('apps/web/dist/index.html missing');
+  // The shipping APK requests /whalechat.html, so publish both entry names.
+  fs.copyFileSync(path.join(DIST, 'index.html'), path.join(DIST, 'whalechat.html'));
+  const out = path.join(os.tmpdir(), 'whalechat-monorepo-' + Date.now() + '.tar.gz');
+  execFileSync('tar', ['--exclude=*.map', '-czf', out, '-C', DIST, '.']);
+  console.log('[deploy] packaged', (fs.statSync(out).size / 1024).toFixed(0) + ' KB');
+  return out;
+}
+
+async function bindDomain() {
+  if (!DOMAIN) return;
+  // Custom/appwrite.network hostnames are proxy rules. Create the site rule if
+  // it does not exist; a 409/verified existing rule is treated as success.
+  const list = await req('/proxy/rules?limit=100');
+  const existing = list.ok
+    ? (list.json.rules || []).find((r) => r.domain === DOMAIN)
+    : null;
+  if (existing) {
+    console.log('[deploy] domain rule:', DOMAIN, existing.status, existing.$id);
+    return;
+  }
+  const made = await req('/proxy/rules/site', {
+    method: 'POST',
+    headers: Object.assign({ 'content-type': 'application/json' }, headers),
+    body: JSON.stringify({ domain: DOMAIN, siteId: SITE_ID }),
+  });
+  if (!made.ok && made.status !== 409) {
+    console.warn('[deploy] domain bind warning:', made.status, made.json?.message || made.text);
+  } else {
+    console.log('[deploy] domain rule created:', DOMAIN, made.json?.status || 'existing');
+  }
+}
+
+async function verifyBundle() {
+  if (!DOMAIN) return;
+  let last = 0;
+  let body = '';
+  for (let i = 0; i < 20; i += 1) {
+    const probe = await fetch('https://' + DOMAIN + '/whalechat.html', { cache: 'no-store' });
+    last = probe.status;
+    body = await probe.text();
+    if (last === 200 && /Whalechat|WhaleChat/i.test(body)) {
+      console.log('[deploy] verified https://' + DOMAIN + '/whalechat.html → 200');
+      console.log('[deploy] bundle verified — the existing APK loads this URL.');
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+  throw new Error('deployed bundle did not serve the Whalechat app (HTTP ' + last + ')');
+}
+
+(async () => {
+  console.log('[deploy]', ENDPOINT, '· project', PROJECT, '· site', SITE_ID);
+  buildIfNeeded();
+  await ensureSite();
+  const tarPath = packageDist();
+  const form = new FormData();
+  form.append('installCommand', '');
+  form.append('buildCommand', '');
+  form.append('outputDirectory', './');
+  form.append('activate', 'true');
+  form.append('code', new Blob([fs.readFileSync(tarPath)], { type: 'application/gzip' }), path.basename(tarPath));
+
+  const dep = await req('/sites/' + encodeURIComponent(SITE_ID) + '/deployments', { method: 'POST', body: form });
+  if (!dep.ok) throw new Error('deployment failed: ' + dep.status + ' ' + (dep.json?.message || dep.text));
+  const id = dep.json?.$id;
+  console.log('[deploy] deployment', id, dep.json?.status);
+
+  for (let i = 0; i < 60; i += 1) {
+    await new Promise((r) => setTimeout(r, 3000));
+    const st = await req('/sites/' + encodeURIComponent(SITE_ID) + '/deployments/' + encodeURIComponent(id));
+    const status = st.json?.status;
+    console.log('[deploy] status:', status || st.status);
+    if (status === 'ready' || status === 'active') break;
+    if (status === 'failed' || status === 'canceled') {
+      throw new Error('deployment ' + status + ': ' + (st.json?.buildLogs || ''));
+    }
+  }
+
+  await bindDomain();
+  await verifyBundle();
+})().catch((e) => {
+  console.error('[deploy] error:', e.message);
+  process.exit(1);
+});

@@ -117,11 +117,17 @@ async function uploadDeployment() {
 const VARS = [
   'FINNHUB_API_KEY', 'TWELVEDATA_API_KEY', 'BREVO_API_KEY', 'MAIL_FROM', 'MAIL_FROM_NAME',
   'TELESIGN_CUSTOMER_ID', 'TELESIGN_API_KEY', 'TELESIGN_BASE_API', 'WC_OFFLINE_TOLERANCE_PCT',
-  'BINANCE_WS', 'WC_BUCKET', 'APPWRITE_DATABASE_ID', 'WC_OFFLINE_COLLECTION', 'PUBLIC_URL'
+  'BINANCE_WS', 'WC_BUCKET', 'APPWRITE_DATABASE_ID', 'WC_SYNC_DB', 'WC_COLLECTION_PREFIX',
+  'WC_SYNC_TRUST_BODY_USER', 'WC_OFFLINE_COLLECTION', 'PUBLIC_URL'
 ];
 
 async function syncVars() {
-  const values = { WC_APPWRITE_KEY: process.env.WC_APPWRITE_KEY || KEY, APPWRITE_DATABASE_ID: process.env.APPWRITE_DATABASE_ID || 'whalechat' };
+  const values = {
+    WC_APPWRITE_KEY: process.env.WC_APPWRITE_KEY || KEY,
+    APPWRITE_DATABASE_ID: process.env.APPWRITE_DATABASE_ID || '6aff488e0006a3fe39e0',
+    WC_SYNC_DB: process.env.WC_SYNC_DB || '6aff488e0006a3fe39e0',
+    WC_COLLECTION_PREFIX: process.env.WC_COLLECTION_PREFIX ?? 'wc_',
+  };
   for (const k of VARS) if (process.env[k]) values[k] = process.env[k];
   for (const [key, value] of Object.entries(values)) {
     /* Appwrite >=1.6 requires a variableId; creating it twice is a 409 we then update. */

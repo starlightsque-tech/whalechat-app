@@ -34,3 +34,13 @@ data-admin/
 
 # local verification harness
 work/
+
+# monorepo build output
+node_modules/
+apps/*/dist/
+apps/*/dist-offline/
+apps/mobile/.expo/
+*.tsbuildinfo
+.turbo/
+
+packages/*/dist/

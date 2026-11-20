@@ -1,0 +1,49 @@
+name: Monorepo CI
+
+on:
+  push:
+    branches: [feat/turborepo-architecture]
+    paths:
+      - 'apps/**'
+      - 'packages/**'
+      - 'pnpm-workspace.yaml'
+      - 'turbo.json'
+      - 'package.json'
+      - '.github/workflows/monorepo-ci.yml'
+  pull_request:
+    paths:
+      - 'apps/**'
+      - 'packages/**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Shared typecheck + build + tests
+        run: |
+          pnpm --filter @whalechat/shared typecheck
+          pnpm --filter @whalechat/shared build
+          pnpm --filter @whalechat/shared test
+
+      - name: Sync function handlers
+        run: node --test appwrite-function/test/monorepo-sync.test.mjs
+
+      - name: Web typecheck + offline build
+        run: |
+          pnpm --filter @whalechat/web typecheck
+          pnpm --filter @whalechat/web build
+
+      - name: Verify self-contained offline bundle
+        run: node scripts/verify-offline-bundle.mjs

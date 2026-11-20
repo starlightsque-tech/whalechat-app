@@ -1,0 +1,28 @@
+{
+  "expo": {
+    "name": "Whalechat",
+    "slug": "whalechat-superapp",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "whalechat",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "splash": { "backgroundColor": "#04101a", "resizeMode": "contain" },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "app.whalechat.superapp",
+      "infoPlist": { "NSAppTransportSecurity": { "NSAllowsArbitraryLoads": false } }
+    },
+    "android": {
+      "package": "app.whalechat.superapp",
+      "adaptiveIcon": { "backgroundColor": "#04101a" },
+      "permissions": ["INTERNET", "POST_NOTIFICATIONS"]
+    },
+    "web": { "bundler": "metro" },
+    "plugins": ["expo-router"],
+    "extra": {
+      "eas": { "projectId": "REPLACE_WITH_EAS_PROJECT_ID" }
+    },
+    "experiments": { "typedRoutes": true }
+  }
+}
