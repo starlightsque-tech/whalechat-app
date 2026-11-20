@@ -28,6 +28,7 @@ const MAIL_LOG_FILE = 'whalechat-email-log';
 const NOTIF_LOG_LIMIT = 400;
 const VERSION = '3.57.5';
 const crypto = require('crypto');
+const marketLive = require('./market-live');
 
 const CORS = {
   'access-control-allow-origin': '*',
@@ -231,6 +232,54 @@ module.exports = async ({ req, res, log, error }) => {
   try { body = req.body ? (typeof req.body === 'string' ? JSON.parse(req.body) : req.body) : {}; } catch (e) { body = {}; }
 
   try {
+    /* ---- live market data (Yahoo + Binance, key-free) -------------------- */
+    if (path.startsWith('/api/market/') && method === 'GET') {
+      const query = req.query || {};
+      const get = (key) => {
+        let value = query[key];
+        if (Array.isArray(value)) value = value[0];
+        try { return decodeURIComponent(String(value == null ? '' : value)); } catch (e) { return String(value == null ? '' : value); }
+      };
+      if (path === '/api/market/quotes') {
+        let symbols = get('symbols').split(',').map((x) => x.trim()).filter(Boolean);
+        if (!symbols.length) {
+          try {
+            const st = await readState();
+            symbols = ((st.db && st.db.stocks) || []).filter((x) => x && x.ticker && x.active !== false).map((x) => String(x.ticker)).slice(0, 30);
+          } catch (e) { symbols = []; }
+        }
+        const out = await marketLive.quotes(symbols);
+        return res.json(out, 200, CORS);
+      }
+      if (path === '/api/market/quote') {
+        const symbol = get('symbol');
+        if (!symbol) return res.json({ ok: false, error: 'symbol_required' }, 400, CORS);
+        const out = await marketLive.quotes([symbol]);
+        return res.json({ ok: true, quote: out.quotes[symbol.toUpperCase()] || null, source: out.source }, 200, CORS);
+      }
+      if (path === '/api/market/candles') {
+        const symbol = get('symbol');
+        if (!symbol) return res.json({ ok: false, error: 'symbol_required' }, 400, CORS);
+        const out = await marketLive.candles(symbol, get('tf') || '1H');
+        return res.json(out, out.ok ? 200 : 404, CORS);
+      }
+      if (path === '/api/market/history') {
+        const symbols = get('tickers').split(',').map((x) => x.trim()).filter(Boolean);
+        if (!symbols.length) return res.json({ ok: false, error: 'tickers_required' }, 400, CORS);
+        const out = await marketLive.history(symbols, get('limit') || 500);
+        return res.json(out, 200, CORS);
+      }
+      if (path === '/api/market/trading-status') {
+        return res.json({ ok: true, open: true, alwaysOpen: true, source: 'yahoo+binance' }, 200, CORS);
+      }
+      if (path === '/api/market/diag') {
+        return res.json(await marketLive.diag(), 200, CORS);
+      }
+      if (path === '/api/market/status') {
+        return res.json({ ok: true, feeds: { yahoo: true, binance: true, finnhub: false, twelvedata: false }, alwaysOpen: true }, 200, CORS);
+      }
+    }
+
     if (path === '/api/admin/login' && method === 'POST') {
       const login = String(body.login || '').trim().toLowerCase();
       const given = String(body.password || '');
