@@ -129,6 +129,7 @@ const MODULES = [
   { file: 'wc-admin-open.js', marker: 'wc-admin-open' },
   /* device-fit layout, readable type, dashboard chat shortcut */
   { file: 'wc-responsive.js', marker: 'wc-responsive' },
+  { file: 'wc-mobile-fit.js', marker: 'wc-mobile-fit' },
   { file: 'wc-dashboard-chat.js', marker: 'wc-dashboard-chat' },
   { file: 'wc-feed-health.js', marker: 'wc-feed-health' },
   /* singleton heartbeat: one connection for the whole app lifetime */

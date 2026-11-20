@@ -10,10 +10,12 @@
 /* WhaleChat view mode — default desktop, remembered per device */
 (function () {
   try {
-    var pref = localStorage.getItem('wc.viewMode') || 'desktop';
+    var pref = localStorage.getItem('wc.viewMode') || 'auto';
     var w = window.innerWidth || (window.screen && window.screen.width) || 0;
     var handheld = /Mobi|Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
-    var mode = (pref === 'mobile' || pref === 'desktop') ? pref : ((handheld || w < 1024) ? 'mobile' : 'desktop');
+    /* phones and small tablets are always the mobile layout: the desktop
+       canvas is what caused the zoomed-out, clipped UI in the installed app */
+    var mode = (handheld || w < 1024) ? 'mobile' : (pref === 'mobile' ? 'mobile' : 'desktop');
     document.documentElement.setAttribute('data-wc-view', mode);
     document.documentElement.setAttribute('data-wc-view-pref', pref);
     /* always the real device width — never a forced 1280px canvas */

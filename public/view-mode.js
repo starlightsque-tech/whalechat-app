@@ -16,16 +16,18 @@
     try {
       const v = localStorage.getItem(KEY);
       if (v === 'mobile' || v === 'desktop' || v === 'auto') return v;
-      return 'desktop';
-    } catch (e) { return 'desktop'; }
+      return 'auto';
+    } catch (e) { return 'auto'; }
   }
   function resolved(mode) {
-    if (mode === 'mobile' || mode === 'desktop') return mode;
-    /* auto: match the device — phones and small tablets get the phone layout,
-       desktops get the wide layout. Nothing is scaled off the screen edge. */
+    /* Handheld devices always use the phone layout. A saved "desktop"
+       preference used to force a 1280px canvas on phones, which zoomed the
+       whole app out and hid buttons past the right edge. */
     try {
       const w = window.innerWidth || (window.screen && window.screen.width) || 0;
-      return (isHandheld() || w < 1024) ? 'mobile' : 'desktop';
+      if (isHandheld() || w < 1024) return 'mobile';
+      if (mode === 'mobile' || mode === 'desktop') return mode;
+      return 'desktop';
     } catch (e) { return 'mobile'; }
   }
   function viewport() { return document.querySelector('meta[name="viewport"]'); }

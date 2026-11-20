@@ -2,6 +2,16 @@ name: Android emulator smoke test
 
 on:
   workflow_dispatch:
+    inputs:
+      apk_url:
+        description: 'Direct APK URL to install (leave blank to use the APK in the repo)'
+        required: false
+        type: string
+      wait_seconds:
+        description: 'Seconds to wait after launch before the screenshot'
+        required: false
+        default: '25'
+        type: string
   push:
     paths:
       - 'whalechat-release.apk'
@@ -16,15 +26,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Locate APK
+      - name: Locate or download APK
         run: |
           set -e
-          APK="$(ls whalechat-release.apk files/*.apk public/*.apk 2>/dev/null | head -1 || true)"
+          if [ -n "${{ inputs.apk_url }}" ]; then
+            curl -fL "${{ inputs.apk_url }}" -o /tmp/whalechat-target.apk
+            APK=/tmp/whalechat-target.apk
+          else
+            APK="$(ls whalechat-release.apk files/*.apk public/*.apk 2>/dev/null | head -1 || true)"
+          fi
           if [ -z "$APK" ]; then
-            echo "No APK in the repo. Run the 'Build signed Android APK' workflow first, or add whalechat-release.apk." >&2
+            echo "No APK supplied and none in the repo." >&2
             exit 1
           fi
+          ls -lh "$APK"
           echo "APK_PATH=$APK" >> "$GITHUB_ENV"
+          echo "WAIT_SECONDS=${{ inputs.wait_seconds || '25' }}" >> "$GITHUB_ENV"
 
       - name: Enable KVM
         run: |
@@ -42,7 +59,7 @@ jobs:
           script: |
             adb install -r -d "$APK_PATH"
             adb shell monkey -p app.whalechat.mobile -c android.intent.category.LAUNCHER 1
-            sleep 15
+            sleep "$WAIT_SECONDS"
             adb exec-out screencap -p > whalechat-emulator.png
             adb shell dumpsys activity activities | grep -i whalechat || true
 
