@@ -97,6 +97,9 @@
     setTimeout(function () { safe(function () { window.dispatchEvent(new Event('resize')); }); }, 60);
     setTimeout(function () {
       safe(function () { var r = g('render'); if (typeof r === 'function') r({ force: true }); });
+      /* the repaint replaced the header button: re-attach immediately so the
+         app's own handler cannot fire on the next tap as well */
+      ensureButton();
     }, 120);
     safe(function () { if (typeof window.toast === 'function') window.toast(next === 'light' ? 'Bright mode on' : 'Dark mode on', 'ok'); });
     return next;
