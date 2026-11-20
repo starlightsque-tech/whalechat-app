@@ -83,6 +83,9 @@ const MODULES = [
   { file: 'diagnostics.js', marker: 'wc-diagnostics' },
   { file: 'message-search.js', marker: 'wc-message-search' },
   { file: 'offline-actions.js', marker: 'wc-offline-actions' },
+  /* 3.67: quiet offline UI, durable offline message queue, fast delivery and
+     the keyboard-safe chat composer. Must load after the offline modules. */
+  { file: 'wc-chat-flow.js', marker: 'wc-chat-flow' },
   { file: 'admin-auth.js', marker: 'wc-admin-auth' },
   { file: 'subscriptions.js', marker: 'wc-subs' },
   { file: 'tawk-control.js', marker: 'wc-tawk-control' },
@@ -115,6 +118,9 @@ const MODULES = [
   { file: 'readability.js', marker: 'wc-readability' },
   /* native green/red price chart replaces every TradingView surface */
   { file: 'wc-chart.js', marker: 'wc-chart' },
+  /* 3.67: the stock trade chart is the reference-board chart (chart kit),
+     streaming real ticks green up / red down. Loads after wc-chart so it wins. */
+  { file: 'wc-trade-chart-live.js', marker: 'wc-trade-chart-live' },
   { file: 'b2b-market.js', marker: 'wc-b2b-market' },
   { file: 'b2b-performance.js', marker: 'wc-b2b-performance' },
   { file: 'connections-admin.js', marker: 'wc-connections-admin' },

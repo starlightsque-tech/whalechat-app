@@ -347,7 +347,7 @@
         var pts = vis.map(function (p, i) { return { x: sx(i, vis.length), y: sy(p.p), v: p.p }; });
         /* fills */
         drawSplitFill(g, pts, ref, sy, plotW, top + plotH);
-        drawSplitLine(g, pts, ref, 2);
+        drawSplitLine(g, pts, ref, 1.7);
         /* last point marker */
         var lastP = pts[pts.length - 1];
         g.fillStyle = lastP.v >= ref ? C.up : C.down;
@@ -493,8 +493,8 @@
         segs.push({ a: { x: cx, y: cy, v: ref }, b: b, up: bUp });
       }
       g.save();
-      g.shadowColor = 'rgba(49,224,160,.45)';
-      g.shadowBlur = 9;
+      g.shadowColor = 'rgba(49,224,160,.38)';
+      g.shadowBlur = 7;
       segs.forEach(function (s) {
         var rising = (s.b.v >= s.a.v);
         g.shadowColor = rising ? 'rgba(49,224,160,.45)' : 'rgba(255,93,108,.4)';

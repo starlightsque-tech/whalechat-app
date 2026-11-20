@@ -4,7 +4,7 @@
 <script>window.__WC_SERVER__ = true; window.__WC_PUBLIC_URL__ = "https://whalechat.appwrite.network";</script>
 <script async src="https://www.googletagmanager.com/gtm.js?id=GTM-5WNCBL8N"></script><script>window.dataLayer = window.dataLayer || [];function gtag(){dataLayer.push(arguments);}gtag('js', new Date());</script>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
 <script>try{var _ts=localStorage.getItem('whalechat.textsize');if(_ts==='compact'||_ts==='default'||_ts==='large'){document.documentElement.setAttribute('data-textsize',_ts);}}catch(e){}</script>
 <script>
 /* WhaleChat view mode — default desktop, remembered per device */
@@ -20,7 +20,7 @@
     document.documentElement.setAttribute('data-wc-view-pref', pref);
     /* always the real device width — never a forced 1280px canvas */
     var m = document.querySelector('meta[name="viewport"]');
-    if (m) m.setAttribute('content', 'width=device-width, initial-scale=1, viewport-fit=cover');
+    if (m) m.setAttribute('content', 'width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content');
     var pf = (location.hash || '').match(/^#\/portfolio\/([A-Za-z0-9_-]+)/i);
     if (!pf) { try { var qt = new URLSearchParams(location.search).get('portfolio'); if (qt) pf = [0, qt]; } catch (e) {} }
     if (pf && pf[1]) sessionStorage.setItem('wc.pfToken', pf[1]);

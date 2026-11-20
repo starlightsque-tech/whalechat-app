@@ -190,14 +190,12 @@ App.send = async function () {
   if (chan) { try { chan.postMessage({ t: 'message', from: u.id }); } catch (e) {} }
   render();
   setTimeout(() => { if (ACTIVE_CHAT === cid) { const b = document.getElementById('chatBody'); if (b) b.scrollTop = b.scrollHeight; } }, 30);
-  // delivery ack simulation
-  setTimeout(() => {
-    const fresh = loadDB();
-    if (!fresh) return;
-    let ch = false;
-    fresh.messages.forEach(m => { if (m.chatId === cid && m.from === u.id && m.status === 'sent') { m.status = 'delivered'; ch = true; } });
-    if (ch) { DB = fresh; persist(); if (ACTIVE_CHAT === cid) render(); }
-  }, 1200);
+  // delivery ack: update the ticks in place — no timeout and no full re-render
+  try {
+    if (navigator.onLine !== false && typeof window.wcMessageDelivered === 'function') {
+      window.wcMessageDelivered(DB.messages.filter(m => m.chatId === cid && m.from === u.id && m.status === 'sent').map(m => m.id));
+    }
+  } catch (e) {}
 };
 
 App.attach = function () {
