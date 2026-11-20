@@ -1,5 +1,18 @@
 # WhaleChat 3.54.0 — web app + mobile apps
 
+> **3.73 · offline-first chat engine**
+>
+> Send is optimistic: the bubble renders and the message is written to IndexedDB
+> (`WhaleChatDB.messages`) plus the **Outbox** before any network call. The Outbox drains every
+> 2 s to Appwrite (`databases.<db>.collections.messages`), retries at 5/10/30 s, and resumes the
+> moment the device is online — the clock tick becomes a single tick when Appwrite accepts it.
+> Incoming messages arrive over **one Appwrite Realtime subscription** for the whole app lifetime
+> (no chat polling); opening a chat paints the cached last 100 first, then merges the server copy
+> in the background. Ticks: clock = outbox, single = Appwrite sent, double = delivered, blue
+> double = read. The previous lane (SSE / Ably / poll) stays only as a fallback while Realtime
+> reconnects. Realtime requires the web origin to be registered under Project → Platforms.
+
+
 > **3.71 · realtime chat + admin SMS desk**
 >
 > * **Chat lane transports.** The browser lane now tries, in order: **SSE** on the app's own

@@ -1130,4 +1130,4 @@ function messageHTML(m, u, other) {
     <div class="meta">
       ${m.editedAt ? '<span class="edited">Edited</span>' : ''}
       <span>${clockTime(m.createdAt)}</span>
-      ${out ? `<span class="tick ${m.status === 'seen' ? 'seen' : ''
+      ${out ? `<span class="tick ${m.status || 'sent'}

@@ -45,6 +45,7 @@
     evSeq: 0,
     transport: 'boot',      /* boot | stream | pusher | ably | poll */
     provider: null,
+    external: false,        /* Appwrite Realtime owns delivery (wc-chat-engine) */
     es: null,
     ws: null,
     wsSocketId: '',
@@ -670,6 +671,7 @@
 
   function schedule(ms) {
     clearTimeout(state.pollTimer);
+    if (state.external) return;          /* no polling while Realtime is connected */
     state.pollTimer = setTimeout(pollOnce, ms || pollInterval());
   }
 
@@ -689,6 +691,7 @@
 
   /* Ask the deployment what it can do, then open the best road. */
   function bootTransports(force) {
+    if (state.external) return;
     if (!state.net) return startPoll('offline');
     var health = fetch(api('/api/health'), { cache: 'no-store' })
       .then(function (r) { return r.json(); }).catch(function () { return null; });
@@ -730,6 +733,9 @@
     if (!A || typeof A.send !== 'function' || A.send.__wcLane) return false;
     var orig = A.send;
     A.send = function () {
+      /* Appwrite Realtime mode: the chat engine saves to IndexedDB + Outbox and
+         renders; the app's own send already paints the bubble synchronously. */
+      if (state.external) return orig.apply(this, arguments);
       var u = meUser();
       var d = db();
       var cid = activeChat();
@@ -831,6 +837,7 @@
 
   function onOnline() {
     state.net = true;
+    if (state.external) { flushOut(); return; }
     bootTransports(true);
     flushOut().then(function () { schedule(30); });
     safe(function () {
@@ -889,6 +896,21 @@
     reconnect: function () { bootTransports(true); },
     ledger: readLedger,
     merge: mergeIntoDB,
+    apply: function (msgs, seq) { return applyIncoming(msgs, seq); },
+    /* Appwrite Realtime takes over delivery: stop the lane's own transports and
+       poll entirely. resume() is only used if Realtime cannot connect. */
+    setExternal: function (on) {
+      state.external = !!on;
+      if (on) {
+        stopTransports();
+        clearTimeout(state.pollTimer);
+        clearTimeout(state.retryTimer);
+      } else if (state.started) {
+        bootTransports(true);
+        schedule(40);
+      }
+    },
+    external: function () { return state.external; },
     typing: function (typing) {
       var u = meUser(); var act = activeChat();
       if (!u || !act) return;

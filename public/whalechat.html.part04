@@ -1,7 +1,18 @@
-}" title="${m.status === 'seen' ? 'Read' : 'Sent'}">${ic(m.status === 'seen' ? 'checks' : 'check', 12)}</span>` : ''}
+}">${wcTickIcon(m)}</span>` : ''}
     </div>
     ${reactionChips(m.reactions, u.id, 'msg', m.id)}
   </div>`;
+}
+/* WhatsApp-style delivery ticks.
+   clock = queued in the outbox · single = Appwrite accepted ·
+   double = the other device received it · blue double = they read it. */
+function wcTickIcon(m) {
+  const st = (m && m.status) || 'sent';
+  const label = st === 'sending' || st === 'queued' ? 'Sending' : st === 'error' ? 'Not sent — retrying'
+    : st === 'delivered' ? 'Delivered' : st === 'seen' ? 'Read' : 'Sent';
+  const icon = st === 'sending' || st === 'queued' || st === 'error' ? 'clock'
+    : st === 'delivered' || st === 'seen' ? 'checks' : 'check';
+  return `<span class="tick" data-state="${st}" title="${label}">${ic(icon, 12)}</span>`;
 }
 function linkify(escaped) {
   return escaped.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener" style="color:var(--accent-2);text-decoration:underline">$1</a>');

@@ -345,7 +345,10 @@ html[data-theme="light"] .topbar{background:rgba(255,255,255,.78)}
 .story-react button.mine{background:rgba(46,230,201,.3);border-color:var(--accent)}
 .msg .edited{font-size:10px;color:var(--muted-2)}
 .tick{display:inline-flex;color:var(--muted-2)}
-.tick.seen{color:#35d39e}
+.tick.sending,.tick.queued,.tick.error,.tick[data-state="sending"],.tick[data-state="queued"]{color:var(--muted-2);opacity:.8}
+.tick.sent{color:var(--muted-2)}
+.tick.delivered{color:var(--muted)}
+.tick.seen,.tick[data-state="seen"]{color:#3aa0ff}
 .chat-input{display:flex;align-items:flex-end;gap:8px;padding:10px 12px calc(10px + env(safe-area-inset-bottom));border-top:1px solid var(--border);
   background:var(--surface);flex:none}
 .chat-input textarea{flex:1;min-height:42px;max-height:120px;border-radius:22px;background:var(--surface-2);border:1px solid var(--border);

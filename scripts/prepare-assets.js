@@ -164,7 +164,10 @@ const MODULES = [
   { file: 'wc-theme.js', marker: 'wc-theme' },
   /* 3.69: repaints are invisible — no scroll jump, no lost typing, no focus loss.
      Must be last so it wraps the final render(). */
-  { file: 'wc-quiet-render.js', marker: 'wc-quiet-render' }
+  { file: 'wc-quiet-render.js', marker: 'wc-quiet-render' },
+  /* 3.73: the chat engine — IndexedDB + Outbox + Appwrite Realtime, with the
+     optimistic send. Must stay LAST so its App.send wrapper is outermost. */
+  { file: 'wc-chat-engine.js', marker: 'wc-chat-engine' }
 ];
 try {
   let page = fs.readFileSync(APP, 'utf8');
