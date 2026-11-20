@@ -269,6 +269,59 @@ module.exports = async ({ req, res, log, error }) => {
       }
     }
 
+    /* ---- minimal bots / shares state so their pages render ---------------- */
+    if ((path === '/api/bots/state' || path === '/api/shares/state') && (method === 'GET' || method === 'POST')) {
+      const st = await readState();
+      const db = st.db || {};
+      const userId = String((body && body.userId) || (req.query && (req.query.userId || req.query.userid)) || '');
+      const u = (db.users || []).find((x) => x && x.id === userId) || null;
+      if (path === '/api/shares/state') {
+        const price = Number(db.shareMarket && db.shareMarket.priceUsd) || 12.5;
+        const now = Date.now();
+        const history = Array.from({ length: 60 }, (_, i) => {
+          const t = now - (59 - i) * 300000;
+          const wave = Math.sin((i + now / 300000) / 6) * 0.012 + Math.sin(i / 3) * 0.004;
+          return { t, p: Math.max(0.5, Number((price * (1 + wave)).toFixed(4))) };
+        });
+        const plans = [
+          { id: 'starter', name: 'Whale Starter', returnPct: 3, durationValue: 7, durationUnit: 'days', durationLabel: '7 days', minUsd: 10, maxUsd: 500, minCoins: 20, maxCoins: 1000, blurb: 'One-week plan · daily return on the shares you hold.', enabled: true },
+          { id: 'growth', name: 'Whale Growth', returnPct: 5, durationValue: 14, durationUnit: 'days', durationLabel: '14 days', minUsd: 50, maxUsd: 2500, minCoins: 100, maxCoins: 5000, blurb: 'Two-week plan · higher daily return.', enabled: true },
+          { id: 'elite', name: 'Whale Elite', returnPct: 8, durationValue: 30, durationUnit: 'days', durationLabel: '30 days', minUsd: 250, maxUsd: 25000, minCoins: 500, maxCoins: 50000, blurb: 'Monthly plan for larger allocations.', enabled: true },
+        ];
+        const investments = Array.isArray(db.shareInvestments) ? db.shareInvestments.filter((x) => !u || x.userId === u.id) : [];
+        return res.json({
+          ok: true, balance: Number(u && u.balance) || 0, plans, investments, completed: [],
+          shareMarket: { priceUsd: price, updatedAt: now, history },
+          summary: { shares: 0, totalEarnedCoins: 0, totalEarnedUsd: 0, activeCount: investments.length, investedCoins: 0, accruedCoins: 0, sharePriceUsd: price, completedProfitCoins: 0 },
+          serverTime: now
+        }, 200, CORS);
+      }
+      const tiers = Array.isArray(db.botTiers) ? db.botTiers : [];
+      const session = Array.isArray(db.botSessions) ? db.botSessions.find((x) => x && x.userId === userId && x.status !== 'stopped') : null;
+      return res.json({
+        ok: true, balance: Number(u && u.balance) || 0, investUsd: Number(u && u.balance) * 0.5 || 0,
+        account: { capitalCoins: 0, profitCoins: 0, totalPayoutCoins: 0 },
+        session: session || null, tiers, history: [],
+        autoSecure: { active: false, enabled: false, priceCoins: 40, billedAs: 'monthly', securedCount: 0, securedCoins: 0 },
+        botAccess: false, settings: { intervalMin: 5, tradeFeePct: 0.5 }, serverTime: Date.now()
+      }, 200, CORS);
+    }
+
+    if (path === '/api/market/binance' && method === 'GET') {
+      try {
+        const symbols = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT', 'ADAUSDT', 'DOGEUSDT', 'AVAXUSDT'];
+        const out = await marketLive.quotes(symbols);
+        const prices = {};
+        Object.keys(out.quotes || {}).forEach((sym) => {
+          const q = out.quotes[sym];
+          prices[sym] = { price: q.price, openPrice: q.prevClose, high: q.dayHigh, low: q.dayLow, quoteVolume: q.vol, changePct: ((q.price / q.prevClose - 1) * 100), at: q.updatedAt };
+        });
+        return res.json({ ok: true, prices, at: Date.now(), source: 'binance' }, 200, CORS);
+      } catch (e) {
+        return res.json({ ok: false, error: 'binance_failed' }, 502, CORS);
+      }
+    }
+
     if (path === '/api/admin/login' && method === 'POST') {
       const login = String(body.login || '').trim().toLowerCase();
       const given = String(body.password || '');

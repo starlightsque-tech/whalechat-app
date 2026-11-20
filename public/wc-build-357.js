@@ -55,7 +55,10 @@
     return '$' + n.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
   }
   function api(path, body) {
-    return fetch(path, {
+    var base = '';
+    try { base = (typeof Remote !== 'undefined' && Remote && Remote.base) ? String(Remote.base) : ''; } catch (e) {}
+    if (!base) base = 'https://whalechat-api.appwrite.network';
+    return fetch(base.replace(/\/+$/, '') + path, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body || {})
@@ -400,24 +403,33 @@
 
   function codeDialog(opts) {
     return new Promise(function (resolve) {
-      var shell = safe(function () { return modalShell; }, null);
-      var open = safe(function () { return openModal; }, null);
-      if (!shell || !open) return resolve(null);
-      var html = '' +
-        '<div style="text-align:center;padding:4px 0 12px">' +
-          '<div class="tiny muted" style="margin-bottom:10px">' + esc(opts.sub || '') + '</div>' +
+      var old = document.getElementById('wc357VerifyOverlay');
+      if (old) { try { old.remove(); } catch (e) {} }
+      var wrap = document.createElement('div');
+      wrap.id = 'wc357VerifyOverlay';
+      wrap.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:rgba(2,10,16,.78);display:flex;align-items:center;justify-content:center;padding:18px;backdrop-filter:blur(4px)';
+      wrap.innerHTML = '' +
+        '<div style="width:100%;max-width:420px;background:#0b1d29;border:1px solid rgba(255,255,255,.14);border-radius:18px;padding:20px;color:#e9f4f9;box-shadow:0 24px 60px rgba(0,0,0,.5)">' +
+          '<div style="font-size:18px;font-weight:800;margin-bottom:6px">' + esc(opts.title || 'Verify your email') + '</div>' +
+          '<div style="font-size:12px;line-height:1.5;color:#8ba4b6;margin-bottom:12px">' + esc(opts.sub || '') + '</div>' +
           '<input id="wc357Code" class="input" inputmode="numeric" maxlength="6" placeholder="000000" ' +
-            'style="text-align:center;font-size:24px;letter-spacing:10px;font-weight:800;font-family:Menlo,Consolas,monospace"/>' +
-          '<div id="wc357CodeErr" class="err" style="display:none;margin-top:8px"></div>' +
-          (opts.fallbackCode ? '<div class="panel" style="margin-top:10px;padding:10px;text-align:left"><div class="tiny muted">Email delivery is not configured on this server yet, so here is your code:</div>' +
-            '<div class="center" style="font-size:22px;letter-spacing:6px;font-weight:800;color:var(--accent);margin-top:6px">' + esc(opts.fallbackCode) + '</div>' +
-            '<div class="tiny muted" style="margin-top:4px">Add SMTP/Resend/Brevo credentials to send it by email.</div></div>' : '') +
+            'style="width:100%;box-sizing:border-box;text-align:center;font-size:24px;letter-spacing:10px;font-weight:800;font-family:Menlo,Consolas,monospace;padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,.18);background:#04101a;color:#e9f4f9"/>' +
+          '<div id="wc357CodeErr" style="display:none;margin-top:8px;color:#ff9aaa;font-size:12px"></div>' +
+          (opts.fallbackCode ? '<div style="margin-top:10px;padding:10px;border:1px solid rgba(255,255,255,.1);border-radius:10px"><div style="font-size:11px;color:#8ba4b6">Email delivery is not configured on this server yet, so here is your code:</div>' +
+            '<div style="text-align:center;font-size:22px;letter-spacing:6px;font-weight:800;color:#2ee6c9;margin-top:6px">' + esc(opts.fallbackCode) + '</div></div>' : '') +
+          '<div style="display:flex;gap:8px;margin-top:14px">' +
+            '<button type="button" data-close style="flex:1;border:1px solid rgba(255,255,255,.18);background:transparent;color:#e9f4f9;border-radius:10px;padding:10px;font-weight:700;cursor:pointer">Not now</button>' +
+            '<button type="button" data-wc357-verify style="flex:1;border:0;background:#2ee6c9;color:#04101a;border-radius:10px;padding:10px;font-weight:800;cursor:pointer">Verify</button>' +
+          '</div>' +
         '</div>';
-      var foot = '<button class="btn btn-ghost" data-close style="flex:1">Not now</button>' +
-        '<button class="btn btn-primary" data-wc357-verify style="flex:1">Verify</button>';
-      open(shell(opts.title || 'Verify your email', html, foot), { locked: false });
-      var overlay = document.getElementById('overlay');
-      if (!overlay) return resolve(null);
+      document.body.appendChild(wrap);
+      var finished = false;
+      function finish(value) {
+        if (finished) return;
+        finished = true;
+        try { wrap.remove(); } catch (e) {}
+        resolve(value);
+      }
       var submit = async function () {
         var code = (document.getElementById('wc357Code') || {}).value || '';
         var err = document.getElementById('wc357CodeErr');
@@ -431,16 +443,13 @@
           if (err) { err.textContent = res.message || 'Incorrect or expired code'; err.style.display = 'block'; }
           return;
         }
-        safe(function () { closeModal(); });
-        resolve({ ok: true });
+        finish({ ok: true });
       };
-      overlay.querySelector('[data-wc357-verify]').onclick = submit;
-      overlay.querySelectorAll('[data-close]').forEach(function (b) {
-        b.addEventListener('click', function () { resolve(null); });
-      });
+      wrap.querySelector('[data-wc357-verify]').onclick = submit;
+      wrap.querySelector('[data-close]').onclick = function () { finish(null); };
       var inp = document.getElementById('wc357Code');
       if (inp) { inp.focus(); inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') submit(); }); }
-      setTimeout(function () { safe(function () { closeModal(); resolve(null); }, null); }, 10 * 60000);
+      setTimeout(function () { finish(null); }, 10 * 60000);
     });
   }
 
@@ -963,6 +972,56 @@
     document.addEventListener('visibilitychange', function () { if (document.hidden) backupNow(); });
     setInterval(backupNow, 60000);
     tick();
+
+    function ensureVerifyPanel() {
+      try {
+        var u = safe(function () { return me357(); }, null);
+        var panel = document.getElementById('wc357VerifyPanel');
+        if (!u || u.verified) { if (panel) panel.remove(); return; }
+        if (panel || document.getElementById('wc357VerifyOverlay')) return;
+        panel = document.createElement('div');
+        panel.id = 'wc357VerifyPanel';
+        panel.style.cssText = 'position:fixed;left:12px;right:12px;bottom:12px;z-index:2147482000;background:#0b1d29;border:1px solid rgba(46,230,201,.35);border-radius:16px;padding:14px;color:#e9f4f9;box-shadow:0 18px 50px rgba(0,0,0,.55);max-width:520px;margin:0 auto';
+        panel.innerHTML = '' +
+          '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">' +
+            '<div><b style="font-size:14px">Verify your email</b>' +
+            '<div style="font-size:11px;color:#8ba4b6;line-height:1.45;margin-top:3px">Enter the 6-digit code sent to <b style="color:#e9f4f9">' + esc(u.email || '') + '</b>. Check spam if it is not there.</div></div>' +
+            '<button type="button" data-vp-close style="background:transparent;border:0;color:#8ba4b6;font-size:18px;cursor:pointer">×</button>' +
+          '</div>' +
+          '<div style="display:flex;gap:8px;margin-top:10px">' +
+            '<input id="wc357PanelCode" inputmode="numeric" maxlength="6" placeholder="000000" style="flex:1;min-width:0;text-align:center;font-size:18px;letter-spacing:7px;font-weight:800;padding:9px;border-radius:10px;border:1px solid rgba(255,255,255,.18);background:#04101a;color:#e9f4f9"/>' +
+            '<button type="button" data-vp-verify style="background:#2ee6c9;color:#04101a;border:0;border-radius:10px;padding:0 14px;font-weight:800;cursor:pointer">Verify</button>' +
+          '</div>' +
+          '<div style="display:flex;justify-content:space-between;margin-top:8px;gap:8px">' +
+            '<button type="button" data-vp-resend style="background:transparent;border:0;color:#2ee6c9;font-size:11px;font-weight:700;cursor:pointer;padding:0">Resend code</button>' +
+            '<span id="wc357PanelMsg" style="font-size:11px;color:#8ba4b6"></span>' +
+          '</div>';
+        document.body.appendChild(panel);
+        var msg = function (t, bad) { var el = document.getElementById('wc357PanelMsg'); if (el) { el.textContent = t; el.style.color = bad ? '#ff9aaa' : '#8ba4b6'; } };
+        panel.querySelector('[data-vp-close]').onclick = function () { panel.remove(); };
+        panel.querySelector('[data-vp-resend]').onclick = async function () {
+          msg('Sending…');
+          var res = await api('/api/verify/email-code', { email: u.email, purpose: 'signup', name: u.fullName || u.username, userId: u.id });
+          if (!res.ok) return msg(res.message || 'Could not send the code', true);
+          if (res.code) msg('Email is not configured — code: ' + res.code);
+          else msg('A new code was sent to your email.');
+        };
+        panel.querySelector('[data-vp-verify]').onclick = async function () {
+          var code = (document.getElementById('wc357PanelCode') || {}).value || '';
+          if (!/^\d{6}$/.test(code.trim())) return msg('Enter the 6-digit code', true);
+          msg('Checking…');
+          var res = await api('/api/verify/email-check', { email: u.email, purpose: 'signup', code: code.trim() });
+          if (!res.ok) return msg(res.message || 'Incorrect or expired code', true);
+          u.verified = true; u.emailVerifiedAt = Date.now(); u.updatedAt = Date.now();
+          save357(); backupNow();
+          panel.remove();
+          toast357('Email verified — welcome to your account');
+          go357('profile');
+        };
+      } catch (e) { /* never break the app */ }
+    }
+    setInterval(ensureVerifyPanel, 1800);
+    setTimeout(ensureVerifyPanel, 1200);
 
     /* expose a tiny status surface for diagnostics */
     window.WC_BUILD_357 = { version: VERSION, backupNow: backupNow, verify: startEmailVerification };
