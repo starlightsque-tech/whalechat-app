@@ -42,12 +42,22 @@ Mobile does the same with `EXPO_PUBLIC_APPWRITE_*`.
 - React hooks (`useWhalechatSync`, `useChat`, `useWallet`) read the same
   Zustand store on both platforms.
 
-## Appwrite provisioning
+## Appwrite provisioning & sync API
+
+The monorepo writes go through `appwrite-function/monorepo-sync.js`
+(`/api/messages`, `/api/orders/checkout`, `/api/trades`,
+`/api/wallet/transfer`, `/api/admin/*`). See
+[docs/APPWRITE-SYNC-API.md](APPWRITE-SYNC-API.md) for the contract,
+idempotency rules and wallet holds.
 
 ```bash
 APPWRITE_ENDPOINT=https://nyc.cloud.appwrite.io/v1 \
 APPWRITE_PROJECT_ID=... APPWRITE_API_KEY=... \
 node scripts/provision-monorepo-appwrite.mjs
+
+APPWRITE_PROJECT_ID=... APPWRITE_API_KEY=... \
+WC_DEPLOY_DOMAIN=whalechat.appwrite.network \
+node scripts/deploy-monorepo-site.mjs
 ```
 
 The script is idempotent and creates `users`, `wallets`, `conversations`,

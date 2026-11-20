@@ -35,6 +35,8 @@ const TELESIGN_ID = String(process.env.TELESIGN_CUSTOMER_ID || (TELSIGN_BASIC.in
 const TELESIGN_KEY = String(process.env.TELESIGN_API_KEY || (TELSIGN_BASIC.indexOf(':') > 0 ? TELSIGN_BASIC.slice(TELSIGN_BASIC.indexOf(':') + 1) : '')).trim();
 const WC_DB_ID = isRealId(process.env.APPWRITE_DATABASE_ID) ? String(process.env.APPWRITE_DATABASE_ID).trim() : '6aff488e0006a3fe39e0';
 const offlineSync = require('./offline-sync');
+const { createMonorepoSync } = require('./monorepo-sync');
+const monorepoSync = createMonorepoSync({ api, readState, saveState, log: console.log, error: console.error });
 const { ShareService } = require('./shares');
 const { BotService } = require('./bots');
 
@@ -902,6 +904,12 @@ module.exports = async ({ req, res, log, error }) => {
       if (changed) await saveState(st);
       return res.json({ ok: true, engine: 'cron', rev: st.rev || 0, at: Date.now() }, 200, CORS);
     }
+
+    /* ---- monorepo sync contract (apps/web + apps/mobile) -----------------
+       These routes are additive: the legacy /api/state, /api/ops and 3.65
+       client routes below are untouched. */
+    const syncResult = await monorepoSync.handle(req, method, path, body);
+    if (syncResult) return res.json(syncResult.body, syncResult.status, CORS);
 
     if (path === '/api/admin/login' && method === 'POST') {
       const login = String(body.login || '').trim().toLowerCase();

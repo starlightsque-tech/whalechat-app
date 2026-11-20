@@ -40,7 +40,9 @@
     "build:web": "pnpm --filter @whalechat/web build",
     "build:shared": "pnpm --filter @whalechat/shared build",
     "dev:mobile": "pnpm --filter @whalechat/mobile start",
-    "appwrite:provision": "node scripts/provision-monorepo-appwrite.mjs"
+    "appwrite:provision": "node scripts/provision-monorepo-appwrite.mjs",
+    "test:sync-function": "node --test appwrite-function/test/monorepo-sync.test.mjs",
+    "deploy:monorepo:site": "node scripts/deploy-monorepo-site.mjs"
   },
   "dependencies": {
     "web-push": "^3.6.7",

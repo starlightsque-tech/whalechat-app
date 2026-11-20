@@ -16,13 +16,36 @@
   ],
   "tasks": {
     "build": {
-      "dependsOn": ["^build"],
-      "outputs": ["dist/**", ".expo/**", "build/**"]
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": [
+        "dist/**",
+        "dist-offline/**",
+        ".expo/**",
+        "build/**"
+      ]
     },
-    "dev": { "cache": false, "persistent": true },
-    "typecheck": { "dependsOn": ["^build"] },
-    "test": { "dependsOn": ["^build"], "outputs": ["coverage/**"] },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    },
+    "typecheck": {
+      "dependsOn": [
+        "^build"
+      ]
+    },
+    "test": {
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": [
+        "coverage/**"
+      ]
+    },
     "lint": {},
-    "clean": { "cache": false }
+    "clean": {
+      "cache": false
+    }
   }
 }

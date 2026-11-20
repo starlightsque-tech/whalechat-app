@@ -73,9 +73,17 @@ export function createAppwriteBackend(options: AppwriteBackendOptions): Whalecha
   async function execute<T>(path: string, method: string, body?: unknown): Promise<T> {
     let execution: AppwriteExecution;
     try {
+      // The function resolves identity from the Appwrite session header and
+      // (as a compatibility fallback) from this signed-in user id.
+      const payload =
+        body && typeof body === 'object' && !Array.isArray(body)
+          ? { ...(body as Record<string, unknown>), userId }
+          : body === undefined
+            ? { userId }
+            : body;
       execution = await client.functions.createExecution(
         config.functionId,
-        body === undefined ? '' : JSON.stringify(body),
+        payload === undefined ? '' : JSON.stringify(payload),
         false,
         path,
         method,

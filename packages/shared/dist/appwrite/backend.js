@@ -37,7 +37,14 @@ export function createAppwriteBackend(options) {
     async function execute(path, method, body) {
         let execution;
         try {
-            execution = await client.functions.createExecution(config.functionId, body === undefined ? '' : JSON.stringify(body), false, path, method, { 'content-type': 'application/json' });
+            // The function resolves identity from the Appwrite session header and
+            // (as a compatibility fallback) from this signed-in user id.
+            const payload = body && typeof body === 'object' && !Array.isArray(body)
+                ? { ...body, userId }
+                : body === undefined
+                    ? { userId }
+                    : body;
+            execution = await client.functions.createExecution(config.functionId, payload === undefined ? '' : JSON.stringify(payload), false, path, method, { 'content-type': 'application/json' });
         }
         catch (error) {
             throw new WhalechatError(`Sync function unreachable: ${error instanceof Error ? error.message : String(error)}`, 'retryable', 'SYNC_UNREACHABLE');

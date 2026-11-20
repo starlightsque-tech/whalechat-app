@@ -37,6 +37,9 @@ jobs:
           pnpm --filter @whalechat/shared build
           pnpm --filter @whalechat/shared test
 
+      - name: Sync function handlers
+        run: node --test appwrite-function/test/monorepo-sync.test.mjs
+
       - name: Web typecheck + offline build
         run: |
           pnpm --filter @whalechat/web typecheck

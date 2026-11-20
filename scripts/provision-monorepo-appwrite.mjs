@@ -57,6 +57,17 @@ async function api(method, route, body) {
   return { ok: res.ok, status: res.status, json };
 }
 
+const COLLECTION_PERMISSIONS = {
+  users: ['read("users")'],
+  products: ['read("any")'],
+  wallets: [],
+  conversations: [],
+  messages: [],
+  orders: [],
+  trades: [],
+  ledger_transactions: [],
+};
+
 function attrBody(attr) {
   const body = {
     key: attr.key,
@@ -95,7 +106,7 @@ async function ensureCollection(collection) {
     const created = await api('POST', `/databases/${databaseId}/collections`, {
       collectionId: collection.id,
       name: collection.name,
-      permissions: ['read("users")', 'create("users")', 'update("users")', 'delete("users")'],
+      permissions: COLLECTION_PERMISSIONS[collection.id] || [],
       documentSecurity: true,
     });
     if (!created.ok && created.status !== 409) {
