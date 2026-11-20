@@ -13,7 +13,7 @@ Checked against the repo and live endpoints on the current branch.
 | Verify APK loads live app | **PASS (URL)** | APK `833ac022` bakes `webUrl: https://whalechat.appwrite.network/whalechat.html`, which now returns 200 with the app shell and assets. Not launched on a physical Android device in this environment. |
 | Appwrite sync handlers | **Done** | `appwrite-function/monorepo-sync.js` implements `/api/messages`, `/api/messages/read`, `/api/orders/checkout`, `/api/trades`, `/api/wallet/transfer` and `/api/admin/*`; 7 handler tests pass (replay, holds, concurrent double-spend, admin auth). |
 | Appwrite schema provisioning | **DONE** | Applied to existing database `6aff488e0006a3fe39e0` with prefix `wc_` (plan database limit reached). 8 collections + unique idempotency indexes created. |
-| Deploy new `apps/web` to Appwrite Sites | **DONE** | Site `whalechat` live on deployment `6b0020e170c4029bb258`; domain rule `801784839b8433677ade4c8eb6af7418` (`whalechat.appwrite.network`) verified. |
+| Deploy new `apps/web` to Appwrite Sites | **DONE** | Site `whalechat` live on deployment `6b0021c15a95220d2fd4`; domain rule `801784839b8433677ade4c8eb6af7418` (`whalechat.appwrite.network`) verified. |
 | Verify `/whalechat.html` returns 200 | **PASS** | `https://whalechat.appwrite.network/whalechat.html` → 200 (716-byte shell) and hashed `/assets/*.js|css` → 200. |
 
 ## Remaining non-Appwrite blockers
