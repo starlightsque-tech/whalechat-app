@@ -32,6 +32,39 @@ auto-syncs on reconnect .......... PASS
 
 ---
 
+## 1b. Presence, typing and ticks (3.57.0)
+
+Presence used to be a localStorage guess and typing used BroadcastChannel, so
+another **device** could never see either. Both now live on the server and ride the
+same single realtime stream as the messages:
+
+| Signal | How it works | Latency |
+|---|---|---|
+| Online | open SSE socket is the source of truth + a 15 s heartbeat | **~40 ms** |
+| Offline / last seen | socket close, explicit offline beacon on hide/close, or 35 s without a heartbeat | **<1 s** |
+| "In another chat" | heartbeat carries `currentChatWith` (the open thread) | <1 s |
+| Typing | debounced input flag, max 1 write / 2 s, cleared after 2 s idle, on send, on blur, plus a 6 s auto-expiry | **~40 ms** |
+| Delivered ✓✓ | the server marks a message delivered when the recipient's socket is connected | instant |
+| Read ✓✓ blue | recipient's client acks `read` while the thread is open | instant |
+
+Server endpoints:
+
+```http
+POST /api/presence          { userId, currentChatWith, device, visible }
+POST /api/presence/offline  { userId }                     (sendBeacon on hide/close)
+GET  /api/presence/state?users=a,b
+POST /api/typing            { userId, chatId, to, isTyping }
+GET  /api/events?user=<id>
+   event: presence · presence-snapshot · typing · message · delivered · read
+```
+
+`public/chat-presence.js` paints the result surgically — header subtitle, the green
+dot and "last seen HH:MM" in the chat list, the `typing…` preview, and the animated
+typing dots — so a keystroke never re-renders the page. Presence frames are only sent
+to users who share a chat or a contact with you.
+
+---
+
 ## 2. Architecture
 
 ```
