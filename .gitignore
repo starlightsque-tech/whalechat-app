@@ -25,3 +25,6 @@ public/demo/banners/*.jpg
 
 # Cloudflare Pages build output
 dist/
+
+# wrangler local cache
+.wrangler/
