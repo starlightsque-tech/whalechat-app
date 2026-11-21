@@ -954,8 +954,8 @@ globalThis.process = cloudflare_default2;
 // src/index.js
 var APP = "whalechat";
 var VERSION = "3.60.0";
-var DO_NAME = "global:v10";
-var PREV_DO_NAME = "global:v9";
+var DO_NAME = "global:v11";
+var PREV_DO_NAME = "global:v10";
 var BUILD = "2026-11-22T23:00:00Z";
 var COLLECTIONS = ["users", "vendors", "companyProducts", "products", "orders", "deposits", "withdrawals", "messages", "statuses", "notifications", "contacts", "blocks", "txs", "referrals", "purchases", "refunds", "vendorApplications", "reports", "bonuses", "bonusClaims", "emailCampaigns", "stocks", "holdings", "trades", "watchlist", "alerts", "audit", "portfolioAudit", "botAccounts", "botEvents", "traffic", "shareInvestments", "serviceRequests"];
 var PRESENCE_STALE_MS = 35e3;
@@ -2239,6 +2239,125 @@ var ChatHub = class {
         }
       }
       return json({ ok: true, id: msg.id, message: existing || msg, rev: this.rev });
+    }
+    /* ---- offline / room sync -------------------------------------------
+       Pulls only the *other* member's messages into this user's chat and
+       accepts this device's queued messages in the same round trip. This is
+       the webhook the offline outbox drains through: A's messages come back
+       to B and B's messages come back to A, never a member's own copy.
+    ------------------------------------------------------------------- */
+    const memberRoom = (code, userId) => {
+      const room2 = this.roomByCode(code);
+      if (!room2)
+        return { error: json({ ok: false, error: "room_not_found" }, 404) };
+      if (!userId || !room2.members.includes(userId))
+        return { error: json({ ok: false, error: "not_a_member" }, 403) };
+      return { room: room2 };
+    };
+    const pullFor = (room2, userId, since, limit) => {
+      const after = Number(since) || 0;
+      const list = (room2.messages || []).filter((m) => m && m.from !== userId && Number(m.createdAt || 0) > after);
+      const msgs = list.slice(-Math.max(1, Math.min(Number(limit) || 200, 500)));
+      let touched = false;
+      msgs.forEach((m) => {
+        if (!Array.isArray(m.deliveredTo))
+          m.deliveredTo = [];
+        if (!m.deliveredTo.includes(userId)) {
+          m.deliveredTo.push(userId);
+          touched = true;
+        }
+        if (m.from !== userId && m.status === "sent" && m.deliveredTo.length)
+          m.status = "delivered";
+      });
+      if (touched) {
+        this.rev += 1;
+        this.updatedAt = Date.now();
+        this.scheduleSave();
+      }
+      return msgs;
+    };
+    const ingestRoomMessage = (room2, userId, b) => {
+      if (!Array.isArray(room2.messages))
+        room2.messages = [];
+      const msg = {
+        id: String(b && b.id || "").slice(0, 120) || "rm_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+        from: userId,
+        text: String(b && b.text || "").slice(0, 4e3),
+        createdAt: Number(b && b.createdAt) || Date.now(),
+        status: "sent",
+        readBy: [],
+        deliveredTo: []
+      };
+      const existing = room2.messages.find((m) => m && m.id === msg.id);
+      if (existing)
+        return { msg: existing, created: false };
+      room2.members.forEach((id) => {
+        if (id !== userId && this.online(id))
+          msg.deliveredTo.push(id);
+      });
+      if (msg.deliveredTo.length)
+        msg.status = "delivered";
+      room2.messages.push(msg);
+      if (room2.messages.length > 2e3)
+        room2.messages = room2.messages.slice(-2e3);
+      room2.updatedAt = Date.now();
+      this.rev += 1;
+      this.updatedAt = Date.now();
+      this.scheduleSave();
+      this.roomBroadcast(room2, "room-message", { code: room2.code, message: msg, at: Date.now(), rev: this.rev });
+      try {
+        this.state.waitUntil(this.pushRoomMessage(room2, msg));
+      } catch (e) {
+        this.pushRoomMessage(room2, msg).catch(() => {
+        });
+      }
+      return { msg, created: true };
+    };
+    if (path === "/api/rooms/pull" && request.method === "GET") {
+      const userId = String(q.get("user") || "");
+      const got = memberRoom(q.get("code"), userId);
+      if (got.error)
+        return got.error;
+      const since = Number(q.get("since")) || 0;
+      const messages = pullFor(got.room, userId, since, q.get("limit"));
+      return json({
+        ok: true,
+        code: got.room.code,
+        rev: this.rev,
+        serverTime: Date.now(),
+        room: this.roomView(got.room),
+        members: (got.room.members || []).slice(),
+        messages
+      });
+    }
+    if (path === "/api/rooms/sync" && request.method === "POST") {
+      const b = await body();
+      const userId = String(b && b.userId || "");
+      const got = memberRoom(b && b.code, userId);
+      if (got.error)
+        return got.error;
+      const room2 = got.room;
+      const incoming = Array.isArray(b && b.outbox) ? b.outbox.slice(0, 50) : [];
+      const accepted = [];
+      for (const item of incoming) {
+        const text = String(item && item.text || "").trim();
+        if (!text)
+          continue;
+        const r = ingestRoomMessage(room2, userId, item);
+        accepted.push(r.msg.id);
+      }
+      const since = Number(b && b.since) || 0;
+      const messages = pullFor(room2, userId, since, b && b.limit);
+      return json({
+        ok: true,
+        code: room2.code,
+        rev: this.rev,
+        serverTime: Date.now(),
+        accepted,
+        room: this.roomView(room2),
+        members: (room2.members || []).slice(),
+        messages
+      });
     }
     if (path === "/api/rooms/read" && request.method === "POST") {
       const b = await body();

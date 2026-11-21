@@ -479,23 +479,15 @@
       '.update-sheet{pointer-events:none!important}' +
       '.update-sheet-card{pointer-events:auto!important}' +
       /* never let a sticky banner sit on top of a submit button */
-      '.auth-split .update-sheet,.auth-split .update-sheet-card{display:none!important}' +
-      /* friendly offline chip */
-      '.wc-offline-chip{position:fixed;left:16px;bottom:16px;z-index:9997;display:flex;align-items:center;gap:7px;' +
-      'padding:8px 12px;border-radius:999px;border:1px solid rgba(255,196,0,.35);background:rgba(30,24,6,.94);' +
-      'color:#ffc400;font:600 11.5px Inter,-apple-system,Segoe UI,Roboto,sans-serif;box-shadow:0 10px 24px rgba(0,0,0,.35)}';
+      '.auth-split .update-sheet,.auth-split .update-sheet-card{display:none!important}';
     document.head.appendChild(st);
   }
 
-  function offlineChip(show) {
-    let chip = document.getElementById('wcOfflineChip');
-    if (!show) { if (chip) chip.remove(); return; }
-    if (chip) return;
-    chip = document.createElement('div');
-    chip.id = 'wcOfflineChip';
-    chip.className = 'wc-offline-chip';
-    chip.textContent = 'Offline — your work is saved and will sync automatically';
-    document.body.appendChild(chip);
+  function offlineChip() {
+    /* The offline banner is intentionally removed. Queueing and catch-up
+       happen silently, so the screen never shows an "offline mode" notice. */
+    const chip = document.getElementById('wcOfflineChip');
+    if (chip) chip.remove();
   }
 
   function boot() {
@@ -505,9 +497,8 @@
     setTimeout(sanitizeUsers, 2500);
     setTimeout(guardAuthCalls, 1200);
     watchRerenders();
+    offlineChip(false);
     window.addEventListener('online', () => offlineChip(false));
-    window.addEventListener('offline', () => offlineChip(true));
-    if (!navigator.onLine) offlineChip(true);
     silenceRejectionToasts();
     backupSession();
     restoreSession();

@@ -6,9 +6,11 @@
      · Share button in every chat header → pick contacts → get a 6-character
        room code and a link anyone can join with.
      · Session overlay with live messages, typing, presence, delivered / read
-       ticks and an offline outbox ("Waiting for tunnel").
-     · "Simulate Lagos ↔ Warri Bridge" switch: forces this device offline so a
-       queued message can be watched draining the instant the tunnel is back.
+       ticks and a durable outbox for devices without a connection.
+     · Offline catch-up runs silently through POST /api/rooms/sync: only the
+       other member's messages are pulled into this chat, so A's messages reach
+       B and B's replies reach A as soon as either device has a link. No
+       offline banner and no manual "reconnect" step.
      · Deep link  .../whalechat#/session/CODE  joins straight into the room.
      · Every write is local-first: the bubble is painted before the network,
        and queued messages survive a reload.
@@ -28,7 +30,6 @@
     msgs: 'wc.rooms.msgs.v1',
     outbox: 'wc.rooms.outbox.v1',
     byPeer: 'wc.rooms.byPeer.v1',
-    demo: 'wc.rooms.demoOffline.v1',
     pendingJoin: 'wc.rooms.pendingJoin.v1'
   };
 
@@ -110,8 +111,6 @@
   }
   function outbox() { var q = read(LS.outbox, []); return Array.isArray(q) ? q : []; }
   function saveOutbox(q) { write(LS.outbox, (q || []).slice(-300)); }
-  function demoOffline() { return read(LS.demo, false) === true; }
-  function setDemoOffline(v) { write(LS.demo, !!v); }
 
   /* ------------------------------------------------------------------ *
    *  state                                                              *
@@ -131,7 +130,7 @@
   /* ------------------------------------------------------------------ *
    *  transport                                                          *
    * ------------------------------------------------------------------ */
-  function networkUp() { return navigator.onLine !== false && !demoOffline(); }
+  function networkUp() { return navigator.onLine !== false; }
 
   function createRoom(opts) {
     var body = { userId: uid(), name: opts.name || 'Internet session', members: opts.members || [] };
@@ -169,6 +168,60 @@
   }
 
   /* ------------------------------------------------------------------ *
+   *  room sync — the offline webhook                                   *
+   *  POST /api/rooms/sync carries this device's queued messages up and  *
+   *  returns ONLY the other members' messages back. A's messages reach  *
+   *  B, B's replies reach A, and a device that was offline catches up   *
+   *  automatically the moment it has a connection again.                *
+   * ------------------------------------------------------------------ */
+  function roomSince(code) {
+    /* Cursor over the *incoming* stream only. Using our own latest message
+       would skip an older message from the other side that we never saw. */
+    var meId = uid();
+    var max = 0;
+    messagesOf(code).forEach(function (m) {
+      if (!m || m.from === meId) return;
+      var t = Number(m.serverAt || m.createdAt || 0);
+      if (t > max) max = t;
+    });
+    return max ? Math.max(0, max - 1) : 0;
+  }
+
+  var syncing = {};
+  function syncRoom(code) {
+    if (!code || !uid() || !networkUp()) return Promise.resolve(null);
+    if (syncing[code]) return syncing[code];
+    var queued = outbox().filter(function (m) { return m && m.code === code; }).map(function (m) {
+      return { id: m.id, text: m.text, createdAt: m.createdAt };
+    });
+    syncing[code] = postJSON('/api/rooms/sync', {
+      userId: uid(), code: code, since: roomSince(code), outbox: queued
+    }, 9000).then(function (r) {
+      if (!r || !r.ok || !r.data || r.data.ok === false) return r;
+      var d = r.data;
+      if (d.room) { saveRoom(d.room); state.rooms[code] = d.room; }
+      (d.messages || []).forEach(function (m) { if (m && m.id) ingestRoomMessage(code, m); });
+      if (Array.isArray(d.accepted) && d.accepted.length) {
+        var accepted = d.accepted;
+        saveOutbox(outbox().filter(function (x) { return accepted.indexOf(x.id) < 0; }));
+        var list = messagesOf(code).map(function (m) {
+          if (m && accepted.indexOf(m.id) >= 0 && RANK[m.status || 'queued'] < RANK[ST.SENT]) {
+            return Object.assign({}, m, { status: ST.SENT, serverAt: d.serverTime || Date.now() });
+          }
+          return m;
+        });
+        saveMessages(code, list);
+      }
+      state.lastSync = Date.now();
+      state.latency = Math.max(0, state.lastSync - (d.serverTime || state.lastSync));
+      if (state.openCode === code) { paintRoomMessages(); paintMembers(); markRoomRead(code); }
+      refreshRoomsBadge();
+      return r;
+    }).catch(function () { return null; }).finally(function () { syncing[code] = null; });
+    return syncing[code];
+  }
+
+  /* ------------------------------------------------------------------ *
    *  send (optimistic + durable outbox)                                 *
    * ------------------------------------------------------------------ */
   function sendRoomMessage(code, text) {
@@ -185,6 +238,7 @@
     var q = outbox(); q.push(msg); saveOutbox(q);
     updateSyncBadge();
     flushOutbox();
+    syncRoom(code);
     return msg;
   }
 
@@ -209,6 +263,7 @@
             if (hit && RANK[hit.status] < RANK[ST.SENT]) { hit.status = ST.SENT; }
             saveMessages(m.code, list);
             if (state.openCode === m.code) paintRoomMessages();
+            syncRoom(m.code);
           } else if (r.status >= 400 && r.status < 500) {
             /* rejected forever — keep the bubble but stop retrying it */
             remaining = remaining.filter(function (x) { return x.id !== m.id; });
@@ -281,7 +336,11 @@
     });
     WCI.onRealtime('presence', function () { if (state.openCode) { paintRoomMessages(); paintTyping(); paintMembers(); } refreshRoomsBadge(); });
     WCI.onRealtime('presence-snapshot', function () { if (state.openCode) { paintRoomMessages(); paintTyping(); paintMembers(); } refreshRoomsBadge(); });
-    WCI.onRealtime('hello', function () { state.lastSync = Date.now(); updateSyncBadge(); flushOutbox(); });
+    WCI.onRealtime('hello', function () {
+      state.lastSync = Date.now(); updateSyncBadge(); flushOutbox();
+      if (state.openCode) syncRoom(state.openCode);
+      fetchRoomsList();
+    });
     return true;
   }
 
@@ -438,24 +497,11 @@
             '<div style="display:flex;gap:8px"><input id="wcsJoinCode" style="flex:1;background:#04101a;border:1px solid rgba(255,255,255,.12);border-radius:11px;color:#e9f4f9;padding:10px" placeholder="ABC123" maxlength="16"/>' +
             '<button class="wcs-btn" id="wcsJoin">Join</button></div>' +
           '</div>' +
-          '<div class="wcs-toggle"><div><div style="font-weight:650">Simulate Lagos ↔ Warri Bridge</div>' +
-            '<div class="wcs-muted">Cut this device off the tunnel. Messages queue locally and drain automatically when you switch back.</div></div>' +
-            '<div class="wcs-sw' + (demoOffline() ? ' on' : '') + '" id="wcsDemo" role="switch" aria-checked="' + (demoOffline() ? 'true' : 'false') + '"></div></div>' +
           '<div id="wcsShareStatus" class="wcs-muted"></div>' +
         '</div>' +
       '</div>');
 
     el.querySelector('[data-close]').addEventListener('click', function () { el.remove(); });
-    var demo = el.querySelector('#wcsDemo');
-    demo.addEventListener('click', function () {
-      var next = !demoOffline();
-      setDemoOffline(next);
-      demo.classList.toggle('on', next);
-      demo.setAttribute('aria-checked', next ? 'true' : 'false');
-      if (!next) { flushOutbox(); toastSafe('Tunnel restored — queued messages syncing'); }
-      else toastSafe('Tunnel down — this device is offline (queued mode)', 'warn');
-      updateSyncBadge();
-    });
     el.querySelector('#wcsJoin').addEventListener('click', function () {
       var code = (el.querySelector('#wcsJoinCode').value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
       if (!code) return;
@@ -569,7 +615,6 @@
       '</div>' +
       '<div class="body" id="wcsBody"></div>' +
       '<div class="wcs-typing" id="wcsTyping"></div>' +
-      '<div class="wcs-sync" id="wcsSync" style="padding:0 16px 8px"></div>' +
       '<div class="wcs-in"><textarea id="wcsMsg" rows="1" placeholder="Message the session…"></textarea><button class="wcs-send" data-send>➤</button></div>';
     document.body.appendChild(el);
 
@@ -597,7 +642,7 @@
 
     paintRoomMessages(); paintTyping(); paintMembers(); updateSyncBadge();
     joinRoom(code).catch(function () {});
-    fetchRoom(code).then(function () { paintRoomMessages(); paintMembers(); markRoomRead(code); }).catch(function () {});
+    fetchRoom(code).then(function () { paintRoomMessages(); paintMembers(); markRoomRead(code); syncRoom(code); }).catch(function () { syncRoom(code); });
   }
 
   function paintMembers() {
@@ -652,18 +697,10 @@
   }
 
   function updateSyncBadge() {
+    /* Offline status is intentionally not shown as a banner. Messages queue
+       quietly and drain through syncRoom() when the link returns. */
     var el = document.getElementById('wcsSync');
-    var q = outbox().length;
-    var up = networkUp();
-    if (el) {
-      var dot = up ? (q ? 'queue' : '') : 'off';
-      var text = up ? (q ? 'Tunnel up · ' + q + ' queued' : 'Live' + (state.latency ? ' · ' + state.latency + 'ms' : '')) : 'Offline · messages queue automatically';
-      el.innerHTML = '<span class="wcs-dot ' + dot + '"></span><span>' + esc(text) + '</span>';
-    }
-    var fab = document.getElementById('wcsFab');
-    if (fab) {
-      var old = fab.querySelector('.wcs-badge'); if (old) old.remove();
-    }
+    if (el) el.innerHTML = '';
   }
 
   function refreshRoomsBadge() {
@@ -737,6 +774,16 @@
     }).catch(function () { openRoom(code); });
   }
 
+  try {
+    window.WCS = window.WCS || {};
+    window.WCS.syncRoom = syncRoom;
+    window.WCS.messages = messagesOf;
+    window.WCS.outbox = outbox;
+    window.WCS.flush = flushOutbox;
+    window.WCS.send = function (code, text) { return sendRoomMessage(code, text); };
+    window.WCS.openRoom = function (code) { try { openRoom(code); } catch (e) {} };
+  } catch (e) {}
+
   /* ------------------------------------------------------------------ *
    *  boot                                                               *
    * ------------------------------------------------------------------ */
@@ -758,12 +805,16 @@
     }
     handleRoute();
     window.addEventListener('hashchange', handleRoute);
-    window.addEventListener('online', function () { flushOutbox(); updateSyncBadge(); });
+    window.addEventListener('online', function () { flushOutbox(); updateSyncBadge(); if (state.openCode) syncRoom(state.openCode); fetchRoomsList(); });
     window.addEventListener('offline', updateSyncBadge);
     document.addEventListener('visibilitychange', function () {
-      if (!document.hidden) { flushOutbox(); fetchRoomsList(); }
+      if (!document.hidden) { flushOutbox(); if (state.openCode) syncRoom(state.openCode); fetchRoomsList(); }
     });
     setInterval(function () { if (outbox().length && networkUp()) flushOutbox(); }, 2000);
+    /* the offline webhook: while a room is open, pull only the other
+       members' messages every 3 s even if the SSE stream dropped */
+    setInterval(function () { if (state.openCode) syncRoom(state.openCode); }, 3000);
+    setInterval(function () { fetchRoomsList(); if (state.openCode) syncRoom(state.openCode); }, 12000);
     setInterval(refreshRoomsBadge, 8000);
     try { console.info('[wcs] internet sessions ready'); } catch (e) {}
   }
