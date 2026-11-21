@@ -386,6 +386,7 @@ function presenceAudience(userId) {
     if (c.ownerId === userId && c.userId) ids.add(String(c.userId));
     else if (c.userId === userId && c.ownerId) ids.add(String(c.ownerId));
   });
+  roomPeers(userId).forEach((id) => ids.add(id));
   return [...ids];
 }
 function persistPresence(userId, view) {
@@ -425,6 +426,55 @@ function countSockets(userId) {
   for (const meta of clients.values()) if (meta && meta.user === userId) n++;
   return n;
 }
+/* ====================== shared internet sessions =========================
+   A "session room" is a small shared space between people who already chat.
+   It is deliberately separate from the 1:1 message stream: a room has a short
+   code, members, and a capped message log, and every write is fanned out to
+   the members' open sockets in a few milliseconds. It also runs over the same
+   zero-rated SSE tunnel as the rest of the chat, so an offline member simply
+   reconnects and catches up. */
+function roomStore() {
+  if (!store.db) return [];
+  if (!Array.isArray(store.db.sessionRooms)) store.db.sessionRooms = [];
+  return store.db.sessionRooms;
+}
+function roomCode() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  for (let attempt = 0; attempt < 40; attempt++) {
+    let code = '';
+    for (let i = 0; i < 6; i++) code += alphabet[Math.floor(Math.random() * alphabet.length)];
+    if (!roomStore().some((r) => r && r.code === code)) return code;
+  }
+  return 'R' + Date.now().toString(36).toUpperCase().slice(-6);
+}
+function roomFind(code) {
+  const c = String(code || '').trim().toUpperCase();
+  return roomStore().find((r) => r && r.code === c) || null;
+}
+function roomView(room) {
+  if (!room) return null;
+  return {
+    code: room.code, name: room.name || 'Internet session', ownerId: room.ownerId,
+    members: (room.members || []).slice(), createdAt: room.createdAt, updatedAt: room.updatedAt
+  };
+}
+function roomAudience(room) {
+  return room ? (room.members || []).map(String) : [];
+}
+/* room members also care about each other's presence */
+function roomPeers(userId) {
+  const out = new Set();
+  roomStore().forEach((r) => {
+    if (!r || !Array.isArray(r.members) || !r.members.includes(userId)) return;
+    r.members.forEach((id) => { if (id !== userId) out.add(String(id)); });
+  });
+  return [...out];
+}
+function broadcastRoom(room, event, data, except) {
+  const ids = roomAudience(room).filter((id) => id !== except);
+  try { broadcastTo(ids, event, data); } catch (e) {}
+}
+
 /* silence sweeper: a phone that lost its network without closing the tab */
 setInterval(() => {
   const now = Date.now();
@@ -882,6 +932,133 @@ async function api(req, res, pathname, query) {
     broadcastTo([...targets], kind === 'read' ? 'read' : 'delivered', { chatId, userId, ids: changed.map((m) => m.id), at: Date.now(), rev: store.rev });
     return json(res, 200, { ok: true, changed: changed.length, rev: store.rev });
   }
+
+  /* ---------------- shared internet session rooms ----------------
+     A room code is the unit of sharing. Everything below is member-only and
+     pushes over the same single realtime stream as chat, so the receiving
+     device paints in a few milliseconds with no polling. */
+  if (pathname === '/api/rooms/create' && req.method === 'POST') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    const body = await readBody(req);
+    const userId = String(body.userId || '');
+    if (!userId) return json(res, 400, { ok: false, error: 'userId_required' });
+    const known = new Set(((store.db.users) || []).map((u) => u && u.id));
+    if (!known.has(userId)) return json(res, 403, { ok: false, error: 'unknown_user' });
+    const members = new Set([userId]);
+    (Array.isArray(body.members) ? body.members : []).forEach((id) => { if (id && known.has(String(id))) members.add(String(id)); });
+    let room = null;
+    const requested = String(body.code || '').trim().toUpperCase();
+    if (requested) {
+      room = roomFind(requested);
+      if (room && !room.members.includes(userId)) return json(res, 403, { ok: false, error: 'not_a_member' });
+      if (!room) {
+        room = { code: requested, name: String(body.name || 'Internet session').slice(0, 60), ownerId: userId, members: [...members], messages: [], createdAt: Date.now(), updatedAt: Date.now() };
+        roomStore().push(room);
+      } else {
+        members.forEach((id) => { if (!room.members.includes(id)) room.members.push(id); });
+      }
+    } else {
+      room = { code: roomCode(), name: String(body.name || 'Internet session').slice(0, 60), ownerId: userId, members: [...members], messages: [], createdAt: Date.now(), updatedAt: Date.now() };
+      roomStore().push(room);
+    }
+    room.members.forEach((id) => { if (!room.members.includes(id)) room.members.push(id); });
+    room.updatedAt = Date.now();
+    store.rev += 1; store.updatedAt = Date.now(); persist();
+    const view = roomView(room);
+    room.members.forEach((id) => {
+      try { broadcastTo([id], 'room-invite', { room: view, at: Date.now(), rev: store.rev }); } catch (e) {}
+      try { broadcastPresence(id); } catch (e) {}
+    });
+    return json(res, 200, { ok: true, room: view });
+  }
+  if (pathname === '/api/rooms/join' && req.method === 'POST') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    const body = await readBody(req);
+    const userId = String(body.userId || '');
+    const room = roomFind(body.code);
+    if (!userId) return json(res, 400, { ok: false, error: 'userId_required' });
+    if (!room) return json(res, 404, { ok: false, error: 'room_not_found' });
+    if (!room.members.includes(userId)) {
+      room.members.push(userId);
+      room.updatedAt = Date.now();
+      store.rev += 1; store.updatedAt = Date.now(); persist();
+      broadcastRoom(room, 'room-update', { room: roomView(room), at: Date.now() });
+      try { broadcastTo([userId], 'room-invite', { room: roomView(room), at: Date.now(), rev: store.rev }); } catch (e) {}
+      room.members.forEach((id) => { try { broadcastPresence(id); } catch (e) {} });
+    }
+    return json(res, 200, { ok: true, room: roomView(room), messages: (room.messages || []).slice(-200) });
+  }
+  if (pathname === '/api/rooms/list' && req.method === 'GET') {
+    const userId = String(query.get('user') || '');
+    const rooms = roomStore().filter((r) => r && Array.isArray(r.members) && r.members.includes(userId))
+      .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, 50)
+      .map((r) => Object.assign(roomView(r), { last: (r.messages || [])[(r.messages || []).length - 1] || null }));
+    return json(res, 200, { ok: true, rooms });
+  }
+  if (pathname === '/api/rooms/get' && req.method === 'GET') {
+    const userId = String(query.get('user') || '');
+    const room = roomFind(query.get('code'));
+    if (!room) return json(res, 404, { ok: false, error: 'room_not_found' });
+    if (!room.members.includes(userId)) return json(res, 403, { ok: false, error: 'not_a_member' });
+    const presence = {};
+    room.members.forEach((id) => { presence[id] = presenceView(id); });
+    return json(res, 200, { ok: true, room: roomView(room), messages: (room.messages || []).slice(-200), presence, at: Date.now() });
+  }
+  if (pathname === '/api/rooms/message' && req.method === 'POST') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    const body = await readBody(req);
+    const userId = String(body.userId || '');
+    const room = roomFind(body.code);
+    if (!userId) return json(res, 400, { ok: false, error: 'userId_required' });
+    if (!room) return json(res, 404, { ok: false, error: 'room_not_found' });
+    if (!room.members.includes(userId)) return json(res, 403, { ok: false, error: 'not_a_member' });
+    if (!Array.isArray(room.messages)) room.messages = [];
+    const msg = {
+      id: String(body.id || '').slice(0, 120) || ('rm_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7)),
+      from: userId,
+      text: String(body.text || '').slice(0, 4000),
+      createdAt: Number(body.createdAt) || Date.now(),
+      status: 'sent', readBy: [], deliveredTo: []
+    };
+    const existing = room.messages.find((m) => m && m.id === msg.id);
+    if (!existing) {
+      room.members.forEach((id) => { if (id !== userId && isOnline(id)) msg.deliveredTo.push(id); });
+      if (msg.deliveredTo.length) msg.status = 'delivered';
+      room.messages.push(msg);
+      if (room.messages.length > 2000) room.messages = room.messages.slice(-2000);
+      room.updatedAt = Date.now();
+      store.rev += 1; store.updatedAt = Date.now(); persist();
+      broadcastRoom(room, 'room-message', { code: room.code, message: msg, at: Date.now(), rev: store.rev });
+    }
+    return json(res, 200, { ok: true, id: msg.id, message: existing || msg, rev: store.rev });
+  }
+  if (pathname === '/api/rooms/read' && req.method === 'POST') {
+    const body = await readBody(req);
+    const userId = String(body.userId || '');
+    const room = roomFind(body.code);
+    if (!room || !room.members.includes(userId)) return json(res, 403, { ok: false, error: 'not_a_member' });
+    const ids = Array.isArray(body.ids) ? body.ids.slice(0, 500) : [];
+    const changed = [];
+    (room.messages || []).forEach((m) => {
+      if (!m || !ids.includes(m.id) || m.from === userId) return;
+      if (!Array.isArray(m.readBy)) m.readBy = [];
+      if (!m.readBy.includes(userId)) { m.readBy.push(userId); changed.push(m.id); }
+    });
+    if (changed.length) {
+      store.rev += 1; store.updatedAt = Date.now(); persist();
+      broadcastRoom(room, 'room-read', { code: room.code, userId, ids: changed, at: Date.now(), rev: store.rev });
+    }
+    return json(res, 200, { ok: true, changed: changed.length });
+  }
+  if (pathname === '/api/rooms/typing' && req.method === 'POST') {
+    const body = await readBody(req);
+    const userId = String(body.userId || '');
+    const room = roomFind(body.code);
+    if (!room || !room.members.includes(userId)) return json(res, 200, { ok: false });
+    broadcastRoom(room, 'room-typing', { code: room.code, from: userId, isTyping: !!body.isTyping, at: Date.now() }, userId);
+    return json(res, 200, { ok: true, at: Date.now() });
+  }
+
   // --- market data (Finnhub stays server-side) -------------------------
   if (pathname === '/api/market/stream' && req.method === 'GET') {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache, no-transform', connection: 'keep-alive', 'x-accel-buffering': 'no', 'access-control-allow-origin': '*' });

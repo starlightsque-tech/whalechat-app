@@ -375,6 +375,20 @@
     return true;
   }
 
+  function isMeRead(m, uid) {
+    if (!m) return false;
+    if (Array.isArray(m.readBy)) return m.readBy.includes(uid);
+    return m.status === ST.SEEN;             // legacy rows
+  }
+  function markReadLocal(m, uid) {
+    if (!m) return;
+    if (!Array.isArray(m.readBy)) m.readBy = [];
+    if (!m.readBy.includes(uid)) m.readBy.push(uid);
+    /* never change the status on the reader's copy: status belongs to the
+       sender and is delivered by the realtime ack, not by state sync. */
+    try { idbPut('messages', stripVolatile(m)); } catch (e) {}
+  }
+
   function ingest(raw, opts) {
     const db = appDb();
     const uid = meId();
@@ -389,8 +403,6 @@
     const prevRank = prev ? (RANK[prev.status] || 0) : -1;
     if ((RANK[raw.status] || 0) < prevRank) next.status = prev.status;
     if (!next.status) next.status = (next.from === uid ? ST.SENT : ST.SENT);
-    if (next.readBy && Array.isArray(next.readBy) && uid && next.to === uid && !next.readBy.includes(uid)) next.readBy.push(uid);
-
     if (prev) {
       if (prev.status !== next.status) changed = true;
       if (prev.text !== next.text) changed = true;
@@ -409,6 +421,13 @@
 
     const open = activeChat() || hashChatId();
     const isOpen = open && next.chatId === open;
+    if (isOpen && next.to === uid && !isMeRead(next, uid)) {
+      /* the thread is on screen: mark it read locally and tell the sender.
+         (Never mark a message read just because it was downloaded — that used
+         to suppress unread badges and read receipts for closed chats.) */
+      markReadLocal(next, uid);
+      changed = true;
+    }
     if (isOpen) {
       if (prev) { scheduleRender(); }
       else if (!drawMessage(open, next, next.from === uid ? next.to : next.from)) scheduleRender();
@@ -445,20 +464,64 @@
   }
 
   /* ------------------------------------------------------------------ *
-   *  READ RECEIPTS                                                      *
+   *  READ RECEIPTS — durable queue                                      *
+   *  A receipt is never dropped when the network is down: it is stored   *
+   *  (localStorage survives a reload) and drained on reconnect.          *
    * ------------------------------------------------------------------ */
+  const READQ_KEY = 'wc.readq.v1';
+  function readQueue() {
+    try { const q = JSON.parse(localStorage.getItem(READQ_KEY) || '[]'); return Array.isArray(q) ? q : []; }
+    catch (e) { return []; }
+  }
+  function saveReadQueue(q) {
+    try { localStorage.setItem(READQ_KEY, JSON.stringify((q || []).slice(-200))); } catch (e) {}
+  }
+  function queueRead(chatId, ids) {
+    const q = readQueue();
+    const hit = q.find((x) => x && x.chatId === chatId);
+    if (hit) {
+      const set = new Set(hit.ids || []);
+      ids.forEach((id) => set.add(id));
+      hit.ids = Array.from(set).slice(-500);
+      hit.at = now();
+    } else q.push({ chatId, ids: ids.slice(-500), at: now() });
+    saveReadQueue(q);
+  }
+
   const ackSent = new Set();
-  async function ackRead(chatId, ids) {
+  function ackRead(chatId, ids) {
     const uid = meId();
     if (!uid || !chatId || !ids || !ids.length) return;
     const fresh = ids.filter((id) => !ackSent.has(id));
     if (!fresh.length) return;
     fresh.forEach((id) => ackSent.add(id));
     if (awCfg() || !(typeof Remote !== 'undefined' && Remote.enabled)) return;
-    try {
-      await postJSON(apiPath('/api/messages/ack'), { chatId, userId: uid, ids: fresh, kind: 'read' }, 7000);
-    } catch (e) {}
+    queueRead(chatId, fresh);
+    drainReadQueue();
   }
+
+  let drainingReads = false;
+  async function drainReadQueue() {
+    if (drainingReads || !WCI.online()) return;
+    if (awCfg() || !(typeof Remote !== 'undefined' && Remote.enabled)) return;
+    let q = readQueue();
+    if (!q.length) return;
+    const uid = meId();
+    if (!uid) return;
+    drainingReads = true;
+    try {
+      while (q.length) {
+        const item = q[0];
+        let r = null;
+        try { r = await postJSON(apiPath('/api/messages/ack'), { chatId: item.chatId, userId: uid, ids: item.ids, kind: 'read' }, 7000); }
+        catch (e) { break; }                       // offline: keep it queued
+        const fatal = r && r.status >= 400 && r.status < 500;
+        if ((r && r.ok) || fatal) { q.shift(); saveReadQueue(q); }
+        else break;                                // retry on the next wake-up
+      }
+    } finally { drainingReads = false; }
+  }
+  WCI.drainReadQueue = drainReadQueue;
 
   function ackDelivered(chatId, ids) {
     const uid = meId();
@@ -470,17 +533,26 @@
   function applyAck(kind, d) {
     const db = appDb(); if (!db) return;
     const uid = meId();
+    if (!uid) return;
     const status = kind === 'read' ? ST.SEEN : ST.DELIVERED;
+    let touched = false;
     (d.ids || []).forEach((id) => {
       const m = (db.messages || []).find((x) => x && x.id === id);
       if (!m) return;
       if (m.from !== uid) {
-        if (kind === 'read' && d.userId && Array.isArray(m.readBy) && !m.readBy.includes(d.userId)) m.readBy.push(d.userId);
+        if (kind === 'read' && d.userId && Array.isArray(m.readBy) && !m.readBy.includes(d.userId)) {
+          m.readBy.push(d.userId); touched = true;
+        }
         return;
       }
-      if ((RANK[status] || 0) > (RANK[m.status] || 0)) { m.status = status; paintStatus(id, status); }
+      if ((RANK[status] || 0) > (RANK[m.status] || 0)) {
+        m.status = status; paintStatus(id, status); touched = true;
+        try { idbPut('messages', stripVolatile(m)); } catch (e) {}
+      }
     });
+    if (!touched) return;
     persistNow();
+    if (routeType() === 'home') scheduleRender();
   }
 
   /* ------------------------------------------------------------------ *
@@ -515,7 +587,28 @@
     const uid = meId() || '';
     const url = (Remote.base || '') + '/api/events?client=' + encodeURIComponent(Remote.clientId) + '&user=' + encodeURIComponent(uid);
     try { es = new EventSource(url); } catch (e) { return; }
-    es.addEventListener('hello', () => { esRetry = 0; lastEventAt = now(); WCI.rtStatus = 'online'; WCI.emit('hello', {}); });
+    /* session-room frames ride the same stream; forward them to any module
+       that registered a handler (no second socket, no polling). */
+    ['room-message', 'room-invite', 'room-update', 'room-typing', 'room-read'].forEach((name) => {
+      es.addEventListener(name, (e) => {
+        lastEventAt = now();
+        let d = {}; try { d = JSON.parse(e.data); } catch (err) { return; }
+        WCI.emit(name, d);
+      });
+    });
+    es.addEventListener('hello', () => {
+      esRetry = 0; lastEventAt = now(); WCI.rtStatus = 'online';
+      WCI.emit('hello', {});
+      /* a reconnect may have missed frames: quietly catch up the open thread
+         and flush anything the network refused while we were away. */
+      try {
+        const cid = activeChat() || hashChatId();
+        const uidNow = meId();
+        const other = cid && uidNow ? cid.split('__').find((x) => x !== uidNow) : null;
+        if (other) fetchHistory(other, { force: true });
+      } catch (e) {}
+      drainReadQueue();
+    });
     es.addEventListener('presence', (e) => {
       lastEventAt = now();
       let d = {}; try { d = JSON.parse(e.data); } catch (err) { return; }
@@ -746,12 +839,15 @@
       if (db.chatsMeta && db.chatsMeta[cid] && (db.chatsMeta[cid].deletedFor || []).includes(u.id)) {
         db.chatsMeta[cid].deletedFor = db.chatsMeta[cid].deletedFor.filter((x) => x !== u.id);
       }
-      persistNow();
+      /* Paint first. The whole-database localStorage write and the IndexedDB
+         enqueue happen after the bubble is on screen, so a big account can
+         never make Send feel slow. */
       if (!drawMessage(cid, msg, otherId)) safeRender();
       enqueue(msg);
 
-      /* never block the UI on notifications / network */
+      /* never block the UI on storage, notifications or network */
       setTimeout(() => {
+        persistNow();
         try { if (typeof notify === 'function') notify(otherId, u.fullName, text.slice(0, 120), '#/chat/' + u.id, 'chat'); } catch (e) {}
         try { if (typeof sync === 'function') sync(); } catch (e) {}
       }, 0);
@@ -805,10 +901,13 @@
           const uid = meId(); if (!uid) return;
           const cid = [uid, parts[1]].sort().join('__');
           try { ACTIVE_CHAT = cid; } catch (e) {}
+          /* Ack by message id, not by the local readBy flag: the legacy view
+             code can set readBy before this hook runs, and that used to skip
+             the network receipt entirely. ackRead de-duplicates per session. */
           const pending = (appDb().messages || [])
-            .filter((m) => m && m.chatId === cid && m.from !== uid && !(Array.isArray(m.readBy) && m.readBy.includes(uid)))
-            .map((m) => m.id);
-          if (pending.length) ackRead(cid, pending);
+            .filter((m) => m && m.chatId === cid && m.from !== uid && !ackSent.has(m.id))
+            .map((m) => { markReadLocal(m, uid); return m.id; });
+          if (pending.length) { persistNow(); ackRead(cid, pending); }
           fetchHistory(parts[1], { force: !lastFetchAt[parts[1]] });
         } catch (e) {}
       };
@@ -915,6 +1014,7 @@
 
     connectRealtime();
     flush();
+    drainReadQueue();
     registerBackgroundSync();
 
     /* the service worker drains the outbox while the tab is closed */
@@ -936,12 +1036,14 @@
       ensureTransport();
       connectRealtime();
       flush();
+      drainReadQueue();
     });
     window.addEventListener('offline', () => { WCI.rtStatus = 'offline'; });
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) { registerBackgroundSync(); return; }
       ensureTransport();
       flush();
+      drainReadQueue();
       if (!es) connectRealtime();
     });
     setInterval(() => { if (WCI.online()) { ensureTransport(); flush(); } }, 20000);

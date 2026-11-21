@@ -58,10 +58,12 @@ AFTER.chat = function (parts) {
         if (!m.readBy.includes(u.id)) m.readBy.push(u.id);
         changed = true;
       }
-      // only expose the green “seen” tick when this reader allows receipts
-      if (receipts && m.status !== 'seen') { m.status = 'seen'; changed = true; }
+      /* The sender's tick is driven by the realtime read receipt in
+         chat-instant.js. Mutating the status here made the generic state sync
+         race ahead of that receipt, so the blue tick sometimes never arrived.
+         Keep the local readBy flag (unread badges) and let the ack do the rest. */
     });
-    if (changed) { persist(true); notifySeen(oid); }
+    if (changed) { persist(true); notifySeen(oid); if (window.WCI && WCI.drainReadQueue) WCI.drainReadQueue(); }
   }
   bindMessageGestures();
   Media.hydrate(body || document);

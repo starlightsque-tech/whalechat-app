@@ -1,7 +1,7 @@
 /* =========================================================================
    WhaleChat service worker — offline shell, in-place updates, Web Push
    ========================================================================= */
-const VERSION = 'wc-v3.57.0-1';
+const VERSION = 'wc-v3.58.0-1';
 const SHELL = [
   './',
   './index.html',
@@ -16,6 +16,8 @@ const SHELL = [
   './assets/hero.jpg',
   './assets/whale.jpg',
   './chat-instant.js',
+  './chat-presence.js',
+  './session-bridge.js',
   './binance-live.js'
 ];
 

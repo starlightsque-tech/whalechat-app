@@ -65,6 +65,43 @@ to users who share a chat or a contact with you.
 
 ---
 
+## 1c. 3.58.0 — receipts fixed, typing kept alive, session rooms
+
+The 3.57 presence engine was correct on the wire, but two client races still
+made the UI feel unreliable:
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Unread badge stayed at 0 | `ingest()` added the reader to `readBy` on download, so every message looked read | readBy is only added when the thread is actually open |
+| Blue ticks sometimes never arrived | the legacy chat view set `status='seen'` locally, and the generic state sync pushed that to the server before the realtime ack | the reader's copy never mutates the sender-owned status; the ack API is authoritative |
+| Read receipt lost while offline | the ack was fire-and-forget | receipts are queued in `localStorage` and drained on reconnect / boot |
+| "typing…" disappeared mid-sentence | only one typing frame was sent per burst | the flag is re-asserted every 1.6 s while the input has text |
+| Send felt slow on big accounts | the full localStorage DB was stringified before the bubble was drawn | the bubble is painted first, storage runs on the next task |
+
+### Session rooms (Share Internet Session)
+
+A room is a small shared space with a 6-character code. It rides the same SSE
+stream, so no second connection is opened.
+
+```http
+POST /api/rooms/create   { userId, name, members:[ids], code? }
+POST /api/rooms/join     { userId, code }
+GET  /api/rooms/list?user=<id>
+GET  /api/rooms/get?user=<id>&code=ABC123
+POST /api/rooms/message  { userId, code, id, text, createdAt }
+POST /api/rooms/read     { userId, code, ids:[...] }
+POST /api/rooms/typing   { userId, code, isTyping }
+   events: room-invite · room-update · room-message · room-read · room-typing
+```
+
+The client (`public/session-bridge.js`) adds a **Share session** button to every
+chat header, a contact picker, a join-by-code box, a room overlay with live
+presence / typing / ticks / a durable outbox, and a **Simulate Lagos ↔ Warri
+Bridge** switch that cuts the device off so you can watch queued messages drain
+the moment the tunnel returns. Deep link: `…/whalechat#/session/CODE`.
+
+---
+
 ## 2. Architecture
 
 ```

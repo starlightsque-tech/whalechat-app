@@ -1033,7 +1033,7 @@ VIEWS.home = function () {
               <div class="nm">${esc(c.fullName)}${c.verified ? `<span class="verified">${ic('check', 9)}</span>` : ''}
                 ${c.role === 'admin' ? '<span class="badge badge-accent" style="font-size:9.5px">Support</span>' : ''}
                 ${isVendor(c) ? '<span class="badge" style="font-size:9.5px">Vendor</span>' : ''}</div>
-              <div class="pv">${m && m.from === u.id ? `<span class="tick ${m.status === 'seen' ? 'seen' : ''}">${ic(m.status === 'seen' ? 'checks' : 'check', 13)}</span>` : ''}
+              <div class="pv">${m && m.from === u.id ? `<span class="tick ${m.status === 'seen' ? 'seen' : ''}">${ic(m.status === 'seen' || m.status === 'delivered' ? 'checks' : m.status === 'queued' ? 'clock' : 'check', 13)}</span>` : ''}
                 <span class="ellipsis">${esc(previewOf(m))}</span></div>
             </div>
             <div class="right">

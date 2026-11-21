@@ -30,8 +30,9 @@
   var WCL = window.WCL = {};
   var HEARTBEAT_MS = 15000;      // presence write
   var STALE_MS = 35000;          // server considers you offline after this
-  var TYPING_IDLE_MS = 2200;     // stop typing after this much silence
-  var TYPING_REFRESH_MS = 2000;  // at most one typing write per 2 s
+  var TYPING_IDLE_MS = 2500;     // stop typing after this much silence
+  var TYPING_REFRESH_MS = 1500;  // at most one typing write per 1.5 s
+  var TYPING_EXPIRE_MS = 4000;   // hide a stale typing flag on the receiver
 
   var $ = function (id) { return document.getElementById(id); };
   function meSafe() { try { return typeof me === 'function' ? me() : null; } catch (e) { return null; } }
@@ -113,7 +114,7 @@
   WCL.typingIn = function (chatId) {
     var t = typingIn[chatId];
     if (!t) return null;
-    if (Date.now() - t.at > 6000) { delete typingIn[chatId]; return null; }
+    if (Date.now() - t.at > TYPING_EXPIRE_MS) { delete typingIn[chatId]; return null; }
     return t;
   };
 
@@ -161,6 +162,22 @@
    *  typing (outgoing)                                                  *
    * ------------------------------------------------------------------ */
   var typing = { chatId: '', sentAt: 0, lastAt: 0, idle: null, active: false };
+  var typingRefresh = null;
+
+  /* While the input has text we re-assert typing every 1.5 s. Without this a
+     long message made the indicator vanish mid-sentence after the receiver's
+     auto-expiry. */
+  function ensureTypingLoop() {
+    if (typingRefresh) return;
+    typingRefresh = setInterval(function () {
+      var el = $('msgInput');
+      if (!el || !el.value || !el.value.trim() || document.hidden) { stopTyping(); return; }
+      sendTyping(true, true);
+    }, 1600);
+  }
+  function clearTypingLoop() {
+    if (typingRefresh) { clearInterval(typingRefresh); typingRefresh = null; }
+  }
 
   function typingTarget() {
     var cid = '';
@@ -187,6 +204,7 @@
   }
 
   function stopTyping() {
+    clearTypingLoop();
     if (typing.idle) { clearTimeout(typing.idle); typing.idle = null; }
     if (typing.active) sendTyping(false, true);
   }
@@ -198,6 +216,7 @@
     var has = !!(el.value && el.value.trim());
     if (!has) { stopTyping(); return; }
     sendTyping(true);
+    ensureTypingLoop();
     if (typing.idle) clearTimeout(typing.idle);
     typing.idle = setTimeout(function () { typing.idle = null; sendTyping(false, true); }, TYPING_IDLE_MS);
   }
@@ -236,8 +255,8 @@
     /* safety: typing auto-expires even if the "stop" frame is lost */
     if (d.isTyping) setTimeout(function () {
       var t = typingIn[d.chatId];
-      if (t && Date.now() - t.at >= 6000) { delete typingIn[d.chatId]; paintChatHeader(); paintChatList(); paintTypingBubble(); }
-    }, 6500);
+      if (t && Date.now() - t.at >= TYPING_EXPIRE_MS) { delete typingIn[d.chatId]; paintChatHeader(); paintChatList(); paintTypingBubble(); }
+    }, TYPING_EXPIRE_MS + 400);
   }
 
   /* ------------------------------------------------------------------ *
@@ -265,11 +284,16 @@
     var p = WCL.presenceOf(other);
     var text;
     if (typing) text = 'typing…';
-    else if (online && p && p.currentChatWith && p.currentChatWith !== uid()) text = 'online · in another chat';
-    else if (online) text = 'online';
+    else if (online && p && p.currentChatWith && p.currentChatWith !== uid()) text = 'Online';
+    else if (online) text = 'Online';
     else text = WCL.lastSeenText(other);
     el.textContent = text;
-    el.style.color = typing ? 'var(--accent)' : online ? 'var(--success, #22c55e)' : 'var(--muted)';
+    el.style.color = typing
+      ? 'var(--accent)'
+      : online
+        ? (p && p.currentChatWith && p.currentChatWith !== uid() ? 'var(--muted)' : 'var(--success, #22c55e)')
+        : 'var(--muted)';
+    el.title = typing ? 'typing…' : online ? (p && p.currentChatWith && p.currentChatWith !== uid() ? 'online — in another chat' : 'online') : text;
   }
 
   function paintChatHeader() { try { headerStatus(); } catch (e) {} }
@@ -353,8 +377,9 @@
     try {
       (DB.messages || []).forEach(function (m) {
         if (!m || m.chatId !== cid || m.from !== other) return;
-        var readBy = Array.isArray(m.readBy) ? m.readBy : [];
-        if (m.status !== 'seen' && readBy.indexOf(myId) < 0) ids.push(m.id);
+        /* always re-assert the receipt for the open thread; the server is
+           idempotent and this closes the race with the legacy local flag. */
+        ids.push(m.id);
       });
     } catch (e) {}
     if (!ids.length) return;
@@ -594,7 +619,7 @@
     /* housekeeping: expire stale typing flags and refresh the header clock */
     setInterval(function () {
       var dirty = false;
-      Object.keys(typingIn).forEach(function (k) { if (Date.now() - typingIn[k].at > 6000) { delete typingIn[k]; dirty = true; } });
+      Object.keys(typingIn).forEach(function (k) { if (Date.now() - typingIn[k].at > TYPING_EXPIRE_MS) { delete typingIn[k]; dirty = true; } });
       if (dirty) paintAll();
       else if (activeOther() && !WCL.isOnline(activeOther())) paintChatHeader();
     }, 2500);
