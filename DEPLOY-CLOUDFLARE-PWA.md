@@ -1,7 +1,24 @@
 # Deploy WhaleChat to Cloudflare Pages (PWA)
 
-The client is a self-contained PWA. Cloudflare Pages serves `public/`; the
-API/sync backend remains the Appwrite Function configured in the app.
+The client is a self-contained PWA. Cloudflare Pages serves `public/` **and**
+runs the edge backend in `public/_worker.js`:
+
+- email verification codes, SMS OTP and admin email/SMS are generated and sent
+  from the Worker through **Brevo** (API + transactional SMS);
+- every other `/api/*` request is proxied to the WhaleChat sync service.
+
+Required Pages environment variables:
+
+| Variable | Value |
+| --- | --- |
+| `BREVO_API_KEY` | Brevo API key (`xkeysib-…`) |
+| `BREVO_SENDER_EMAIL` | a verified Brevo sender |
+| `BREVO_SENDER_NAME` | `Whalechat` |
+| `BREVO_SMS_SENDER` | approved SMS sender, max 11 chars |
+| `WC_OTP_SECRET` | long random secret for HMAC one-time codes |
+| `SYNC_ORIGIN` | `https://whalechat-api.appwrite.network` |
+
+Brevo SMS requires an SMS add-on/credits on the Brevo account.
 
 ## One-time credentials
 

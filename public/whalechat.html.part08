@@ -844,6 +844,11 @@ const Remote = {
         this.status = 'offline';
         return false;
       }
+      /* Cloudflare Pages: the edge worker serves /api/* on the same origin.
+         Connect to the page origin instead of a separate sync host. */
+      if (!DEFAULT_SYNC_SERVER && /\.pages\.dev$/i.test(location.hostname)) {
+        return await this.connect('', { silent: true, initFromLocal: true });
+      }
       // Only a server that served this page injects the marker — avoids failed probes on static hosts
       if (window.__WC_SERVER__) {
         return await this.connect('', { silent: true, initFromLocal: true });

@@ -649,7 +649,9 @@ html[data-theme="light"] .profile-banner>img{opacity:.10}
 let COIN_USD = 0.5;                 // 1 Whale Coin = $0.50 (admin-editable in Trade Guide settings)
 const APP_VERSION = '3.9.10';
 // Set to your permanent sync server to auto-connect from any static host, e.g. 'https://sync.yourdomain.com'
-const DEFAULT_SYNC_SERVER = 'https://whalechat-api.appwrite.network';
+/* On Cloudflare Pages the same edge worker serves /api/* (email/SMS/OTP) and
+   proxies the rest to the sync backend, so the app talks to its own origin. */
+const DEFAULT_SYNC_SERVER = /\.pages\.dev$/i.test(location.hostname) ? '' : 'https://whalechat-api.appwrite.network';
 const APP_BUILD = '2026-11-12T05:57:54Z';    // replaced at build time
 /* First boot after a new build: used by the sync layer to merge this device's
    account instead of accepting a thinner server snapshot as authoritative. */
