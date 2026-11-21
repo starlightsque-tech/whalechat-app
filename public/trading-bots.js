@@ -27,7 +27,7 @@
   function cycleText(c) { return CYCLE_TEXT[c] || 'month'; }
   function when(ms) { try { return new Date(ms).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch (e) { return '—'; } }
   function tmsg(msg, type) { if (typeof toast === 'function') toast(msg, type || 'ok'); }
-  function apiPath(p) { try { if (typeof Remote !== 'undefined' && Remote && Remote.url) return Remote.url(p); } catch (e) {} return p; }
+  function apiPath(p) { try { if (typeof Remote !== 'undefined' && Remote && Remote.enabled) return Remote.url(p); } catch (e) {} return p; }
   async function api(pathname, opts, timeout) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeout || 20000);
@@ -139,19 +139,6 @@
     </div>`;
   }
 
-  /* direction-coloured path legs: green while the series rises, red while it
-     falls — the same rule the shared trade chart uses. */
-  function segsPath(pts, yFn, xAt) {
-    let up = '', down = '';
-    for (let i = 1; i < pts.length; i++) {
-      const a = pts[i - 1], b = pts[i];
-      const d = 'M' + xAt(i - 1).toFixed(1) + ' ' + yFn(a).toFixed(1) +
-        ' L' + xAt(i).toFixed(1) + ' ' + yFn(b).toFixed(1) + ' ';
-      if (yFn(b) <= yFn(a)) up += d; else down += d;
-    }
-    return { up, down };
-  }
-
   function perfSVG(session) {
     const alloc = Math.max(0.01, Number(session.allocatedCoins) || 0.01);
     const trades = (session.trades || []).slice().reverse();
@@ -173,40 +160,27 @@
     const xAt = (i) => 6 + (i / Math.max(1, pts.length - 1)) * (W - 44);
     const yCap = (v) => topY + topH - ((v - capMin) / (capMax - capMin)) * topH;
     const yPnl = (v) => botY + botH - ((v - pMin) / (pMax - pMin)) * botH;
-
-    const capSegs = segsPath(pts.map((p) => p.cap), yCap, xAt);
-    const pnlSegs = segsPath(pts.map((p) => p.pnl), yPnl, xAt);
-
-    const capPath = pts.map((p, i) => (i ? 'L' : 'M') + xAt(i).toFixed(1) + ' ' + yCap(p.cap).toFixed(1)).join(' ');
+    const line = (fn, val) => pts.map((p, i) => (i ? 'L' : 'M') + xAt(i).toFixed(1) + ' ' + fn(val(p)).toFixed(1)).join(' ');
+    const capPath = line(yCap, (p) => p.cap);
     const areaPath = capPath + ' L' + xAt(pts.length - 1).toFixed(1) + ' ' + (topY + topH) + ' L' + xAt(0).toFixed(1) + ' ' + (topY + topH) + ' Z';
-
+    const pnlPath = line(yPnl, (p) => p.pnl);
     const lastPnl = pts[pts.length - 1].pnl;
-    const pnlColor = lastPnl >= 0 ? '#31e0a0' : '#ff5d6c';
-    const capUp = pts[pts.length - 1].cap >= pts[0].cap;
-    const capColor = capUp ? '#31e0a0' : '#ff5d6c';
+    const pnlColor = lastPnl >= 0 ? '#22c55e' : '#ef4444';
     const zeroY = yPnl(0).toFixed(1);
     const fmt = (v) => (Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(2));
     const tLabel = (ms) => { try { return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; } };
-
-    const line = (segs, w) =>
-      (segs.up ? `<path d="${segs.up}" fill="none" stroke="#31e0a0" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round"/>` : '') +
-      (segs.down ? `<path d="${segs.down}" fill="none" stroke="#ff5d6c" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round"/>` : '');
-
-    return `<svg class="bot-perf-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Bot capital and cumulative profit chart, green while rising and red while falling">
+    return `<svg class="bot-perf-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Bot capital and cumulative profit chart">
       <defs><linearGradient id="botCapFill" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="${capColor}" stop-opacity=".26"/><stop offset="100%" stop-color="${capColor}" stop-opacity="0"/>
+        <stop offset="0%" stop-color="#2ee6c9" stop-opacity=".28"/><stop offset="100%" stop-color="#2ee6c9" stop-opacity="0"/>
       </linearGradient></defs>
-      <line x1="6" y1="${topY + topH}" x2="${W - 38}" y2="${topY + topH}" stroke="rgba(255,255,255,.07)"/>
-      <line x1="6" y1="${yCap(alloc).toFixed(1)}" x2="${W - 38}" y2="${yCap(alloc).toFixed(1)}" stroke="rgba(255,255,255,.18)" stroke-dasharray="4 4"/>
       <text x="6" y="8" class="bot-perf-lbl">Allocated capital (USD)</text>
       <text x="${W - 6}" y="8" text-anchor="end" class="bot-perf-val">$${fmt(pts[pts.length - 1].cap * 0.5)}</text>
       <path d="${areaPath}" fill="url(#botCapFill)"/>
-      ${line(capSegs, 1.9)}
+      <path d="${capPath}" fill="none" stroke="#2ee6c9" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>
       <text x="6" y="${botY - 4}" class="bot-perf-lbl">Cumulative P/L (USD)</text>
       <text x="${W - 6}" y="${botY - 4}" text-anchor="end" class="bot-perf-val" style="fill:${pnlColor}">${lastPnl >= 0 ? '+' : '−'}$${fmt(Math.abs(lastPnl) * 0.5)}</text>
       <line x1="6" y1="${zeroY}" x2="${W - 38}" y2="${zeroY}" stroke="rgba(255,255,255,.14)" stroke-dasharray="3 3"/>
-      ${line(pnlSegs, 1.9)}
-      <circle cx="${xAt(pts.length - 1).toFixed(1)}" cy="${yPnl(lastPnl).toFixed(1)}" r="2.6" fill="${pnlColor}"/>
+      <path d="${pnlPath}" fill="none" stroke="${pnlColor}" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>
       <text x="${W - 38}" y="${topY + 10}" class="bot-perf-axis">${fmt(capMax)}</text>
       <text x="${W - 38}" y="${topY + topH}" class="bot-perf-axis">${fmt(capMin)}</text>
       <text x="${W - 38}" y="${botY + 8}" class="bot-perf-axis">${fmt(pMax)}</text>
@@ -499,21 +473,19 @@
   function adminBodyHTML(a) {
     if (!a) return '<div class="tiny muted" style="margin-top:10px">Could not load bot configuration.</div>';
     const s = a.settings || {};
-    /* a partial / offline state arrives without stats or tiers — never crash the panel */
-    const st = a.stats || {};
     const intervals = [[1, 'Every minute'], [5, 'Every 5 minutes'], [15, 'Every 15 minutes'], [30, 'Every 30 minutes'], [60, 'Hourly'], [240, 'Every 4 hours'], [1440, 'Daily']];
     return `<div class="bot-admin-stats">
-        <div><span>Active subscriptions</span><b>${Number(st.subscriptions) || 0}</b></div>
-        <div><span>Running bots</span><b>${Number(st.running) || 0}</b></div>
-        <div><span>Reserved capital</span><b>${money((Number(st.reservedCoins)||0)*0.5)}</b></div>
-        <div><span>Subscription revenue</span><b>${money((Number(st.revenueCoins)||0)*0.5)}</b></div>
+        <div><span>Active subscriptions</span><b>${a.stats.subscriptions}</b></div>
+        <div><span>Running bots</span><b>${a.stats.running}</b></div>
+        <div><span>Reserved capital</span><b>${money((a.stats.reservedCoins)*0.5)}</b></div>
+        <div><span>Subscription revenue</span><b>${money((a.stats.revenueCoins)*0.5)}</b></div>
       </div>
       <div class="between" style="margin-top:12px;gap:8px;flex-wrap:wrap">
         <div class="tiny muted">Add trading assistants with their own username and profile picture. Mark them HOT to feature them in the marketplace.</div>
         <button class="btn btn-sm btn-primary" data-act="bot-add-assistant">+ Add bot assistant</button>
       </div>
       <div class="table-wrap"><table class="tbl bot-admin-table"><thead><tr><th>Assistant</th><th>Accuracy %</th><th>24 hrs ($)</th><th>Weekly ($)</th><th>Monthly ($)</th><th>Yearly ($)</th><th>Speed (min)</th><th>Hot</th><th>Live</th><th></th></tr></thead><tbody>
-        ${(a.tiers || []).map(adminTierRow).join('')}
+        ${a.tiers.map(adminTierRow).join('')}
       </tbody></table></div>
       ${subsAdminHTML(a)}
       <div class="bot-admin-grid">
@@ -605,7 +577,7 @@
         if (!ok) return;
       }
       try {
-        const r = await api('/api/bots/subscribe', { method: 'POST', body: JSON.stringify({ userId: uidNow(), tierId: id, duration }) }, 45000);
+        const r = await api('/api/bots/subscribe', { method: 'POST', body: JSON.stringify({ userId: uidNow(), tierId: id, duration }) }, 25000);
         if (!r.res || !r.res.ok || !r.data || !r.data.ok) return tmsg((r.data && r.data.error) || 'Subscription failed', 'err');
         await Remote.refresh(true);
         await load(true);
@@ -644,7 +616,7 @@
       try {
         const r = await api('/api/bots/start', { method: 'POST', body: JSON.stringify({
           userId: uidNow(), tierId, topupCoins: topup, minTradeCoins: minTrade, maxTradeCoins: maxTrade, durationMinutes: duration
-        }) }, 45000);
+        }) }, 25000);
         if (!r.res || !r.res.ok || !r.data || !r.data.ok) return tmsg((r.data && r.data.error) || 'Could not start bot', 'err');
         await Remote.refresh(true);
         await load(true);
@@ -684,7 +656,7 @@
         if (!ok) return;
       }
       try {
-        const r = await api('/api/bots/stop', { method: 'POST', body: JSON.stringify({ userId: uidNow() }) }, 45000);
+        const r = await api('/api/bots/stop', { method: 'POST', body: JSON.stringify({ userId: uidNow() }) }, 25000);
         if (!r.res || !r.res.ok || !r.data || !r.data.ok) return tmsg((r.data && r.data.error) || 'Could not stop bot', 'err');
         await Remote.refresh(true); await load(true);
         tmsg('Bot stopped — capital and profit remain in the bot balances', 'ok');
@@ -701,8 +673,8 @@
           <div><span>Stock trading balance</span><b>${money((B.state && B.state.balance)*0.5)}</b></div>
         </div>
         <div class="field" style="margin-top:12px"><label class="label">Top-up amount (USD)</label>
-          <div class="input-wrap"><span class="inv-prefix">$</span><input class="input" id="botTopupUsd" type="number" min="0.01" step="0.01" placeholder="10.00"/></div>
-          <div class="tiny muted" style="margin-top:4px">Any amount — taken from your bot allocation first, then your stock trading balance. 1 WC = $0.50</div></div>`,
+          <div class="input-wrap"><span class="inv-prefix">$</span><input class="input" id="botTopupUsd" type="number" min="0.5" step="0.01" placeholder="10.00"/></div>
+          <div class="tiny muted" style="margin-top:4px">1 WC = $0.50</div></div>`,
         `<button class="btn btn-ghost" data-close style="flex:1">Cancel</button><button class="btn btn-primary" id="botTopupSend" style="flex:1">Send top-up</button>`), { locked: false });
       const btn = document.getElementById('botTopupSend');
       if (btn) btn.onclick = async () => {
@@ -787,7 +759,7 @@
       if (alreadyHere) {
         /* billed elsewhere already — just make sure the engine knows about it */
         try {
-          await api('/api/bots/auto-secure/subscribe', { method: 'POST', body: JSON.stringify({ userId: uidNow(), activateOnly: true }) }, 45000);
+          await api('/api/bots/auto-secure/subscribe', { method: 'POST', body: JSON.stringify({ userId: uidNow(), activateOnly: true }) }, 25000);
           await load(true);
         } catch (e) {}
         tmsg('Auto Secure is already subscribed — synced across every page', 'ok');
@@ -802,7 +774,7 @@
         if (!ok) return;
       }
       try {
-        const r = await api('/api/bots/auto-secure/subscribe', { method: 'POST', body: JSON.stringify({ userId: uidNow() }) }, 45000);
+        const r = await api('/api/bots/auto-secure/subscribe', { method: 'POST', body: JSON.stringify({ userId: uidNow() }) }, 25000);
         if (!r.res || !r.res.ok || !r.data || !r.data.ok) return tmsg((r.data && r.data.error) || 'Subscription failed', 'err');
         await Remote.refresh(true);
         await load(true);
@@ -1154,7 +1126,7 @@
       padding:3px 8px;border-radius:99px;border:1px solid var(--border);color:var(--muted);white-space:nowrap}
     .bot-badge i{width:6px;height:6px;border-radius:50%;background:var(--muted);display:inline-block}
     .bot-badge.on{color:var(--success);border-color:rgba(34,197,94,.35);background:rgba(34,197,94,.10)}
-    .bot-badge.on i{background:#31e0a0;animation:wbotPulse 1.3s ease-in-out infinite}
+    .bot-badge.on i{background:#22c55e;animation:wbotPulse 1.3s ease-in-out infinite}
     .bot-badge.paused{color:var(--warn);border-color:rgba(255,176,32,.35);background:rgba(255,176,32,.10)}
     .bot-badge.paused i{background:var(--warn)}
     @keyframes wbotPulse{0%,100%{opacity:.35;transform:scale(.8)}50%{opacity:1;transform:scale(1.25)}}

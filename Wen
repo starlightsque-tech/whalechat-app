@@ -1,1 +1,0 @@
-git fetch origin git checkout -b rollback/3.57.5 43e011f git push origin rollback/3.57.5 git fetch origin fix/admin-env-login-3.57.4 git checkout origin/fix/admin-env-login-3.57.4 -- patches/admin-env-login-3.57.4.patch git apply patches/admin-env-login-3.57.4.patch git add -A && git commit -m "Admin env login" && git push

@@ -1,26 +1,21 @@
 <!DOCTYPE html>
 <html lang="en" data-theme="dark">
 <head>
-<script>window.__WC_SERVER__ = true; window.__WC_PUBLIC_URL__ = "https://whalechat.appwrite.network";</script>
+<script>window.__WC_SERVER__ = true; window.__WC_PUBLIC_URL__ = "https://whalechat-qkgd.onrender.com";</script>
 <script async src="https://www.googletagmanager.com/gtm.js?id=GTM-5WNCBL8N"></script><script>window.dataLayer = window.dataLayer || [];function gtag(){dataLayer.push(arguments);}gtag('js', new Date());</script>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
 <script>try{var _ts=localStorage.getItem('whalechat.textsize');if(_ts==='compact'||_ts==='default'||_ts==='large'){document.documentElement.setAttribute('data-textsize',_ts);}}catch(e){}</script>
 <script>
 /* WhaleChat view mode — default desktop, remembered per device */
 (function () {
   try {
-    var pref = localStorage.getItem('wc.viewMode') || 'auto';
-    var w = window.innerWidth || (window.screen && window.screen.width) || 0;
-    var handheld = /Mobi|Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
-    /* phones and small tablets are always the mobile layout: the desktop
-       canvas is what caused the zoomed-out, clipped UI in the installed app */
-    var mode = (handheld || w < 1024) ? 'mobile' : (pref === 'mobile' ? 'mobile' : 'desktop');
+    var mode = localStorage.getItem('wc.viewMode') || 'desktop';
     document.documentElement.setAttribute('data-wc-view', mode);
-    document.documentElement.setAttribute('data-wc-view-pref', pref);
-    /* always the real device width — never a forced 1280px canvas */
-    var m = document.querySelector('meta[name="viewport"]');
-    if (m) m.setAttribute('content', 'width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content');
+    if (mode === 'desktop' && ((window.screen && window.screen.width) || window.innerWidth) < 1024) {
+      var m = document.querySelector('meta[name="viewport"]');
+      if (m) m.setAttribute('content', 'width=1280, user-scalable=yes, viewport-fit=cover');
+    }
     var pf = (location.hash || '').match(/^#\/portfolio\/([A-Za-z0-9_-]+)/i);
     if (!pf) { try { var qt = new URLSearchParams(location.search).get('portfolio'); if (qt) pf = [0, qt]; } catch (e) {} }
     if (pf && pf[1]) sessionStorage.setItem('wc.pfToken', pf[1]);
@@ -344,18 +339,8 @@ html[data-theme="light"] .topbar{background:rgba(255,255,255,.78)}
   background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.2);color:#fff}
 .story-react button.mine{background:rgba(46,230,201,.3);border-color:var(--accent)}
 .msg .edited{font-size:10px;color:var(--muted-2)}
-.contact-hint{display:flex;align-items:center;gap:9px;margin:8px 12px 0;padding:8px 10px;border-radius:11px;background:rgba(58,160,255,.10);border:1px solid rgba(58,160,255,.26);flex:none}
-.contact-hint-ic{width:28px;height:28px;border-radius:8px;background:rgba(58,160,255,.16);color:#3aa0ff;display:flex;align-items:center;justify-content:center;flex:none}
-.contact-hint-txt{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px;line-height:1.35}
-.contact-hint-txt b{font-size:12px;font-weight:700}
-.contact-hint-txt span{font-size:11px;color:var(--muted)}
-.contact-hint .btn{flex:none;white-space:nowrap}
-@media(max-width:520px){.contact-hint{margin:6px 8px 0;padding:7px 8px}.contact-hint-txt span{font-size:10.5px}}
 .tick{display:inline-flex;color:var(--muted-2)}
-.tick.sending,.tick.queued,.tick.error,.tick[data-state="sending"],.tick[data-state="queued"]{color:var(--muted-2);opacity:.8}
-.tick.sent{color:var(--muted-2)}
-.tick.delivered{color:var(--muted)}
-.tick.seen,.tick[data-state="seen"]{color:#3aa0ff}
+.tick.seen{color:#35d39e}
 .chat-input{display:flex;align-items:flex-end;gap:8px;padding:10px 12px calc(10px + env(safe-area-inset-bottom));border-top:1px solid var(--border);
   background:var(--surface);flex:none}
 .chat-input textarea{flex:1;min-height:42px;max-height:120px;border-radius:22px;background:var(--surface-2);border:1px solid var(--border);
@@ -649,19 +634,8 @@ html[data-theme="light"] .profile-banner>img{opacity:.10}
 let COIN_USD = 0.5;                 // 1 Whale Coin = $0.50 (admin-editable in Trade Guide settings)
 const APP_VERSION = '3.9.10';
 // Set to your permanent sync server to auto-connect from any static host, e.g. 'https://sync.yourdomain.com'
-/* On Cloudflare Pages the same edge worker serves /api/* (email/SMS/OTP) and
-   proxies the rest to the sync backend, so the app talks to its own origin. */
-const DEFAULT_SYNC_SERVER = /\.pages\.dev$/i.test(location.hostname) ? '' : 'https://whalechat-api.appwrite.network';
+const DEFAULT_SYNC_SERVER = '';
 const APP_BUILD = '2026-11-12T05:57:54Z';    // replaced at build time
-/* First boot after a new build: used by the sync layer to merge this device's
-   account instead of accepting a thinner server snapshot as authoritative. */
-let WC_UPGRADED = false;
-try {
-  const _wcLastVer = localStorage.getItem('wc.lastAppVersion') || '';
-  WC_UPGRADED = !!_wcLastVer && _wcLastVer !== APP_VERSION;
-  localStorage.setItem('wc.lastAppVersion', APP_VERSION);
-} catch (e) {}
-try { window.__wcUpgraded = WC_UPGRADED; } catch (e) {}
 const LS_DB = 'whalechat.db.v1';
 const LS_SESSION = 'whalechat.session.v1';
 const LS_THEME = 'whalechat.theme';

@@ -42,7 +42,7 @@
   }
   (function primePrices() {
     try {
-      var url = (typeof Remote !== 'undefined' && Remote && Remote.url) ? Remote.url('/api/market/quotes') : '/api/market/quotes';
+      var url = (typeof Remote !== 'undefined' && Remote.enabled) ? Remote.url('/api/market/quotes') : '/api/market/quotes';
       fetch(url).then(function (r) { return r.json(); }).then(function (d) {
         var q = (d && (d.quotes || d)) || {};
         var list = Array.isArray(q) ? q : Object.keys(q).map(function (k) { var x = q[k] || {}; if (!x.symbol) x.symbol = k; return x; });
@@ -111,10 +111,7 @@
   }
   function ledgerM(u, label, usdDelta, wcDelta, meta) {
     acct(u);
-    var m = meta || null;
-    var id = String((m && (m.from || m.to)) || '');
-    var scope = /^b2b/.test(id) ? 'b2b' : /^stock/.test(id) ? 'stock' : /^wc_/.test(id) ? 'wc' : /^bot/.test(id) ? 'bot' : 'general';
-    u.acctLedger.unshift({ id: nowIdM('al_'), label: label, usd: roundM(usdDelta), wc: roundM(wcDelta), scope: scope, meta: m, at: Date.now() });
+    u.acctLedger.unshift({ id: nowIdM('al_'), label: label, usd: roundM(usdDelta), wc: roundM(wcDelta), meta: meta || null, at: Date.now() });
     if (u.acctLedger.length > 200) u.acctLedger.length = 200;
   }
 
@@ -258,7 +255,7 @@
 
   async function botTransferProfit(u, amountUsd) {
     var uid = u.id;
-    var res = await fetch((typeof Remote !== 'undefined' && Remote && Remote.url) ? Remote.url('/api/bots/transfer') : '/api/bots/transfer', {
+    var res = await fetch((typeof Remote !== 'undefined' && Remote.enabled) ? Remote.url('/api/bots/transfer') : '/api/bots/transfer', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ userId: uid, source: 'profit', amountUsd: amountUsd })
     });
@@ -295,13 +292,10 @@
       return;
     }
 
-    var srcBefore = src.get(), dstBefore = dst.get();
-    src.set(roundM(srcBefore - amt));
-    dst.set(roundM(dstBefore + receive));
-    u.updatedAt = Date.now();
-    /* both sides are written and persisted together */
-    ledgerM(u, src.label + ' → ' + dst.label + ' · ' + display(src, amt) + ' sent', 0, 0, { from: src.id, to: dst.id, srcBefore: srcBefore, dstBefore: dstBefore });
-    saveM(); toastM('Transfer complete — ' + display(dst, receive) + ' added to ' + dst.label, 'ok'); renderM();
+    src.set(src.get() - amt);
+    dst.set(dst.get() + receive);
+    ledgerM(u, src.label + ' → ' + dst.label + ' · ' + moneyM(amt * units(src.cur)) + ' value', 0, 0, { from: src.id, to: dst.id });
+    saveM(); toastM('Transfer complete', 'ok'); renderM();
   }
 
   /* ---------------------------------------------------------- convert */
@@ -516,11 +510,7 @@
     if (from === 'inv_payout') a.payout = roundM(a.payout - amt); else a.usd = roundM(a.usd - amt);
     var oa = ia(other);
     oa.usd = roundM((Number(oa.usd) || 0) + amt);
-    u.updatedAt = Date.now(); other.updatedAt = Date.now();
     ledgerM(u, 'Sent ' + moneyM(amt) + ' to ' + (other.accountId || other.referralCode), -amt, 0, { toUser: other.id });
-    /* the receiver's balance and ledger both move with the same write, so a
-       refresh can never show the money leaving one account and not arriving */
-    ledgerM(other, 'Received ' + moneyM(amt) + ' from @' + u.username, amt, 0, { fromUser: u.id });
     try { notify(other.id, 'Investment transfer received', moneyM(amt) + ' was added to your investment total assets by @' + u.username + '.', '#/investment', 'briefcase'); } catch (e) {}
     saveM(); toastM('Sent ' + moneyM(amt) + ' to ' + (other.accountId || other.referralCode), 'ok'); renderM();
   }

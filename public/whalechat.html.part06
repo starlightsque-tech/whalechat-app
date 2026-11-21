@@ -338,19 +338,22 @@ VIEWS.settings = function () {
       </div>
       <div class="tiny muted mt10">Preview — “WhaleChat: chat, shop and get paid.” Your choice is remembered per account and per device.</div>
     </div>
-    <div class="card mt16 wc-conn-card">
+    <div class="card mt16">
       <div class="between wrap gap10">
-        <div><h3 style="font-size:15px">Always connected</h3>
-          <p class="tiny muted mt6">Your account, chats, portfolio and live prices stay connected on this device. No server setup, no sync button, no reconnect.</p></div>
-        <span class="badge" id="wcConnBadge" style="color:var(--success);border-color:rgba(34,197,94,.35)">
-          <span class="dot" style="background:var(--success)"></span> <span data-wc-conn-label>Connected</span></span>
+        <div><h3 style="font-size:15px">Cross-device sync & push</h3>
+          <p class="tiny muted mt6">Share chats, orders and wallet across every device, with alerts when the app is closed.</p></div>
+        ${typeof syncBadge === 'function' ? syncBadge() : ''}
       </div>
       <div class="row gap8 mt14 wrap">
+        <button class="btn btn-primary btn-sm" data-act="server-dialog">${ic('refresh', 14)} ${Remote.enabled ? 'Manage sync server' : 'Connect sync server'}</button>
+        <button class="btn btn-ghost btn-sm" data-act="server-details">${ic('shield', 14)} Server details</button>
         <button class="btn btn-ghost btn-sm" data-act="push-enable">${ic('bell', 14)} Enable push alerts</button>
+        <button class="btn btn-ghost btn-sm" data-act="push-test">${ic('send', 14)} Send test</button>
         <button class="btn btn-ghost btn-sm" data-act="install-app">${ic('download', 14)} Install app</button>
         <button class="btn btn-ghost btn-sm" data-act="live-chat">${ic('chat', 14)} Live support</button>
       </div>
-      <div class="tiny muted mt10" id="pushDeviceCount">${typeof Notification !== 'undefined' && Notification.permission === 'granted' ? 'Checking registered alert devices…' : 'Alerts are off — turn them on to receive messages when the app is closed.'}</div>
+      ${Remote.enabled ? `<div class="tiny muted mt10">Connected to <b>${esc(Remote.base || location.origin)}</b> · revision ${Remote.rev}</div>` : `<div class="tiny muted mt10">Running in local mode — data stays on this device until you connect a server.</div>`}
+      <div class="tiny muted mt8" id="pushDeviceCount">${typeof Notification !== 'undefined' && Notification.permission === 'granted' ? 'Checking registered alert devices…' : 'Alerts are off — turn them on to receive messages when the app is closed.'}</div>
     </div>
     <div class="card mt16">
       <h3 style="font-size:15px">Account</h3>
@@ -575,14 +578,13 @@ function adminRelease() {
 async function loadReleasePanel() {
   const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
   try {
-    const r = await fetch((typeof Remote !== 'undefined' ? Remote.url('/api/release') : '/api/release') + '?t=' + Date.now(), { cache: 'no-store' });
+    const r = await fetch('/api/release?t=' + Date.now(), { cache: 'no-store' });
     if (!r.ok) throw new Error('no-server');
     const d = await r.json();
-    try { localStorage.setItem('wc.release.cache', JSON.stringify({ d: d, at: Date.now() })); } catch (e) {}
-    const same = (d.build && d.build === APP_BUILD) || (d.version && d.version === APP_VERSION);
+    const same = d.build && d.build === APP_BUILD;
     set('relServerBuild', d.build ? d.build.replace('T', ' ').replace('Z', '') : 'unknown');
     set('relServerBuildRow', d.build || 'unknown');
-    set('relUptime', d.storage === 'appwrite' ? 'always on' : Math.floor((d.uptimeSec || 0) / 3600) + 'h ' + Math.floor(((d.uptimeSec || 0) % 3600) / 60) + 'm');
+    set('relUptime', Math.floor((d.uptimeSec || 0) / 3600) + 'h ' + Math.floor(((d.uptimeSec || 0) % 3600) / 60) + 'm');
     set('relClients', String(d.clients || 0));
     set('relRev', String(d.rev || 0));
     set('relDevices', String(d.devices || 0));
@@ -592,12 +594,11 @@ async function loadReleasePanel() {
       badge.textContent = same ? 'Up to date' : 'Update available';
     }
     try {
-      const bk = await fetch((typeof Remote !== 'undefined' ? Remote.url('/api/backup') : '/api/backup'), { cache: 'no-store' }).then(x => x.json());
-      try { localStorage.setItem('wc.backup.cache', JSON.stringify({ bk: bk, at: Date.now() })); } catch (e) {}
+      const bk = await fetch('/api/backup', { cache: 'no-store' }).then(x => x.json());
       const du = document.getElementById('relDataUsers'); if (du) du.textContent = String(bk.users || 0);
       const db = document.getElementById('relDataBackups'); if (db) db.textContent = (bk.count || 0) + ' snapshot' + ((bk.count || 0) === 1 ? '' : 's');
       const dl = document.getElementById('relDataLast'); if (dl) dl.textContent = bk.last ? new Date(bk.last).toLocaleString() : 'none yet';
-      const ds = document.getElementById('relDataStore'); if (ds) ds.textContent = bk.storage === 'appwrite' ? 'Appwrite Storage (persistent)' : bk.persistent ? 'Persistent disk' : (bk.recoverable ? 'Ephemeral storage + persistent backups' : 'Ephemeral — set DATA_DIR to a disk');
+      const ds = document.getElementById('relDataStore'); if (ds) ds.textContent = bk.persistent ? 'Persistent disk' : (bk.recoverable ? 'Ephemeral storage + persistent backups' : 'Ephemeral — set DATA_DIR to a disk');
       const dgb = document.getElementById('relDataBadge');
       if (dgb) {
         if (bk.persistent) { dgb.className = 'badge badge-success'; dgb.textContent = 'Protected'; }
@@ -606,41 +607,11 @@ async function loadReleasePanel() {
       }
     } catch (e2) {}
   } catch (e) {
-    /* offline: show the last known server snapshot instead of claiming there is
-       no server, because the app keeps its revision and build locally */
-    let cached = null;
-    try { cached = JSON.parse(localStorage.getItem('wc.release.cache') || 'null'); } catch (e2) {}
-    if (cached && cached.d) {
-      const d = cached.d;
-      set('relServerBuild', d.build ? d.build.replace('T', ' ').replace('Z', '') : 'cached');
-      set('relServerBuildRow', d.build || 'cached');
-      set('relRev', String(d.rev || 0));
-      set('relDevices', String(d.devices || 0));
-      set('relUptime', 'offline'); set('relClients', String(d.clients || 0));
-      const badge = document.getElementById('relBadge');
-      if (badge) { badge.className = 'badge badge-warn'; badge.textContent = 'Connected · offline cache (' + timeAgo(cached.at) + ' ago)'; }
-      try {
-        const bc = JSON.parse(localStorage.getItem('wc.backup.cache') || 'null');
-        if (bc && bc.bk) {
-          set('relDataUsers', String(bc.bk.users || 0));
-          set('relDataBackups', (bc.bk.count || 0) + ' snapshot' + ((bc.bk.count || 0) === 1 ? '' : 's'));
-          set('relDataLast', bc.bk.last ? new Date(bc.bk.last).toLocaleString() : 'none yet');
-          set('relDataStore', bc.bk.storage === 'appwrite' ? 'Appwrite Storage (persistent)' : 'Persistent storage');
-          const dgb = document.getElementById('relDataBadge');
-          if (dgb) { dgb.className = 'badge badge-success'; dgb.textContent = 'Protected · cached'; }
-        }
-      } catch (e3) {}
-      return;
-    }
-    set('relServerBuild', typeof Remote !== 'undefined' && Remote.enabled ? 'connected' : 'local mode');
+    set('relServerBuild', 'local mode');
     set('relServerBuildRow', 'unavailable');
-    set('relRev', typeof Remote !== 'undefined' && Remote.rev ? String(Remote.rev) : '—');
-    set('relDevices', '—'); set('relUptime', '—'); set('relClients', '—');
+    set('relRev', '—'); set('relDevices', '—'); set('relUptime', '—'); set('relClients', '—');
     const badge = document.getElementById('relBadge');
-    if (badge) {
-      badge.className = 'badge ' + (typeof Remote !== 'undefined' && Remote.enabled ? 'badge-success' : 'badge-warn');
-      badge.textContent = typeof Remote !== 'undefined' && Remote.enabled ? 'Sync connected' : 'No sync server';
-    }
+    if (badge) { badge.className = 'badge badge-warn'; badge.textContent = 'No sync server'; }
   }
 }
 
@@ -662,7 +633,7 @@ App.adminReloadAll = async function () {
   if (!Remote.enabled) return toast('Connect the sync server to refresh remote devices', 'err');
   if (!await confirmDialog({ title: 'Force refresh all devices?', body: 'Every app that is open right now will clear its cache and reload the latest build. Users may lose an unsent draft.', ok: 'Refresh everyone', danger: true })) return;
   try {
-    const r = await fetch((typeof Remote !== 'undefined' ? Remote.url('/api/reload') : '/api/reload'), {
+    const r = await fetch('/api/reload', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ build: APP_BUILD, version: APP_VERSION })
     }).then(x => x.json());
@@ -907,7 +878,7 @@ function adminVendors() {
       return `<tr><td><div style="font-weight:600">@${esc(v.username)}</div><div class="tiny muted">Since ${dateLabel(v.createdAt)}</div></td>
         <td><div class="row gap6">${owner ? avatarHTML(owner, 'sm') : ''}<div><div class="small">${esc(owner ? owner.fullName : '—')}</div><div class="tiny muted">${esc(owner ? owner.username : '')}</div></div></div></td>
         <td>${prods.length}</td><td>${v.sales || 0}</td><td>${coins(DB.orders.filter(o => o.vendorId === v.id).reduce((s, o) => s + o.totalUsd, 0) / COIN_USD)} WC</td>
-        <td>${vendorRating(v).toFixed(1)} ★</td>
+        <td>${v.rating.toFixed(1)} ★</td>
         <td><div class="row gap6" style="justify-content:flex-end">
           <button class="btn btn-xs btn-ghost" data-act="admin-vendor" data-id="${v.id}">View</button>
           <button class="btn btn-xs btn-ghost" data-act="admin-edit-vendor" data-id="${v.id}">Edit</button>
@@ -923,7 +894,7 @@ App.adminVendor = function (id) {
   const prods = DB.products.filter(p => p.vendorId === id);
   openModal(modalShell('Vendor @' + v.username, `
     <div class="row gap12 mb16">${avatarHTML(owner || {}, 'lg')}<div><div style="font-weight:650">${esc(v.name)}</div>
-      <div class="small muted">${esc(owner ? owner.fullName : '')}</div><div class="row gap6 mt6"><span class="badge badge-accent">${vendorRating(v).toFixed(1)} ★</span><span class="badge">Trust ${vendorTrust(v)}</span><span class="badge">${v.sales || 0} sales</span></div></div></div>
+      <div class="small muted">${esc(owner ? owner.fullName : '')}</div><div class="row gap6 mt6"><span class="badge badge-accent">${v.rating.toFixed(1)} ★</span><span class="badge">Trust ${v.trustScore}</span><span class="badge">${v.sales || 0} sales</span></div></div></div>
     <div class="kv"><span class="k">Wallet balance</span><span class="v">${coins(owner ? owner.balance : 0)} WC</span></div>
     <div class="kv"><span class="k">Products in inventory</span><span class="v">${prods.length}</span></div>
     <div class="kv"><span class="k">Created</span><span class="v">${dateLabel(v.createdAt)}</span></div>

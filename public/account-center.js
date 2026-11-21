@@ -136,17 +136,17 @@
     return headA('Whalechat account', 'Your spendable balances, deposits and account actions.') +
       '<div class="ac-grid">' +
         '<div class="ac-card ac-card-dep"><div class="ac-card-top"><span>Crypto balance</span><span class="ac-ic">' + iconA('wallet', 17) + '</span></div>' +
-          '<div class="ac-big" data-acct="depTotal">' + moneyA(depTotal) + '</div>' +
+          '<div class="ac-big">' + moneyA(depTotal) + '</div>' +
           '<div class="ac-sub">' + rows.length + ' coin' + (rows.length === 1 ? '' : 's') + ' · total value · convert to WC to spend or invest</div>' +
           '<div class="ac-coins">' + depBody + '</div>' +
           '<a href="#/account/convert" class="ac-link">Convert crypto to WC →</a></div>' +
         (Number(u.walletUsd) > 0.004 ? '<div class="ac-card ac-card-usd"><div class="ac-card-top"><span>Old $ balance</span><span class="ac-ic">' + iconA('download', 17) + '</span></div>' +
-          '<div class="ac-big" data-acct="usd">' + moneyA(u.walletUsd) + '</div>' +
+          '<div class="ac-big">' + moneyA(u.walletUsd) + '</div>' +
           '<div class="ac-sub">From the previous account system. Move it to your WC balance to use it.</div>' +
           '<div class="ac-minirow"><span>≈ ' + wcA(u.walletUsd / RATE) + ' WC</span><span>1 WC = $' + RATE.toFixed(2) + '</span></div>' +
           '<a href="#/account/convert" class="ac-link">Move to WC balance →</a></div>' : '') +
         '<div class="ac-card ac-card-wc"><div class="ac-card-top"><span>WC balance</span><span class="ac-ic">WC</span></div>' +
-          '<div class="ac-big" data-acct="wc">' + wcA(u.balance) + ' <em>WC</em></div>' +
+          '<div class="ac-big">' + wcA(u.balance) + ' <em>WC</em></div>' +
           '<div class="ac-sub">≈ ' + moneyA(Number(u.balance || 0) * RATE) + ' USD · used for all purchases and vendor payments</div>' +
           '<div class="ac-minirow"><span>Spendable</span><span>WC</span></div>' +
           '<a href="#/account/transfer?to=inv_usd" class="ac-link">Send WC to investment trade capital →</a>' +

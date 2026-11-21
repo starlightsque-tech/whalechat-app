@@ -1,18 +1,7 @@
-}">${wcTickIcon(m)}</span>` : ''}
+}" title="${m.status === 'seen' ? 'Read' : 'Sent'}">${ic(m.status === 'seen' ? 'checks' : 'check', 12)}</span>` : ''}
     </div>
     ${reactionChips(m.reactions, u.id, 'msg', m.id)}
   </div>`;
-}
-/* WhatsApp-style delivery ticks.
-   clock = queued in the outbox · single = Appwrite accepted ·
-   double = the other device received it · blue double = they read it. */
-function wcTickIcon(m) {
-  const st = (m && m.status) || 'sent';
-  const label = st === 'sending' || st === 'queued' ? 'Sending' : st === 'error' ? 'Not sent — retrying'
-    : st === 'delivered' ? 'Delivered' : st === 'seen' ? 'Read' : 'Sent';
-  const icon = st === 'sending' || st === 'queued' || st === 'error' ? 'clock'
-    : st === 'delivered' || st === 'seen' ? 'checks' : 'check';
-  return `<span class="tick" data-state="${st}" title="${label}">${ic(icon, 12)}</span>`;
 }
 function linkify(escaped) {
   return escaped.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener" style="color:var(--accent-2);text-decoration:underline">$1</a>');
@@ -201,12 +190,14 @@ App.send = async function () {
   if (chan) { try { chan.postMessage({ t: 'message', from: u.id }); } catch (e) {} }
   render();
   setTimeout(() => { if (ACTIVE_CHAT === cid) { const b = document.getElementById('chatBody'); if (b) b.scrollTop = b.scrollHeight; } }, 30);
-  // delivery ack: update the ticks in place — no timeout and no full re-render
-  try {
-    if (navigator.onLine !== false && typeof window.wcMessageDelivered === 'function') {
-      window.wcMessageDelivered(DB.messages.filter(m => m.chatId === cid && m.from === u.id && m.status === 'sent').map(m => m.id));
-    }
-  } catch (e) {}
+  // delivery ack simulation
+  setTimeout(() => {
+    const fresh = loadDB();
+    if (!fresh) return;
+    let ch = false;
+    fresh.messages.forEach(m => { if (m.chatId === cid && m.from === u.id && m.status === 'sent') { m.status = 'delivered'; ch = true; } });
+    if (ch) { DB = fresh; persist(); if (ACTIVE_CHAT === cid) render(); }
+  }, 1200);
 };
 
 App.attach = function () {
@@ -379,7 +370,7 @@ App.viewProfile = function (id) {
       <h3 class="mt10" style="font-size:18px">${esc(c.fullName)} ${c.verified ? `<span class="verified" style="vertical-align:middle">${ic('check', 9)}</span>` : ''}</h3>
       <div class="small muted">@${esc(c.username)}</div>
       <div class="row" style="justify-content:center;gap:6px;margin-top:10px">
-        ${v ? `<span class="badge badge-accent">${ic('store', 12)} Vendor · ${vendorRating(v).toFixed(1)}★</span>` : ''}
+        ${v ? `<span class="badge badge-accent">${ic('store', 12)} Vendor · ${v.rating.toFixed(1)}★</span>` : ''}
         ${c.role === 'admin' ? `<span class="badge badge-accent">${ic('shield', 12)} Support</span>` : ''}
         <span class="badge">${Presence.isOnline(c.id) ? 'Online' : 'Offline'}</span>
       </div>
@@ -387,7 +378,7 @@ App.viewProfile = function (id) {
     <div class="mt16">
       ${c.role !== 'admin' ? `<div class="kv"><span class="k">Member since</span><span class="v">${dateLabel(c.createdAt)}</span></div>` : ''}
       <div class="kv"><span class="k">Trust score</span><span class="v">${c.trustScore}/100</span></div>
-      ${v ? `<div class="kv"><span class="k">Vendor rating</span><span class="v">${vendorRating(v).toFixed(1)} ★</span></div>` : ''}
+      ${v ? `<div class="kv"><span class="k">Vendor rating</span><span class="v">${v.rating.toFixed(1)} ★</span></div>` : ''}
     </div>`,
     `<button class="btn btn-ghost" data-close style="flex:1">Close</button><button class="btn btn-primary" data-act="open-chat" data-id="${c.id}" style="flex:1">${ic('chat', 15)} Message</button>`));
 };
@@ -844,7 +835,7 @@ function productCard(p, u) {
     <div class="product-body">
       <a href="#/product/${p.id}" class="product-name">${esc(p.name)}</a>
       <div class="stars-row">${v ? `<a href="#/store/${v.id}" class="ellipsis" style="max-width:104px;color:var(--accent);font-weight:650;text-decoration:none" title="Visit ${esc(v.name)}">${esc(v.name)}</a><span style="opacity:.5">·</span>` : ''}
-        <span style="color:var(--gold)">★</span> ${vendorRating(v).toFixed(1)} <span style="opacity:.5">·</span> ${v ? `Trust ${vendorTrust(v)}` : ''}</div>
+        <span style="color:var(--gold)">★</span> ${(v ? v.rating : 5).toFixed(1)} <span style="opacity:.5">·</span> ${v ? `Trust ${v.trustScore}` : ''}</div>
       <div class="between mt6" style="align-items:flex-end">
         <div><div class="price">${coins(p.priceUsd / COIN_USD)} <span class="tiny muted">WC</span></div><div class="tiny muted">${usd(p.priceUsd)}</div></div>
         <div class="col" style="align-items:flex-end;gap:4px">
@@ -900,7 +891,7 @@ VIEWS.product = function (parts) {
           <div class="tiny muted">${esc(p.category)}</div>
           <h1 style="font-size:24px;margin-top:6px;line-height:1.2">${esc(p.name)}</h1>
           <div class="row gap6 mt10">
-            <span style="color:var(--gold)">★★★★★</span><span class="tiny muted">${vendorRating(v).toFixed(1)} vendor rating</span>
+            <span style="color:var(--gold)">★★★★★</span><span class="tiny muted">${(v ? v.rating : 5).toFixed(1)} vendor rating</span>
           </div>
           <div class="row" style="gap:8px;margin-top:16px;align-items:baseline">
             <span style="font-family:var(--display);font-size:32px;font-weight:800;letter-spacing:-.03em">${coins(p.priceUsd / COIN_USD)}</span>
@@ -910,7 +901,7 @@ VIEWS.product = function (parts) {
           ${vUser && v ? `<div class="divider"></div>
             <a href="#/store/${v.id}" class="row gap10" style="color:inherit;text-decoration:none">
               ${avatarHTML(vUser, 'sm')}
-              <div class="grow"><div class="small" style="font-weight:600">${esc(v.name)}</div><div class="tiny muted">${esc(vUser.fullName)} · Trust ${vendorTrust(v)}/100</div></div>
+              <div class="grow"><div class="small" style="font-weight:600">${esc(v.name)}</div><div class="tiny muted">${esc(vUser.fullName)} · Trust ${v.trustScore}/100</div></div>
               <span class="btn btn-ghost btn-xs">${ic('store', 12)} Visit store</span>
             </a>` : ''}
           <div class="divider"></div>

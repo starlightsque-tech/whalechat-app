@@ -24,17 +24,6 @@
 function isVendorAccount(u) {
   return !!(u && (u.vendorId || (typeof vendorOf === 'function' && vendorOf(u.id))));
 }
-/* A shopper and a vendor may chat directly once there is a relationship:
-   either side saved the other to their contacts, or they already have a
-   conversation. Otherwise the old rule stands (company support handles it). */
-function vendorChatAllowed(u, other) {
-  if (!u || !other || u.id === other.id) return false;
-  try {
-    if (typeof isContact === 'function' && (isContact(u.id, other.id) || isContact(other.id, u.id))) return true;
-    const cid = (typeof chatId === 'function') ? chatId(u.id, other.id) : [u.id, other.id].sort().join('__');
-    return (DB.messages || []).some(m => m && m.chatId === cid);
-  } catch (e) { return false; }
-}
 
 /* ---------------- live company support ---------------- */
 App.liveSupport = function (orderId) {
@@ -89,7 +78,7 @@ App.openChat = function (id) {
   if (u && other && u.role !== 'admin' && other.role !== 'admin' && u.id !== other.id) {
     const uVendor = isVendorAccount(u);
     const oVendor = isVendorAccount(other);
-    if (uVendor !== oVendor && !vendorChatAllowed(u, other)) {
+    if (uVendor !== oVendor) {
       toast('Vendor and shopper chats are disabled — connecting you to company support', 'ok', 3600);
       return App.liveSupport();
     }
@@ -102,7 +91,7 @@ VIEWS.chat = function (parts) {
   const u = me();
   const other = findUser(parts[1] || '');
   if (u && other && u.role !== 'admin' && other.role !== 'admin' && u.id !== other.id) {
-    if (isVendorAccount(u) !== isVendorAccount(other) && !vendorChatAllowed(u, other)) return supportOnlyView();
+    if (isVendorAccount(u) !== isVendorAccount(other)) return supportOnlyView();
   }
   return _chatView.apply(this, arguments);
 };

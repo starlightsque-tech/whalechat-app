@@ -39,7 +39,7 @@
     { t: 'SPACEX', name: 'SpaceX', kind: 'Pre-IPO', sym: null, c: '#005288' }
   ];
 
-  var WC_USD = 12.50;            /* WhaleChat company stock starts at the share price */
+  var WC_USD = 0.50;             /* WhaleChat token value */
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
   function money(v) { return '$' + (Math.round((Number(v) || 0) * 100) / 100).toFixed(2); }
   function pct(v) { v = Number(v) || 0; return (v >= 0 ? '+' : '') + v.toFixed(2) + '%'; }
@@ -114,38 +114,14 @@
     } catch (e) {}
   }
 
-  /* The WhaleChat company stock is a live symbol, not a constant: it follows
-     the same whale-share market price that drives WC-Investing daily returns. */
-  function wcShare() {
-    try {
-      var st = window.WC_SHARES && window.WC_SHARES.state;
-      var p = st && st.shareMarket && Number(st.shareMarket.priceUsd);
-      if (p > 0) return p;
-      var s2 = st && st.summary && Number(st.summary.sharePriceUsd);
-      if (s2 > 0) return s2;
-    } catch (e) {}
-    return 0;
-  }
   M.price = function (ticker) {
-    var t = String(ticker).toUpperCase();
-    if (t === 'WC') {
-      try { var q = INV.quote('WC'); if (q && Number(q.price) > 0) return Number(q.price); } catch (e) {}
-      var p = wcShare();
-      return p > 0 ? p : WC_USD;
-    }
-    try { var q2 = INV.quote(t); if (q2 && Number(q2.price) > 0) return Number(q2.price); } catch (e) {}
+    if (String(ticker).toUpperCase() === 'WC') return WC_USD;
+    try { var q = INV.quote(String(ticker).toUpperCase()); if (q && Number(q.price) > 0) return Number(q.price); } catch (e) {}
     return 0;
   };
   M.quote = function (ticker) {
-    var t = String(ticker).toUpperCase();
-    if (t === 'WC') {
-      try { var q = INV.quote('WC'); if (q && Number(q.price) > 0) return q; } catch (e) {}
-      var p = wcShare() || WC_USD;
-      var hist = M.hist('WC');
-      var first = hist.length ? Number(hist[0].p) : p;
-      return { price: p, prevClose: first, changePct: first > 0 ? ((p - first) / first) * 100 : 0, source: 'whaleshares' };
-    }
-    try { return INV.quote(t) || { price: 0, changePct: 0 }; } catch (e) { return { price: 0, changePct: 0 }; }
+    if (String(ticker).toUpperCase() === 'WC') return { price: WC_USD, changePct: 0 };
+    try { return INV.quote(String(ticker).toUpperCase()) || { price: 0, changePct: 0 }; } catch (e) { return { price: 0, changePct: 0 }; }
   };
   M.entry = function (ticker) {
     var found = null;
@@ -160,14 +136,7 @@
   function hist(ticker) {
     if (HIST[ticker] && HIST[ticker].length > 2) return HIST[ticker];
     var seed = [];
-    if (String(ticker).toUpperCase() === 'WC') {
-      try {
-        var st = window.WC_SHARES && window.WC_SHARES.state;
-        var h = st && st.shareMarket && st.shareMarket.history;
-        if (Array.isArray(h) && h.length > 2) seed = h.slice(-40).map(function (x) { return Number(x.p); });
-      } catch (e) {}
-    }
-    if (!seed.length) { try { seed = (INV.series(ticker, '1D') || []).slice(-40); } catch (e) {} }
+    try { seed = (INV.series(ticker, '1D') || []).slice(-40); } catch (e) {}
     var p = M.price(ticker);
     if (!seed.length && p > 0) seed = [p, p];
     HIST[ticker] = seed.map(function (v, i) { return { x: i, p: v }; });
@@ -183,7 +152,6 @@
       if (h.length > 48) h.shift();
     });
   }
-  M.hist = hist;
   function spark(ticker, w, h) {
     var vals = hist(ticker).map(function (x) { return x.p; }).filter(function (v) { return v > 0; });
     if (vals.length < 2) return { points: '', up: true };
@@ -203,81 +171,6 @@
       '<div><h1 style="margin:0">' + esc(title) + '</h1><p class="muted" style="margin:2px 0 0">' + esc(sub) + '</p></div></div></div>';
   }
   function holding(ticker) { var a = acct(); var h = a && a.b2b[ticker]; return h && Number(h.units) > 0 ? h : null; }
-
-  /* Remember the manually selected chart symbol: a background sync/re-render
-     must not snap the TradingView widget back to the default. */
-  var LAST_CHART = { t: '', kind: '' };
-  function defaultChart(kind) {
-    if (LAST_CHART.t && (kind === 'All' || LAST_CHART.kind === kind)) return LAST_CHART;
-    return {
-      t: ({ Crypto: 'BTCUSDT', Meme: 'DOGEUSDT', Company: 'WC', 'Pre-IPO': 'SPACEX' })[kind] || 'TSLA',
-      kind: ({ Crypto: 'Crypto', Meme: 'Meme', Company: 'Company', 'Pre-IPO': 'Pre-IPO' })[kind] || 'Stock'
-    };
-  }
-
-  /* the DB listing knows the real exchange, so the widget can use NYSE vs NASDAQ */
-  function exchangeOf(t) {
-    try {
-      var s = INV.stock(String(t).toUpperCase());
-      if (s && s.exchange) return String(s.exchange).toUpperCase();
-    } catch (e) {}
-    var e = M.entry(t);
-    return (e && e.exchange) || '';
-  }
-  /* TradingView live chart card (the chart from the reference screenshot).
-     The native candle chart is only used when TradingView has no listing. */
-  function tvCard(t, kind) {
-    if (!window.WC_TV) return '';
-    var tt = String(t || '').toUpperCase();
-    var sym = window.WC_TV.symbol(tt, kind, exchangeOf(t));
-    return '<div class="card" id="b2bmTvCard" style="margin-bottom:10px">' +
-      '<div class="between" style="align-items:flex-start"><div><div class="card-title" style="margin:0" id="b2bmTvTitle">' + esc(tt.replace('USDT', '/USDT')) + ' · live chart</div>' +
-      '<div class="tiny muted" id="b2bmTvSub">' + (sym ? 'TradingView · ' + esc(sym) : 'WhaleChat live candle chart') + '</div></div></div>' +
-      '<div class="wc-tv-host" id="b2bmTvHost" data-wc-tv="' + esc(tt) + '" data-wc-tv-kind="' + esc(kind || '') + '" data-wc-tv-exchange="' + esc(exchangeOf(t)) + '"></div></div>';
-  }
-  M.tvCard = tvCard;
-  M.tvSymbol = function (t, kind) {
-    try { return window.WC_TV ? window.WC_TV.symbol(t, kind, exchangeOf(t)) : ''; } catch (e) { return ''; }
-  };
-  function selectForChart(t, kind) {
-    LAST_CHART = { t: String(t).toUpperCase(), kind: kind || 'Stock' };
-    var host = document.getElementById('b2bmTvHost');
-    if (!host) return;
-    host.setAttribute('data-wc-tv', String(t).toUpperCase());
-    host.setAttribute('data-wc-tv-kind', kind || '');
-    host.setAttribute('data-wc-tv-exchange', exchangeOf(t));
-    /* 3.66.1: the marketplace chart is the shared reference chart, not an
-       external TradingView embed — same design as every other chart. */
-    if (window.WCChartKit && WCChartKit.mount) {
-      try {
-        var pts = hist(t).map(function (d) { return { t: Number(d.x) || Date.now(), p: Number(d.p) }; });
-        var px = M.price(t) || (pts.length ? pts[pts.length - 1].p : 0);
-        var firstPx = pts.length ? pts[0].p : px;
-        host.innerHTML = '';
-        /* claim the host so the legacy TradingView shim stops repainting it */
-        host.setAttribute('data-wck-owned', '1');
-        if (host.__wcKit) { try { host.__wcKit.destroy(); } catch (e) {} host.__wcKit = null; }
-        host.__wcKit = WCChartKit.mount(host, {
-          symbol: String(t).toUpperCase(), data: pts, price: px,
-          changePct: firstPx > 0 ? ((px - firstPx) / firstPx) * 100 : 0,
-          height: 270, range: '1D', mode: 'line'
-        });
-        var sub0 = document.getElementById('b2bmTvSub');
-        if (sub0) sub0.textContent = 'Live market data · WhaleChat feed';
-        return;
-      } catch (e) {}
-    }
-    if (window.WC_TV) window.WC_TV.mount(host, t, kind, exchangeOf(t));
-    var title = document.getElementById('b2bmTvTitle');
-    if (title) title.textContent = String(t).replace('USDT', '/USDT') + ' · live chart';
-    var sub = document.getElementById('b2bmTvSub');
-    if (sub) {
-      var sym = window.WC_TV ? window.WC_TV.symbol(t, kind, exchangeOf(t)) : '';
-      sub.textContent = sym ? 'TradingView · ' + sym : 'WhaleChat live candle chart';
-    }
-    document.querySelectorAll('[data-b2bm-card]').forEach(function (c) { c.classList.toggle('sel', c.getAttribute('data-b2bm-card') === String(t).toUpperCase()); });
-  }
-  M.selectForChart = selectForChart;
 
   /* ---- live ticker strip for the B2B dashboard --------------------------- */
   M.strip = function () {
@@ -304,11 +197,10 @@
         kinds.map(function (k) { return '<a class="chip b2b-cat ' + (k === kind ? 'on' : '') + '" href="#/investment/b2b/market?kind=' + encodeURIComponent(k) + '">' + k + '</a>'; }).join('') +
         '<a class="chip b2b-cat" href="#/investment/b2b/alerts">Price alerts</a>' +
       '</div>' +
-      (function () { var d = defaultChart(kind); return tvCard(d.t, d.kind); })() +
       '<div class="b2bm-grid">' + list.map(function (x) {
         var q = M.quote(x.t); var sp = spark(x.t, 140, 40); var h = holding(x.t);
         var fav = favs.indexOf(x.t) >= 0;
-        return '<div class="b2bm-card" data-b2bm-card="' + esc(x.t) + '" data-b2bm-tv="' + esc(x.t) + '" data-b2bm-kind="' + esc(x.kind) + '">' +
+        return '<div class="b2bm-card" data-b2bm-card="' + esc(x.t) + '">' +
           '<div class="between" style="align-items:flex-start">' +
             '<a class="b2bm-name" href="#/investment/b2b/asset?t=' + encodeURIComponent(x.t) + '">' +
               '<i class="b2bm-dot" style="background:' + x.c + '"></i>' + esc(x.name) + '</a>' +
@@ -317,7 +209,7 @@
           '<div class="tiny muted">' + esc(x.kind) + ' · ' + esc(x.t.replace('USDT', '/USDT')) + (h ? ' · holding ' + Number(h.units).toFixed(6) : '') + '</div>' +
           '<div class="b2bm-row"><b data-b2bm-price="' + esc(x.t) + '">' + (q.price > 0 ? money(q.price) : '—') + '</b>' +
             '<i class="' + ((q.changePct || 0) >= 0 ? 'up' : 'down') + '" data-b2bm-chg="' + esc(x.t) + '">' + pct(q.changePct) + '</i></div>' +
-          '<svg viewBox="0 0 140 40" class="b2bm-spark" preserveAspectRatio="none"><polyline data-b2bm-spark="' + esc(x.t) + '" points="' + sp.points + '" fill="none" stroke="' + (sp.up ? '#31e0a0' : '#ff5d6c') + '" stroke-width="1.5"/></svg>' +
+          '<svg viewBox="0 0 140 40" class="b2bm-spark" preserveAspectRatio="none"><polyline data-b2bm-spark="' + esc(x.t) + '" points="' + sp.points + '" fill="none" stroke="' + (sp.up ? '#22c55e' : '#ef4444') + '" stroke-width="1.5"/></svg>' +
           '<div class="b2bm-actions">' +
             '<a class="btn btn-xs btn-primary" href="#/investment/b2b/buy?asset=' + encodeURIComponent(x.t) + '">Buy</a>' +
             '<a class="btn btn-xs btn-ghost" href="#/investment/b2b/sell?asset=' + encodeURIComponent(x.t) + '">Sell</a>' +
@@ -335,8 +227,7 @@
     var a = acct();
     var h = holding(t);
     var bin = BIN.prices[e.sym || ''];
-    var tvSym = (window.WC_TV) ? window.WC_TV.symbol(t, e.kind, exchangeOf(t)) : '';
-    if (tvSym) LAST_CHART = { t: t, kind: e.kind };
+    var sp = spark(t, 300, 110);
     var alert = ((a && a.b2bAlerts) || []).filter(function (x) { return x.ticker === t; })[0] || {};
     var fav = ((a && a.b2bFav) || []).indexOf(t) >= 0;
     var series = [];
@@ -358,36 +249,23 @@
           '<div><span>24h low</span><b>' + (q.dayLow ? money(q.dayLow) : '—') + '</b></div>' +
           '<div><span>24h volume</span><b>' + (q.vol ? Number(q.vol).toLocaleString(undefined, { maximumFractionDigits: 0 }) : '—') + '</b></div>' +
         '</div>' +
+        '<svg viewBox="0 0 300 110" class="b2bm-bigchart" preserveAspectRatio="none"><polyline data-b2bm-bigspark="' + esc(t) + '" points="' + sp.points + '" fill="none" stroke="' + (sp.up ? '#22c55e' : '#ef4444') + '" stroke-width="1.8"/></svg>' +
+        '<div class="tiny muted center">Live chart · updates every 2 seconds</div>' +
       '</div>' +
-      tvCard(t, e.kind) +
       (h ? '<div class="card"><div class="between"><span class="tiny muted">Your holding</span><b>' + Number(h.units).toFixed(6) + ' units</b></div>' +
         '<div class="between"><span class="tiny muted">Entry price</span><b>' + money(h.avgPrice) + '</b></div>' +
         '<div class="between"><span class="tiny muted">Market value</span><b>' + money(h.units * (q.price || h.avgPrice)) + '</b></div>' +
         '<div class="between"><span class="tiny muted">Unrealised P/L</span><b class="' + ((q.price || h.avgPrice) >= h.avgPrice ? 'up' : 'down') + '">' +
           ((q.price || h.avgPrice) >= h.avgPrice ? '+' : '') + money(h.units * ((q.price || h.avgPrice) - h.avgPrice)) + '</b></div>' +
-        '<a class="btn btn-sm btn-primary" href="#/investment/b2b/sell?asset=' + encodeURIComponent(t) + '" style="width:100%;margin-top:8px">Sell ' + esc(e.name) + '</a>' +
-        /* 3.66.1 — manual buyers: set ONLY a sell target and let Auto Buy/Sell exit */
-        '<div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)">' +
-          '<div class="between"><b class="tiny" style="letter-spacing:.04em">AUTO SELL TARGET</b>' +
-            '<span class="tiny muted">' + Number(h.units).toFixed(6) + ' units held</span></div>' +
-          '<div class="field" style="margin:6px 0 0"><label class="label">Sell when price reaches (USD)</label>' +
-            '<input class="input" id="b2bmAutoSell_' + esc(t) + '" type="number" step="0.0001" min="0" value="' + (Number(alert.sell) > 0 ? Number(alert.sell) : '') + '" placeholder="' + (q.price > 0 ? (q.price * 1.05).toFixed(4) : '') + '"/>' +
-            '<div class="tiny muted mt6">Live ' + (q.price > 0 ? money(q.price) : '—') + ' · the whole holding sells at or above this price</div></div>' +
-          '<label class="row" style="gap:8px;align-items:center;font-size:12px;margin-top:6px"><input type="checkbox" id="b2bmAutoSellOn_' + esc(t) + '"' + (alert.auto ? ' checked' : ' checked') + '/> <b>Use Auto Buy/Sell</b></label>' +
-          '<button class="btn btn-primary btn-sm" data-act="wcbm-auto-sell" data-t="' + esc(t) + '" style="width:100%;margin-top:8px">' + (alert.auto ? 'Update auto sell target' : 'Arm auto sell') + '</button>' +
-          (alert.auto ? '<div class="tiny" style="margin-top:6px;color:#31e0a0">Auto sell armed at ' + money(Number(alert.sell) || 0) + ' — it fires with the app closed.</div>' : '') +
-        '</div></div>' : '') +
+        '<a class="btn btn-sm btn-primary" href="#/investment/b2b/sell?asset=' + encodeURIComponent(t) + '" style="width:100%;margin-top:8px">Sell ' + esc(e.name) + '</a></div>' : '') +
       '<div class="card"><div class="card-title">Buy at market</div>' +
         '<div class="tiny muted">Paid from your B2B capital · filled at the live price above.</div>' +
         '<a class="btn btn-primary" href="#/investment/b2b/buy?asset=' + encodeURIComponent(t) + '" style="width:100%;margin-top:8px">Buy ' + esc(e.name) + '</a></div>' +
       '<div class="card"><div class="card-title">Alert me on this asset</div>' +
-        '<div class="tiny muted" style="margin-bottom:6px">Chart price <b data-b2bm-price="' + esc(t) + '">' + (q.price > 0 ? money(q.price) : '—') + '</b> · set your targets from this live price.</div>' +
         '<div class="row" style="gap:8px"><div class="field grow"><label class="label">Buy when price ≤ ($)</label>' +
-          '<input class="input" id="b2bmBuy_' + esc(t) + '" type="number" step="0.0001" value="' + (alert.buy || '') + '" placeholder="' + (q.price > 0 ? (q.price * 0.98).toFixed(4) : '') + '"/></div>' +
+          '<input class="input" id="b2bmBuy_' + esc(t) + '" type="number" step="0.0001" value="' + (alert.buy || '') + '"/></div>' +
         '<div class="field grow"><label class="label">Sell when price ≥ ($)</label>' +
-          '<input class="input" id="b2bmSell_' + esc(t) + '" type="number" step="0.0001" value="' + (alert.sell || '') + '" placeholder="' + (q.price > 0 ? (q.price * 1.02).toFixed(4) : '') + '"/></div></div>' +
-        '<div class="row" style="gap:6px;margin-top:6px"><button class="btn btn-xs btn-ghost" data-act="wcbm-target-live" data-t="' + esc(t) + '" data-mode="2">Use live ±2%</button>' +
-          '<button class="btn btn-xs btn-ghost" data-act="wcbm-target-live" data-t="' + esc(t) + '" data-mode="5">Use live ±5%</button></div>' +
+          '<input class="input" id="b2bmSell_' + esc(t) + '" type="number" step="0.0001" value="' + (alert.sell || '') + '"/></div></div>' +
         (window.WC_SUBS && WC_SUBS.autoFields ? WC_SUBS.autoFields(t, alert, 'one_' + t) : '') +
         '<button class="btn btn-soft" data-act="wcbm-alert-one" data-t="' + esc(t) + '" style="width:100%">Save alert</button>' +
         '<a class="btn btn-ghost btn-sm" href="#/investment/b2b/alerts" style="width:100%;margin-top:6px">Set alerts for several assets</a></div>';
@@ -433,48 +311,6 @@
       save(); tmsg(i >= 0 ? 'Unpinned' : 'Pinned to favourites', 'ok'); repaint();
     };
 
-    App.wcbmTargetLive = function (id, ds) {
-      var t = String((ds && ds.t) || '').toUpperCase();
-      var p = M.price(t);
-      if (!(p > 0)) return tmsg('Live price is not available yet', 'err');
-      var pct = Math.max(0.5, Math.min(25, Number(ds && ds.mode) || 2)) / 100;
-      var buyEl = document.getElementById('b2bmBuy_' + t);
-      var sellEl = document.getElementById('b2bmSell_' + t);
-      if (buyEl) buyEl.value = (p * (1 - pct)).toFixed(4);
-      if (sellEl) sellEl.value = (p * (1 + pct)).toFixed(4);
-      tmsg('Targets set from the live chart price ' + money(p), 'ok');
-    };
-
-    /* Manual buy → sell-only target → automatic exit. */
-    App.wcbmAutoSell = function (id, ds) {
-      var a = acct(); if (!a) return;
-      var t = String((ds && ds.t) || '').toUpperCase();
-      var h = holding(t);
-      if (!h || !(Number(h.units) > 0)) return tmsg('Buy ' + t + ' first — there is no holding to sell', 'err');
-      var onEl = document.getElementById('b2bmAutoSellOn_' + t);
-      var wantOn = onEl ? !!onEl.checked : true;
-      var target = Number((document.getElementById('b2bmAutoSell_' + t) || {}).value) || 0;
-      var live = M.price(t);
-      if (wantOn && !(target > 0)) return tmsg('Enter the sell price you want', 'err');
-      if (wantOn && live > 0 && target < live) return tmsg('Your sell target must be at or above the live price ' + money(live), 'err');
-      var ex = (a.b2bAlerts || []).filter(function (x) { return x.ticker === t; })[0];
-      if (!ex) {
-        ex = { id: 'al_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), ticker: t, buy: 0, sell: target, email: true, createdAt: Date.now() };
-        a.b2bAlerts = a.b2bAlerts || [];
-        a.b2bAlerts.push(ex);
-      }
-      ex.sell = target;
-      ex.auto = wantOn;
-      ex.autoRepeat = false;
-      ex.sellOnly = true;
-      ex.autoArmedAt = Date.now();
-      ex.sellHit = false; ex.sellHitAt = 0; ex.sellEmailAt = 0; ex.sellNotifyAt = 0; ex.sellRearmAt = 0;
-      a.autoBuySellOn = wantOn;
-      save();
-      tmsg(wantOn ? 'Auto sell armed for ' + t + ' at ' + money(target) : 'Auto sell switched off for ' + t, 'ok');
-      repaint();
-    };
-
     App.wcbmAlertOne = function (id, ds) {
       var a = acct(); if (!a) return;
       var t = String((ds && ds.t) || '').toUpperCase();
@@ -485,7 +321,7 @@
       var autoErr = (autoOpts && WC_SUBS.checkAuto) ? WC_SUBS.checkAuto(t, buy, sell, autoOpts) : '';
       if (autoErr) return tmsg(autoErr, 'err');
       var ex = a.b2bAlerts.filter(function (x) { return x.ticker === t; })[0];
-      if (ex) { ex.buy = buy; ex.sell = sell; ex.buyHit = false; ex.sellHit = false; ex.buyHitAt = 0; ex.sellHitAt = 0; ex.buyEmailAt = 0; ex.sellEmailAt = 0; ex.buyNotifyAt = 0; ex.sellNotifyAt = 0; ex.buyRearmAt = 0; ex.sellRearmAt = 0; }
+      if (ex) { ex.buy = buy; ex.sell = sell; ex.buyHit = false; ex.sellHit = false; ex.buyHitAt = 0; ex.sellHitAt = 0; ex.buyEmailAt = 0; ex.sellEmailAt = 0; }
       else { ex = { id: 'al_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), ticker: t, buy: buy, sell: sell, email: true, createdAt: Date.now() }; a.b2bAlerts.push(ex); }
       if (autoOpts && WC_SUBS.applyAuto) WC_SUBS.applyAuto(ex, autoOpts);
       save(); tmsg('Alert saved for ' + t + (ex.auto ? ' · Auto Buy/Sell ON' : ''), 'ok'); repaint();
@@ -512,7 +348,7 @@
         var autoOpts = (window.WC_SUBS && WC_SUBS.readAuto) ? WC_SUBS.readAuto('m_' + t) : null;
         var autoErr = (autoOpts && WC_SUBS.checkAuto) ? WC_SUBS.checkAuto(t, buy, sell, autoOpts) : '';
         if (autoErr) { autoErrors.push(autoErr); return; }
-        if (ex) { ex.buy = buy; ex.sell = sell; ex.email = byEmail; ex.buyHit = false; ex.sellHit = false; ex.buyHitAt = 0; ex.sellHitAt = 0; ex.buyEmailAt = 0; ex.sellEmailAt = 0; ex.buyNotifyAt = 0; ex.sellNotifyAt = 0; ex.buyRearmAt = 0; ex.sellRearmAt = 0; }
+        if (ex) { ex.buy = buy; ex.sell = sell; ex.email = byEmail; ex.buyHit = false; ex.sellHit = false; ex.buyHitAt = 0; ex.sellHitAt = 0; ex.buyEmailAt = 0; ex.sellEmailAt = 0; }
         else { ex = { id: 'al_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), ticker: t, buy: buy, sell: sell, email: byEmail, createdAt: Date.now() }; a.b2bAlerts.push(ex); }
         if (autoOpts && WC_SUBS.applyAuto) WC_SUBS.applyAuto(ex, autoOpts);
         if (ex.auto) autoCount++;
@@ -565,25 +401,6 @@
       if (g.points) el.setAttribute('points', g.points);
       el.setAttribute('stroke', g.up ? '#22c55e' : '#ef4444');
     });
-    /* professional chart on the asset page — shared engine, green up / red down */
-    document.querySelectorAll('[data-b2bm-chart]').forEach(function (el) {
-      var t = el.getAttribute('data-b2bm-chart');
-      var pts = hist(t).map(function (x) { return { time: Math.floor(x.x / 1000), value: Number(x.p) || 0 }; })
-        .filter(function (p) { return p.value > 0; });
-      if (pts.length < 2) return;
-      var TC = (typeof window !== 'undefined' && window.WC_TRADE_CHART) ? window.WC_TRADE_CHART : null;
-      if (!TC) return;
-      if (!el.__wtc) {
-        el.__wtc = TC.mount(el, {
-          symbol: t.replace('USDT', '/USDT'),
-          points: pts,
-          height: 220,
-          mode: 'line'
-        });
-      } else if (el.__wtc.setData) {
-        el.__wtc.setData(pts);
-      }
-    });
   }
   M.paint = paint;
 
@@ -618,25 +435,7 @@
       var h = String(location.hash || '');
       if (h.indexOf('#/investment/b2b') !== 0) return;
       paint();
-      /* the marketplace chart is the shared reference chart: if a re-render
-         wiped the canvas, put it straight back */
-      var tvHost = document.getElementById('b2bmTvHost');
-      if (tvHost && !tvHost.querySelector('.wck-canvas')) {
-        var tt = tvHost.getAttribute('data-wc-tv');
-        if (tt) selectForChart(tt, tvHost.getAttribute('data-wc-tv-kind') || '');
-      }
     }, 2000);
-    document.addEventListener('click', function (ev) {
-      var card = ev.target && ev.target.closest ? ev.target.closest('[data-b2bm-tv]') : null;
-      if (!card) return;
-      /* action buttons keep their normal behaviour (buy / sell / data / star) */
-      if (ev.target.closest('a[href], button')) return;
-      var t = card.getAttribute('data-b2bm-tv');
-      var k = card.getAttribute('data-b2bm-kind') || '';
-      selectForChart(t, k);
-      var host = document.getElementById('b2bmTvHost');
-      if (host && host.scrollIntoView) { try { host.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {} }
-    }, false);
     document.addEventListener('change', function (ev) {
       var t = ev.target;
       if (t && t.matches && t.matches('[data-b2bm-pick]')) { try { App.wcbmCount(); } catch (e) {} }
@@ -668,7 +467,7 @@
       if (key) body.apiKey = key;
       try {
         var url = '/api/market/binance/config';
-        if (typeof Remote !== 'undefined' && Remote && Remote.url) url = Remote.url(url);
+        if (typeof Remote !== 'undefined' && Remote && Remote.enabled && Remote.url) url = Remote.url(url);
         var r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
         var d = await r.json();
         if (!d.ok) return tmsg(d.error || 'Could not save', 'err');
@@ -699,8 +498,7 @@
     .b2bm-stripitem i.up{color:#22c55e}.b2bm-stripitem i.down{color:#ef4444}
     .b2bm-sym{font-size:9.5px;font-weight:800;letter-spacing:.03em}
     .b2bm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(158px,1fr));gap:8px}
-    .b2bm-card{padding:10px;border:1px solid var(--border);border-radius:12px;background:var(--surface-2);min-width:0;cursor:pointer}
-    .b2bm-card.sel{border-color:#2ee6c9;box-shadow:0 0 0 1px #2ee6c9 inset}
+    .b2bm-card{padding:10px;border:1px solid var(--border);border-radius:12px;background:var(--surface-2);min-width:0}
     .b2bm-name{display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:700;color:var(--text);text-decoration:none;min-width:0}
     .b2bm-dot{width:8px;height:8px;border-radius:99px;flex:none;display:inline-block}
     .b2bm-row{display:flex;justify-content:space-between;align-items:baseline;margin-top:4px}
@@ -714,27 +512,13 @@
     .b2bm-statgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
     .b2bm-statgrid span{display:block;font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted-2);font-weight:700}
     .b2bm-statgrid b{font-size:12.5px;font-variant-numeric:tabular-nums}
-    .b2bm-bigchart{width:100%;height:auto;display:block;margin-top:10px}
+    .b2bm-bigchart{width:100%;height:110px;display:block;margin-top:10px}
     .b2bm-picklist{display:flex;flex-direction:column;gap:6px;max-height:62vh;overflow:auto}
     .b2bm-pick{border:1px solid var(--border);border-radius:11px;padding:8px 10px;background:var(--surface-2)}
     .b2bm-pickhead{display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12.5px}
     .b2bm-pickhead input{width:16px;height:16px;accent-color:var(--accent)}
     .b2bm-pickfields{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px}
-    .b2bm-card,.b2bm-card *{min-width:0}
-    .b2bm-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .b2bm-grid > *{min-width:0}
-    #b2bmTvCard{overflow:hidden}
-    #b2bmTvHost,.wc-tv-host{min-width:0;width:100%}
-    .wc-tv-host .wc-lc{min-width:0}
-    @media(max-width:520px){
-      .b2bm-pickfields{grid-template-columns:1fr}
-      .b2bm-grid{grid-template-columns:1fr 1fr}
-      .b2bm-statgrid{grid-template-columns:1fr 1fr}
-      .b2bm-card{padding:9px}
-      .b2bm-big{font-size:24px}
-      #b2bmTvCard{padding:8px!important}
-      .wc-tv-box{height:300px!important}
-    }
+    @media(max-width:520px){.b2bm-pickfields{grid-template-columns:1fr}.b2bm-grid{grid-template-columns:1fr 1fr}}
     `;
     document.head.appendChild(st);
   })();

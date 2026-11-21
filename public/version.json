@@ -1,8 +1,8 @@
 {
-  "version": "3.80.0",
-  "build": "2026-11-20T23:30:34Z",
+  "version": "3.44.0",
+  "build": "2026-11-17T10:45:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.80.0 — frontend and backend redeployed together on Appwrite. Email now goes through Appwrite Messaging (project SMTP provider) for verification codes and admin email, with Brevo SMTP/API fallback. State writes use a cross-instance lock and merge so a deposit or account change can no longer be overwritten by a parallel function instance. Chat keeps instant local echo, queues messages while a device is offline, and delivers them to the other device on reconnect.",
-  "releasedAt": "2026-11-20T23:30:34Z",
+  "notes": "WhaleChat 3.44.0 - Convert and Transfer buttons on the WhaleChat account card; WC goes to investment trade capital or vendor capital as USD; only the investment total profit balance returns to WC; WC converts to USDT or BTC for withdrawal; vendor stock paid from vendor capital; bolder buttons and text.",
+  "releasedAt": "2026-11-17T10:45:00Z",
   "minimum": "3.0.0"
 }

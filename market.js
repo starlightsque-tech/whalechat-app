@@ -306,14 +306,6 @@ const FORCE_MARKET_OPEN = process.env.US_MARKET_FORCE_OPEN === '1';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const round = (v, n) => Math.round(v * Math.pow(10, n)) / Math.pow(10, n);
-/* crypto has sub-cent prices (PEPE/SHIB); 4 decimals would floor them to 0 */
-function roundPrice(v) {
-  const n = Number(v) || 0;
-  if (n >= 1) return round(n, 4);
-  if (n >= 0.01) return round(n, 5);
-  if (n >= 0.0001) return round(n, 7);
-  return round(n, 10);
-}
 
 function nyClock(d) {
   const parts = new Intl.DateTimeFormat('en-US', {
@@ -391,57 +383,11 @@ class MarketService {
     this.lastSimAt = 0;
     this.simTicks = 0;
     this.quoteListeners = [];
-    this.rateWindow = [];
-    /* every recorded point is also handed to the durable tick store so the
-       candle chart still opens with full history after a restart */
-    this.tickListeners = [];
   }
 
   /* Called on every price update (B2B Auto Buy/Sell watches each tick so a target is never missed). */
   onQuote(fn) {
     if (typeof fn === 'function' && this.quoteListeners.indexOf(fn) < 0) this.quoteListeners.push(fn);
-  }
-
-  /* Called for every history point (used by the Postgres tick store). */
-  onTick(fn) {
-    if (typeof fn === 'function' && this.tickListeners.indexOf(fn) < 0) this.tickListeners.push(fn);
-  }
-
-  /* Restore the ring buffer from durable storage before the feed starts.
-     A hydrated symbol is marked as seeded so synthetic history never replaces
-     the real ticks that survived the previous deployment. */
-  hydrateHistory(map) {
-    if (!map || typeof map !== 'object') return 0;
-    let n = 0;
-    Object.keys(map).forEach((raw) => {
-      const t = String(raw || '').toUpperCase();
-      const rows = Array.isArray(map[raw]) ? map[raw] : [];
-      if (!t || !rows.length) return;
-      const pts = rows.map((r) => ({
-        t: Number(r.t) || 0,
-        p: roundPrice(Number(r.p)),
-        real: !!r.real,
-        source: r.source || 'restored'
-      })).filter((x) => x.t > 0 && x.p > 0).sort((a, b) => a.t - b.t);
-      if (!pts.length) return;
-      /* Older builds could persist a half-price first tick (the 50% blend from
-         a zero simulated level). Drop such points while hydrating so the chart
-         never shows a one-candle 50% crash. */
-      const clean = [];
-      for (let i = 0; i < pts.length; i++) {
-        const cur = pts[i], next = pts[i + 1];
-        if (next && cur.p > 0 && Math.abs(cur.p - next.p / 2) < next.p * 0.01) continue;
-        clean.push(cur);
-      }
-      const use = clean.length ? clean : pts;
-      this.history[t] = use.slice(-3000);
-      const last = use[use.length - 1];
-      this.seedBase[t] = last.p;
-      if (last.real) { this.lastReal[t] = last.p; this.lastRealTime[t] = last.t; this.lastRealAt = Math.max(this.lastRealAt || 0, last.t); }
-      n++;
-    });
-    if (n) console.log('[market] restored ' + n + ' symbol history series from Postgres');
-    return n;
   }
 
   /* ------------------------------- config ------------------------------- */
@@ -530,16 +476,13 @@ class MarketService {
       exchange: s.exchange || (s.assetClass === 'forex' ? 'OANDA' : s.assetClass === 'crypto' ? 'Binance' : 'US'),
       currency: s.currency || 'USD',
       price: Number(s.price) || 0,
-      provider: s.provider || 'finnhub',
       twentyFourSeven: !!s.twentyFourSeven,
       synthetic: !!s.synthetic,
       hidden: !!s.hidden
     }));
     /* only visible assets may claim a Finnhub symbol, so a hidden legacy row
        (e.g. the old BTCUSDT listing) can never swallow the real ticks */
-    this.byFinnhub = new Map(this.assets
-      .filter((a) => !a.hidden && a.provider === 'finnhub')
-      .map((a) => [String(a.finnhubSymbol).toUpperCase(), a.ticker]));
+    this.byFinnhub = new Map(this.assets.filter((a) => !a.hidden).map((a) => [String(a.finnhubSymbol).toUpperCase(), a.ticker]));
     return this.assets;
   }
 
@@ -577,9 +520,9 @@ class MarketService {
     for (let i = 179; i >= 0; i--) {
       const shock = (Math.random() - 0.5) * 2 * vol;
       p = Math.max(base * 0.8, Math.min(base * 1.2, p / (1 + shock)));
-      pts.push({ t: now - i * step, p: roundPrice(p), real: false, source: 'simulated' });
+      pts.push({ t: now - i * step, p: round(p, 4), real: false, source: 'simulated' });
     }
-    pts[pts.length - 1].p = roundPrice(base);
+    pts[pts.length - 1].p = round(base, 4);
     this.history[ticker] = pts;
     this.seedBase[ticker] = base;
   }
@@ -590,29 +533,10 @@ class MarketService {
     const now = Date.now();
     this.refreshAssets();
     const db = this.getDb && this.getDb();
-    /* A restart must not blank the board while the provider rotation catches
-       up: the last real print (hydrated from Postgres) is restored as a real
-       quote for up to 7 days (a weekend/holiday close counts). */
-    const cachedReal = (ticker) => {
-      const p = Number(this.lastReal[ticker]) || 0;
-      const at = Number(this.lastRealTime[ticker]) || 0;
-      return (p > 0 && at > 0 && now - at < 7 * 86400000) ? { price: p, at } : null;
-    };
     if (this.liveConfigured) {
-      /* live mode: a symbol has no price until a provider prints one, unless a
-         real print survived the restart */
+      /* live mode: a symbol has no price until Finnhub prints one */
       this.assetList().forEach((a) => {
         if (this.quotes[a.ticker]) return;
-        const c = cachedReal(a.ticker);
-        if (c) {
-          this.quotes[a.ticker] = {
-            ticker: a.ticker, price: c.price, prevClose: c.price, open: c.price,
-            dayHigh: c.price, dayLow: c.price, changePct: 0, changeUsd: 0, vol: 0,
-            dir: 0, updatedAt: c.at, source: 'cached', real: true
-          };
-          this.seedBase[a.ticker] = c.price;
-          return;
-        }
         this.quotes[a.ticker] = {
           ticker: a.ticker, price: 0, prevClose: 0, open: 0,
           dayHigh: 0, dayLow: 0, changePct: 0, changeUsd: 0, vol: 0,
@@ -623,18 +547,6 @@ class MarketService {
     }
     this.assetList().forEach((a) => {
       if (this.quotes[a.ticker]) return;
-      const c = cachedReal(a.ticker);
-      if (c) {
-        this.quotes[a.ticker] = {
-          ticker: a.ticker, price: c.price, prevClose: c.price, open: c.price,
-          dayHigh: c.price, dayLow: c.price, changePct: 0, changeUsd: 0, vol: 0,
-          dir: 0, updatedAt: c.at, source: 'cached', real: true
-        };
-        this.seedBase[a.ticker] = c.price;
-        const rec0 = db && Array.isArray(db.stocks) ? db.stocks.find((x) => x && String(x.ticker).toUpperCase() === a.ticker) : null;
-        if (rec0 && !(Number(rec0.price) > 0)) { rec0.price = c.price; if (!(Number(rec0.prevClose) > 0)) rec0.prevClose = c.price; }
-        return;
-      }
       const base = this.fallbackBase(a.ticker);
       const price = Number(a.price) > 0 ? Number(a.price) : base;
       this.quotes[a.ticker] = {
@@ -670,11 +582,7 @@ class MarketService {
          the chart always tallies with the real market. Only symbols with no
          live source (synthetic 24/7 products, or no API key) are simulated. */
       const liveFeed = this.config.mode === 'hybrid' || (this.extRealAt && now - this.extRealAt < 60000);
-      /* A symbol that has ever printed a real price from a real provider must
-         never be replaced by a synthetic walk — hold the last real print until
-         the provider refreshes it (overnight/weekend included). */
-      const realProvider = a.provider === 'binance' || a.provider === 'finnhub' || a.provider === 'twelvedata';
-      if (lastReal && (realProvider || (liveFeed && now - lastReal < 15 * 60 * 1000))) return;
+      if (lastReal && liveFeed && now - lastReal < 15 * 60 * 1000) return;
       if (is247Asset(a) && now - lastReal < 4000) return;
       let q = this.quotes[a.ticker];
       /* repair a quote left at a wildly wrong level by an older build */
@@ -737,23 +645,18 @@ class MarketService {
     const prev = this.quotes[ticker] || { prevClose: price, open: price, dayHigh: price, dayLow: price, vol: 1000000 };
     const q = {
       ticker,
-      price: roundPrice(price),
-      prevClose: Number(meta && meta.prevClose) > 0 ? roundPrice(meta.prevClose) : (prev.prevClose || roundPrice(price)),
-      open: Number(meta && meta.open) > 0 ? roundPrice(meta.open) : (prev.open || roundPrice(price)),
-      /* a provider-supplied 24h range replaces a stale simulated range */
-      dayHigh: Number(meta && meta.dayHigh) > 0
-        ? Math.max(Number(meta.dayHigh), price)
-        : Math.max(prev.dayHigh || price, price),
-      dayLow: Number(meta && meta.dayLow) > 0
-        ? Math.min(Number(meta.dayLow), price)
-        : Math.min(prev.dayLow || price, price),
+      price: round(price, 4),
+      prevClose: Number(meta && meta.prevClose) > 0 ? round(meta.prevClose, 4) : (prev.prevClose || round(price, 4)),
+      open: Number(meta && meta.open) > 0 ? round(meta.open, 4) : (prev.open || round(price, 4)),
+      dayHigh: Math.max(prev.dayHigh || price, Number(meta && meta.dayHigh) || 0, price),
+      dayLow: Math.min(prev.dayLow || price, Number(meta && meta.dayLow) || price, price),
       vol: Number(meta && meta.vol) || prev.vol || 1000000,
       dir: price > (prev.price || price) ? 1 : price < (prev.price || price) ? -1 : 0,
       updatedAt: now,
       source: (meta && meta.source) || 'live',
       real: !!(meta && meta.real)
     };
-    q.changeUsd = roundPrice(q.price - q.prevClose);
+    q.changeUsd = round(q.price - q.prevClose, 4);
     q.changePct = q.prevClose ? round((q.changeUsd / q.prevClose) * 100, 4) : 0;
     this.quotes[ticker] = q;
     if (meta && meta.real) this.seedBase[ticker] = q.price;
@@ -803,7 +706,7 @@ class MarketService {
   }
 
   /* real prices from another live source (Binance websocket) */
-  ingestExternal(symbol, price, meta) {
+  ingestExternal(symbol, price) {
     const sym = String(symbol || '').toUpperCase();
     const p = Number(price);
     if (!sym || !(p > 0)) return;
@@ -827,25 +730,11 @@ class MarketService {
       const old = this.quotes[t];
       if (!old) return;
       if (Math.abs(Number(old.price) - p) < 1e-12 && old.real) { this.lastRealTime[t] = now; return; }
-      /* A provider print is the real market price: write it exactly. Older
-         builds blended the first tick 50/50 from a simulated level, which
-         stored a half-price "real" quote (and a one-candle crash) until the
-         next poll. The board must show the real price immediately. */
-      const next = p;
-      /* A real 24h open/high/low from the provider beats a simulated anchor —
-         without this, the first blended tick locked prevClose at half price
-         and the app displayed a fake +100% change. */
-      const m = meta || {};
-      const prevClose = Number(m.prevClose) > 0 ? Number(m.prevClose) : (Number(old.prevClose) > 0 ? Number(old.prevClose) : p);
-      const open = Number(m.open) > 0 ? Number(m.open) : (Number(old.open) > 0 ? Number(old.open) : p);
-      this.writeQuote(t, next, {
-        prevClose,
-        open,
-        dayHigh: Number(m.dayHigh) > 0 ? Number(m.dayHigh) : undefined,
-        dayLow: Number(m.dayLow) > 0 ? Number(m.dayLow) : undefined,
-        vol: Number(m.vol) > 0 ? Number(m.vol) : old.vol,
-        source: 'live', real: true
-      });
+      /* first switch from a simulated level: catch up over a few ticks so
+         open trades are not settled by an artificial jump */
+      let next = p;
+      if (!old.real && !this.lastRealTime[t] && Math.abs(p - old.price) / p > 0.005) next = old.price + (p - old.price) * 0.25;
+      this.writeQuote(t, next, { prevClose: old.prevClose, open: old.open, vol: old.vol, source: next === p ? 'live' : 'simulated', real: next === p });
       touched++;
     });
     if (targets.length) this.extRealAt = now;
@@ -858,17 +747,13 @@ class MarketService {
     const at = now || Date.now();
     const last = arr[arr.length - 1];
     if (last && at - last.t < 2000) {
-      last.p = roundPrice(price);
+      last.p = round(price, 4);
       last.t = at;
       last.real = !!real;
       return;
     }
-    const rec = { t: at, p: roundPrice(price), real: !!real, source: source || 'simulated' };
-    arr.push(rec);
+    arr.push({ t: at, p: round(price, 4), real: !!real, source: source || 'simulated' });
     if (arr.length > 3000) arr.splice(0, arr.length - 3000);
-    if (this.tickListeners && this.tickListeners.length) {
-      for (const fn of this.tickListeners) { try { fn(ticker, rec); } catch (e) {} }
-    }
   }
 
   /* Last real quotes survive a restart or a cold start (Render sleeps idle
@@ -884,13 +769,9 @@ class MarketService {
       Object.keys(raw).forEach((t) => {
         const q = raw[t];
         if (!q || !(Number(q.price) > 0)) return;
-        /* keep the recorded flag: a simulated fallback price must never be
-           promoted to "real" on restart, or it would freeze for 15 minutes */
-        this.quotes[t] = Object.assign({}, q, { cached: true, real: !!q.real, updatedAt: Number(q.updatedAt) || now });
-        if (q.real) {
-          this.lastReal[t] = Number(q.price);
-          this.lastRealTime[t] = Number(q.updatedAt) || now;
-        }
+        this.quotes[t] = Object.assign({}, q, { cached: true, real: true, updatedAt: Number(q.updatedAt) || now });
+        this.lastReal[t] = Number(q.price);
+        this.lastRealTime[t] = Number(q.updatedAt) || now;
         n++;
       });
       if (n) console.log('[market] restored ' + n + ' last known quotes');
@@ -955,15 +836,6 @@ class MarketService {
     const key = this.config.apiKey;
     if (!key) return null;
     if (Date.now() < this.rateLimitedUntil) return null;
-    /* hard client-side budget: 55 requests / rolling minute (free tier is 60).
-       A 429 would stop the whole feed, so extra calls are deferred instead. */
-    const nowMs = Date.now();
-    this.rateWindow = (this.rateWindow || []).filter((t) => nowMs - t < 60000);
-    if (this.rateWindow.length >= 55) {
-      this.lastError = 'Finnhub call budget reached for this minute — remaining quotes deferred';
-      return null;
-    }
-    this.rateWindow.push(nowMs);
     const url = FINNHUB_REST_BASE + '/api/v1/quote?symbol=' + encodeURIComponent(ticker) + '&token=' + encodeURIComponent(key);
     try {
       const r = await this.getJSON(url, 9000);
@@ -1002,7 +874,7 @@ class MarketService {
     try {
       /* synthetic 24/7 symbols have no Finnhub listing — never spend calls on them */
       this.refreshAssets();
-      const assets = this.assetList().filter((a) => !a.hidden && a.provider === 'finnhub' && !(a.synthetic || /24\/7|synthetic/i.test(String(a.name || ''))));
+      const assets = this.assetList().filter((a) => !a.hidden && !(a.synthetic || /24\/7|synthetic/i.test(String(a.name || ''))));
       for (const a of assets) {
         if (this.stopped) break;
         if (Date.now() < this.rateLimitedUntil) break;
@@ -1026,7 +898,7 @@ class MarketService {
     try {
       this.refreshAssets();
       for (const a of this.assetList()) {
-        if (a.hidden || a.provider !== 'finnhub' || a.synthetic || /24\/7|synthetic/i.test(String(a.name || ''))) continue;
+        if (a.hidden || a.synthetic || /24\/7|synthetic/i.test(String(a.name || ''))) continue;
         const wsFresh = this.wsConnected && this.lastWsTickAt && Date.now() - this.lastWsTickAt < 45000;
         if (this.stopped || wsFresh) break;
         const t = a.ticker;
@@ -1113,7 +985,6 @@ class MarketService {
       name, sector: profile.finnhubIndustry || (klass === 'forex' ? 'Forex' : klass === 'crypto' ? 'Crypto' : 'Stock'),
       exchange: profile.exchange || (klass === 'forex' ? 'OANDA' : klass === 'crypto' ? 'Binance' : 'US'),
       currency: profile.currency || (klass === 'crypto' ? 'USDT' : 'USD'),
-      provider: klass === 'crypto' ? 'binance' : 'finnhub',
       logo: profile.logo || '', website: profile.weburl || '', ceo: '', about: profile.name || name,
       price: quote ? quote.price : 0, prevClose: quote ? quote.prevClose : 0,
       div: dividendYield, dividendYield,
@@ -1161,10 +1032,10 @@ class MarketService {
       this.lastWsTickAt = Date.now();
       this.lastError = '';
       this.assetList().forEach((a) => {
-        if (a.hidden || a.provider !== 'finnhub' || a.synthetic || /24\/7/i.test(String(a.name || ''))) return;
+        if (a.hidden || a.synthetic || /24\/7/i.test(String(a.name || ''))) return;
         try { ws.send(JSON.stringify({ type: 'subscribe', symbol: a.finnhubSymbol })); } catch (e) {}
       });
-      console.log('[market] Finnhub WebSocket connected ·', this.assetList().filter((a) => !a.hidden && a.provider === 'finnhub' && !a.synthetic).length, 'subscriptions');
+      console.log('[market] Finnhub WebSocket connected ·', this.assetList().filter((a) => !a.hidden && !a.synthetic).length, 'subscriptions');
     };
     ws.onmessage = (ev) => {
       let msg;
@@ -1240,8 +1111,6 @@ class MarketService {
       simulatedTicks: this.simTicks || 0,
       tickers: this.assetList().length,
       assetCounts: this.assetClasses(),
-      providerCounts: this.assetList().reduce((o, a) => { const k = a.provider || 'finnhub'; o[k] = (o[k] || 0) + 1; return o; }, {}),
-      realByProvider: this.assetList().reduce((o, a) => { const q = this.quotes[a.ticker]; if (!q || !q.real) return o; const k = a.provider || 'finnhub'; o[k] = (o[k] || 0) + 1; return o; }, {}),
       unpriced: this.assetList().filter((a) => !(this.quotes[a.ticker] && this.quotes[a.ticker].price > 0)).length,
       dividends: this.dividendStatus(),
       startedAt: this.startedAt

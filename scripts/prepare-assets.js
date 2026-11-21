@@ -55,54 +55,11 @@ if (!parts.length) {
   }
 }
 
-/* 2b. market data proxy routes are wired into server.js at build time */
-try { const ps = require('./patch-server'); ps.patchConnections(require('path').join(__dirname, '..', 'connections.js')); ps.patchServer(require('path').join(__dirname, '..', 'server.js')); } catch (e) { console.warn('[app] patch-server failed: ' + e.message); }
-
 /* 3. app modules owned by the repo ------------------------------------------- */
 const MODULES = [
-  /* build-time endpoints — loaded before anything opens a connection */
-  { file: 'wc-build-config.js', marker: 'wc-build-config' },
-  /* 3.74: expose the core's lexical state (App/DB/Remote/VIEWS/AFTER/INV/LT)
-     on window so the add-on modules actually bind. Must stay first. */
-  { file: 'wc-core-bridge.js', marker: 'wc-core-bridge' },
-  /* 3.64: public server config (Appwrite nyc, Binance stream, tolerance) */
-  { file: 'wc-server-config.js', marker: 'wc-server-config' },
-  /* offline-first must run first: it wraps fetch for the modules below */
-  { file: 'offline-first.js', marker: 'wc-offline-first' },
-  { file: 'offline-data.js', marker: 'wc-offline-data' },
-  /* installed-app offline mode: device DB → simulator → native chart →
-     reconciliation queue → offline trading desk (order matters) */
-  { file: 'wc-device-store.js', marker: 'wc-device-store' },
-  { file: 'wc-install-mode.js', marker: 'wc-install-mode' },
-  { file: 'wc-sim-engine.js', marker: 'wc-sim-engine' },
-  { file: 'wc-native-chart.js', marker: 'wc-native-chart' },
-  { file: 'wc-recon.js', marker: 'wc-recon' },
-  { file: 'wc-offline-desk.js', marker: 'wc-offline-desk' },
-  /* 3.65: Telesign SMS OTP on the signup and login screens */
-  { file: 'wc-telesign-auth.js', marker: 'wc-telesign-auth' },
-  /* extended 300+ instrument catalogue — must exist before the market views */
-  { file: 'wc-market-universe-data.js', marker: 'wc-market-universe-data' },
-  { file: 'wc-market-universe.js', marker: 'wc-market-universe' },
-  { file: 'diagnostics.js', marker: 'wc-diagnostics' },
-  { file: 'message-search.js', marker: 'wc-message-search' },
-  { file: 'offline-actions.js', marker: 'wc-offline-actions' },
-  /* 3.67: quiet offline UI, durable offline message queue, fast delivery and
-     the keyboard-safe chat composer. Must load after the offline modules. */
-  { file: 'wc-chat-flow.js', marker: 'wc-chat-flow' },
-  /* 3.69: the chat lane — persistent connection, instant local echo, offline outbox */
-  { file: 'wc-live-chat.js', marker: 'wc-live-chat' },
-  { file: 'admin-auth.js', marker: 'wc-admin-auth' },
-  /* 3.69: a session is only ever ended by the user, never by a sync */
-  { file: 'wc-stay-signed-in.js', marker: 'wc-stay-signed-in' },
   { file: 'subscriptions.js', marker: 'wc-subs' },
   { file: 'tawk-control.js', marker: 'wc-tawk-control' },
-  /* 3.66.1: ONE chart design for every chart in the app (reference board).
-     Must load before trade-chart / pro-chart / bots / invest UI so their
-     renderers can delegate to it. */
-  { file: 'wc-chart-kit.js', marker: 'wc-chart-kit' },
-  { file: 'trade-chart.js', marker: 'wc-trade-chart' },
   { file: 'live-trade.js', marker: 'wc-live-trade' },
-  { file: 'live-candles.js', marker: 'wc-live-candles' },
   { file: 'spot-orders.js', marker: 'wc-spot-orders' },
   { file: 'whalechat-shares.js', marker: 'wc-shares' },
   { file: 'trading-bots.js', marker: 'wc-bots' },
@@ -110,13 +67,10 @@ const MODULES = [
   { file: 'market-live.js', marker: 'wc-market-live' },
   { file: 'market-keys.js', marker: 'wc-market-keys' },
   { file: 'wc-extras.js', marker: 'wc-extras' },
-  { file: 'market-data-ui.js', marker: 'wc-market-data-ui' },
   { file: 'market-247.js', marker: 'wc-market-247' },
   { file: 'trade-guide.js', marker: 'wc-trade-guide' },
   { file: 'investment-hub.js', marker: 'wc-investment-hub' },
   { file: 'account-center.js', marker: 'wc-account-centre' },
-  /* 3.79: balance numbers update in place after approval/transfer — no repaint */
-  { file: 'wc-money-live.js', marker: 'wc-money-live' },
   { file: 'money-hub.js', marker: 'wc-money-hub' },
   { file: 'service-center.js', marker: 'wc-service-center' },
   { file: 'demo-sellers.js', marker: 'wc-demo-sellers' },
@@ -125,59 +79,14 @@ const MODULES = [
   { file: 'portfolio-share.js', marker: 'wc-portfolio-share' },
   { file: 'pro-chart.js', marker: 'wc-pro-chart' },
   { file: 'readability.js', marker: 'wc-readability' },
-  /* native green/red price chart replaces every TradingView surface */
-  { file: 'wc-chart.js', marker: 'wc-chart' },
-  /* 3.67: the stock trade chart is the reference-board chart (chart kit),
-     streaming real ticks green up / red down. Loads after wc-chart so it wins. */
-  { file: 'wc-trade-chart-live.js', marker: 'wc-trade-chart-live' },
-  /* 3.70: live trade readout — entry/live rails on the chart and a move counter
-     that updates in place on the order card. Must load after the live chart. */
-  { file: 'wc-live-moves.js', marker: 'wc-live-moves' },
-  /* 3.71: entry/target rails on the chart + live P/L in the sidebar and a
-     portfolio performance curve that moves with the market. Must load after
-     the chart and the live-trade engine. */
-  { file: 'wc-live-portfolio.js', marker: 'wc-live-portfolio' },
   { file: 'b2b-market.js', marker: 'wc-b2b-market' },
-  { file: 'b2b-performance.js', marker: 'wc-b2b-performance' },
   { file: 'connections-admin.js', marker: 'wc-connections-admin' },
   { file: 'wc-invest-plans.js', marker: 'wc-invest-plans' },
   { file: 'wc-invest-ui.js', marker: 'wc-invest-ui' },
-  /* server accruals are the source of truth for the WC page */
-  { file: 'wc-wc-server-sync.js', marker: 'wc-wc-server-sync' },
   { file: 'typography.js', marker: 'wc-typography' },
   { file: 'session-guard.js', marker: 'wc-session-guard' },
   { file: 'scroll-stability.js', marker: 'wc-scroll-stability' },
-  { file: 'apk-download.js', marker: 'wc-apk-download' },
-  { file: 'market-admin-ui.js', marker: 'wc-market-admin-ui' },
-  { file: 'shares-admin-extra.js', marker: 'wc-shares-admin-extra' },
-  /* always-on browser feed + open admin session (no unlock code) */
-  { file: 'wc-market-feed.js', marker: 'wc-market-feed' },
-  { file: 'wc-admin-open.js', marker: 'wc-admin-open' },
-  /* device-fit layout, readable type, dashboard chat shortcut */
-  { file: 'wc-responsive.js', marker: 'wc-responsive' },
-  { file: 'wc-mobile-fit.js', marker: 'wc-mobile-fit' },
-  { file: 'wc-dashboard-chat.js', marker: 'wc-dashboard-chat' },
-  { file: 'wc-feed-health.js', marker: 'wc-feed-health' },
-  /* singleton heartbeat: one connection for the whole app lifetime */
-  { file: 'wc-connection.js', marker: 'wc-connection' },
-  /* 3.68: admin SMS desk — message, link button, audience, send log */
-  { file: 'wc-admin-sms.js', marker: 'wc-admin-sms' },
-  /* 3.79: new deposit/withdrawal requests reach the admin without repainting */
-  { file: 'wc-admin-watch.js', marker: 'wc-admin-watch' },
-  /* 3.57: account dashboard, email verification, PIN reset and offline charts.
-     Must stay last so its VIEWS/App patches win over earlier modules. */
-  { file: 'wc-build-357.js', marker: 'wc-build-357' },
-  /* 3.69: a working dark/bright switch, authoritative over view-mode */
-  { file: 'wc-theme.js', marker: 'wc-theme' },
-  /* 3.69: repaints are invisible — no scroll jump, no lost typing, no focus loss.
-     Must be last so it wraps the final render(). */
-  { file: 'wc-quiet-render.js', marker: 'wc-quiet-render' },
-  /* 3.74: contacts — one-way add, incoming conversations never blocked, and a
-     sync refresh can never erase a newly saved contact. */
-  { file: 'wc-contact-fix.js', marker: 'wc-contact-fix' },
-  /* 3.73: the chat engine — IndexedDB + Outbox + Appwrite Realtime, with the
-     optimistic send. Must stay LAST so its App.send wrapper is outermost. */
-  { file: 'wc-chat-engine.js', marker: 'wc-chat-engine' }
+  { file: 'apk-download.js', marker: 'wc-apk-download' }
 ];
 try {
   let page = fs.readFileSync(APP, 'utf8');
@@ -205,36 +114,6 @@ try {
     }
   }
 } catch (e) { console.error('[app] module injection failed:', e.message); }
-
-/* 3b. offline manifest — every file the installed app needs with no network.
-   Built from what is actually on disk, so a new module is picked up without
-   anyone remembering to edit a list. --------------------------------------- */
-try {
-  const EXTRA = ['offline-manifest.json'];
-  const SKIP = /\.(b64|part\d+)$|\.apk$|^whalechat\.html\.part|^offline-manifest\.json$/i;
-  const walk = (dir, prefix, out) => {
-    for (const name of fs.readdirSync(dir)) {
-      const full = path.join(dir, name);
-      const rel = prefix ? prefix + '/' + name : name;
-      if (SKIP.test(name)) continue;
-      let st;
-      try { st = fs.statSync(full); } catch (e) { continue; }
-      if (st.isDirectory()) { walk(full, rel, out); continue; }
-      if (!st.size) continue;
-      if (!/\.(html|js|css|json|webmanifest|png|jpg|jpeg|svg|webp|ico|woff2?)$/i.test(name)) continue;
-      out.push('./' + rel);
-    }
-    return out;
-  };
-  const assets = walk(PUB, '', []);
-  const manifest = {
-    version: (() => { try { return JSON.parse(fs.readFileSync(path.join(PUB, 'release.json'), 'utf8')).version; } catch (e) { return null; } })(),
-    builtAt: new Date().toISOString(),
-    assets: assets.concat(EXTRA)
-  };
-  fs.writeFileSync(path.join(PUB, 'offline-manifest.json'), JSON.stringify(manifest) + '\n');
-  console.log('[offline] manifest lists ' + manifest.assets.length + ' file(s) for the installed app');
-} catch (e) { console.error('[offline] manifest failed:', e.message); }
 
 /* 4. single release lever ---------------------------------------------------- */
 try {

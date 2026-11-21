@@ -16,10 +16,6 @@
 const fs = require('fs');
 const path = require('path');
 
-/* 3.77 · Brevo SMTP relay (smtp-relay.brevo.com) is the primary mail path.
-   The small dependency-free client also works inside Appwrite Functions. */
-let smtp = null;
-try { smtp = require('./smtp'); } catch (e) { smtp = null; }
 let nodemailer = null;
 try { nodemailer = require('nodemailer'); } catch (e) { nodemailer = null; }
 
@@ -29,11 +25,6 @@ function applyRuntimeMail() {
   try {
     const c = JSON.parse(fs.readFileSync(MAIL_CFG_FILE, 'utf8'));
     if (c.brevoKey) cfg.brevoKey = c.brevoKey;
-    if (c.smtpKey) { cfg.smtpPass = c.smtpKey; cfg.source = 'runtime'; }
-    if (c.smtpUser) cfg.smtpUser = c.smtpUser;
-    if (c.smtpHost) cfg.smtpHost = c.smtpHost;
-    if (c.smtpPort) cfg.smtpPort = Number(c.smtpPort);
-    if (c.smtpSecure != null) cfg.smtpSecure = !!c.smtpSecure;
     if (c.resendKey) cfg.resendKey = c.resendKey;
     if (c.from) cfg.from = c.from;
     if (c.fromName) cfg.fromName = c.fromName;
@@ -54,13 +45,6 @@ const cfg = {
   resendKey: process.env.RESEND_API_KEY || '',
   resendFrom: process.env.RESEND_FROM || '',
   brevoKey: process.env.BREVO_API_KEY || '',
-  /* Brevo SMTP relay — the SMTP key is the password, the Brevo login is the user */
-  smtpHost: process.env.BREVO_SMTP_HOST || 'smtp-relay.brevo.com',
-  smtpPort: Number(process.env.BREVO_SMTP_PORT || 587),
-  smtpSecure: String(process.env.BREVO_SMTP_SECURE || '').toLowerCase() === 'true' || Number(process.env.BREVO_SMTP_PORT || 587) === 465,
-  smtpUser: process.env.BREVO_SMTP_USER || process.env.SMTP_USER || process.env.OUTLOOK_EMAIL || '',
-  smtpPass: process.env.BREVO_SMTP_KEY || process.env.BREVO_SMTP_PASS || process.env.SMTP_PASS || process.env.OUTLOOK_APP_PASSWORD || '',
-  source: process.env.BREVO_SMTP_KEY ? '.env' : '',
   /* wc-verified-sender */ from: (function () {
     var want = String(process.env.MAIL_FROM || '').trim().toLowerCase();
     var verified = 'whalechat1@gmail.com';
@@ -72,9 +56,7 @@ const cfg = {
 };
 function provider() {
   applyRuntimeMail();
-  /* the SMTP relay is the requested transport: Brevo SMTP key first */
-  if (cfg.smtpPass && cfg.smtpUser) return 'brevo-smtp';
-  if (cfg.brevoKey) return 'brevo-api';
+  if (cfg.brevoKey) return 'brevo';
   if (cfg.resendKey) return 'resend';
   if (cfg.user && cfg.pass) return 'smtp';
   return 'none';
@@ -88,7 +70,6 @@ let timer = null;
 
 function configured() {
   applyRuntimeMail();
-  if (cfg.smtpPass && cfg.smtpUser) return !!cfg.from;
   if (cfg.brevoKey) return !!cfg.from;
   if (cfg.resendKey) return !!cfg.from;
   return !!(nodemailer && cfg.user && cfg.pass && cfg.from);
@@ -109,7 +90,7 @@ function load() {
   if (!Array.isArray(queue)) queue = [];
   if (!Array.isArray(sentKeys)) sentKeys = [];
   state.queued = queue.length;
-  if (configured() && provider() === 'smtp' && !smtp && nodemailer) {
+  if (configured() && provider() === 'smtp') {
     transport = nodemailer.createTransport({
       host: cfg.host, port: cfg.port, secure: cfg.secure,
       auth: { user: cfg.user, pass: cfg.pass },
@@ -262,42 +243,6 @@ const templates = {
       text: 'Your WhaleChat verification code is ' + code + ' (valid 15 minutes). Open: ' + copyUrl
     };
   },
-  /* offline → online trade reconciliation receipt (3.64.0) */
-  offlineReceipt(data, ctx) {
-    const d = data || {};
-    const user = d.user || {};
-    const rows = (d.orders || []).filter(function (r) {
-      return r.status === 'RECONCILED' || r.status === 'ADJUSTED';
-    });
-    const badge = function (status) {
-      const color = status === 'ADJUSTED' ? '#f5b544' : '#2ee6c9';
-      return '<span style="display:inline-block;font-size:11px;font-weight:700;letter-spacing:.04em;padding:2px 8px;border-radius:999px;border:1px solid ' + color + '33;color:' + color + '">' + escapeHtml(status) + '</span>';
-    };
-    const lines = rows.map(function (r) {
-      return '<tr>'
-        + '<td style="padding:8px 6px;border-bottom:1px solid rgba(255,255,255,.06);color:#e9f4f9;font-weight:700">' + escapeHtml(r.side || '') + ' ' + escapeHtml(r.ticker || '') + '</td>'
-        + '<td style="padding:8px 6px;border-bottom:1px solid rgba(255,255,255,.06)">' + escapeHtml(String(r.orderType || 'MARKET')) + '</td>'
-        + '<td style="padding:8px 6px;border-bottom:1px solid rgba(255,255,255,.06)">' + escapeHtml(String(r.executedPrice != null ? '$' + Number(r.executedPrice).toFixed(4) : '—')) + '</td>'
-        + '<td style="padding:8px 6px;border-bottom:1px solid rgba(255,255,255,.06)">' + badge(r.status) + '</td>'
-        + '</tr>';
-    }).join('');
-    return {
-      subject: 'WhaleChat — ' + rows.length + ' offline trade' + (rows.length === 1 ? '' : 's') + ' synced',
-      html: layout('Your offline trades are synced',
-        'Hi ' + escapeHtml((user.fullName || user.username || 'there').split(' ')[0]) + ',<br/><br/>'
-        + 'Your device reconnected and WhaleChat settled the trades you placed offline against the live market (tolerance ' + escapeHtml(String(d.tolerance || 2)) + '%).'
-        + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:16px 0;font-size:13px">'
-        + '<tr><th align="left" style="padding:6px;color:#63798a;font-weight:600;font-size:11px;text-transform:uppercase">Trade</th>'
-        + '<th align="left" style="padding:6px;color:#63798a;font-weight:600;font-size:11px;text-transform:uppercase">Type</th>'
-        + '<th align="left" style="padding:6px;color:#63798a;font-weight:600;font-size:11px;text-transform:uppercase">Price</th>'
-        + '<th align="left" style="padding:6px;color:#63798a;font-weight:600;font-size:11px;text-transform:uppercase">Status</th></tr>'
-        + lines + '</table>'
-        + '<b style="color:#e9f4f9">Portfolio cash balance:</b> $' + Number(d.balanceUsd || 0).toFixed(2) + '<br/><br/>'
-        + '<span style="font-size:12px;color:#63798a">Prices adjusted away from your offline execution price are filled at the live market price and flagged ADJUSTED; the committed dollar amount is always preserved.</span>',
-        { label: 'Open your portfolio', url: ctx.appUrl + '/whalechat.html#/investment' }),
-      text: rows.length + ' offline trade(s) synced. Balance: $' + Number(d.balanceUsd || 0).toFixed(2)
-    };
-  },
   test(ctx) {
     return {
       subject: 'WhaleChat email service is working',
@@ -343,23 +288,7 @@ async function flush() {
   try {
     for (const item of [...queue]) {
       try {
-        if (provider() === 'brevo-smtp') {
-          if (!smtp) throw new Error('smtp_module_unavailable');
-          await smtp.sendMail({
-            host: cfg.smtpHost,
-            port: cfg.smtpPort,
-            secure: cfg.smtpSecure,
-            user: cfg.smtpUser,
-            pass: cfg.smtpPass
-          }, {
-            from: cfg.from,
-            fromName: cfg.fromName,
-            to: item.to,
-            subject: item.subject,
-            html: item.html,
-            text: item.text
-          });
-        } else if (provider() === 'brevo-api') {
+        if (provider() === 'brevo') {
           const res = await fetch('https://api.brevo.com/v3/smtp/email', {
             method: 'POST',
             headers: { 'api-key': cfg.brevoKey, 'content-type': 'application/json', accept: 'application/json' },
@@ -395,19 +324,7 @@ async function flush() {
             try { msg = JSON.parse(body).message || msg; } catch (e) {}
             throw new Error('Resend ' + res.status + ': ' + msg);
           }
-        } else if (smtp) {
-          await smtp.sendMail({
-            host: cfg.host, port: cfg.port, secure: cfg.secure,
-            user: cfg.user, pass: cfg.pass
-          }, {
-            from: cfg.from,
-            fromName: cfg.fromName,
-            to: item.to,
-            subject: item.subject,
-            html: item.html,
-            text: item.text
-          });
-        } else if (transport) {
+        } else {
           await transport.sendMail({
             from: `"${cfg.fromName}" <${cfg.from}>`,
             to: item.to,
@@ -415,8 +332,6 @@ async function flush() {
             text: item.text,
             html: item.html
           });
-        } else {
-          throw new Error('smtp_not_configured');
         }
         item.sentAt = Date.now();
         if (item.key) markSent(item.key);
@@ -452,12 +367,8 @@ function status() {
     configured: configured(),
     provider: provider(),
     from: cfg.from || null,
-    host: provider() === 'brevo-smtp' ? cfg.smtpHost
-      : provider() === 'brevo-api' ? 'api.brevo.com'
-      : (provider() === 'resend' ? 'api.resend.com' : cfg.host),
-    port: provider() === 'brevo-smtp' ? cfg.smtpPort : (provider() === 'smtp' ? cfg.port : 443),
-    secure: provider() === 'brevo-smtp' ? cfg.smtpSecure : undefined,
-    transport: provider(),
+    host: provider() === 'brevo' ? 'api.brevo.com' : (provider() === 'resend' ? 'api.resend.com' : cfg.host),
+    port: provider() === 'smtp' ? cfg.port : 443,
     queued: queue.length,
     sent: state.sent,
     failed: state.failed,

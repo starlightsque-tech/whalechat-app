@@ -63,7 +63,7 @@
   }
 
   function apiPath(p) {
-    try { if (typeof Remote !== 'undefined' && Remote && Remote.url) return Remote.url(p); } catch (e) {}
+    try { if (typeof Remote !== 'undefined' && Remote && Remote.enabled) return Remote.url(p); } catch (e) {}
     return p;
   }
   async function getJSON(pathname, timeout) {
@@ -957,62 +957,8 @@
   }
   PC.equities = PC.equities || [];
 
-  function kitPoints(points) {
-    return (points || []).map(function (p, i) {
-      if (p == null) return null;
-      if (typeof p === 'number') return { t: i, p: p };
-      var val = p.p != null ? p.p : (p.value != null ? p.value : (p.v != null ? p.v : p.close));
-      var tt = p.t != null ? p.t : (p.time != null ? p.time : i);
-      if (tt instanceof Date) tt = tt.getTime();
-      if (typeof tt === 'number' && tt < 1e11 && tt > 1e8) tt = tt * 1000;
-      return { t: Number(tt) || i, p: Number(val) };
-    }).filter(function (x) { return x && isFinite(x.p); });
-  }
-
   PC.mountEquity = function (host, opts) {
     if (!host) return null;
-    /* 3.66.1: company/B2B plan charts render with the shared reference chart */
-    try {
-      if (window.WCChartKit && WCChartKit.mount) {
-        const key0 = (opts && opts.key) || 'default';
-        const prev = PC.equities.find((e) => e.host === host);
-        if (prev && prev.key === key0 && prev.__kit) {
-          prev.setData((opts && opts.points) || [], opts);
-          return prev;
-        }
-        const pts0 = kitPoints((opts && opts.points) || []);
-        host.innerHTML = '';
-        const kernel = WCChartKit.mount(host, {
-          symbol: (opts && opts.hud && opts.hud.title) || '',
-          data: pts0,
-          price: pts0.length ? pts0[pts0.length - 1].p : 0,
-          height: (opts && opts.height) || 300,
-          range: 'ALL',
-          lines: ((opts && opts.lines) || []).map(function (l) {
-            return { price: Number(l.price), color: l.color, title: String(l.title || '') };
-          })
-        });
-        if (kernel) {
-          const inst = {
-            __kit: true, key: key0, host: host,
-            setData: function (pts, o) {
-              const mapped = kitPoints(pts || []);
-              kernel.setData(mapped);
-              if (mapped.length) kernel.setPrice(mapped[mapped.length - 1].p);
-              if (o && o.lines) kernel.setLines((o.lines || []).map(function (l) {
-                return { price: Number(l.price), color: l.color, title: String(l.title || '') };
-              }));
-            },
-            setLines: function (lines) { kernel.setLines(lines || []); },
-            destroy: function () { try { kernel.destroy(); } catch (e) {} }
-          };
-          const i = PC.equities.findIndex((e) => e.host === host);
-          if (i >= 0) PC.equities.splice(i, 1);
-          PC.equities.push(inst);
-          return inst;
-        }
-      }
-    } catch (e) {}
     const key = (opts && opts.key) || 'default';
     const existing = PC.equities.find((e) => e.host === host);
     if (existing && existing.key === key) {

@@ -16,7 +16,7 @@
   function me2() { try { return me(); } catch (e) { return null; } }
   function tmsg(m, t) { try { if (typeof toast === 'function') toast(m, t || 'ok'); } catch (e) {} }
   function url(p) {
-    try { if (typeof Remote !== 'undefined' && Remote && Remote.url) return Remote.url(p); } catch (e) {}
+    try { if (typeof Remote !== 'undefined' && Remote && Remote.enabled && Remote.url) return Remote.url(p); } catch (e) {}
     return p;
   }
   function dot(ok) { return '<i class="cn-dot ' + (ok ? 'ok' : 'off') + '"></i>'; }
@@ -33,16 +33,9 @@
     return STATE.status;
   };
 
-  /* Load at most once at a time, and never re-render on failure: an offline
-     device used to load → render → load … until the tab ran out of memory. */
   C.view = function () {
-    if (!STATE.status && !STATE.loading && Date.now() > (STATE.retryAfter || 0)) {
-      STATE.loading = true;
-      C.load().then(function (status) {
-        STATE.loading = false;
-        if (status) { try { if (typeof render === 'function') render(); } catch (e) {} }
-        else STATE.retryAfter = Date.now() + 15000;
-      }).catch(function () { STATE.loading = false; STATE.retryAfter = Date.now() + 15000; });
+    if (!STATE.status) {
+      C.load().then(function () { try { if (typeof render === 'function') render(); } catch (e) {} });
     }
     var s = STATE.status;
     if (!s) {

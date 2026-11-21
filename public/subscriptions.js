@@ -169,10 +169,7 @@
 
   function ledgerLine(label, usd, coins, meta) {
     var a = acct(); if (!a) return;
-    var m = meta || null;
-    var tid = String((m && m.tool) || '').toLowerCase();
-    var scope = tid === 'autobuysell' ? 'b2b' : tid === 'autosecure' ? 'stock' : (/^bot|tier/.test(tid) ? 'bot' : 'general');
-    a.ledger.unshift({ id: 'il_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), label: label, usd: Number(usd) || 0, coins: Number(coins) || 0, scope: scope, meta: m, at: Date.now() });
+    a.ledger.unshift({ id: 'il_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), label: label, usd: Number(usd) || 0, coins: Number(coins) || 0, meta: meta || null, at: Date.now() });
     if (a.ledger.length > 300) a.ledger.length = 300;
   }
   S.ledger = ledgerLine;
@@ -223,7 +220,7 @@
     var u = user(); if (!u) return { skipped: true };
     try {
       var path = (function (p) { try { return Remote.url(p); } catch (e) { return p; } })('/api/bots/auto-secure/subscribe');
-      var r = await Remote.fetchJSON(path, { method: 'POST', body: JSON.stringify({ userId: u.id }) }, 45000);
+      var r = await Remote.fetchJSON(path, { method: 'POST', body: JSON.stringify({ userId: u.id }) }, 25000);
       try { if (window.WC_BOTS) window.WC_BOTS.state = null; } catch (e) {}
       return r && (r.data || r) || { ok: true };
     } catch (e) {
@@ -252,10 +249,8 @@
       /* the server bot engine charges its own balance — nothing to do here */
       if (!opts.skipPin && !(await pinOk('Confirm subscription', d.name))) return { ok: false, error: 'cancelled' };
       if (d.bot) {
-        /* The local record is the source of truth for the paid duration. A
-           cold/unreachable bot engine must not fail the subscription or show
-           "failed to fetch" — sync it in the background when it is available. */
-        try { await pushToBotEngine(); } catch (e) {}
+        var res = await pushToBotEngine();
+        if (res && res.error) return { ok: false, error: res.error };
       }
     }
 
@@ -280,7 +275,7 @@
     if (!S.record(id)) return { ok: false, error: 'not subscribed' };
     if (!opts.skipPin && !(await pinOk('Turn off tool', 'This stops future billing. Paid time is not refunded.'))) return { ok: false, error: 'cancelled' };
     var u = user();
-    if (typeof Remote !== 'undefined' && Remote && Remote.url && def(id) && def(id).bot) {
+    if (typeof Remote !== 'undefined' && Remote && Remote.enabled && def(id) && def(id).bot) {
       try {
         var p = (function (x) { try { return Remote.url(x); } catch (e) { return x; } })('/api/bots/auto-secure/toggle');
         await Remote.fetchJSON(p, { method: 'POST', body: JSON.stringify({ userId: u.id, enabled: false }) }, 20000);
@@ -361,8 +356,7 @@
     return '<div class="wc-auto-box" style="margin-top:8px;padding:8px;border:1px dashed var(--border);border-radius:10px">' +
       '<label class="row" style="gap:8px;align-items:center;font-size:12px"><input type="checkbox" id="' + sfxId('On', sfx) + '"' + (al.auto ? ' checked' : '') + dis + '/> <b>Use Auto Buy/Sell</b> to buy and sell ' + escS(ticker) + ' at these prices</label>' +
       '<div class="field" style="margin:6px 0 0"><label class="label">Auto-buy amount (USD from B2B capital)</label>' +
-        '<input class="input" id="' + sfxId('Amt', sfx) + '" type="number" step="0.01" min="0" placeholder="Up to $100" value="' + (Number(al.autoAmount) > 0 ? Number(al.autoAmount) : '') + '"' + dis + '/>' +
-        '<div class="tiny muted">Leave blank and the tool uses up to $100 of your B2B capital.</div></div>' +
+        '<input class="input" id="' + sfxId('Amt', sfx) + '" type="number" step="0.01" min="0" placeholder="0.00" value="' + (Number(al.autoAmount) > 0 ? Number(al.autoAmount) : '') + '"' + dis + '/></div>' +
       '<label class="row" style="gap:8px;align-items:center;font-size:11px;margin-top:6px"><input type="checkbox" id="' + sfxId('Rep', sfx) + '"' + (al.autoRepeat ? ' checked' : '') + dis + '/> Buy again at the buy price after each auto sell</label>' +
       (sub
         ? (S.autoOn() ? '' : '<div class="tiny warn" style="margin-top:4px">Auto Buy/Sell is switched off — turn it on from the B2B desk.</div>')
@@ -382,6 +376,7 @@
     if (!opts || !opts.auto) return '';
     if (!S.autoSubscribed()) return 'Subscribe to the Auto Buy/Sell tool first';
     if (!(buy > 0) && !(sell > 0)) return 'Set a buy or sell price for ' + ticker + ' so Auto Buy/Sell knows when to trade';
+    if (buy > 0 && !(opts.amount > 0)) return 'Enter the amount Auto Buy/Sell should buy ' + ticker + ' with';
     if (buy > 0 && sell > 0 && sell <= buy) return 'The sell price must be above the buy price for ' + ticker;
     return '';
   };
@@ -389,26 +384,15 @@
   S.applyAuto = function (al, opts) {
     if (!al || !opts) return al;
     var buy = Number(al.buy) || 0, sell = Number(al.sell) || 0;
-    var amount = opts.amount > 0 ? opts.amount : 0;
-    var repeat = !!opts.repeat;
     var holding = Number(al.autoUnits) > 0 && al.autoState !== 'buy' && al.autoState !== 'done';
-    var wasAuto = !!al.auto;
-    var fingerprint = [buy, sell, amount, repeat ? 1 : 0].join('|');
-    var configChanged = al.autoConfig !== fingerprint;
     al.auto = !!opts.auto;
-    al.autoAmount = amount;
-    al.autoRepeat = repeat;
-    al.autoConfig = fingerprint;
-    /* only a real change to the trigger restarts the trade cycle; saving the
-       same alert again keeps the server-side buy/sell state intact */
-    if (!wasAuto || configChanged) al.autoArmedAt = Date.now();
+    al.autoAmount = opts.amount > 0 ? opts.amount : 0;
+    al.autoRepeat = !!opts.repeat;
+    al.autoArmedAt = Date.now();
     al.autoError = '';
     if (!al.auto) al.autoState = holding ? al.autoState : '';
     else if (holding) al.autoState = sell > 0 ? 'sell' : 'held';
     else { al.autoState = buy > 0 ? 'buy' : 'sell'; al.autoUnits = 0; }
-    /* selecting the tool on an alert means the user wants it trading */
-    var acc = acct();
-    if (al.auto && acc) acc.autoBuySellOn = true;
     return al;
   };
   S.autoToggle = function () {

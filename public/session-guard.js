@@ -228,7 +228,7 @@
     syncingForm = true;
     const btn = form.querySelector('button[type=submit]');
     const label = btn ? btn.innerHTML : '';
-    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Signing you in…'; }
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Syncing your account…'; }
     try { await Remote.refresh(true); } catch (err) {}
     G._lastSync = Date.now();
     syncingForm = false;

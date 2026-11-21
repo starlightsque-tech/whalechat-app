@@ -17,7 +17,7 @@ App.refundDel = async function (id) {
 /* ---------------- data backups ---------------- */
 App.adminBackupNow = async function () {
   try {
-    const r = await fetch((typeof Remote !== 'undefined' ? Remote.url('/api/backup') : '/api/backup'), { method: 'POST' }).then(x => x.json());
+    const r = await fetch('/api/backup', { method: 'POST' }).then(x => x.json());
     if (!r.ok) throw new Error(r.error || 'failed');
     toast('Backup created (' + r.count + ' snapshots kept)', 'ok');
     loadReleasePanel();
@@ -26,7 +26,7 @@ App.adminBackupNow = async function () {
 
 App.adminBackupDownload = async function () {
   try {
-    const res = await fetch((typeof Remote !== 'undefined' ? Remote.url('/api/backup/latest') : '/api/backup/latest'), { cache: 'no-store' });
+    const res = await fetch('/api/backup/latest', { cache: 'no-store' });
     if (!res.ok) throw new Error('no backup yet');
     const blob = await res.blob();
     const a = document.createElement('a');
@@ -53,7 +53,7 @@ App.adminBackupRestore = function () {
       danger: true, ok: 'Restore backup'
     })) return;
     try {
-      const r = await fetch((typeof Remote !== 'undefined' ? Remote.url('/api/state/restore') : '/api/state/restore'), {
+      const r = await fetch('/api/state/restore', {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ db })
       }).then(x => x.json());
@@ -256,9 +256,8 @@ async function loadEmailPanel() {
   const badge = document.getElementById('emailBadge');
   if (!box || !badge) return;
   try {
-    const d = await fetch((typeof Remote !== 'undefined' ? Remote.url('/api/email/status') : '/api/email/status'), { cache: 'no-store' }).then(r => r.json());
+    const d = await fetch('/api/email/status', { cache: 'no-store' }).then(r => r.json());
     if (!d || d.ok === false) throw new Error('unavailable');
-    try { localStorage.setItem('wc.email.status', JSON.stringify({ d: d, at: Date.now() })); } catch (e) {}
     badge.className = 'badge ' + (d.configured ? 'badge-success' : 'badge-warn');
     badge.textContent = d.configured ? 'Connected' : 'Not configured';
     box.innerHTML = `<div class="kv"><span class="k">Mailbox</span><span class="v">${esc(d.from || '—')}</span></div>
@@ -267,17 +266,6 @@ async function loadEmailPanel() {
       <div class="kv"><span class="k">Sent this session</span><span class="v">${d.sent || 0}</span></div>
       ${d.lastError ? `<div class="tiny mt8" style="color:var(--danger)">${esc(d.lastError)}</div>` : ''}`;
   } catch (e) {
-    let cached = null;
-    try { cached = JSON.parse(localStorage.getItem('wc.email.status') || 'null'); } catch (e2) {}
-    if (cached && cached.d) {
-      const d = cached.d;
-      badge.className = 'badge ' + (d.configured ? 'badge-success' : 'badge-warn');
-      badge.textContent = d.configured ? 'Connected · cached' : 'Not configured · cached';
-      box.innerHTML = '<div class="kv"><span class="k">Mailbox</span><span class="v">' + esc(d.from || '—') + '</span></div>' +
-        '<div class="kv"><span class="k">Provider</span><span class="v">' + esc(d.provider || '—') + '</span></div>' +
-        '<div class="tiny muted mt8">Offline — last known state from ' + timeAgo(cached.at) + ' ago. The email server itself runs 24/7 in Appwrite.</div>';
-      return;
-    }
     badge.className = 'badge badge-warn'; badge.textContent = 'No sync server';
     box.innerHTML = '<div class="tiny muted">Email runs on the sync server. Connect this device to a server to see its status.</div>';
   }
@@ -289,7 +277,7 @@ App.emailTest = async function () {
   toast('Sending test email…');
   let r = null;
   try {
-    r = await fetch((typeof Remote !== 'undefined' ? Remote.url('/api/email/test') : '/api/email/test'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ to }) }).then(x => x.json());
+    r = await fetch('/api/email/test', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ to }) }).then(x => x.json());
   } catch (e) { return toast('Could not reach the server', 'err'); }
   if (r && r.ok) toast('Test email sent to ' + to, 'ok');
   else if (r && r.error === 'smtp_not_configured') toast('Mailbox not connected on the server yet', 'err');
@@ -794,16 +782,9 @@ const Remote = {
   setStoredBase(v) {
     try { v ? localStorage.setItem(LS_SERVER, v) : localStorage.removeItem(LS_SERVER); } catch (e) {}
   },
-  url(p) {
-    /* never fall back to the page origin on a static host: the Appwrite site
-       has no /api/* and answers with a router_path_not_found JSON, which used
-       to surface as a bare "not_found" toast on take-profit / subscribe */
-    let base = this.base || '';
-    try { if (!base && typeof DEFAULT_SYNC_SERVER !== 'undefined' && DEFAULT_SYNC_SERVER) base = DEFAULT_SYNC_SERVER; } catch (e) {}
-    return base + p;
-  },
+  url(p) { return (this.base || '') + p; },
 
-  async fetchJSON(pathname, opts = {}, timeout = 15000) {
+  async fetchJSON(pathname, opts = {}, timeout = 7000) {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeout);
     try {
@@ -824,34 +805,13 @@ const Remote = {
         return await this.connect(url.replace(/\/+$/, ''), { silent: true, initFromLocal: true });
       }
       const stored = this.storedBase();
-      if (stored) {
-        const ok = await this.connect(stored, { silent: true, initFromLocal: true });
-        if (ok) return true;
-        /* the saved host moved or died — drop it and fall through to the
-           current Appwrite sync server instead of staying offline */
-        this.setStoredBase('');
-      }
-      // An explicit sync server always wins (the Appwrite site is static)
-      if (DEFAULT_SYNC_SERVER) {
-        /* Appwrite Functions cold-start: a single fast probe can time out on
-           the first request of the day, so retry once before giving up */
-        let ok = await this.connect(DEFAULT_SYNC_SERVER, { silent: true, initFromLocal: true });
-        if (!ok) {
-          await new Promise((r) => setTimeout(r, 1800));
-          ok = await this.connect(DEFAULT_SYNC_SERVER, { silent: true, initFromLocal: true });
-        }
-        if (ok) return true;
-        this.status = 'offline';
-        return false;
-      }
-      /* Cloudflare Pages: the edge worker serves /api/* on the same origin.
-         Connect to the page origin instead of a separate sync host. */
-      if (!DEFAULT_SYNC_SERVER && /\.pages\.dev$/i.test(location.hostname)) {
-        return await this.connect('', { silent: true, initFromLocal: true });
-      }
+      if (stored) return await this.connect(stored, { silent: true, initFromLocal: true });
       // Only a server that served this page injects the marker — avoids failed probes on static hosts
       if (window.__WC_SERVER__) {
         return await this.connect('', { silent: true, initFromLocal: true });
+      }
+      if (DEFAULT_SYNC_SERVER) {
+        return await this.connect(DEFAULT_SYNC_SERVER, { silent: true, initFromLocal: true });
       }
     } catch (e) {}
     this.status = 'local';
@@ -862,25 +822,13 @@ const Remote = {
     base = String(base || '').replace(/\/+$/, '');
     this.status = 'connecting';
     try {
-      /* the health probe must use the CANDIDATE base, not this.base: a new
-         server URL was previously probed against the old/empty base and always
-         failed with “Not a WhaleChat server” / “Failed to fetch” */
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 15000);
-      let health = null;
-      try {
-        const res = await fetch(base + '/api/health', { signal: ctrl.signal, cache: 'no-store' });
-        health = await res.json().catch(() => null);
-        if (!res.ok || !health || health.app !== 'whalechat') throw new Error('Not a WhaleChat server');
-      } finally { clearTimeout(timer); }
+      const health = await this.fetchJSON(base + '/api/health', {}, 5000);
+      if (!health.res.ok || !health.data || health.data.app !== 'whalechat') throw new Error('Not a WhaleChat server');
       this.base = base;
       this.setStoredBase(base);
       this.enabled = true;
       this.status = 'online';
       this.retry = 0;
-      /* Appwrite Functions cannot hold SSE open: the health payload says so
-         and the client polls instead of reconnecting forever */
-      this.stream = !health || health.stream !== false;
 
       const st = await this.fetchJSON('/api/state');
       if (!st.res.ok || !st.data) throw new Error('Could not read server state');
@@ -894,45 +842,10 @@ const Remote = {
         this.rev = r.data.rev || 1;
         this.last = cloneDB(DB);
       } else {
-        const serverDb = st.data.db;
-        const serverUsers = Array.isArray(serverDb.users) ? serverDb.users.length : 0;
-        const localUsers = (DB && Array.isArray(DB.users)) ? DB.users.length : 0;
-        if (serverUsers === 0 && localUsers > 0) {
-          /* the server was reset (a new instance or empty disk): push this
-             device's database back instead of wiping the local account */
-          const seed = await this.fetchJSON('/api/state/init', { method: 'POST', body: JSON.stringify({ db: DB, rev: Math.max(1, Number(st.data.rev) || 1) }) });
-          if (!seed.res.ok) throw new Error((seed.data && seed.data.error) || 'Restore failed');
-          this.rev = seed.data.rev || 1;
-          this.last = cloneDB(DB);
-          saveLocalNow();
-        } else {
-          /* first boot after an update: never let a thin server snapshot erase
-             the signed-in account or the contacts saved on this device */
-          try {
-            const sid = SESSION && SESSION.userId;
-            const localUser = sid && DB && Array.isArray(DB.users) ? DB.users.find(u => u.id === sid) : null;
-            if (window.__wcUpgraded && localUser && !(serverDb.users || []).some(u => u.id === sid)) {
-              serverDb.users = (serverDb.users || []).concat([localUser]);
-              const sc = Array.isArray(serverDb.contacts) ? serverDb.contacts : [];
-              const haveIds = new Set(sc.map(c => c && c.id));
-              (DB.contacts || []).forEach(c => { if (c && c.ownerId === sid && !haveIds.has(c.id)) sc.push(c); });
-              serverDb.contacts = sc;
-              setTimeout(() => { try { this.flush(); } catch (e) {} }, 150);
-            }
-          } catch (e) {}
-          /* never let a server snapshot drop offline messages: union local
-             chat into the snapshot, then push the union back on reconnect */
-          const serverBeforeMerge = cloneDB(serverDb);
-          const preservedChat = mergeLocalChatInto(serverDb);
-          DB = migrateDB(serverDb);
-          this.rev = st.data.rev || 0;
-          this.last = preservedChat ? serverBeforeMerge : cloneDB(DB);
-          saveLocalNow();
-          if (preservedChat) {
-            this.dirty = true;
-            setTimeout(() => { try { this.flush(); } catch (e) {} }, 250);
-          }
-        }
+        DB = migrateDB(st.data.db);
+        this.rev = st.data.rev || 0;
+        this.last = cloneDB(DB);
+        saveLocalNow();
       }
       try { resolvePendingReferrals(); reconcileReferralBonuses(); } catch (e) {}
       // session may point at a user this server doesn't know
@@ -952,7 +865,6 @@ const Remote = {
 
   disconnect() {
     stopEventStream();
-    clearInterval(this.pollTimer); this.pollTimer = null;
     this.enabled = false;
     this.base = '';
     this.status = 'local';
@@ -960,9 +872,7 @@ const Remote = {
   },
 
   onLocalChange() {
-    if (!this.enabled) return;
-    /* mark the change even while a server refresh is being applied: the flush
-       waits for that refresh to finish and then sends this local change */
+    if (!this.enabled || this.applying) return;
     this.dirty = true;
     clearTimeout(this.timer);
     this.timer = setTimeout(() => this.flush(), 140);
@@ -971,11 +881,8 @@ const Remote = {
   async flush() {
     if (!this.enabled || this.applying || this.flushing) return;
     if (!this.dirty) return;
-    /* snapshot the database: a change made while this request is in flight
-       must stay dirty and be sent next, never be marked as synced */
-    const snapshot = cloneDB(DB);
-    const ops = diffDB(this.last || blankDB(), snapshot);
-    if (!ops.length) { this.last = snapshot; this.dirty = false; return; }
+    const ops = diffDB(this.last || blankDB(), DB);
+    if (!ops.length) { this.dirty = false; return; }
     this.flushing = true;
     this.status = 'syncing';
     try {
@@ -985,7 +892,7 @@ const Remote = {
       }, 10000);
       if (!r.res.ok) throw new Error((r.data && r.data.error) || ('Sync failed (' + r.res.status + ')'));
       this.rev = r.data.rev || this.rev;
-      this.last = snapshot;                 /* only what this request carried */
+      this.last = cloneDB(DB);
       this.dirty = false;
       this.status = 'online';
       this.lastError = '';
@@ -998,12 +905,7 @@ const Remote = {
       this.retryTimer = setTimeout(() => { this.flush(); }, 800 * this.retry);
     } finally {
       this.flushing = false;
-      let remaining = [];
-      try { remaining = diffDB(this.last, DB); } catch (e) {}
-      if ((this.dirty || remaining.length) && this.status === 'online') {
-        this.dirty = true;
-        setTimeout(() => this.flush(), 80);
-      }
+      if (this.dirty && this.status === 'online') setTimeout(() => this.flush(), 80);
     }
   },
 
@@ -1015,55 +917,13 @@ const Remote = {
       if (!r.res.ok || !r.data) throw new Error('State fetch failed');
       if (!force && (r.data.rev === this.rev || r.data.rev === undefined)) return;
       if (!r.data.db) return;
-      const serverUsers = Array.isArray(r.data.db.users) ? r.data.db.users.length : 0;
-      const localUsers = (DB && Array.isArray(DB.users)) ? DB.users.length : 0;
-      if (serverUsers === 0 && localUsers > 0) {
-        /* server came back empty (new instance / cleared disk): re-seed it from
-           this device rather than replacing the signed-in account with nothing */
-        const seed = await this.fetchJSON('/api/state/init', { method: 'POST', body: JSON.stringify({ db: DB, rev: Math.max(1, Number(r.data.rev) || 1) }) });
-        if (seed.res.ok) { this.rev = seed.data.rev || r.data.rev; this.last = cloneDB(DB); this.status = 'online'; return; }
-        /* the server would not accept a seed but still reports nobody: keep
-           this device's database rather than wiping every account */
-        this.status = 'online';
-        return;
-      }
-
-      /* First boot after an app update: if the server snapshot arrived thinner
-         than this device (a cold instance that read a stale/partial state),
-         merge the signed-in account and their contacts instead of dropping
-         them. A normal, later refresh still follows the server exactly. */
-      let upgradeMerge = false;
-      try {
-        const sessionUser = SESSION ? (DB.users || []).find(u => u.id === SESSION.userId) : null;
-        if (window.__wcUpgraded && sessionUser && !r.data.db.users.some(u => u.id === SESSION.userId)) {
-          r.data.db.users = (r.data.db.users || []).concat([sessionUser]);
-          const serverContacts = Array.isArray(r.data.db.contacts) ? r.data.db.contacts : [];
-          const haveContact = new Set(serverContacts.map(c => c && c.id));
-          (DB.contacts || []).forEach(c => {
-            if (c && c.ownerId === SESSION.userId && !haveContact.has(c.id)) serverContacts.push(c);
-          });
-          r.data.db.contacts = serverContacts;
-          upgradeMerge = true;
-        }
-      } catch (e) {}
-
       this.applying = true;
-      const refreshBeforeMerge = cloneDB(r.data.db);
-      const preservedOnRefresh = mergeLocalChatInto(r.data.db);
       DB = migrateDB(r.data.db);
       this.rev = r.data.rev;
-      this.last = preservedOnRefresh ? refreshBeforeMerge : cloneDB(DB);
+      this.last = cloneDB(DB);
       saveLocalNow();
-      if (preservedOnRefresh) {
-        this.dirty = true;
-        setTimeout(() => { try { this.flush(); } catch (e) {} }, 120);
-      }
       if (SESSION && !DB.users.some(u => u.id === SESSION.userId)) {
         SESSION = null; localStorage.removeItem(LS_SESSION);
-      }
-      if (upgradeMerge) {
-        this.dirty = true;
-        setTimeout(() => { try { this.flush(); } catch (e) {} }, 80);
       }
       this.status = 'online';
       try { resolvePendingReferrals(); reconcileReferralBonuses(); } catch (e) {}
@@ -1076,7 +936,6 @@ const Remote = {
     } finally {
       this.applying = false;
       if (this.pendingRefresh) { this.pendingRefresh = false; setTimeout(() => this.refresh(true), 150); }
-      if (this.dirty) setTimeout(() => { try { this.flush(); } catch (e) {} }, 180);
     }
   }
 };
@@ -1084,43 +943,6 @@ const Remote = {
 const SYNC_COLLECTIONS = ['users', 'vendors', 'companyProducts', 'products', 'orders', 'deposits', 'withdrawals', 'messages', 'statuses', 'notifications', 'contacts', 'blocks', 'txs', 'referrals', 'purchases', 'refunds', 'vendorApplications', 'audit', 'portfolioAudit', 'botAccounts', 'botEvents', 'stocks', 'holdings', 'trades', 'watchlist', 'alerts', 'traffic'];
 
 function cloneDB(db) { try { return JSON.parse(JSON.stringify(db)); } catch (e) { return db; } }
-/* Offline-first chat: a server snapshot must never erase a message this device
-   already holds (sent while offline, or received and not yet mirrored).
-   Messages are unioned by id; the local copy wins only when it carries newer
-   delivery state or an edit. Called before every DB replacement. */
-function mergeLocalChatInto(target) {
-  if (!target || typeof DB === 'undefined' || !DB) return 0;
-  const server = Array.isArray(target.messages) ? target.messages : (target.messages = []);
-  const local = Array.isArray(DB.messages) ? DB.messages : [];
-  const byId = new Map();
-  server.forEach(m => { if (m && m.id) byId.set(m.id, m); });
-  let added = 0;
-  local.forEach(m => {
-    if (!m || !m.id) return;
-    const cur = byId.get(m.id);
-    if (!cur) { server.push(m); byId.set(m.id, m); added++; return; }
-    /* keep the more advanced delivery state and the newest edit */
-    const localNewer = Number(m.editedAt || 0) > Number(cur.editedAt || 0);
-    const localAhead = (m.status && m.status !== 'sent' && cur.status === 'sent') ||
-      (Array.isArray(m.readBy) && m.readBy.length > (Array.isArray(cur.readBy) ? cur.readBy.length : 0));
-    if (localNewer || localAhead) {
-      const merged = Object.assign({}, cur, m);
-      if (Array.isArray(cur.readBy) && Array.isArray(m.readBy)) {
-        merged.readBy = Array.from(new Set(cur.readBy.concat(m.readBy)));
-      }
-      const i = server.findIndex(x => x && x.id === m.id);
-      if (i >= 0) server[i] = merged;
-      byId.set(m.id, merged);
-    }
-  });
-  if (added) server.sort((a, b) => (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0));
-  /* chat metadata (archive/mute/read markers) follows the same rule */
-  try {
-    target.chatsMeta = target.chatsMeta || {};
-    Object.keys(DB.chatsMeta || {}).forEach(k => { if (!target.chatsMeta[k]) target.chatsMeta[k] = DB.chatsMeta[k]; });
-  } catch (e) {}
-  return added;
-}
 function migrateDB(db) {
   if (!db) return DB;
   const out = Object.assign(blankDB(), db);
@@ -1156,17 +978,7 @@ function diffDB(prev, next) {
 
 function startEventStream() {
   stopEventStream();
-  if (!Remote.enabled) return;
-  if (Remote.stream === false || typeof EventSource === 'undefined') {
-    /* polling transport (Appwrite Function sync): keeps chats, notifications
-       and balances in step across devices without SSE */
-    clearInterval(Remote.pollTimer);
-    Remote.pollTimer = setInterval(function () {
-      if (!Remote.enabled) return;
-      if (!document.hidden) Remote.refresh();
-    }, 15000);
-    return;
-  }
+  if (!Remote.enabled || typeof EventSource === 'undefined') return;
   try {
     const es = new EventSource(Remote.url('/api/events?client=' + encodeURIComponent(Remote.clientId)));
     Remote.es = es;
@@ -1199,18 +1011,6 @@ function startEventStream() {
     };
   } catch (e) {}
 }
-/* Keep the connection alive 24/7: when the server wakes up, the app reconnects
-   on its own instead of waiting for a manual “Connect”. */
-setInterval(function () {
-  try {
-    if (!Remote) return;
-    if (Remote.status === 'online' || Remote.status === 'syncing') return;
-    const target = Remote.base || DEFAULT_SYNC_SERVER;
-    if (!target) return;
-    Remote.connect(target, { silent: true, initFromLocal: true });
-  } catch (e) {}
-}, 12000);
-
 /* Batch incoming changes: at most one state download per ~0.9 s, never while
    the user is tapping, scrolling or typing, and not while the tab is hidden. */
 let WC_LAST_INPUT_AT = 0;
@@ -1315,10 +1115,10 @@ function urlB64ToUint8Array(base64String) {
 function syncBadge() {
   const map = {
     local: ['Local device only', 'var(--muted)'],
-    connecting: ['Loading', 'var(--muted)'],
+    connecting: ['Connecting…', 'var(--warn)'],
     online: ['Connected · realtime', 'var(--success)'],
     syncing: ['Syncing…', 'var(--accent)'],
-    offline: ['Offline · cached data', 'var(--muted)'],
+    offline: ['Reconnecting…', 'var(--warn)'],
     error: ['Connection error', 'var(--danger)']
   };
   const m = map[Remote.status] || map.local;

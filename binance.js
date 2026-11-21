@@ -52,16 +52,6 @@ function createBinanceFeed(opts) {
   }
 
   function map() {
-    /* 1) the provider catalogue owned by Binance (20-50 pairs), 2) an admin
-       override, 3) the built-in fallback map */
-    try {
-      const dyn = typeof opts.getSymbols === 'function' ? opts.getSymbols() : null;
-      if (Array.isArray(dyn) && dyn.length) {
-        const o = {};
-        dyn.map((x) => String(x || '').toUpperCase()).filter(Boolean).forEach((t) => { o[t] = t; });
-        if (Object.keys(o).length) return o;
-      }
-    } catch (e) {}
     const c = cfg();
     if (c.symbols && typeof c.symbols === 'object') return Object.assign({}, DEFAULT_MAP, c.symbols);
     return DEFAULT_MAP;
@@ -104,19 +94,6 @@ function createBinanceFeed(opts) {
           quoteVolume: Number(r.quoteVolume) || 0,
           at: now
         };
-        /* REST snapshots seed every pair immediately — the WebSocket then
-           keeps them moving tick by tick between polls */
-        if (onTick) {
-          try {
-            onTick(symbol, price, {
-              prevClose: open > 0 ? open : price,
-              open: open > 0 ? open : price,
-              dayHigh: Number(r.highPrice) || price,
-              dayLow: Number(r.lowPrice) || price,
-              vol: Number(r.quoteVolume) || 0
-            });
-          } catch (e) {}
-        }
       });
       state.lastAt = now; state.ticks++; state.source = 'binance'; state.lastError = '';
       try {
@@ -174,17 +151,7 @@ function createBinanceFeed(opts) {
           source: 'binance-ws'
         };
         state.wsTicks = (state.wsTicks || 0) + 1;
-        if (onTick) {
-          try {
-            onTick(symbol, price, {
-              prevClose: open > 0 ? open : price,
-              open: open > 0 ? open : price,
-              dayHigh: Number(d.h) || price,
-              dayLow: Number(d.l) || price,
-              vol: Number(d.q) || 0
-            });
-          } catch (e) {}
-        }
+        if (onTick) { try { onTick(symbol, price); } catch (e) {} }
         state.lastAt = Date.now();
         state.source = 'binance-ws';
       } catch (e) {}

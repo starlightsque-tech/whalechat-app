@@ -1,9 +1,0 @@
-{
-  "name": "whalechat-sync-function",
-  "version": "3.70.0",
-  "private": true,
-  "main": "index.js",
-  "engines": {
-    "node": ">=18"
-  }
-}

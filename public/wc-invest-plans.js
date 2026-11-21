@@ -53,15 +53,6 @@
 
   /* ---- share price ------------------------------------------------------- */
   P.sharePrice = function () {
-    /* The WhaleChat company stock (WC) is the reference price: whatever the
-       live WC quote shows is what the plan's daily return is calculated on. */
-    try {
-      if (typeof INV !== 'undefined' && INV && INV.quote) {
-        var wq = INV.quote('WC');
-        if (wq && Number(wq.price) > 0) return Number(wq.price);
-      }
-      if (typeof INV !== 'undefined' && INV && INV.live && INV.live.WC && Number(INV.live.WC.price) > 0) return Number(INV.live.WC.price);
-    } catch (e) {}
     try {
       var st = window.WC_SHARES && window.WC_SHARES.state;
       var p = st && st.shareMarket && Number(st.shareMarket.priceUsd);
@@ -135,7 +126,7 @@
   function ledgerLine(u, label, usdDelta) {
     try {
       var a = u.investAcct;
-      a.ledger.unshift({ id: nowId('il_'), label: label, usd: round2(usdDelta), coins: 0, scope: 'wc', at: Date.now() });
+      a.ledger.unshift({ id: nowId('il_'), label: label, usd: round2(usdDelta), coins: 0, at: Date.now() });
       if (a.ledger.length > 300) a.ledger.length = 300;
     } catch (e) {}
   }
@@ -443,24 +434,12 @@
     };
   };
 
-  /* ---- professional chart, live-safe -------------------------------------
-     Rendered by the shared WC_TRADE_CHART engine: green while the series is
-     rising, red while it is falling, same look as the trade charts.        */
+  /* ---- small svg chart, live-safe --------------------------------------- */
   P.chart = function (points, opts) {
     opts = opts || {};
-    var TC = (typeof window !== 'undefined' && window.WC_TRADE_CHART) ? window.WC_TRADE_CHART : null;
-    var vals = (points || []).filter(function (v) { return isFinite(v); });
-    var height = opts.height || 90;
-    if (TC && TC.svg) {
-      return TC.svg(vals.map(function (v, i) { return { time: i, value: Number(v) || 0 }; }), {
-        width: 320,
-        height: height,
-        weight: height > 120 ? 2 : 1.8
-      }).replace('class="wtc-spark"', 'class="wtc-spark wci-chart"');
-    }
-    /* fallback: previous renderer if the chart engine is not on the page */
-    var W = 300, H = height, pad = 6;
-    var pts = vals.length >= 2 ? vals : [0, 0.0001];
+    var W = 300, H = opts.height || 90, pad = 6;
+    var pts = (points || []).filter(function (v) { return isFinite(v); });
+    if (pts.length < 2) pts = [0, 0.0001];
     var min = Math.min.apply(null, pts), max = Math.max.apply(null, pts);
     var span = (max - min) || Math.abs(max) * 0.02 || 1;
     var step = (W - pad * 2) / (pts.length - 1);
@@ -471,7 +450,12 @@
     }).join(' ');
     var color = opts.color || '#2ee6c9';
     return '<svg viewBox="0 0 ' + W + ' ' + H + '" class="wci-chart" preserveAspectRatio="none">' +
-      '<path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="1.8" stroke-linejoin="round"/></svg>';
+      '<defs><linearGradient id="wciFill' + (opts.uid || 'a') + '" x1="0" y1="0" x2="0" y2="1">' +
+        '<stop offset="0%" stop-color="' + color + '" stop-opacity=".32"/>' +
+        '<stop offset="100%" stop-color="' + color + '" stop-opacity="0"/></linearGradient></defs>' +
+      '<path d="' + d + ' L' + (pad + (pts.length - 1) * step).toFixed(1) + ' ' + (H - pad) + ' L' + pad + ' ' + (H - pad) + ' Z" fill="url(#wciFill' + (opts.uid || 'a') + ')" stroke="none"/>' +
+      '<path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="1.8" stroke-linejoin="round"/>' +
+    '</svg>';
   };
 
   /* accrued series for one plan (or all) — drives the ROI charts */

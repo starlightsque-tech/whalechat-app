@@ -538,7 +538,7 @@ function viewVendorDash(u, v, tab) {
   const pendingOrders = DB.orders.filter(o => o.vendorId === v.id && o.status !== 'delivered').length;
   return `<div class="page-head"><div>
       <span class="badge badge-accent mb10">${ic('store', 12)} Vendor</span>
-      <h1>${esc(v.name)}</h1><p>@${esc(v.username)} · ${vendorRating(v).toFixed(1)} ★ · Trust ${vendorTrust(v)}/100</p></div>
+      <h1>${esc(v.name)}</h1><p>@${esc(v.username)} · ${v.rating.toFixed(1)} ★ · Trust ${v.trustScore}/100</p></div>
       <div class="row gap8"><a href="#/market" class="btn btn-ghost btn-sm">${ic('bag', 15)} View store</a>
       <a href="#/vendor/renew" class="btn btn-ghost btn-sm">${ic('refresh', 15)} Renew</a>
       <a href="#/vendor/company" class="btn btn-primary btn-sm">${ic('plus', 15)} Buy stock</a></div></div>
@@ -1064,11 +1064,6 @@ VIEWS.deposit = function () {
           </div>`).join('') : `<div class="empty" style="padding:18px"><p>No bank details configured yet. Contact support.</p></div>`}
           <div class="field mt16"><label class="label">Payment reference (optional)</label><input class="input" id="depRef" placeholder="Bank transfer reference / sender name"/></div>
         </div>
-        <div class="field mt16"><label class="label">Payment slip <span style="color:var(--danger)">*</span></label>
-          <input class="input" id="depSlip" type="file" accept="image/*" capture="environment"/>
-          <div class="help">Upload a clear photo or screenshot of the payment receipt. Deposits are only approved with a slip.</div>
-          <div id="depSlipPreview" class="mt10 hidden"></div>
-          <div id="depSlipErr" class="help" style="color:var(--danger);display:none"></div></div>
         <div class="panel mt16" style="padding:12px"><div class="row gap6 tiny" style="font-weight:600;color:var(--accent)">${ic('shield', 13)} Reviewed by our team</div>
           <div class="tiny muted mt6" style="line-height:1.6">${esc(s.depositNote || '')}</div></div>
         <button class="btn btn-primary btn-block btn-lg mt16" id="depSubmit">${ic('check', 16)} I have sent the payment</button>
@@ -1092,46 +1087,6 @@ VIEWS.deposit = function () {
     </div>
     <style>@media(max-width:860px){.cart-grid{grid-template-columns:1fr!important}}</style>`;
 };
-let DEP_SLIP = null;
-let DEP_SLIP_NAME = '';
-/* Read + downscale a payment slip on the device. The compressed JPEG travels
-   with the deposit record, so the admin can open it from any device. */
-function slipToDataUrl(file) {
-  return new Promise(function (resolve, reject) {
-    if (!file || !/^image\//i.test(String(file.type || ''))) return reject(new Error('Choose an image (JPG, PNG or WebP).'));
-    if (file.size > 12 * 1024 * 1024) return reject(new Error('That image is larger than 12 MB. Choose a smaller one.'));
-    const reader = new FileReader();
-    reader.onerror = function () { reject(new Error('Could not read that image.')); };
-    reader.onload = function () {
-      const img = new Image();
-      img.onerror = function () { reject(new Error('Could not open that image.')); };
-      img.onload = function () {
-        try {
-          const max = 900;
-          const scale = Math.min(1, max / Math.max(img.width || 1, img.height || 1));
-          const w = Math.max(1, Math.round((img.width || max) * scale));
-          const h = Math.max(1, Math.round((img.height || max) * scale));
-          const c = document.createElement('canvas');
-          c.width = w; c.height = h;
-          const g = c.getContext('2d');
-          g.fillStyle = '#ffffff'; g.fillRect(0, 0, w, h);
-          g.drawImage(img, 0, 0, w, h);
-          resolve(c.toDataURL('image/jpeg', 0.68));
-        } catch (e) { reject(new Error('Could not prepare that image.')); }
-      };
-      img.src = String(reader.result || '');
-    };
-    reader.readAsDataURL(file);
-  });
-}
-function paintSlipPreview() {
-  const host = document.getElementById('depSlipPreview');
-  if (!host) return;
-  if (!DEP_SLIP) { host.classList.add('hidden'); host.innerHTML = ''; return; }
-  host.classList.remove('hidden');
-  host.innerHTML = '<div class="panel" style="padding:10px"><img src="' + DEP_SLIP + '" alt="Payment slip preview" style="max-width:100%;max-height:260px;border-radius:10px;display:block;margin:0 auto"/>' +
-    '<div class="tiny muted center mt6">' + esc(DEP_SLIP_NAME || 'Payment slip') + ' · attached</div></div>';
-}
 AFTER.deposit = function () {
   const amt = document.getElementById('depUsd');
   const upd = () => {
@@ -1154,25 +1109,6 @@ AFTER.deposit = function () {
     upd();
   });
   upd();
-  DEP_SLIP = null; DEP_SLIP_NAME = '';
-  const slipInput = document.getElementById('depSlip');
-  if (slipInput) {
-    slipInput.onchange = function () {
-      const f = slipInput.files && slipInput.files[0];
-      if (!f) { DEP_SLIP = null; DEP_SLIP_NAME = ''; paintSlipPreview(); return; }
-      toast('Preparing your payment slip…');
-      slipToDataUrl(f).then(function (url) {
-        DEP_SLIP = url; DEP_SLIP_NAME = f.name || 'payment-slip.jpg';
-        paintSlipPreview();
-        const err = document.getElementById('depSlipErr'); if (err) err.style.display = 'none';
-        toast('Payment slip attached', 'ok');
-      }).catch(function (e) {
-        DEP_SLIP = null; DEP_SLIP_NAME = '';
-        paintSlipPreview();
-        toast(e.message || 'Could not attach that image', 'err');
-      });
-    };
-  }
   document.getElementById('depSubmit').onclick = () => App.submitDeposit(mode);
 };
 App.depQuick = function (v) {
@@ -1188,12 +1124,6 @@ App.submitDeposit = function (mode) {
   const u = me(); clearErrors();
   const usdAmt = Math.round(Number(document.getElementById('depUsd').value) * 100) / 100;
   if (!(usdAmt >= 1)) return formError('depUsd', 'Enter at least $1');
-  if (!DEP_SLIP) {
-    const e = document.getElementById('depSlipErr');
-    if (e) { e.textContent = 'Upload a picture of your payment slip before submitting.'; e.style.display = 'block'; }
-    try { document.getElementById('depSlip').scrollIntoView({ block: 'center' }); } catch (err) {}
-    return toast('Upload your payment slip first', 'err');
-  }
   let methodName = '', detail = '';
   if (mode === 'crypto') {
     const sel = document.querySelector('input[name="depm"]:checked');
@@ -1209,8 +1139,7 @@ App.submitDeposit = function (mode) {
   const coin = depositCoinOf({ method: mode, methodName });
   DB.deposits.unshift({
     id: uid('dep'), userId: u.id, usd: usdAmt, coins: usdToCoins(usdAmt), coin,
-    method: mode, methodName, detail, status: 'pending', createdAt: Date.now(), note: '',
-    slip: DEP_SLIP, slipName: DEP_SLIP_NAME || 'payment-slip.jpg', slipAt: Date.now()
+    method: mode, methodName, detail, status: 'pending', createdAt: Date.now(), note: ''
   });
   notify('usr_admin', 'New deposit request', `${u.fullName} (@${u.username}) submitted ${usd(usdAmt)} via ${methodName}.`, '#/admin/deposits', 'wallet');
   notify(u.id, 'Deposit submitted', `Your ${usd(usdAmt)} || ${coin} deposit is pending review. It will be credited to your deposit balance once approved.`, '#/account', 'wallet');
@@ -1219,7 +1148,7 @@ App.submitDeposit = function (mode) {
     <div class="center">
       <div style="width:58px;height:58px;border-radius:50%;background:rgba(255,176,32,.14);color:var(--warn);display:flex;align-items:center;justify-content:center;margin:0 auto">${ic('clock', 26)}</div>
       <h3 class="mt16" style="font-size:17px">Awaiting confirmation</h3>
-      <p class="small muted mt10" style="line-height:1.7">We've received your ${usd(usdAmt)} request via ${esc(methodName)} with your payment slip. Our team will verify it and credit <b style="color:var(--accent)">$${usdAmt.toFixed(2)} || ${esc(coin)}</b> to your deposit balance.</p>
+      <p class="small muted mt10" style="line-height:1.7">We've received your ${usd(usdAmt)} request via ${esc(methodName)}. Our team will verify and credit <b style="color:var(--accent)">$${usdAmt.toFixed(2)} || ${esc(coin)}</b> to your deposit balance.</p>
     </div>`,
     `<a href="#/account" class="btn btn-primary" data-close style="width:100%">Back to account</a>`));
   setTimeout(() => render(), 60);

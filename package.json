@@ -1,6 +1,6 @@
 {
   "name": "whalechat",
-  "version": "3.80.0",
+  "version": "3.33.1",
   "private": true,
   "description": "WhaleChat \u2014 chat, marketplace and wallet. Web app + sync server + Android/iOS shells.",
   "main": "server.js",
@@ -11,43 +11,17 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "build:mobile": "node scripts/build-mobile.mjs",
-    "build": "node scripts/verify-connections.js && node scripts/prepare-assets.js",
+    "build": "node scripts/prepare-assets.js",
     "demo:catalog": "node scripts/generate-demo-catalog.mjs",
     "verify:finnhub": "node scripts/verify-finnhub.js",
     "test:b2b": "node scripts/test-b2b-desk.js",
     "verify:b2b": "node scripts/verify-b2b-links.mjs",
-    "test:wc-invest": "node scripts/test-wc-invest.js",
-    "test:offline": "node scripts/test-offline.js",
-    "test:brevo": "node scripts/test-brevo.js",
-    "deploy:render": "node scripts/deploy-render.mjs",
-    "test:offline:runtime": "node scripts/test-offline-runtime.js",
-    "backup:state": "node scripts/backup-state.mjs",
-    "restore:state": "node scripts/restore-state.mjs",
-    "test:ui": "node scripts/test-trading-ui.mjs",
-    "audit:routes": "node scripts/audit-routes.js --all",
-    "verify:twelvedata": "node scripts/verify-twelvedata.js",
-    "deploy:appwrite": "node scripts/deploy-appwrite.mjs",
-    "test:v357": "node scripts/test-v357.mjs",
-    "verify:connections": "node scripts/verify-connections.js",
-    "deploy:appwrite:db": "node scripts/deploy-appwrite-collections.mjs",
-    "deploy:appwrite:function": "node scripts/deploy-appwrite-function.mjs",
-    "deploy:appwrite:all": "node scripts/deploy-appwrite-collections.mjs && node scripts/deploy-appwrite-function.mjs && node scripts/deploy-appwrite.mjs && node scripts/deploy-appwrite-admin.mjs",
-    "test:offline-trading": "node scripts/test-offline-trading.mjs",
-    "test:chat-e2e": "node scripts/test-chat-e2e.mjs",
-    "test:chat-e2e:live": "WC_E2E_BASE=https://whalechat-api.appwrite.network node scripts/test-chat-e2e.mjs",
-    "test:live-trades": "node scripts/test-live-trades.mjs",
-    "test:370": "node scripts/test-370.mjs",
-    "deploy:appwrite:admin": "node scripts/deploy-appwrite-admin.mjs",
-    "deploy:cloudflare": "node scripts/deploy-cloudflare.mjs"
+    "test:wc-invest": "node scripts/test-wc-invest.js"
   },
   "dependencies": {
     "web-push": "^3.6.7",
     "nodemailer": "^6.9.14",
     "pg": "^8.11.5",
     "ws": "^8.18.0"
-  },
-  "devDependencies": {
-    "jsdom": "^24.0.0",
-    "fake-indexeddb": "^6.0.0"
   }
 }

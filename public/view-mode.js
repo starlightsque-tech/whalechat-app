@@ -10,37 +10,24 @@
   if (typeof window === 'undefined') return;
   const V = window.WC_VIEW = window.WC_VIEW || {};
   const KEY = 'wc.viewMode';
-  V.mode = 'mobile';
+  V.mode = 'desktop';
 
   function stored() {
-    try {
-      const v = localStorage.getItem(KEY);
-      if (v === 'mobile' || v === 'desktop' || v === 'auto') return v;
-      return 'auto';
-    } catch (e) { return 'auto'; }
-  }
-  function resolved(mode) {
-    /* Handheld devices always use the phone layout. A saved "desktop"
-       preference used to force a 1280px canvas on phones, which zoomed the
-       whole app out and hid buttons past the right edge. */
-    try {
-      const w = window.innerWidth || (window.screen && window.screen.width) || 0;
-      if (isHandheld() || w < 1024) return 'mobile';
-      if (mode === 'mobile' || mode === 'desktop') return mode;
-      return 'desktop';
-    } catch (e) { return 'mobile'; }
+    try { return localStorage.getItem(KEY) === 'mobile' ? 'mobile' : 'desktop'; }
+    catch (e) { return 'desktop'; }
   }
   function viewport() { return document.querySelector('meta[name="viewport"]'); }
-  function content() {
-    /* always the real device width: text and buttons can never sit under the
-       screen edge, in mobile or desktop mode, online or offline */
-    return 'width=device-width, initial-scale=1, viewport-fit=cover';
+  function content(mode) {
+    const screenW = (window.screen && Number(window.screen.width)) || window.innerWidth;
+    if (mode === 'desktop' && (isHandheld() || screenW < 1024)) {
+      return 'width=1280, user-scalable=yes, viewport-fit=cover';
+    }
+    return 'width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover';
   }
 
   function updateButtons() {
-    const effective = resolved(V.mode);
-    const target = V.mode === 'auto' ? 'desktop' : (effective === 'desktop' ? 'mobile' : 'desktop');
-    const icon = effective === 'desktop' ? 'smartphone' : 'monitor';
+    const target = V.mode === 'desktop' ? 'mobile' : 'desktop';
+    const icon = V.mode === 'desktop' ? 'smartphone' : 'monitor';
     document.querySelectorAll('[data-view-toggle]').forEach((btn) => {
       const label = btn.querySelector('[data-view-label]');
       const iconEl = btn.querySelector('[data-view-icon]');
@@ -52,7 +39,7 @@
       btn.setAttribute('title', 'Switch to ' + target + ' view');
       btn.setAttribute('aria-label', 'Switch to ' + target + ' view');
     });
-    document.querySelectorAll('[data-view-mode-label]').forEach((el) => { el.textContent = V.mode === 'auto' ? ('auto · ' + effective) : V.mode; });
+    document.querySelectorAll('[data-view-mode-label]').forEach((el) => { el.textContent = V.mode; });
   }
 
   function isHandheld() {
@@ -61,24 +48,17 @@
   }
 
   function apply(mode, opts) {
-    mode = (mode === 'mobile' || mode === 'desktop' || mode === 'auto') ? mode : 'auto';
+    mode = mode === 'mobile' ? 'mobile' : 'desktop';
     V.mode = mode;
-    const effective = resolved(mode);
     try { localStorage.setItem(KEY, mode); } catch (e) {}
-    document.documentElement.setAttribute('data-wc-view', effective);
-    document.documentElement.setAttribute('data-wc-view-pref', mode);
+    document.documentElement.setAttribute('data-wc-view', mode);
     const meta = viewport();
-    if (meta) meta.setAttribute('content', content());
-    /* the reference look: phone layout on a dark canvas, desktop on white */
-    try {
-      document.documentElement.setAttribute('data-theme', effective === 'mobile' ? 'dark' : 'light');
-      document.documentElement.setAttribute('data-wc-view-theme', effective === 'mobile' ? 'dark' : 'light');
-    } catch (e) {}
+    if (meta) meta.setAttribute('content', content(mode));
     updateButtons();
     if (!opts || !opts.silent) {
-      /* no reload needed — the viewport is the device width in every mode */
+      /* phones need a reload for the viewport width switch to fully apply */
       if (isHandheld()) {
-        setTimeout(function () { try { window.dispatchEvent(new Event('resize')); } catch (e) {} }, 80);
+        setTimeout(function () { try { location.reload(); } catch (e) {} }, 60);
         return;
       }
       /* let the viewport/layout settle, then make charts recalculate widths */
@@ -89,7 +69,7 @@
 
   V.apply = apply;
   V.set = function (mode) { apply(mode); };
-  V.toggle = function () { apply(resolved(V.mode) === 'desktop' ? 'mobile' : 'desktop'); };
+  V.toggle = function () { apply(V.mode === 'desktop' ? 'mobile' : 'desktop'); };
 
   if (typeof App !== 'undefined') {
     App.viewToggle = function () { V.toggle(); };
@@ -105,22 +85,12 @@
         let html = base.apply(this, arguments);
         const mode = V.mode;
         const block = `<div class="divider"></div>
-        <div><div class="small" style="font-weight:700">View mode</div>
-          <div class="tiny muted mt6">Currently <b data-view-mode-label>${mode}</b> · your choice is remembered on this device</div></div>
-        <div class="wc-view-picks">
-          <button type="button" class="wc-view-pick ${mode === 'mobile' ? 'on' : ''}" data-act="view-mode-mobile">
-            <span class="wc-vp-ic">${typeof ic === 'function' ? ic('smartphone', 16) : ''}</span>
-            <span class="wc-vp-t"><b>Mobile view</b><small>Phone layout · dark screen</small></span>
-            <span class="wc-vp-check">${mode === 'mobile' ? '✓' : ''}</span></button>
-          <button type="button" class="wc-view-pick ${mode === 'auto' ? 'on' : ''}" data-act="view-mode-auto">
-            <span class="wc-vp-ic">${typeof ic === 'function' ? ic('refresh', 16) : ''}</span>
-            <span class="wc-vp-t"><b>Auto</b><small>Match this device automatically</small></span>
-            <span class="wc-vp-check">${mode === 'auto' ? '✓' : ''}</span></button>
-          <button type="button" class="wc-view-pick ${mode === 'desktop' ? 'on' : ''}" data-act="view-mode-desktop">
-            <span class="wc-vp-ic">${typeof ic === 'function' ? ic('monitor', 16) : ''}</span>
-            <span class="wc-vp-t"><b>Desktop view</b><small>Wide layout · white screen</small></span>
-            <span class="wc-vp-check">${mode === 'desktop' ? '✓' : ''}</span></button>
-        </div>`;
+        <div class="between"><div><div class="small" style="font-weight:600">View mode</div>
+          <div class="tiny muted mt6">Currently <b data-view-mode-label>${mode}</b> · desktop uses the wide layout, mobile uses the phone layout</div></div>
+          <div class="row" style="gap:6px">
+            <button class="btn btn-xs ${mode === 'desktop' ? 'btn-primary' : 'btn-ghost'}" data-act="view-mode-desktop">Desktop</button>
+            <button class="btn btn-xs ${mode === 'mobile' ? 'btn-primary' : 'btn-ghost'}" data-act="view-mode-mobile">Mobile</button>
+          </div></div>`;
         const anchor = '<div class="divider"></div>\n        <div class="between"><div><div class="small" style="font-weight:600">Enable device alerts</div>';
         return html.indexOf(anchor) >= 0 ? html.replace(anchor, block + anchor) : html;
       };
@@ -133,20 +103,10 @@
     const st = document.createElement('style');
     st.id = 'wc-view-style';
     st.textContent = `
-    .wc-view-picks{display:flex;flex-direction:column;gap:8px;margin-top:12px}
-    .wc-view-pick{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:11px 12px;border-radius:14px;
-      border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;min-height:52px}
-    .wc-view-pick.on{border-color:rgba(46,230,201,.65);background:rgba(46,230,201,.10);box-shadow:0 0 0 1px rgba(46,230,201,.25) inset}
-    .wc-vp-ic{width:32px;height:32px;border-radius:10px;display:flex;align-items:center;justify-content:center;
-      background:rgba(46,230,201,.12);color:var(--accent);flex:0 0 auto}
-    .wc-vp-t{display:flex;flex-direction:column;min-width:0;flex:1}
-    .wc-vp-t b{font-size:12.5px;font-weight:800;line-height:1.25}
-    .wc-vp-t small{font-size:10.5px;font-weight:600;color:var(--muted);line-height:1.3}
-    .wc-vp-check{font-size:14px;font-weight:800;color:var(--accent);width:16px;text-align:center}
-    /* desktop layout on a small screen: keep it responsive, never 1180px wide */
+    /* fallback desktop layout when a phone ignores the width=1280 viewport */
     @media(max-width:1023px){
-      html[data-wc-view="desktop"] body{min-width:0!important;width:100%!important;overflow-x:hidden}
-      html[data-wc-view="desktop"] .sidebar{display:none!important}
+      html[data-wc-view="desktop"] body{min-width:1180px}
+      html[data-wc-view="desktop"] .sidebar{display:flex!important}
       html[data-wc-view="desktop"] .bottomnav{display:none!important}
       html[data-wc-view="desktop"] .content{padding:22px 24px 60px!important}
       html[data-wc-view="desktop"] .topbar .brand{display:flex!important}
@@ -177,7 +137,6 @@
 
   /* keep dynamically re-rendered topbars/sidebars in sync */
   setInterval(updateButtons, 1200);
-  if (typeof App !== 'undefined') App.viewModeAuto = function () { apply('auto'); if (typeof render === 'function') { try { render(); } catch (e) {} } };
   apply(stored(), { silent: true });
   setTimeout(updateButtons, 300);
 })();

@@ -163,7 +163,6 @@ INV.viewDash = function (params) {
     </div>
   </div>
 
-
   <div class="inv-two">
     <div class="card">
       <div class="card-title">Allocation</div>
@@ -198,7 +197,7 @@ INV.viewDash = function (params) {
     </div>
   </div>
 
-  <div class="card inv-note">${ic('shield', 14)} <span class="tiny">Prices update continuously from the live market feed — Finnhub, Twelve Data and Binance. Trades settle instantly against your Whale Coin balance at 1 WC = $0.50.</span></div>`;
+  <div class="card inv-note">${ic('shield', 14)} <span class="tiny">Prices on this build are <b>simulated</b> for demonstration, moving every 5 seconds. Trades settle instantly against your Whale Coin balance at 1 WC = $0.50.</span></div>`;
 };
 
 /* ------------------------------ market ------------------------------ */
@@ -222,10 +221,7 @@ INV.classes = function () {
 };
 INV.classEnabled = function (key) { return INV.classes()[key] !== false; };
 INV.visibleStocks = function () {
-  const all = INV.stocks();
-  const list = all.filter((s) => INV.classEnabled(INV.classOf(s)));
-  /* never render an empty board because one class flag was switched off */
-  return list.length ? list : all;
+  return INV.stocks().filter((s) => INV.classEnabled(INV.classOf(s)));
 };
 INV.visibleCats = function () {
   return ['All'].concat(INV.CLASS_LIST.filter((c) => INV.classEnabled(c.key)).map((c) => c.label));
@@ -263,10 +259,7 @@ INV.marketFiltered = function () {
     else if (cat === 'Crypto') list = list.filter(s => s.crypto);
     else if (cat === 'Dividend') list = list.filter(s => (s.div || 0) > 0).sort((a, b) => b.div - a.div);
     else if (cat === 'New') list = list.filter(s => s.isNew || s.custom).slice().reverse();
-    else if (cat && cat !== 'All' && cat !== 'All Live') {
-      const bySector = list.filter(s => s.sector === cat);
-      if (bySector.length) list = bySector;
-    }
+    else list = list.filter(s => s.sector === cat);
   }
   return list;
 };
@@ -404,15 +397,17 @@ INV.viewStock = function (rawTicker, params) {
         ${chg >= 0 ? '▲' : '▼'} ${Math.abs(chg).toFixed(2)}% · ${usd(Math.abs(q.changeUsd))}</div>
     </div>
     ${paused ? `<div class="inv-paused">${ic('pause', 13)} Trading is paused for ${esc(s.ticker)} by an administrator.</div>` : ''}
-    ${window.WC_LIVE_CANDLES
-      ? WC_LIVE_CANDLES.embed({
-          ticker: s.ticker,
-          sub: esc(s.name) + ' · ' + esc(INV.assetTicker ? INV.assetTicker(s) : s.ticker) + ' · ' + esc(s.sector || ''),
-          height: 400
-        })
-      : `<div class="inv-chart" data-chart="${s.ticker}|${tf}|${mode}">${chart}</div>`}
+    <div class="between" style="margin-top:10px;align-items:center">
+      <div class="inv-seg">${['1D', '1W', '1M', '1Y', 'ALL'].map((x, i) => `<a href="${links([x])[0]}" class="inv-segbtn ${x === tf ? 'on' : ''}">${x}</a>`).join('')}</div>
+      <div class="inv-seg">
+        <a href="#/invest/stock/${s.ticker}?tf=${tf}&mode=line" class="inv-segbtn ${mode === 'line' ? 'on' : ''}">Line</a>
+        <a href="#/invest/stock/${s.ticker}?tf=${tf}&mode=candle" class="inv-segbtn ${mode === 'candle' ? 'on' : ''}">Candles</a>
+      </div>
+    </div>
+    <div class="inv-chart" data-chart="${s.ticker}|${tf}|${mode}">${chart}</div>
+    <div class="tiny muted center" data-lt-chart-hint style="margin-top:4px"></div>
+    <div class="tiny muted center wc-feed-notice" data-market-notice="1" style="margin-top:4px">Simulated market data · 24/7</div>
   </div>
-
 
   <div class="inv-two">
     <div class="card">

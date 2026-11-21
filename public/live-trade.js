@@ -65,23 +65,6 @@ const LT = {
     if (!DB.invest.dividendOverrides || typeof DB.invest.dividendOverrides !== 'object') DB.invest.dividendOverrides = {};
     return DB.invest;
   },
-  /* A page links with the canonical ticker, but a link made before an asset was
-     renamed (or a hand-typed URL) can carry the display ticker — "7203.T" for the
-     internal "7203_T". Resolve every form so the ticket never silently vanishes. */
-  resolveStock(value) {
-    const raw = String(value || '').toUpperCase();
-    if (!raw) return null;
-    let direct = null;
-    try { direct = INV.stock(raw); } catch (e) {}
-    if (direct) return direct;
-    const norm = (v) => String(v == null ? '' : v).toUpperCase().replace(/[^A-Z0-9]/g, '');
-    const key = norm(raw);
-    if (!key) return null;
-    let list = [];
-    try { list = (typeof INV.stocks === 'function' ? INV.stocks() : DB.stocks) || []; } catch (e) { list = (DB && DB.stocks) || []; }
-    return list.find((x) => x && (norm(x.ticker) === key || norm(x.displayTicker) === key || norm(x.finnhubSymbol) === key)) || null;
-  },
-
   leverage() {
     /* payout = capital × price move % × leverage. When a user has not set a
        leverage level the trade runs at the 5× default. */
@@ -237,19 +220,11 @@ const LT = {
     const trailStop = trailPct > 0
       ? Math.round(q.price * (direction === 'FALL' ? (1 + trailPct / 100) : (1 - trailPct / 100)) * 10000) / 10000
       : 0;
-    /* Leverage precedence: the value the caller passed, then the per-trade select
-       on the ticket (#ltLev, installed by wc-market-247), then the account default.
-       Reading the DOM here means every entry point honours the user's choice. */
-    const levField = (typeof document !== 'undefined')
-      ? (document.getElementById('ltLev') || document.getElementById('ltLeverage'))
-      : null;
-    const reqLev = Number(o.leverage != null ? o.leverage : (levField ? levField.value : NaN));
-    const lev = Math.min(20, Math.max(1, Number.isFinite(reqLev) && reqLev >= 1 ? Math.round(reqLev) : this.leverage()));
     const trade = {
       id: uid('lt'), userId: u.id, type: 'live', ticker, name: s.name,
       side: side === 'short' ? 'short' : 'long', direction,
       capitalCoins: capital, stakeAmount: capital, entryPrice: q.price, initialEntryPrice: q.price,
-      leverage: lev,
+      leverage: this.leverage(),
       takeProfitPrice: tpPrice > 0 ? Math.round(tpPrice * 10000) / 10000 : null,
       takeProfitMode: tpWcAmt > 0 ? 'AMOUNT' : (o.tpMode || 'PRICE'),
       takeProfitWc: tpWcAmt > 0 ? Math.round(tpWcAmt * 100) / 100 : null,
@@ -308,9 +283,8 @@ const LT = {
     if (!t || t.status !== 'Open') return false;
     const u = findUser(t.userId);
     if (!u) return false;
-    /* every close (manual, stop, take-profit or timer) pays the move % at
-       exit multiplied by the number of moves gained during the trade */
-    const p = this.calc(t);
+    /* trade ended by timer with no manual / auto Take Profit: final move % from the last price at end time, no moves multiplier */
+    const p = this.calc(t, reason === 'Time limit reached');
     const ia = INV.investAcct(u);
     const split = LT.bookClose(ia, t.capitalCoins, p.pnlCoins, LT.closeFee(t));
     const payout = split.payout;
@@ -432,12 +406,11 @@ const LT = {
     if (!DB || !DB.trades) return;
     this.open().forEach(t => {
       this.updateTrailing(t);
-      /* Auto Secure runs on the device as well as the backend: lock the
-         profit the moment it appears, before any backend round-trip. */
-      if (this.autoSecureOn(t.userId)) this.secureLocal(t, 'Auto Secure');
-      /* Finnhub-covered symbols are also settled by the backend so a closed
-         browser cannot miss a payout — avoid paying the same trade twice. */
+      /* Finnhub-covered symbols are settled by the backend so a closed browser
+         cannot miss a payout — avoid paying the same trade twice. */
       if (this.serverCovered(t)) return;
+      /* Auto Secure: lock any profit the moment it appears (backend does this for covered symbols) */
+      if (this.autoSecureOn(t.userId)) this.secureLocal(t, 'Auto Secure');
       const p = this.calc(t);
       const dir = this.dirOf(t);
       const lv = this.tpslOf(t);
@@ -772,8 +745,7 @@ const LT = {
 
   /* the stock-page panel: buy to open, then take profit / take loss */
   ticketHTML(ticker) {
-    const s = this.resolveStock(ticker); if (!s) return '';
-    ticker = s.ticker;
+    const s = INV.stock(ticker); if (!s) return '';
     const lev = this.leverage();
     const pos = this.open().filter(t => t.ticker === ticker)[0];
     const head = `<div class="between"><div class="card-title" style="margin:0">Trade · ${esc(INV.assetTicker ? INV.assetTicker(ticker) : ticker)}</div>
@@ -1174,7 +1146,7 @@ LT.seriesWithTrades = function (tf, userId) {
   const win = LT_WINDOW[tf] || LT_WINDOW['1M'];
   const now = Date.now();
   const series = pos.map(p => ({ p, data: INV.series(p.ticker, tf) }));
-  const len = Math.max(2, pos.length ? Math.max(2, ...series.map(s => s.data.length)) : 60);
+  const len = pos.length ? Math.max(...series.map(s => s.data.length)) : 60;
   const out = [];
   for (let i = 0; i < len; i++) {
     const msAgo = (1 - i / Math.max(1, len - 1)) * win;
@@ -1190,7 +1162,7 @@ LT.seriesWithTrades = function (tf, userId) {
       if (msAgo > started) { v += p.capital; return; }           /* before entry: flat capital */
       const dir = t.side === 'short' ? -1 : 1;
       const move = LT.priceMovePct(t.entryPrice, price) / 100;
-      const pnl = Math.max(-p.capital, p.capital * (LT.movePctOf(t, price) / 100) * (t.leverage || 1) * dir * (LT.tpLevelOf(t) > 0 ? 1 : Math.max(0, Number(t.clientMoveTotal) || 0, Number(t.moveCount) || 0, t._cMoves || 0)));
+      const pnl = Math.max(-p.capital, p.capital * (LT.movePctOf(t, price) / 100) * (t.leverage || 1) * dir * (LT.tpLevelOf(t) > 0 ? 1 : Math.max(1, Number(t.moveCount) || 0, t._cMoves || 0)));
       v += Math.max(0, p.capital + pnl);
     });
     out.push(v);
@@ -1274,35 +1246,6 @@ LT.autoSecureStrip = function () {
   };
   LT.bindAutoSecure();
 
-/* 3.66.1: the portfolio performance card renders the shared reference chart
-   panel (header price + WC, 1D/1W/1M/1Y/ALL, Line/Candles, split green/red).
-   The kit owns the drawing and re-mounts itself if this card repaints. */
-function kitPortfolio(series, tf, hasPerf) {
-  try {
-    if (window.WCChartKit && WCChartKit.autoHtml) {
-      let vals = (series || []).map((v) => Number(v) || 0).filter((v) => isFinite(v));
-      if (vals.length === 1) vals = [vals[0], vals[0]];
-      const count = vals.length;
-      const step = { '1D': 6e4, '1W': 6e5, '1M': 18e5, '3M': 54e5, '1Y': 216e5, ALL: 216e5 }[tf] || 6e4;
-      const now = Date.now();
-      const pts = vals.map((v, i) => ({ t: now - (count - 1 - i) * step, p: v }));
-      const last = count ? vals[count - 1] : 0;
-      const first = count ? vals[0] : 0;
-      return WCChartKit.autoHtml({
-        data: pts,
-        price: last,
-        changePct: first > 0 ? ((last - first) / first) * 100 : 0,
-        height: 240,
-        range: 'ALL',
-        mode: 'line',
-        emptyHint: 'Start a trade, buy stock or run a bot to see performance'
-      }, 'inv-chart-kit');
-    }
-  } catch (e) {}
-  return hasPerf ? INV.lineChart(series, { h: 150 })
-    : '<div class="inv-empty">' + ic('trend', 26) + '<p class="small muted">Start a trade, buy stock or run a bot to see performance.</p><a href="#/invest/market" class="btn btn-sm btn-primary">Explore market</a></div>';
-}
-
 LT.dash = function (params) {
   const u = me();
   const s = LT.summary(u.id);
@@ -1361,7 +1304,7 @@ LT.dash = function (params) {
       ${INV.seg(tf)}
     </div>
     <div class="inv-chart" id="ltDashChart" data-ltd-chart="${tf}">
-      ${kitPortfolio(series, tf, hasPerf)}
+      ${hasPerf ? INV.lineChart(series, { h: 150 }) : `<div class="inv-empty">${ic('trend', 26)}<p class="small muted">Start a trade, buy stock or run a bot to see performance.</p><a href="#/invest/market" class="btn btn-sm btn-primary">Explore market</a></div>`}
     </div>
     ${s.botActive ? `<div class="tiny center ${s.botPnl >= 0 ? 'up' : 'down'}" style="margin-top:5px" data-lt-bot-line>
       ${ic('trend', 11)} ${esc(s.botTier || 'Trading bot')} · ${usd(s.botValue)} equity · ${s.botPnl >= 0 ? '+' : '−'}${usd(Math.abs(s.botPnl))} · ${s.botTrades} trade${s.botTrades === 1 ? '' : 's'}${s.botStatus === 'running' ? ' · live' : ''}
@@ -1369,7 +1312,6 @@ LT.dash = function (params) {
     </div>` : ''}
     <div class="tiny muted center wc-feed-notice" data-market-notice="1" style="margin-top:6px">Simulated market data · 24/7</div>
   </div>
-
 
   <div class="inv-two">
     <div class="card">
@@ -2030,7 +1972,7 @@ App.admPublish = async function () {
     body: 'Every open app reloads onto ' + APP_VERSION + ' automatically. Users do not need to update anything.',
     ok: 'Publish to all users' })) return;
   try {
-    const r = await fetch((typeof Remote !== 'undefined' ? Remote.url('/api/reload') : '/api/reload'), {
+    const r = await fetch('/api/reload', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ build: APP_BUILD, version: APP_VERSION })
     }).then(x => x.json());
@@ -2045,7 +1987,7 @@ App.admMailSave = async function () {
   if (key && !/^xkeysib-/i.test(key) && !/^xsmtpsib-/i.test(key)) return toast('That does not look like a Brevo API key', 'err');
   if (from && !/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(from)) return toast('Enter a valid sender email', 'err');
   try {
-    const r = await fetch((typeof Remote !== 'undefined' ? Remote.url('/api/admin/mail') : '/api/admin/mail'), {
+    const r = await fetch('/api/admin/mail', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ adminId: me().id, brevoKey: key || undefined, from: from || undefined, fromName: name })
     }).then(x => x.json());
@@ -2058,7 +2000,7 @@ App.admMailSave = async function () {
 App.admMailTest = async function () {
   const to = ((document.getElementById('admMailTest') || {}).value || '').trim();
   if (!to) return toast('Enter an address to test', 'err');
-  const r = await fetch((typeof Remote !== 'undefined' ? Remote.url('/api/email/test') : '/api/email/test'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ to }) }).then(x => x.json()).catch(() => null);
+  const r = await fetch('/api/email/test', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ to }) }).then(x => x.json()).catch(() => null);
   if (r && r.ok) toast('Test email sent to ' + to, 'ok');
   else toast('Test failed: ' + ((r && (r.error || r.reason)) || 'unknown'), 'err');
 };
@@ -2095,12 +2037,7 @@ App.admPushDismiss = function () {
 
 async function ltServersPanel() {
   let mail = null;
-  try {
-    mail = await fetch((typeof Remote !== 'undefined' ? Remote.url('/api/email/status') : '/api/email/status'), { cache: 'no-store' }).then(r => r.json());
-    if (mail && mail.ok !== false) { try { localStorage.setItem('wc.email.status', JSON.stringify({ d: mail, at: Date.now() })); } catch (e) {} }
-  } catch (e) {
-    try { const c = JSON.parse(localStorage.getItem('wc.email.status') || 'null'); if (c && c.d) { mail = Object.assign({}, c.d, { cached: true }); } } catch (e2) {}
-  }
+  try { mail = await fetch('/api/email/status', { cache: 'no-store' }).then(r => r.json()); } catch (e) {}
   const pushOn = !!(DB.settings && DB.settings.push && DB.settings.push.enabled);
   const tabs = `<div class="admin-nav">${ADMIN_NAV.map(n => {
     const key = n.href.replace('#/admin', '') || '';
@@ -2126,7 +2063,7 @@ async function ltServersPanel() {
     <div class="between" style="align-items:center;flex-wrap:wrap;gap:10px">
       <div><div class="card-title" style="margin:0 0 4px">Email server</div>
         <div class="small ${mail && mail.configured ? 'up' : 'muted'}">
-          ${mail && mail.configured ? 'Connected' + (mail.cached ? ' (cached)' : '') + ' · sending from ' + esc(mail.from || '') + ' via ' + esc(mail.provider || '') : 'Not connected'}</div></div>
+          ${mail && mail.configured ? 'Connected · sending from ' + esc(mail.from || '') + ' via ' + esc(mail.provider || '') : 'Not connected'}</div></div>
       <span class="badge ${mail && mail.configured ? 'badge-success' : 'badge-warn'}">${mail && mail.configured ? 'Live' : 'Off'}</span>
     </div>
     <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:12px">
@@ -2227,9 +2164,7 @@ LT.previewTargets = function () {
   const capital = Number(capEl && capEl.value) || 0;
   const sideEl = document.querySelector('.lt-side-btn.on');
   const direction = sideEl && sideEl.getAttribute('data-side') === 'short' ? 'FALL' : 'RISE';
-  const levEl = document.getElementById('ltLev') || document.getElementById('ltLeverage');
-  const levReq = Number(levEl && levEl.value);
-  const lev = Math.min(20, Math.max(1, Number.isFinite(levReq) && levReq >= 1 ? Math.round(levReq) : LT.leverage()));
+  const lev = LT.leverage();
   const tpRaw = Number((document.getElementById('ltTp') || {}).value) || 0;
   const slRaw = Number((document.getElementById('ltSl') || {}).value) || 0;
   const tp = LT.levelPrice(direction, q.price, tpRaw, LT.levels.tp, 'tp', capital, lev);
@@ -2313,10 +2248,11 @@ App.ltStart = function (id, ds) {
   if ((tpRaw || slRaw) && !(capital > 0)) return toast('Enter a capital amount first', 'err');
   if (slAmt > capital + 1e-9) return toast('Stop Loss cannot be more than your ' + usd(capital) + ' capital', 'err');
   const tpPrice = 0, slPrice = 0;
+  void lev;
   const minutes = Number((document.getElementById('ltDuration') || {}).value) || 60;
   const modeName = (m) => m === 'price' ? 'PRICE' : m === 'wc' ? 'WC' : 'PERCENT';
   LT.start(side, ds.t, capital, {
-    tpPrice, slPrice, minutes, leverage: lev,
+    tpPrice, slPrice, minutes,
     tpMode: modeName(LT.levels.tp),
     slMode: trailOn ? 'TRAILING' : modeName(LT.levels.sl),
     tpWc: tpAmt,
@@ -2329,12 +2265,12 @@ App.ltTp = async function (id, ds) {
   if (!t || t.status !== 'Open') return toast('This trade is already closed', 'err');
   if (!(LT.calc(t).pnlCoins > 0)) return toast('No profit to take yet', 'err');
   /* the backend skim is atomic; fall back to the local bookkeeping offline */
-  if (typeof Remote !== 'undefined' && Remote && Remote.url) {
+  if (typeof Remote !== 'undefined' && Remote && Remote.enabled) {
     try {
       const r = await Remote.fetchJSON('/api/market/trade/take-profit', {
         method: 'POST',
         body: JSON.stringify({ userId: me().id, tradeId: t.id })
-      }, 30000);
+      }, 8000);
       if (r.res && r.res.ok && r.data && r.data.ok) {
         await Remote.refresh(true);
         toast(`Profit taken — ${usd(coinsToUsd(Number(r.data.profit) || 0))} credited. Trade continues`, 'ok');
@@ -2353,7 +2289,7 @@ App.ltClaimAllProfits = async function () {
     const ok = await confirmDialog({ title: 'Claim all secured profits?', body: `${list.length} entries totalling ${usd(total)} USD will be credited to your stock Profit balance.`, ok: 'Claim all' });
     if (!ok) return;
   }
-  if (typeof Remote !== 'undefined' && Remote && Remote.url) {
+  if (typeof Remote !== 'undefined' && Remote && Remote.enabled) {
     try {
       const r = await Remote.fetchJSON('/api/market/secure-profit/claim-all', {
         method: 'POST', body: JSON.stringify({ userId: me().id })
@@ -2391,7 +2327,7 @@ App.ltClaimProfit = async function (id, ds) {
   const rec = t && (t.securedProfits || []).find((x) => x && x.id === profitId);
   if (!t || !rec) return toast('That secured profit was not found', 'err');
   if (rec.claimed) return toast('This profit has already been claimed', 'err');
-  if (typeof Remote !== 'undefined' && Remote && Remote.url) {
+  if (typeof Remote !== 'undefined' && Remote && Remote.enabled) {
     try {
       const r = await Remote.fetchJSON('/api/market/secure-profit/claim', {
         method: 'POST',
@@ -2419,7 +2355,7 @@ App.ltClaimProfit = async function (id, ds) {
 };
 
 async function ltManualClose(t, action, reason) {
-  if (typeof Remote !== 'undefined' && Remote && Remote.url) {
+  if (typeof Remote !== 'undefined' && Remote && Remote.enabled) {
     try {
       const r = await Remote.fetchJSON('/api/market/trade/close', {
         method: 'POST',
@@ -2626,24 +2562,20 @@ function ltMountOrders() {
 
 function ltMountStock() {
   const hash = location.hash || '';
-  /* tickers may contain "_" (7203_T), "." (7203.T) or "-", not just [A-Z0-9.] */
-  const m = hash.match(/^#\/invest\/stock\/([A-Za-z0-9._-]+)/);
+  const m = hash.match(/^#\/invest\/stock\/([A-Z0-9.]+)/i);
   if (!m) return;
-  const raw = m[1].toUpperCase();
+  const ticker = m[1].toUpperCase();
   const content = document.getElementById('content');
   if (!content || document.getElementById('ltTicketMount')) return;
-  const stock = LT.resolveStock(raw);
-  const ticker = stock ? stock.ticker : raw;
   try {
+    const st = INV.stock(ticker);
     const admin = me() && me().role === 'admin';
-    if (stock && INV.classEnabled && INV.classOf && !INV.classEnabled(INV.classOf(stock)) && !admin) return;
+    if (st && INV.classEnabled && INV.classOf && !INV.classEnabled(INV.classOf(st)) && !admin) return;
   } catch (e) {}
 
   const host = document.createElement('div');
   host.id = 'ltTicketMount';
   host.innerHTML = LT.ticketHTML(ticker) + LT.activeBlock() + LT.stockHistory(ticker);
-  /* unknown symbol: leave the page's own panel untouched */
-  if (!host.innerHTML.trim()) return;
 
   /* the old spot panel (Market/Limit + Buy stock/Sell) is replaced entirely:
      a trade starts immediately and is exited with Take profit / Take loss. */
@@ -2763,20 +2695,14 @@ LT.closeFee = function (t) {
    Single source of truth for live P&L, charts and the trade guide. */
 /* number of real price moves seen on the live feed since entry (or last re-base): each distinct new price counts once; never a fixed number */
 LT.movesOf = function (t, price) {
+  const n = Number(t.moveCount) || 0;
   const p = Number(price);
-  if (!t) return 0;
   if (t._cEntry !== t.entryPrice) { t._cEntry = t.entryPrice; t._cMoves = 0; t._cLast = undefined; }
   if (p > 0 && p !== t._cLast) {
-    /* count only a new tick in the user's direction: that is a trade move */
-    const dir = LT.dirOf(t) === 'FALL' ? -1 : 1;
-    if (t._cLast > 0 && (p - t._cLast) * dir > 0) {
-      t._cMoves = (Number(t._cMoves) || 0) + 1;
-      t.clientMoveTotal = (Number(t.clientMoveTotal) || 0) + 1;
-      t.moveCount = t.clientMoveTotal;
-    }
+    if (t._cLast > 0) { t._cMoves = (t._cMoves || 0) + 1; t.clientMoveTotal = (Number(t.clientMoveTotal) || 0) + 1; }
     t._cLast = p;
   }
-  return Math.max(0, Number(t._cMoves) || 0, Number(t.clientMoveTotal) || 0);
+  return Math.max(1, n, t._cMoves || 0);
 };
 /* Take-profit level in USD (a % TP is stored as its USD amount of the capital) */
 LT.tpLevelOf = function (t) {
@@ -2811,17 +2737,12 @@ LT.rebaseAfterTake = function (t, price, amount) {
    (totalMoveCount) wins; older trades fall back to the moves since the last re-base. */
 LT.totalMovesOf = function (t) {
   if (!t) return 0;
-  /* the counter the user watches: real favourable price ticks since the trade
-     opened, never the number of take-profit levels */
-  const q = INV.quote(t.ticker);
-  const live = q && Number(q.price) > 0 ? LT.movesOf(t, q.price) : 0;
-  return Math.max(
-    live,
-    Number(t.clientMoveTotal) || 0,
-    Number(t.moveCount) || 0,
-    Number(t.totalMoveCount) || 0,
-    Number(t._cMoves) || 0
-  );
+  if (LT.tpLevelOf(t) > 0) {
+    if (t.status !== 'Open') return Number(t.totalMoveCount) || Number(t.tpMovesTaken) || 0;
+    const q = INV.quote(t.ticker);
+    return (Number(t.tpMovesTaken) || 0) + LT.tpMoves(t, q ? q.price : t.entryPrice);
+  }
+  return Math.max(Number(t.totalMoveCount) || 0, Number(t.clientMoveTotal) || 0, Number(t.moveCount) || 0, t._cMoves || 0);
 };
 /* admin profit rate (%) for a stock: its own rate, else the market-type rate (Admin -> Stocks) */
 /* ---- trade move log: stock price and profit at every move, and who took it ---- */

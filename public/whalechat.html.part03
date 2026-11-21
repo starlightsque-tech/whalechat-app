@@ -298,7 +298,7 @@ function shellHTML(inner, opts = {}) {
           <button class="btn-icon hide-desktop" data-act="mobile-search" title="Search">${ic('search', 18)}</button>
           <button class="btn-icon" data-nav="#/notifications" title="Notifications" style="position:relative">${ic('bell', 18)}
             ${nn ? `<span style="position:absolute;top:-4px;right:-4px;background:var(--danger);color:#fff;font-size:9px;min-width:16px;height:16px;border-radius:99px;display:flex;align-items:center;justify-content:center;padding:0 4px">${nn > 9 ? '9+' : nn}</span>` : ''}</button>
-          <button class="btn-icon" data-theme-toggle title="Theme" aria-label="Theme">${ic(document.documentElement.getAttribute('data-theme') === 'dark' ? 'sun' : 'moon', 18)}</button>
+          <button class="btn-icon hide-desktop" data-theme-toggle title="Theme">${ic(document.documentElement.getAttribute('data-theme') === 'dark' ? 'sun' : 'moon', 18)}</button>
           <button class="btn-icon" data-act="view-toggle" data-view-toggle title="Switch to ${((window.WC_VIEW && WC_VIEW.mode) || 'desktop') === 'desktop' ? 'mobile' : 'desktop'} view">${ic(((window.WC_VIEW && WC_VIEW.mode) || 'desktop') === 'desktop' ? 'smartphone' : 'monitor', 18)}</button>
           <button class="btn-icon" data-nav="#/profile" title="Profile" style="padding:0;overflow:hidden">${u.avatar ? `<img src="${u.avatar}" style="width:100%;height:100%;object-fit:cover"/>` : `<span style="font-weight:700;font-size:13px;color:var(--accent)">${esc(initials(u.fullName))}</span>`}</button>
         </div>
@@ -984,53 +984,16 @@ App.acSave = function () {
     <div class="tiny muted mt6">Check the phone number or username.${!Remote.enabled ? ' This device is in local mode, so only accounts created here can be found.' : ''}</div></div>`;
 };
 
-/* One contact row per (owner, person). De-duplicates rows created by older
-   builds, so "Add contact" can never stack the same person twice. */
-function ensureContact(ownerId, userId) {
-  if (!ownerId || !userId || ownerId === userId) return false;
-  const rows = DB.contacts.filter(c => c && c.ownerId === ownerId && c.userId === userId);
-  if (rows.length) {
-    if (rows.length > 1) {
-      const keep = rows[0];
-      DB.contacts = DB.contacts.filter(c => !(c && c.ownerId === ownerId && c.userId === userId) || c === keep);
-    }
-    return false;
-  }
-  DB.contacts.push({ id: uid('ct'), ownerId, userId, createdAt: Date.now() });
-  return true;
-}
-/* The "X added you" notification is sent once per pair — never again when the
-   contact is re-saved, re-synced or opened. */
-function notifyContactOnce(owner, target) {
-  if (!owner || !target) return;
-  DB.meta = DB.meta || {};
-  const map = DB.meta.contactNotices = DB.meta.contactNotices || {};
-  const key = String(owner.id) + '>' + String(target.id);
-  if (map[key]) return;
-  map[key] = Date.now();
-  notify(target.id, 'New contact',
-    `${owner.fullName} (@${owner.username}) added you to their WhaleChat contacts.`,
-    '#/chat/' + owner.id, 'users');
-}
-function flushContactsNow() {
-  try {
-    if (typeof Remote !== 'undefined' && Remote && Remote.enabled && typeof Remote.flush === 'function') {
-      setTimeout(function () { try { Remote.flush(); } catch (e) {} }, 30);
-    }
-  } catch (e) {}
-}
-
 App.saveContact = function (id) {
   const u = me();
   const x = findUser(id);
-  if (!u || !x) return;
+  if (!x) return;
   if (isContact(u.id, id)) { closeModal(); return go('chat/' + id); }
-  const added = ensureContact(u.id, id);
-  if (added) notifyContactOnce(u, x);
-  persist(true);
-  sync();
-  flushContactsNow();
-  closeModal(); toast('Contact added', 'ok'); go('chat/' + id);
+  DB.contacts.push({ id: uid('ct'), ownerId: u.id, userId: id, createdAt: Date.now() });
+  // reciprocal so both sides can talk
+  if (!isContact(id, u.id)) DB.contacts.push({ id: uid('ct'), ownerId: id, userId: u.id, createdAt: Date.now() });
+  notify(id, 'New contact', `${u.fullName} (@${u.username}) added you to their WhaleChat contacts.`, '#/home', 'users');
+  sync(); closeModal(); toast('Contact added', 'ok'); go('chat/' + id);
 };
 
 App.contactMenu = function (id) {
@@ -1054,16 +1017,11 @@ VIEWS.chat = function (parts) {
   const u = me();
   const other = findUser(parts[1]);
   if (!other) return `<div class="empty"><h3>Conversation not found</h3><button class="btn btn-primary" data-nav="#/home">Back</button></div>`;
-  const cid = chatId(u.id, other.id);
-  /* An incoming conversation is never blocked: if the other person has already
-     written to you, you can open it, read it and reply. Replying saves them to
-     your contacts (see AFTER.chat in wc-contact-fix). The gate only appears for
-     a conversation that has never had a message. */
-  const hasHistory = DB.messages.some(m => m && m.chatId === cid);
-  if (!isContact(u.id, other.id) && !hasHistory && other.role !== 'admin' && u.role !== 'admin') {
+  if (!isContact(u.id, other.id) && other.role !== 'admin' && u.role !== 'admin') {
     return `<div class="empty"><div class="ic">${ic('lock', 24)}</div><h3>You need to add ${esc(other.fullName)} first</h3>
-      <p>WhaleChat only allows conversations between saved contacts. Adding someone lets you start the chat; when they reply, they are saved to your contacts automatically.</p><button class="btn btn-primary" data-act="save-contact" data-id="${other.id}">Add contact</button></div>`;
+      <p>WhaleChat only allows conversations between saved contacts.</p><button class="btn btn-primary" data-act="save-contact" data-id="${other.id}">Add contact</button></div>`;
   }
+  const cid = chatId(u.id, other.id);
   ACTIVE_CHAT = cid;
   const msgs = chatMessages(cid);
   const meta = DB.chatsMeta[cid] || {};
@@ -1094,14 +1052,6 @@ VIEWS.chat = function (parts) {
       </div>
       <button class="btn-icon" data-act="chat-menu" data-id="${other.id}" style="width:36px;height:36px">${ic('more', 18)}</button>
     </div>
-    ${!isContact(u.id, other.id) && other.role !== 'admin' ? `<div class="contact-hint" data-contact-hint="${esc(other.id)}">
-      <span class="contact-hint-ic">${ic('users', 16)}</span>
-      <div class="contact-hint-txt">
-        <b>${esc(other.fullName.split(' ')[0])} is not in your contacts yet.</b>
-        <span>They will be saved automatically the moment you reply.</span>
-      </div>
-      <button class="btn btn-xs btn-primary" data-act="save-contact" data-id="${esc(other.id)}">${ic('plus', 12)} Add contact</button>
-    </div>` : ''}
     <div class="chat-body" id="chatBody">
       ${body}
       ${typing ? `<div class="typing"><i></i><i></i><i></i></div>` : ''}
@@ -1180,4 +1130,4 @@ function messageHTML(m, u, other) {
     <div class="meta">
       ${m.editedAt ? '<span class="edited">Edited</span>' : ''}
       <span>${clockTime(m.createdAt)}</span>
-      ${out ? `<span class="tick ${m.status || 'sent'}
+      ${out ? `<span class="tick ${m.status === 'seen' ? 'seen' : ''

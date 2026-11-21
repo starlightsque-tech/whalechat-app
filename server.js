@@ -19,21 +19,13 @@ const DATABASE_URL = process.env.DATABASE_URL || '';
 let email = null;
 try { email = require('./email'); } catch (e) { console.error('[email] module unavailable:', e.message); }
 const { MarketService, DEFAULT_ASSETS, assetKey, displayTickerFor } = require('./market');
-const marketCatalog = require('./market-catalog');
 const { SpotService } = require('./spot');
 const { BotService } = require('./bots');
 const { ShareService } = require('./shares');
-const adminAuth = require('./admin-auth');
-/* 3.57: durable Appwrite mirror for the database + uploaded app files */
-let appwrite = null;
-try { appwrite = require('./appwrite'); } catch (e) { console.error('[appwrite] module unavailable:', e.message); }
-const { createMarketAdmin } = require('./market-admin');
 let createConnections = null;
 try { createConnections = require('./connections').createConnections; } catch (e) { console.error('[connections] module unavailable:', e.message); }
 let createBinanceFeed = null;
 try { createBinanceFeed = require('./binance').createBinanceFeed; } catch (e) { console.error('[binance] module unavailable:', e.message); }
-let createTwelveDataFeed = null;
-try { createTwelveDataFeed = require('./twelvedata').createTwelveDataFeed; } catch (e) { console.error('[twelvedata] module unavailable:', e.message); }
 let createB2BAlertWatcher = null;
 try { createB2BAlertWatcher = require('./b2b-alerts').createB2BAlertWatcher; } catch (e) { console.error('[b2b-alerts] module unavailable:', e.message); }
 const market = new MarketService({
@@ -60,109 +52,19 @@ const shares = new ShareService({
   persist: () => persist(),
   broadcast: (event, data) => { try { broadcast(event, data); } catch (e) {} }
 });
-
-/* 3.64: configured servers (Appwrite nyc, Telesign, Brevo, market feeds).
-   Secrets stay in the environment; only public ids reach the browser. */
-const serverConfig = require('./server-config');
-/* 3.71: hosted WebSocket provider (Pusher Channels / Ably) for chat delivery.
-   Unconfigured here means the lane stays on this server's SSE stream. */
-const realtime = require('./realtime');
-/* 3.77 · unified SMS/OTP: Brevo transactional SMS, Telesign as fallback */
-let telesign = null;
-try { telesign = require('./sms'); } catch (e) { console.error('[sms] module unavailable:', e.message); }
-let appwriteOrders = null;
-try { appwriteOrders = require('./appwrite-orders'); } catch (e) { console.error('[appwrite-orders] module unavailable:', e.message); }
-const { createReconciler } = require('./offline-orders');
-function notifyUser(userId, title, body, icon, link) {
-  try {
-    if (!store.db) return;
-    const now = Date.now();
-    const id = 'nt_' + now.toString(36) + Math.random().toString(36).slice(2, 7);
-    (store.db.notifications = store.db.notifications || []).unshift({ id, userId, title, body, link: link || '#/investment', icon: icon || 'trend', read: false, createdAt: now });
-    store.rev += 1; store.updatedAt = now; persist();
-    broadcast('change', { rev: store.rev, source: 'offline-sync', at: now });
-  } catch (e) {}
-}
-const reconciler = createReconciler({
-  getDb: () => store.db,
-  persist: () => persistNow(),
-  quoteFor: (ticker) => market.quotes[String(ticker || '').toUpperCase()] || null,
-  appwrite: appwriteOrders,
-  mail: email,
-  notify: notifyUser,
-  appUrl: PUBLIC_URL || 'https://whalechat.appwrite.network',
-  tolerancePct: serverConfig.DEFAULTS.reconciliation.tolerancePct
-});
 /* Binance live crypto prices alongside Finnhub (charts stay on Finnhub). */
-const binance = createBinanceFeed ? createBinanceFeed({
-  getDb: () => store.db,
-  everyMs: Number(process.env.BINANCE_MS || 15000),
-  /* every crypto row owned by the Binance catalogue is streamed (30 pairs) */
-  getSymbols: () => {
-    try {
-      return market.assetList()
-        .filter((a) => !a.hidden && a.provider === 'binance')
-        .map((a) => String(a.ticker).toUpperCase());
-    } catch (e) { return []; }
-  },
-  onTick: (sym, price, meta) => { try { market.ingestExternal(sym, price, meta); } catch (e) {} }
-}) : null;
-
-/* Twelve Data runs next to Finnhub (stocks/forex) and Binance (crypto), so the
-   app always shows the freshest real price from any of the three feeds. */
-const twelvedata = createTwelveDataFeed ? createTwelveDataFeed({
-  getDb: () => store.db,
-  /* a key saved in Admin > Market Controls (encrypted in Postgres) is read here
-     too, so either admin card works */
-  getApiKey: () => { try { return marketAdmin.keyFor('twelvedata').apiKey; } catch (e) { return ''; } },
-  everyMs: Number(process.env.TWELVEDATA_MS || 65000),
-  /* 6 symbols per 65 s keeps a free key (8 credits/min) clear of 429s even
-     when the admin presses Test Twelve Data in the same minute */
-  batch: Number(process.env.TWELVEDATA_BATCH || 6),
-  /* Real listed stocks from BOTH stock catalogues. Finnhub keeps its websocket
-     and Twelve Data polls the same symbols as a second real source, so a stock
-     still has a live price when only one of the two providers answers. The B2B
-     marketplace symbols are flagged `hot` and refreshed on every cycle. */
-  getTargets: () => {
-    try {
-      const HOT = ['TSLA', 'MSFT', 'GOOGL', 'AMZN', 'AAPL', 'SHOP', 'SSNLF', 'NVDA', 'META', 'AMD'];
-      return market.assetList()
-        .filter((a) => !a.hidden && !a.synthetic && a.assetClass === 'us' && (a.provider === 'twelvedata' || a.provider === 'finnhub'))
-        .map((a) => ({
-          ticker: a.ticker,
-          symbol: a.finnhubSymbol || a.ticker,
-          kind: a.assetClass,
-          hot: HOT.indexOf(String(a.ticker).toUpperCase()) >= 0
-        }))
-        .sort((a, b) => (b.hot ? 1 : 0) - (a.hot ? 1 : 0));
-    } catch (e) { return []; }
-  },
-  onTick: (ticker, price, row) => {
-    try {
-      market.ingestExternal(ticker, price, row ? {
-        prevClose: Number(row.previous_close) || Number(row.close) || price,
-        open: Number(row.open) || price,
-        dayHigh: Number(row.high) || price,
-        dayLow: Number(row.low) || price,
-        vol: Number(row.volume) || 0
-      } : null);
-    } catch (e) {}
-  }
-}) : null;
+const binance = createBinanceFeed ? createBinanceFeed({ getDb: () => store.db, everyMs: Number(process.env.BINANCE_MS || 15000), onTick: (sym, price) => { try { market.ingestExternal(sym, price); } catch (e) {} } }) : null;
 
 /* Durable third-party connection settings (Finnhub, Binance, Brevo, SMTP).
    Applied on every boot so a new release never comes up disconnected. */
-let createMarketData = null;
-try { createMarketData = require('./market-data').createMarketData; } catch (e) { console.error('[market-data] module unavailable:', e.message); }
 const connections = createConnections ? createConnections({
   getDb: () => store.db,
   persist: () => persist(),
   dataDir: DATA_DIR,
-  market, email, binance, twelvedata,
+  market, email, binance,
   log: (m) => console.log(m),
   storageBackend: () => (pool ? 'postgres' : 'file')
 }) : null;
-const marketData = (createMarketData && connections) ? createMarketData({ connections, log: (m) => console.log(m) }) : null;
 
 /* B2B price alerts: evaluate on the server so email + in-app notification are
    delivered even when the user's app is closed. */
@@ -173,8 +75,6 @@ const b2bAlerts = createB2BAlertWatcher ? createB2BAlertWatcher({
   quotes: () => market.quotes || {},
   email,
   appUrl: () => PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || ('http://localhost:' + PORT),
-  /* home-screen push for buy/sell targets and every Auto Buy/Sell fill */
-  push: (userId, payload) => { try { sendPush(userId, payload).catch(() => {}); } catch (e) {} },
   everyMs: Number(process.env.B2B_ALERT_MS || 15000),
   /* Auto Buy/Sell checks every live price tick so a buy/sell target is never skipped */
   onQuote: (fn) => { try { if (market && typeof market.onQuote === 'function') market.onQuote(fn); } catch (e) {} }
@@ -190,22 +90,6 @@ const STATE_FILE = path.join(DATA_DIR, 'state.json');
 const SUBS_FILE = path.join(DATA_DIR, 'push-subscriptions.json');
 const VAPID_FILE = path.join(DATA_DIR, 'vapid.json');
 const store = { rev: 0, db: null, updatedAt: 0, loadedFrom: 'empty' };
-/* provider config, tradable symbols, trading controls, admin_logs and the
-   provider-only price cache (market-admin.js, db/migrations/001_market_admin.sql) */
-const marketAdmin = createMarketAdmin({
-  log: (m) => console.log(m),
-  legacyKeys: () => {
-    try {
-      const s = (connections && connections.stored && connections.stored()) || {};
-      const m = s.marketData || {};
-      return {
-        binance: { apiKey: (s.binance || {}).apiKey || '', secret: (m.binance || {}).secret || '' },
-        finnhub: { apiKey: (s.finnhub || {}).apiKey || '' },
-        twelvedata: { apiKey: (s.twelvedata || {}).apiKey || (m.twelvedata || {}).apiKey || '' }
-      };
-    } catch (e) { return {}; }
-  }
-});
 const clients = new Set();
 /* live price stream: every 400 ms push only the quotes that changed */
 const marketClients = new Set();
@@ -276,23 +160,14 @@ function persistNow() {
   try { writeJSONAtomic(STATE_FILE, { rev: store.rev, updatedAt: store.updatedAt, db: store.db }); }
   catch (e) { console.error('[db] write failed:', e.message); }
   pgPersist();
-  /* mirror to Appwrite without blocking the request path */
-  try { if (appwrite) appwrite.schedule(store); } catch (e) {}
 }
 /* Durable storage: optional Postgres (DATABASE_URL) so a redeploy can never
    wipe accounts. The file stays as a fast cache and local backup. */
 function pgPersist() {
   if (!pool || !store.db) return;
   const payload = JSON.stringify(store.db);
-  const rev = store.rev;
-  pool.query('insert into whalechat_state (id, rev, updated_at, db) values (1,$1,now(),$2::jsonb) on conflict (id) do update set rev=excluded.rev, updated_at=now(), db=excluded.db', [rev, payload])
-    .then(() => { pgState.lastWriteAt = Date.now(); })
-    .catch(e => {
-      console.error('[db] postgres write failed:', e.message);
-      pgState.lastError = e.message;
-      /* a dead connection must not silently swallow every later write */
-      if (isConnError(e)) { dropPool(); schedulePgRetry(); }
-    });
+  pool.query('insert into whalechat_state (id, rev, updated_at, db) values (1,$1,now(),$2::jsonb) on conflict (id) do update set rev=excluded.rev, updated_at=now(), db=excluded.db', [store.rev, payload])
+    .catch(e => console.error('[db] postgres write failed:', e.message));
 }
 function ensureTradingAssets() {
   const db = store.db;
@@ -307,52 +182,6 @@ function ensureTradingAssets() {
     if (!s.exchange) { s.exchange = s.assetClass === 'forex' ? 'OANDA' : s.assetClass === 'crypto' ? 'Binance' : 'US'; changed = true; }
     if (!s.currency) { s.currency = s.assetClass === 'crypto' ? 'USDT' : 'USD'; changed = true; }
   });
-  /* Provider-owned catalogues: every listed row carries a `provider` so the
-     Binance, Finnhub and Twelve Data feeds only serve their own, disjoint set. */
-  const catBy = marketCatalog.byTicker;
-  db.stocks.forEach((s) => {
-    if (!s || !s.ticker) return;
-    const t = String(s.ticker).toUpperCase();
-    const row = catBy.get(t);
-    if (row) {
-      if (s.provider !== row.provider) { s.provider = row.provider; changed = true; }
-      if (s.synthetic) { s.synthetic = false; changed = true; }
-      if (!s.sector) { s.sector = row.sector; changed = true; }
-      if (!s.exchange) { s.exchange = row.exchange; changed = true; }
-      if (!s.currency) { s.currency = row.currency; changed = true; }
-      if (!s.color) { s.color = row.color; changed = true; }
-      if (!s.displayTicker) { s.displayTicker = row.displayTicker; changed = true; }
-      /* repair a fallback/hash price left far away from the real level */
-      const base = Number(row.price) || 0;
-      const cur = Number(s.price) || 0;
-      if (base > 0 && (!(cur > 0) || cur / base > 5 || cur / base < 0.2)) {
-        s.price = base; s.prevClose = base; changed = true;
-      }
-    } else if (!s.provider) {
-      s.provider = (s.assetClass === 'crypto' || /^BINANCE:/.test(String(s.finnhubSymbol || ''))) ? 'binance' : 'finnhub';
-      changed = true;
-    }
-  });
-  marketCatalog.rows.forEach((row) => {
-    if (db.stocks.some((s) => String(s.ticker).toUpperCase() === row.ticker)) return;
-    db.stocks.push(Object.assign({
-      id: 'st_' + row.ticker.toLowerCase().replace(/[^a-z0-9]/g, ''),
-      price: 0, prevClose: 0, div: 0, paused: false, custom: false, createdAt: Date.now()
-    }, row));
-    changed = true;
-  });
-
-  /* The WhaleChat company stock is a real, continuously counting symbol.
-     Its price is driven by the whale-share market (see bridgeCompanyStock). */
-  if (!db.stocks.some((s) => String(s.ticker).toUpperCase() === 'WC')) {
-    db.stocks.push({
-      id: 'st_wc', ticker: 'WC', displayTicker: 'WC', finnhubSymbol: 'WC',
-      assetClass: 'us', name: 'WhaleChat (WC)', exchange: 'WhaleChat', currency: 'USD',
-      color: '#2ee6c9', sector: 'Company', price: 12.5, prevClose: 12.5, div: 0,
-      paused: false, custom: false, synthetic: true, twentyFourSeven: true, createdAt: Date.now()
-    });
-    changed = true;
-  }
   DEFAULT_ASSETS.forEach((a) => {
     if (!db.stocks.some((s) => String(s.ticker).toUpperCase() === String(a.ticker).toUpperCase())) {
       db.stocks.push(Object.assign({ id: 'st_' + String(a.ticker).toLowerCase().replace(/[^a-z0-9]/g, ''), price: 0, prevClose: 0, div: 0, paused: false, custom: false, createdAt: Date.now() }, a));
@@ -390,333 +219,42 @@ async function saveMarketConfig(cfg) {
   } catch (e) { console.error('[market] durable config write failed:', e.message); return false; }
 }
 
-/* -------------------------------------------------------------------------
-   Durable storage: Postgres (DATABASE_URL) is the source of truth, the file is
-   a fast cache and an offline copy.
-
-   Supabase free projects are paused after 7 days without activity, and a cold
-   (or just-resumed) project can refuse or time out the first connections. The
-   rules below keep chat sync and price alerts alive through that:
-
-     · connect failures never disable durability permanently — we retry with
-       backoff (5s → 60s) for as long as the process lives
-     · a failed WRITE drops the dead pool and reconnects instead of silently
-       losing writes
-     · on every (re)connect the rev numbers are compared: the newer side wins,
-       so resuming a paused project adopts its state instead of clobbering it,
-       and a reconnect pushes the state built while the database was away
-     · a 5-minute heartbeat write keeps the project from going idle
-   ------------------------------------------------------------------------- */
-let pgRetryTimer = null;
-let pgRetryDelay = 5000;
-const pgState = {
-  connected: false,
-  lastError: '',
-  lastConnectAt: 0,
-  attempts: 0,
-  lastWriteAt: 0,
-  lastAdopt: null
-};
-
-function isConnError(e) {
-  const code = String((e && e.code) || '');
-  if (/^(ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EPIPE|EAI_AGAIN|57P01|57P02|57P03|08000|08001|08003|08004|08006|53300|3D000)$/.test(code)) return true;
-  return /terminat|timeout|timed out|closed|socket|connect|not available/i.test(String((e && e.message) || ''));
-}
-
-function schedulePgRetry() {
-  if (!DATABASE_URL || pgRetryTimer) return;
-  const wait = pgRetryDelay;
-  pgRetryTimer = setTimeout(() => { pgRetryTimer = null; connectPostgres().catch(() => {}); }, wait);
-  if (pgRetryTimer.unref) pgRetryTimer.unref();
-  pgRetryDelay = Math.min(Math.round(pgRetryDelay * 1.8), 60000);
-}
-
-function dropPool() {
-  const p = pool;
-  pool = null;
-  pgState.connected = false;
-  try { if (p) p.end().catch(() => {}); } catch (e) {}
-}
-
-async function reconcileState() {
-  const r = await pool.query('select rev, db, updated_at from whalechat_state where id = 1');
-  const row = r.rows[0];
-  if (!row || !row.db) {
-    if (store.db) { pgState.lastAdopt = 'local-seed'; pgPersist(); console.log('[db] seeded Postgres from device state · rev', store.rev); }
-    return;
-  }
-  const remoteRev = Number(row.rev) || 0;
-  const localRev = Number(store.rev) || 0;
-  if (remoteRev > localRev) {
-    store.rev = remoteRev;
-    store.db = row.db;
-    store.updatedAt = new Date(row.updated_at).getTime() || Date.now();
-    store.loadedFrom = 'postgres';
-    pgState.lastAdopt = 'remote';
-    try { writeJSONAtomic(STATE_FILE, { rev: store.rev, updatedAt: store.updatedAt, db: store.db }); } catch (e) {}
-    try { ensureTradingAssets(); } catch (e) {}
-    try { broadcast('change', { rev: store.rev, source: 'postgres-reconnect', at: store.updatedAt }); } catch (e) {}
-    console.log('[db] adopted newer Postgres state · rev', store.rev);
-    return;
-  }
-  if (store.db && localRev >= remoteRev) {
-    pgState.lastAdopt = 'local';
-    pgPersist();
-    console.log('[db] pushed device state to Postgres · rev', store.rev);
-    return;
-  }
-  if (store.db === null) {
-    store.rev = remoteRev;
-    store.db = row.db;
-    store.loadedFrom = 'postgres';
-    pgState.lastAdopt = 'remote';
-    console.log('[db] loaded from Postgres · rev', store.rev);
-  }
-}
-
-async function connectPostgres() {
-  if (!DATABASE_URL) return false;
-  pgState.attempts++;
-  try {
-    const { Pool } = require('pg');
-    /* Managed Postgres (Supabase, Neon, Render) requires TLS. node-postgres lets
-       an `sslmode=` in the URL win over the ssl options we pass here, which
-       re-enables certificate verification and fails on their CA chain
-       ("self-signed certificate in certificate chain"). Strip the parameter and
-       set the policy explicitly instead. */
-    const needsSsl = /sslmode=require|sslmode=no-verify/i.test(DATABASE_URL)
-      || /\.render\.com/i.test(DATABASE_URL)
-      || /supabase\.(co|com)/i.test(DATABASE_URL);
-    const connStr = needsSsl
-      ? DATABASE_URL.replace(/([?&])sslmode=[^&]*/i, '$1').replace(/[?&]$/, '')
-      : DATABASE_URL;
-    if (!pool) {
-      pool = new Pool({
-        connectionString: connStr,
-        max: 4,
-        ssl: needsSsl ? { rejectUnauthorized: false } : undefined,
-        connectionTimeoutMillis: 15000,
-        idleTimeoutMillis: 30000,
-        keepAlive: true
-      });
-      pool.on('error', (e) => {
-        console.error('[db] idle client error:', e.message);
-        if (isConnError(e)) { dropPool(); schedulePgRetry(); }
-      });
-    }
-    await pool.query('create table if not exists whalechat_state (id int primary key, rev int not null default 0, updated_at timestamptz not null default now(), db jsonb)');
-    await pool.query('create table if not exists whalechat_heartbeat (id int primary key, at timestamptz not null default now(), note text)');
-    await pool.query("insert into whalechat_heartbeat (id, at, note) values (1, now(), 'connect') on conflict (id) do update set at = now(), note = 'connect'");
-    pgState.connected = true;
-    pgState.lastError = '';
-    pgState.lastConnectAt = Date.now();
-    pgRetryDelay = 5000;
-    console.log('[db] postgres connected · durable storage active');
-    await reconcileState();
-    return true;
-  } catch (e) {
-    pgState.connected = false;
-    pgState.lastError = e.message;
-    console.error('[db] postgres unavailable (attempt ' + pgState.attempts + '): ' + e.message + ' — retrying in ' + Math.round(pgRetryDelay / 1000) + 's; chat sync and alerts continue on the device state');
-    dropPool();
-    schedulePgRetry();
-    return false;
-  }
-}
-
-/* -------------------------------------------------------------------------
-   Durable market tick ring-buffer (Postgres)
-
-   The in-memory history is a 3000-point ring buffer per symbol. Without this
-   table a redeploy started with an empty ring buffer and the candle chart had
-   to rebuild itself from the first ticks of the new process. Every recorded
-   point is now inserted into whalechat_market_ticks and the ring buffer is
-   hydrated from it before the feeds start, so /api/market/history always has
-   the full series after a restart.
-   ------------------------------------------------------------------------- */
-const TICK_RETENTION_MS = Number(process.env.MARKET_TICK_RETENTION_MS || 14 * 24 * 60 * 60 * 1000);
-const TICK_KEEP_PER_SYMBOL = 3000;
-let tickQueue = [];
-let tickTableReady = false;
-let tickFlushAt = 0;
-
-async function ensureMarketTicksTable() {
-  if (!pool) return false;
-  if (tickTableReady) return true;
-  await pool.query('create table if not exists whalechat_market_ticks (ticker text not null, t bigint not null, p numeric not null, is_real boolean not null default false, source text, primary key (ticker, t))');
-  await pool.query('create index if not exists whalechat_market_ticks_t_idx on whalechat_market_ticks (t)');
-  tickTableReady = true;
-  return true;
-}
-
-async function loadMarketTicks() {
-  if (!pool) return 0;
-  try {
-    await ensureMarketTicksTable();
-    const cutoff = Date.now() - TICK_RETENTION_MS;
-    const r = await pool.query(
-      'select ticker, t, p, is_real, source from whalechat_market_ticks where t >= $1 order by ticker asc, t asc',
-      [cutoff]
-    );
-    const byTicker = {};
-    for (const row of r.rows) {
-      const t = String(row.ticker || '').toUpperCase();
-      if (!t) continue;
-      const arr = byTicker[t] || (byTicker[t] = []);
-      arr.push({ t: Number(row.t), p: Number(row.p), real: !!row.is_real, source: row.source || 'restored' });
-      if (arr.length > TICK_KEEP_PER_SYMBOL) arr.splice(0, arr.length - TICK_KEEP_PER_SYMBOL);
-    }
-    const n = market.hydrateHistory(byTicker);
-    if (n) console.log('[market] durable tick store · ' + r.rows.length + ' ticks restored across ' + n + ' symbols');
-    return n;
-  } catch (e) {
-    console.error('[market] durable tick read failed:', e.message);
-    return 0;
-  }
-}
-
-const lastDurableTick = new Map();
-function queueMarketTick(ticker, rec) {
-  if (!pool || !rec) return;
-  const tk = String(ticker).toUpperCase();
-  const at = Number(rec.t) || Date.now();
-  /* the chart only needs one durable point per 5 s; throttling keeps the
-     table small on a free Postgres plan while preserving the full series */
-  if (at - (lastDurableTick.get(tk) || 0) < 5000) return;
-  lastDurableTick.set(tk, at);
-  tickQueue.push([tk, at, Number(rec.p) || 0, !!rec.real, rec.source || 'live']);
-  if (tickQueue.length > 20000) tickQueue.splice(0, tickQueue.length - 12000);
-}
-
-async function flushMarketTicks(force) {
-  if (!pool || !tickQueue.length) return 0;
-  const now = Date.now();
-  if (!force && now - tickFlushAt < 5000) return 0;
-  tickFlushAt = now;
-  const batch = tickQueue;
-  tickQueue = [];
-  const seen = new Set();
-  const rows = [];
-  for (const r of batch) {
-    if (!(r[2] > 0)) continue;
-    const key = r[0] + '|' + r[1];
-    if (seen.has(key)) continue;
-    seen.add(key);
-    rows.push(r);
-  }
-  if (!rows.length) return 0;
-  try {
-    await ensureMarketTicksTable();
-    for (let i = 0; i < rows.length; i += 400) {
-      const chunk = rows.slice(i, i + 400);
-      const values = [];
-      const params = [];
-      chunk.forEach((r, j) => {
-        const b = j * 5;
-        values.push('($' + (b + 1) + ',$' + (b + 2) + ',$' + (b + 3) + ',$' + (b + 4) + ',$' + (b + 5) + ')');
-        params.push(r[0], r[1], r[2], r[3], r[4]);
-      });
-      await pool.query(
-        'insert into whalechat_market_ticks (ticker, t, p, is_real, source) values ' + values.join(',') +
-        ' on conflict (ticker, t) do update set p = excluded.p, is_real = excluded.is_real, source = excluded.source',
-        params
-      );
-    }
-    /* prune outside the retention window at most once a minute */
-    if (now - (flushMarketTicks._prunedAt || 0) > 60000) {
-      flushMarketTicks._prunedAt = now;
-      await pool.query('delete from whalechat_market_ticks where t < $1', [now - TICK_RETENTION_MS]).catch(() => {});
-    }
-    return rows.length;
-  } catch (e) {
-    console.error('[market] durable tick write failed:', e.message);
-    if (isConnError(e)) { dropPool(); schedulePgRetry(); }
-    return 0;
-  }
-}
-market.onTick(queueMarketTick);
-setInterval(() => { flushMarketTicks(false).catch(() => {}); }, 10000).unref();
-
-/* The WhaleChat company stock (WC) counts like any other symbol: its price is
-   the live whale-share market price, the same number WC-Investing plans use for
-   their daily return, and every move is a real tick in the chart/history. */
-let companyStockAt = 0;
-function bridgeCompanyStock() {
-  try {
-    const now = Date.now();
-    if (now - companyStockAt < 3000) return;
-    companyStockAt = now;
-    const px = Number(shares.sharePrice());
-    if (!(px > 0)) return;
-    const q = market.quotes['WC'] || {};
-    market.writeQuote('WC', px, {
-      prevClose: Number(q.prevClose) > 0 ? Number(q.prevClose) : px,
-      open: Number(q.open) > 0 ? Number(q.open) : px,
-      vol: Number(q.vol) || 0,
-      source: 'whaleshares',
-      real: true
-    });
-  } catch (e) {}
-}
-setInterval(bridgeCompanyStock, 3000).unref();
-
 async function initStorage() {
   if (!DATABASE_URL) return;
-  await connectPostgres();
-  /* keep the database warm so a free Supabase project never goes idle */
-  setInterval(() => {
-    if (!pool) return;
-    pool.query("insert into whalechat_heartbeat (id, at, note) values (1, now(), 'beat') on conflict (id) do update set at = now(), note = 'beat'")
-      .then(() => { pgState.lastWriteAt = Date.now(); })
-      .catch((e) => { if (isConnError(e)) { dropPool(); schedulePgRetry(); } });
-  }, 5 * 60 * 1000).unref();
+  try {
+    const { Pool } = require('pg');
+    const needsSsl = /sslmode=require/i.test(DATABASE_URL) || /\.render\.com/i.test(DATABASE_URL);
+    pool = new Pool({ connectionString: DATABASE_URL, max: 4, ssl: needsSsl ? { rejectUnauthorized: false } : undefined });
+    await pool.query('create table if not exists whalechat_state (id int primary key, rev int not null default 0, updated_at timestamptz not null default now(), db jsonb)');
+    const r = await pool.query('select rev, db, updated_at from whalechat_state where id = 1');
+    if (r.rows[0] && r.rows[0].db) {
+      store.rev = r.rows[0].rev || 0;
+      store.db = r.rows[0].db;
+      store.updatedAt = new Date(r.rows[0].updated_at).getTime() || Date.now();
+      store.loadedFrom = 'postgres';
+      try { writeJSONAtomic(STATE_FILE, { rev: store.rev, updatedAt: store.updatedAt, db: store.db }); } catch (e) {}
+      console.log('[db] loaded from Postgres · rev', store.rev);
+    } else if (store.db) {
+      pgPersist();
+      console.log('[db] seeded Postgres from local state · rev', store.rev);
+    }
+  } catch (e) {
+    console.error('[db] postgres unavailable:', e.message);
+    pool = null;
+  }
 }
-
 loadState();
 setInterval(() => snapshot('hourly'), 3600000).unref();
 
 let webpush = null;
 try { webpush = require('web-push'); } catch (e) { webpush = null; }
-let vapid = null;
-let subscriptions = [];
-/* Push identity and device subscriptions are kept in the database (and the
-   file cache) so a redeploy that preserves /data or Postgres keeps every
-   registered phone working. Env keys win, so an operator can pin them. */
-function initPush() {
-  if (!webpush) { console.log('[push] web-push not installed — push disabled'); return; }
-  const envPub = process.env.VAPID_PUBLIC_KEY || '';
-  const envPriv = process.env.VAPID_PRIVATE_KEY || '';
-  let stored = (envPub && envPriv) ? { publicKey: envPub, privateKey: envPriv } : null;
-  if (!stored) {
-    try { if (store.db && store.db.settings && store.db.settings.vapid && store.db.settings.vapid.publicKey) stored = store.db.settings.vapid; } catch (e) {}
-  }
-  if (!stored) stored = readJSON(VAPID_FILE, null);
-  if (!stored || !stored.publicKey || !stored.privateKey) {
-    stored = webpush.generateVAPIDKeys();
-    console.log('[push] generated VAPID keys');
-  }
-  vapid = stored;
-  try {
-    if (store.db) {
-      store.db.settings = store.db.settings || {};
-      store.db.settings.vapid = { publicKey: vapid.publicKey, privateKey: vapid.privateKey };
-    }
-  } catch (e) {}
-  try { writeJSONAtomic(VAPID_FILE, vapid); } catch (e) {}
+let vapid = readJSON(VAPID_FILE, null);
+let subscriptions = readJSON(SUBS_FILE, []);
+if (webpush) {
+  if (!vapid || !vapid.publicKey || !vapid.privateKey) { vapid = webpush.generateVAPIDKeys(); writeJSONAtomic(VAPID_FILE, vapid); console.log('[push] generated VAPID keys'); }
   webpush.setVapidDetails('mailto:' + VAPID_EMAIL, vapid.publicKey, vapid.privateKey);
-  let list = null;
-  try { if (store.db && Array.isArray(store.db.pushSubscriptions)) list = store.db.pushSubscriptions; } catch (e) {}
-  if (!list) list = readJSON(SUBS_FILE, []);
-  subscriptions = Array.isArray(list) ? list : [];
-  try { if (store.db) store.db.pushSubscriptions = subscriptions; } catch (e) {}
-  try { persist(); } catch (e) {}
-  console.log('[push] ready · devices', subscriptions.length);
-}
-const saveSubs = () => {
-  try { writeJSONAtomic(SUBS_FILE, subscriptions); } catch (e) {}
-  try { if (store.db) { store.db.pushSubscriptions = subscriptions; persist(); } } catch (e) {}
-};
+} else { console.log('[push] web-push not installed — push disabled'); }
+const saveSubs = () => { try { writeJSONAtomic(SUBS_FILE, subscriptions); } catch (e) {} };
 
 async function sendPush(userId, payload) {
   if (!webpush || !vapid) return 0;
@@ -733,7 +271,7 @@ async function sendPush(userId, payload) {
 
 function json(res, code, body) {
   const data = JSON.stringify(body);
-  res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(data), 'cache-control': 'no-store', 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type, x-admin-token', 'access-control-allow-methods': 'GET,POST,OPTIONS' });
+  res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(data), 'cache-control': 'no-store', 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type', 'access-control-allow-methods': 'GET,POST,OPTIONS' });
   res.end(data);
 }
 function readBody(req) {
@@ -763,13 +301,6 @@ function lifecycleEmails(pushes, events) {
   }
 }
 const VERIFY_CODES = new Map();
-/* 6-digit codes for sign-up / password reset, keyed by email + purpose */
-const EMAIL_CODES = new Map();
-function emailCodeKey(email, purpose) { return String(email || '').trim().toLowerCase() + ':' + String(purpose || 'signup'); }
-function codeHash(email, purpose, code) {
-  return require('crypto').createHash('sha256')
-    .update('email-code::' + emailCodeKey(email, purpose) + '::' + String(code || '').trim()).digest('hex');
-}
 function broadcast(event, data) {
   const frame = `event: ${event}\ndata: ${JSON.stringify(data || {})}\n\n`;
   for (const res of clients) { try { res.write(frame); } catch (e) {} }
@@ -846,171 +377,8 @@ function serveStatic(req, res, pathname) {
 
 const COLLECTIONS = ['users', 'vendors', 'companyProducts', 'products', 'orders', 'deposits', 'withdrawals', 'messages', 'statuses', 'notifications', 'contacts', 'blocks', 'txs', 'referrals', 'purchases', 'refunds', 'vendorApplications', 'reports', 'bonuses', 'bonusClaims', 'emailCampaigns', 'stocks', 'holdings', 'trades', 'watchlist', 'alerts', 'audit', 'portfolioAudit', 'botAccounts', 'botEvents', 'traffic', 'shareInvestments', 'serviceRequests'];
 
-/* Admin checks need a valid server-issued admin session token (x-admin-token
-   header, see admin-auth.js). The adminId sent by the browser alone is not
-   trusted any more. */
 function isAdmin(db, adminId) {
-  return adminAuth.isAdminRequest(adminId);
-}
-function adminFor(adminId) {
-  return adminAuth.isAdminRequest(adminId) ? adminAuth.currentAdmin() : null;
-}
-
-/* =========================================================================
-   Chat lane (3.69) — a small, fast road for messages
-   -------------------------------------------------------------------------
-   Messages used to ride on the whole state document. Here they get their own
-   tiny log with a monotonic sequence, an SSE stream for devices that can hold
-   one open, and a long poll for everything else. Delivery is one round trip.
-   ========================================================================= */
-const CHAT_KEEP = 4000;
-const chatRing = { seq: 0, messages: [], loaded: false, subs: new Set() };
-const CHAT_LOG_FILE = path.join(DATA_DIR, 'chat-log.json');
-
-function chatLoadSync() {
-  if (chatRing.loaded) return chatRing;
-  chatRing.loaded = true;
-  try {
-    const raw = JSON.parse(fs.readFileSync(CHAT_LOG_FILE, 'utf8'));
-    if (raw && Array.isArray(raw.messages)) {
-      chatRing.messages = raw.messages;
-      chatRing.seq = Number(raw.seq) || raw.messages.length || 0;
-    }
-  } catch (e) { /* first boot: empty log */ }
-  return chatRing;
-}
-let chatSaveTimer = null;
-function chatSaveSoon() {
-  if (chatSaveTimer) return;
-  chatSaveTimer = setTimeout(() => {
-    chatSaveTimer = null;
-    try { writeJSONAtomic(CHAT_LOG_FILE, { seq: chatRing.seq, messages: chatRing.messages }); } catch (e) {}
-  }, 400);
-}
-function chatNormalize(m, seq) {
-  if (!m || !m.id || !m.chatId) return null;
-  return {
-    id: String(m.id).slice(0, 60),
-    chatId: String(m.chatId).slice(0, 120),
-    from: String(m.from || '').slice(0, 60),
-    to: String(m.to || '').slice(0, 60),
-    type: /^(text|image|video|audio)$/.test(String(m.type || '')) ? m.type : 'text',
-    text: String(m.text == null ? '' : m.text).slice(0, 4000),
-    mediaId: m.mediaId ? String(m.mediaId).slice(0, 80) : null,
-    dur: Number(m.dur) || null,
-    createdAt: Number(m.createdAt) || Date.now(),
-    status: String(m.status || 'sent').slice(0, 20),
-    forwarded: !!m.forwarded,
-    deleted: !!m.deleted,
-    readBy: Array.isArray(m.readBy) ? m.readBy.slice(0, 50) : [],
-    seq: Number(seq) || 0
-  };
-}
-function chatAppendMessages(list) {
-  chatLoadSync();
-  const have = new Map(chatRing.messages.map((m) => [m.id, m]));
-  const accepted = [];
-  for (const raw of (list || [])) {
-    const m = chatNormalize(raw, 0);
-    if (!m) continue;
-    const cur = have.get(m.id);
-    if (cur) {
-      if (m.status) cur.status = m.status;
-      if (m.readBy && m.readBy.length > (cur.readBy || []).length) cur.readBy = m.readBy;
-      if (m.deleted) cur.deleted = true;
-      accepted.push({ id: cur.id, status: cur.status, seq: cur.seq, duplicate: true });
-      continue;
-    }
-    chatRing.seq += 1;
-    m.seq = chatRing.seq;
-    chatRing.messages.push(m);
-    have.set(m.id, m);
-    accepted.push({ id: m.id, status: m.status, seq: m.seq });
-  }
-  if (chatRing.messages.length > CHAT_KEEP) chatRing.messages = chatRing.messages.slice(-CHAT_KEEP);
-  if (accepted.length) {
-    chatSaveSoon();
-    for (const sub of chatRing.subs) { try { sub(); } catch (e) {} }
-  }
-  return { ok: true, seq: chatRing.seq, accepted };
-}
-function chatMessagesSince(since) {
-  chatLoadSync();
-  const s = Number(since) || 0;
-  return { seq: chatRing.seq, messages: chatRing.messages.filter((m) => Number(m.seq) > s) };
-}
-
-/* --- lane events: typing, read receipts and presence ---------------------
-   They ride the same subscriber set as messages but their own short ring, so a
-   test of "is the other person typing" never has to touch the state document. */
-const chatEventRing = { seq: 0, events: [] };
-const CHAT_EVENT_KEEP = 600;
-const adminSmsSubs = new Set();
-function chatEventPush(ev) {
-  if (!ev) return;
-  chatEventRing.seq += 1;
-  ev.seq = chatEventRing.seq;
-  ev.at = Number(ev.at) || Date.now();
-  chatEventRing.events.push(ev);
-  if (chatEventRing.events.length > CHAT_EVENT_KEEP) chatEventRing.events = chatEventRing.events.slice(-CHAT_EVENT_KEEP);
-  for (const sub of chatRing.subs) { try { sub(); } catch (e) {} }
-}
-function chatEventsSince(since, userId, room) {
-  const s = Number(since) || 0;
-  const events = chatEventRing.events.filter((e) => {
-    if (Number(e.seq) <= s) return false;
-    if (!userId && !room) return true;
-    if (e.type === 'typing') return (userId && (e.to === userId || e.from === userId)) || (room && e.chatId === room);
-    if (e.type === 'read') return (userId && (e.to === userId || e.by === userId)) || (room && (e.messages || []).some((m) => m.chatId === room));
-    if (e.type === 'presence') return true;
-    return true;
-  });
-  return { seq: chatEventRing.seq, events: events };
-}
-/* Push accepted lane messages to the hosted provider (no-op when unconfigured). */
-function routeRealtime(accepted) {
-  try {
-    if (!realtime.configured().enabled || !accepted || !accepted.length) return;
-    const ids = new Set(accepted.map((a) => a && a.id).filter(Boolean));
-    for (const m of chatRing.messages) {
-      if (!ids.has(m.id)) continue;
-      realtime.publishMessage(m).catch(() => {});
-      ids.delete(m.id);
-    }
-  } catch (e) {}
-}
-/* An admin SMS also lands in the app chat, so the user can answer it inside
-   WhaleChat and the answer reaches the admin desk in real time. */
-function adminChatAppend(admin, user, text, body) {
-  if (!user || !user.id) return null;
-  const adminId = admin.id || (store.db.users || []).filter((u) => u && u.role === 'admin').map((u) => u.id)[0] || 'usr_admin';
-  const chatId = [String(user.id), String(adminId)].sort().join('__');
-  const msg = {
-    id: 'msg_sms_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-    chatId: chatId,
-    from: adminId,
-    to: String(user.id),
-    type: 'text',
-    text: String(text || '').slice(0, 4000),
-    createdAt: Date.now(),
-    status: 'sent',
-    channel: 'sms',
-    readBy: []
-  };
-  chatAppendMessages([msg]);
-  routeRealtime([{ id: msg.id }]);
-  for (const sub of adminSmsSubs) { try { sub(JSON.stringify({ kind: 'chat', message: msg, at: Date.now() })); } catch (e) {} }
-  try {
-    const db = store.db;
-    db.notifications = Array.isArray(db.notifications) ? db.notifications : [];
-    db.notifications.unshift({ id: 'nt_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), userId: user.id, title: 'Message from WhaleChat', body: String(text || '').slice(0, 140), link: '#/chat/' + adminId, icon: 'chat', read: false, createdAt: Date.now() });
-    if (db.notifications.length > 400) db.notifications.length = 400;
-  } catch (e) {}
-  return { chatId: chatId, message: msg };
-}
-
-function adminRequired(res) {
-  return json(res, 401, { ok: false, error: 'admin_session_required', message: 'Confirm your admin password to continue' });
+  return !!(db && Array.isArray(db.users) && db.users.some((u) => u && u.id === adminId && u.role === 'admin'));
 }
 function ensureServices(db) {
   if (!db) return;
@@ -1044,66 +412,6 @@ function applyOps(db, ops) {
   }
   return { pushes, events };
 }
-/* Sync-channel guard (runs before applyOps).
-   /api/ops is not authenticated, so without an admin session it must not be
-   able to: change anyone's role, take over an admin account (pass, pin,
-   email, username, banned), delete an admin, or replace whole collections.
-   It also enforces trading_controls / tradable_symbols on trades that the
-   web app opens through the sync channel: a blocked trade and the balance
-   change sent with it are dropped, the user gets a notification and every
-   client is told to resync. */
-const ADMIN_LOCKED_FIELDS = ['role', 'pass', 'pin', 'email', 'username', 'banned'];
-function guardOps(db, ops) {
-  const admin = adminAuth.currentAdmin();
-  const users = Array.isArray(db.users) ? db.users : [];
-  const byId = new Map(users.map((u) => [u && u.id, u]));
-  const blockedUsers = new Set();
-  const blocked = [];
-  let modified = false;
-  const existingTrades = new Set((db.trades || []).map((t) => t && t.id));
-  for (const op of ops) {
-    if (op && op.col === 'trades' && op.op === 'push' && op.item && op.item.id && op.item.status === 'Open' && !existingTrades.has(op.item.id)) {
-      const reason = marketAdmin.gate('open', { ticker: op.item.ticker, leverage: op.item.leverage });
-      if (reason) { op.__drop = true; blockedUsers.add(op.item.userId); blocked.push({ userId: op.item.userId, ticker: op.item.ticker, reason }); }
-    }
-  }
-  const out = [];
-  for (const op of ops) {
-    if (!op || typeof op !== 'object') continue;
-    if (op.__drop) { modified = true; continue; }
-    if (op.op === 'set' && !admin && (COLLECTIONS.includes(op.key) || /^share|^market/i.test(String(op.key || '')))) { modified = true; continue; }
-    if (op.col === 'users') {
-      const id = op.op === 'push' ? (op.item && op.item.id) : op.id;
-      const cur = byId.get(id);
-      if (blockedUsers.has(id) && op.op !== 'remove') { modified = true; continue; }
-      if (op.op === 'remove' && cur && cur.role === 'admin' && !admin) { modified = true; continue; }
-      const next = op.op === 'push' ? op.item : op.op === 'update' ? op.patch : null;
-      if (next && typeof next === 'object' && !admin) {
-        if (cur) {
-          const locked = cur.role === 'admin' ? ADMIN_LOCKED_FIELDS : ['role'];
-          for (const f of locked) {
-            if (JSON.stringify(next[f]) === JSON.stringify(cur[f])) continue;
-            if (!(f in next) && op.op === 'update') continue;
-            if (cur[f] === undefined) delete next[f]; else next[f] = cur[f];
-            modified = true;
-          }
-        } else if (next.role && next.role !== 'user') {
-          next.role = 'user';
-          modified = true;
-        }
-      }
-    }
-    out.push(op);
-  }
-  if (blocked.length) {
-    db.notifications = Array.isArray(db.notifications) ? db.notifications : [];
-    blocked.forEach((b) => {
-      db.notifications.unshift({ id: 'nt_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), userId: b.userId, title: 'Trade not opened', body: (b.ticker ? b.ticker + ': ' : '') + b.reason + '. No funds were taken.', link: '#/markets', icon: 'shield', read: false, createdAt: Date.now() });
-    });
-    if (db.notifications.length > 400) db.notifications.length = 400;
-  }
-  return { ops: out, modified, blocked };
-}
 function previewText(msg) {
   if (!msg) return 'New message';
   if (msg.type === 'image') return '📷 Photo';
@@ -1128,141 +436,16 @@ async function dispatchPushes(pushes, db) {
 }
 
 async function api(req, res, pathname, query) {
-  /* --- admin session (server-verified password -> signed token) ---------- */
-  if (pathname === '/api/admin/session' && req.method === 'POST') {
-    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
-    const body = await readBody(req);
-    try { return json(res, 200, Object.assign({ ok: true }, adminAuth.login(store.db, body, adminAuth.ctx().ip))); }
-    catch (e) { return json(res, e.status || 400, { ok: false, error: e.message }); }
-  }
-  /* the admin panel opens without a second password step: a signed-in admin gets
-     a signed session for their own account id */
-  if (pathname === '/api/admin/session/auto' && req.method === 'POST') {
-    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
-    const body = await readBody(req);
-    try { return json(res, 200, Object.assign({ ok: true }, adminAuth.issue(store.db, body.userId || body.adminId || body.login))); }
-    catch (e) { return json(res, e.status || 403, { ok: false, error: e.message }); }
-  }
-  if (pathname === '/api/admin/session' && req.method === 'GET') {
-    const a = adminAuth.currentAdmin();
-    return json(res, 200, { ok: true, active: !!a, adminId: a ? a.id : null });
-  }
-
-  /* the pre-3.46 key form stored provider keys in plain text: retired */
-  if (pathname === '/api/market/providers' && req.method === 'POST') {
-    return json(res, 410, { ok: false, error: 'moved', message: 'Save provider keys in Admin > Market Controls (stored encrypted).' });
-  }
-
-  /* --- market: provider-only price cache (public) ------------------------- */
-  if (pathname === '/api/market/quote' && req.method === 'GET') {
-    try { return json(res, 200, { ok: true, quote: await marketAdmin.quote(query.get('symbol') || '', { admin: !!adminAuth.currentAdmin() }) }); }
-    catch (e) { return json(res, e.status || 400, { ok: false, error: e.message, is_delayed: true }); }
-  }
-  if (pathname === '/api/market/symbols' && req.method === 'GET') {
-    return json(res, 200, { ok: true, symbols: marketAdmin.symbolsPublic(query.get('type') || '') });
-  }
-  if (pathname === '/api/market/trading-status' && req.method === 'GET') {
-    return json(res, 200, Object.assign({ ok: true }, marketAdmin.controls()));
-  }
-
-  /* --- market admin (token required, every change -> admin_logs) ---------- */
-  if (pathname.startsWith('/api/admin/market/') || pathname === '/api/admin/logs') {
-    const admin = adminAuth.currentAdmin();
-    if (!admin) return adminRequired(res);
-    const rc = adminAuth.ctx();
-    try {
-      if (pathname === '/api/admin/market/overview' && req.method === 'GET') return json(res, 200, marketAdmin.overview());
-      if (pathname === '/api/admin/logs' && req.method === 'GET') {
-        return json(res, 200, { ok: true, logs: await marketAdmin.logs({ limit: query.get('limit'), action: query.get('action'), entity_type: query.get('entity_type') }) });
-      }
-      if (req.method === 'POST') {
-        const body = await readBody(req);
-        if (pathname === '/api/admin/market/provider') {
-          const provider = await marketAdmin.updateProvider(admin, rc, body);
-          if (String(body.provider || body.provider_name || '') === 'twelvedata' && twelvedata) twelvedata.poll().catch(() => {});
-          return json(res, 200, { ok: true, provider });
-        }
-        if (pathname === '/api/admin/market/provider/test') return json(res, 200, { ok: true, provider: await marketAdmin.testProvider(admin, rc, String(body.provider || '')) });
-        if (pathname === '/api/admin/market/controls') {
-          const out = await marketAdmin.updateControls(admin, rc, body);
-          try { broadcast('change', { rev: store.rev, source: 'trading-controls', at: Date.now() }); } catch (e) {}
-          return json(res, 200, { ok: true, controls: out });
-        }
-        if (pathname === '/api/admin/market/symbol') return json(res, 200, { ok: true, symbol: await marketAdmin.upsertSymbol(admin, rc, body) });
-      }
-      return json(res, 404, { ok: false, error: 'not_found' });
-    } catch (e) { return json(res, e.status || 400, { ok: false, error: e.message }); }
-  }
-
-  /* --- WhaleChat shares admin extras (token required, logged) ------------- */
-  if (pathname === '/api/shares/admin/settings' && req.method === 'POST') {
-    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
-    const admin = adminAuth.currentAdmin();
-    if (!admin) return adminRequired(res);
-    const body = await readBody(req);
-    try {
-      const r = shares.saveSettings(body);
-      await marketAdmin.audit(admin, adminAuth.ctx(), 'share_settings_updated', 'share_settings', 'whalechat-shares', r.before, r.after).catch((e) => console.error('[admin_logs]', e.message));
-      return json(res, 200, r.state);
-    } catch (e) { return json(res, 400, { ok: false, error: e.message }); }
-  }
-  if (pathname === '/api/shares/admin/investments' && req.method === 'GET') {
-    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
-    if (!adminAuth.currentAdmin()) return adminRequired(res);
-    try { return json(res, 200, shares.adminInvestments({ status: query.get('status'), q: query.get('q') })); }
-    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
-  }
-  if (pathname === '/api/shares/admin/investment' && req.method === 'POST') {
-    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
-    const admin = adminAuth.currentAdmin();
-    if (!admin) return adminRequired(res);
-    const body = await readBody(req);
-    try {
-      const r = shares.adminUpdateInvestment(body);
-      await marketAdmin.audit(admin, adminAuth.ctx(), body.action === 'cancel' ? 'share_investment_cancelled' : 'share_investment_updated', 'share_investment', String(body.id || ''), r.before, Object.assign({}, r.after, body.action === 'cancel' ? { refund: body.refund !== false } : {})).catch((e) => console.error('[admin_logs]', e.message));
-      return json(res, 200, { ok: true, investment: r.view });
-    } catch (e) { return json(res, 400, { ok: false, error: e.message }); }
-  }
-
-  /* --- market data proxy (keys stay server side) ------------------------- */
-  if (marketData && pathname === '/api/market/symbols' && req.method === 'GET') {
-    return json(res, 200, { ok: true, symbols: marketData.symbols(query.get('type') || 'crypto') });
-  }
-  if (marketData && pathname === '/api/market/quote' && req.method === 'GET') {
-    try { return json(res, 200, { ok: true, quote: await marketData.quote(query.get('symbol')) }); }
-    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
-  }
-  if (marketData && pathname === '/api/market/candles' && req.method === 'GET') {
-    try { return json(res, 200, Object.assign({ ok: true }, await marketData.candles(query.get('symbol'), query.get('tf') || '1H'))); }
-    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
-  }
-  if (marketData && pathname === '/api/market/symbol-search' && req.method === 'GET') {
-    return json(res, 200, { ok: true, results: await marketData.search(query.get('q')) });
-  }
-  if (marketData && pathname === '/api/market/providers' && req.method === 'GET') {
-    if (!isAdmin(store.db, query.get('adminId') || '')) return json(res, 403, { ok: false, error: 'admin_only' });
-    return json(res, 200, { ok: true, providers: marketData.status() });
-  }
-  if (marketData && pathname === '/api/market/providers' && req.method === 'POST') {
-    const body = await readBody(req);
-    if (!isAdmin(store.db, body.adminId)) return json(res, 403, { ok: false, error: 'admin_only' });
-    return json(res, 200, { ok: true, providers: marketData.save(body) });
-  }
-  if (marketData && pathname === '/api/market/providers/test' && req.method === 'POST') {
-    const body = await readBody(req);
-    if (!isAdmin(store.db, body.adminId)) return json(res, 403, { ok: false, error: 'admin_only' });
-    return json(res, 200, { ok: true, result: await marketData.test(String(body.which || '')) });
-  }
   /* --- durable connection settings (admin only) -------------------------- */
   if (pathname === '/api/connections' && req.method === 'GET') {
     const adminId = query.get('adminId') || '';
-    const admin = adminFor(adminId);
+    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === adminId && u.role === 'admin') : null;
     if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
     return json(res, 200, connections ? connections.status() : { ok: false, error: 'connections_disabled' });
   }
   if (pathname === '/api/connections' && req.method === 'POST') {
     const body = await readBody(req);
-    const admin = adminFor(body.adminId);
+    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === body.adminId && u.role === 'admin') : null;
     if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
     if (!connections) return json(res, 503, { ok: false, error: 'connections_disabled' });
     try { return json(res, 200, connections.saveFrom(body)); }
@@ -1270,7 +453,7 @@ async function api(req, res, pathname, query) {
   }
   if (pathname === '/api/connections/test' && req.method === 'POST') {
     const body = await readBody(req);
-    const admin = adminFor(body.adminId);
+    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === body.adminId && u.role === 'admin') : null;
     if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
     const which = String(body.which || 'all');
     const out = { ok: true, at: Date.now(), results: {} };
@@ -1279,9 +462,6 @@ async function api(req, res, pathname, query) {
     }
     if (which === 'all' || which === 'finnhub') {
       try { out.results.finnhub = market.status(); } catch (e) { out.results.finnhub = { error: e.message }; }
-    }
-    if (which === 'all' || which === 'twelvedata') {
-      if (twelvedata) { await twelvedata.poll().catch(() => {}); out.results.twelvedata = twelvedata.status(); }
     }
     if (which === 'all' || which === 'brevo') {
       try {
@@ -1302,7 +482,7 @@ async function api(req, res, pathname, query) {
   if (pathname === '/api/market/binance/config' && req.method === 'POST') {
     if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
     const body = await readBody(req);
-    const admin = adminFor(body.adminId);
+    const admin = (store.db.users || []).find(u => u.id === body.adminId && u.role === 'admin');
     if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
     if (!store.db.settings) store.db.settings = {};
     const cur = store.db.settings.binance || {};
@@ -1339,41 +519,32 @@ async function api(req, res, pathname, query) {
   }
 
   if (pathname === '/api/health' && req.method === 'GET') {
-    return json(res, 200, { ok: true, app: 'whalechat', version: readJSON(path.join(PUBLIC_DIR, 'version.json'), {}).version || null, build: (readJSON(path.join(PUBLIC_DIR, 'version.json'), {}).build) || BUILD, uptimeSec: Math.floor((Date.now() - STARTED) / 1000), rev: store.rev, users: (store.db && store.db.users) ? store.db.users.length : 0, clients: clients.size, push: !!webpush, publicUrl: PUBLIC_URL || null, storage: pool ? 'postgres' : 'file', stream: true, realtime: realtime.configured(), storageDetail: { connected: pgState.connected, attempts: pgState.attempts, lastError: pgState.lastError || null, lastConnectAt: pgState.lastConnectAt || null, lastWriteAt: pgState.lastWriteAt || null, lastAdopt: pgState.lastAdopt, retryInMs: pgRetryTimer ? pgRetryDelay : 0 }, email: !!(email && email.configured()), market: market.status() });
+    return json(res, 200, { ok: true, app: 'whalechat', version: readJSON(path.join(PUBLIC_DIR, 'version.json'), {}).version || null, build: (readJSON(path.join(PUBLIC_DIR, 'version.json'), {}).build) || BUILD, uptimeSec: Math.floor((Date.now() - STARTED) / 1000), rev: store.rev, users: (store.db && store.db.users) ? store.db.users.length : 0, clients: clients.size, push: !!webpush, publicUrl: PUBLIC_URL || null, storage: pool ? 'postgres' : 'file', email: !!(email && email.configured()), market: market.status() });
   }
   if (pathname === '/api/state' && req.method === 'GET') return json(res, 200, { rev: store.rev, db: store.db, updatedAt: store.updatedAt });
   if (pathname === '/api/state/init' && req.method === 'POST') {
-    /* an empty state (fresh instance) may be re-seeded by a device that still
-       has the account locally; a state with users is never overwritten */
-    const existingUsers = (store.db && Array.isArray(store.db.users)) ? store.db.users.length : 0;
-    if (store.db && existingUsers > 0) return json(res, 409, { ok: false, error: 'already_initialised', rev: store.rev });
+    if (store.db) return json(res, 409, { ok: false, error: 'already_initialised', rev: store.rev });
     const body = await readBody(req);
     if (!body || !body.db || !Array.isArray(body.db.users)) return json(res, 400, { ok: false, error: 'invalid_db' });
     store.db = body.db; store.rev = Math.max(1, Number(body.rev) || 1); store.updatedAt = Date.now();
     ensureTradingAssets();
     ensureServices(store.db);
-    /* keep the push identity and devices that were already loaded */
-    try { store.db.pushSubscriptions = subscriptions; } catch (e) {}
-    try { if (vapid) { store.db.settings = store.db.settings || {}; store.db.settings.vapid = { publicKey: vapid.publicKey, privateKey: vapid.privateKey }; } } catch (e) {}
     persistNow(); console.log('[db] initialised · users:', store.db.users.length);
     return json(res, 200, { ok: true, rev: store.rev });
   }
   if (pathname === '/api/ops' && req.method === 'POST') {
     if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
     const body = await readBody(req);
-    const guard = guardOps(store.db, Array.isArray(body.ops) ? body.ops : []);
-    const result = applyOps(store.db, guard.ops);
+    const result = applyOps(store.db, Array.isArray(body.ops) ? body.ops : []);
     const pushes = result.pushes;
     if (Array.isArray(body.ops) && body.ops.some((o) => o && o.col === 'stocks')) {
       setImmediate(() => { try { market.onAssetsChanged(); } catch (e) { console.error('[market] asset refresh:', e.message); } });
     }
     store.rev += 1; store.updatedAt = Date.now(); persist();
-    /* when the guard changed anything, the sender must resync too */
-    broadcast('change', { rev: store.rev, source: guard.modified ? 'server-guard' : (body.clientId || null), at: store.updatedAt });
-    if (guard.blocked.length) console.log('[trading] blocked', guard.blocked.length, 'trade(s) from the sync channel:', guard.blocked.map((b) => b.ticker + ' ' + b.reason).join('; '));
+    broadcast('change', { rev: store.rev, source: body.clientId || null, at: store.updatedAt });
     if (pushes.length) setImmediate(() => dispatchPushes(pushes, store.db).catch(() => {}));
     try { lifecycleEmails(pushes, result.events); } catch (e) { console.error('[email] lifecycle:', e.message); }
-    return json(res, 200, guard.blocked.length ? { ok: true, rev: store.rev, blocked: guard.blocked } : { ok: true, rev: store.rev });
+    return json(res, 200, { ok: true, rev: store.rev });
   }
   if (pathname === '/api/events' && req.method === 'GET') {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache, no-transform', connection: 'keep-alive', 'x-accel-buffering': 'no', 'access-control-allow-origin': '*' });
@@ -1407,21 +578,17 @@ async function api(req, res, pathname, query) {
     });
   }
   if (pathname === '/api/market/status' && req.method === 'GET') {
-    const body = Object.assign({ ok: true }, market.status());
-    /* key-free feed telemetry, used to verify the live providers after a deploy */
-    try { if (twelvedata) body.twelvedata = twelvedata.status(); } catch (e) {}
-    try { if (binance) body.binance = binance.status(); } catch (e) {}
-    return json(res, 200, body);
+    return json(res, 200, Object.assign({ ok: true }, market.status()));
   }
   if (pathname === '/api/market/config' && req.method === 'GET') {
     const adminId = query.get('adminId') || '';
-    const admin = adminFor(adminId);
+    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === adminId && u.role === 'admin') : null;
     if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
     return json(res, 200, market.publicConfig());
   }
   if (pathname === '/api/market/config' && req.method === 'POST') {
     const body = await readBody(req);
-    const admin = adminFor(body.adminId);
+    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === body.adminId && u.role === 'admin') : null;
     if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
     const mode = body.mode === 'hybrid' ? 'hybrid' : 'simulated';
     const refreshSec = Math.min(300, Math.max(5, Math.round(Number(body.refreshSec) || 15)));
@@ -1435,7 +602,7 @@ async function api(req, res, pathname, query) {
   }
   if (pathname === '/api/market/search' && req.method === 'GET') {
     const adminId = query.get('adminId') || '';
-    const admin = adminFor(adminId);
+    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === adminId && u.role === 'admin') : null;
     if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
     try {
       const results = await market.searchAssets(query.get('q') || '', query.get('class') || 'us');
@@ -1444,7 +611,7 @@ async function api(req, res, pathname, query) {
   }
   if (pathname === '/api/market/assets/add' && req.method === 'POST') {
     const body = await readBody(req);
-    const admin = adminFor(body.adminId);
+    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === body.adminId && u.role === 'admin') : null;
     if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
     try {
       const out = await market.addAsset(body.class || body.assetClass, body.symbol);
@@ -1453,14 +620,14 @@ async function api(req, res, pathname, query) {
   }
   if (pathname === '/api/market/dividends/sync' && req.method === 'POST') {
     const body = await readBody(req);
-    const admin = adminFor(body.adminId);
+    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === body.adminId && u.role === 'admin') : null;
     if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
     const status = await market.syncDividends(true);
     return json(res, 200, { ok: true, status });
   }
   if (pathname === '/api/market/test' && req.method === 'POST') {
     const body = await readBody(req);
-    const admin = adminFor(body.adminId);
+    const admin = (store.db && Array.isArray(store.db.users)) ? store.db.users.find(u => u.id === body.adminId && u.role === 'admin') : null;
     if (!admin) return json(res, 403, { ok: false, error: 'admin_only' });
     if (!market.config.apiKey) return json(res, 400, { ok: false, error: 'no_key', message: 'Save a Finnhub API key first' });
     const q = await market.fetchQuote('AAPL');
@@ -1533,400 +700,11 @@ async function api(req, res, pathname, query) {
     VERIFY_CODES.delete(key);
     return json(res, 200, { ok: true, verifiedAt: Date.now() });
   }
-  // --- signup / password-reset codes sent to an email address ---------
-  if (pathname === '/api/verify/email-code' && req.method === 'POST') {
-    const body = await readBody(req);
-    const address = String(body.email || '').trim().toLowerCase();
-    const purpose = String(body.purpose || 'signup').replace(/[^a-z_-]/gi, '').slice(0, 16) || 'signup';
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/.test(address)) {
-      return json(res, 400, { ok: false, error: 'invalid_email', message: 'Enter a valid email address' });
-    }
-    const key = emailCodeKey(address, purpose);
-    const prev = EMAIL_CODES.get(key);
-    if (prev && Date.now() - prev.sentAt < 45000) {
-      return json(res, 429, { ok: false, error: 'too_soon', retryIn: Math.ceil((45000 - (Date.now() - prev.sentAt)) / 1000), message: 'Please wait a few seconds before requesting another code' });
-    }
-    const code = String(require('crypto').randomInt(100000, 1000000));
-    EMAIL_CODES.set(key, { hash: codeHash(address, purpose, code), sentAt: Date.now(), exp: Date.now() + 15 * 60000, tries: 0 });
-    const labels = { signup: 'your WhaleChat account', reset: 'your password reset', pin: 'your transaction PIN reset' };
-    let emailed = false;
-    try {
-      if (email && email.configured()) {
-        emailed = email.enqueue({
-          key: null, to: address, template: 'verifyCode',
-          data: { code, name: String(body.name || '').split(' ')[0] || 'there', purposeLabel: labels[purpose] || 'your request', purposeRoute: purpose === 'signup' ? 'verify' : purpose },
-          appUrl: PUBLIC_URL || ('http://localhost:' + PORT)
-        });
-      }
-    } catch (e) { console.error('[verify] email failed:', e.message); }
-    return json(res, 200, { ok: true, emailed, purpose, to: address.replace(/^(.{2}).*(@.*)$/, '$1***$2'),
-      /* when no mail provider is configured the app shows the code on screen so
-         account creation / reset can never dead-end */
-      code: emailed ? undefined : code });
-  }
-  if (pathname === '/api/verify/email-check' && req.method === 'POST') {
-    const body = await readBody(req);
-    const address = String(body.email || '').trim().toLowerCase();
-    const purpose = String(body.purpose || 'signup').replace(/[^a-z_-]/gi, '').slice(0, 16) || 'signup';
-    const key = emailCodeKey(address, purpose);
-    const rec = EMAIL_CODES.get(key);
-    if (!rec || Date.now() > rec.exp) return json(res, 400, { ok: false, error: 'expired', message: 'Code expired — request a new one' });
-    if (rec.tries >= 6) { EMAIL_CODES.delete(key); return json(res, 429, { ok: false, error: 'locked', message: 'Too many attempts — request a new code' }); }
-    if (codeHash(address, purpose, body.code) !== rec.hash) {
-      rec.tries += 1;
-      return json(res, 400, { ok: false, error: 'invalid', message: 'Incorrect code' });
-    }
-    EMAIL_CODES.delete(key);
-    return json(res, 200, { ok: true, verifiedAt: Date.now() });
-  }
-  // --- Appwrite backup status / manual sync ----------------------------
-  if (pathname === '/api/appwrite/status' && req.method === 'GET') {
-    return json(res, 200, appwrite ? appwrite.status() : { ok: true, configured: false });
-  }
-  if (pathname === '/api/appwrite/sync' && req.method === 'POST') {
-    if (!adminAuth.currentAdmin()) return adminRequired(res);
-    if (!appwrite || !appwrite.configured()) return json(res, 503, { ok: false, error: 'appwrite_not_configured' });
-    const out = await appwrite.backup(store, 'manual');
-    return json(res, out.ok ? 200 : 502, out);
-  }
-  if (pathname === '/api/appwrite/files' && req.method === 'POST') {
-    if (!adminAuth.currentAdmin()) return adminRequired(res);
-    if (!appwrite || !appwrite.configured()) return json(res, 503, { ok: false, error: 'appwrite_not_configured' });
-    const out = await appwrite.uploadFiles(PUBLIC_DIR, { max: 40 });
-    return json(res, out.ok ? 200 : 502, out);
-  }
   // --- email -----------------------------------------------------------
-  /* --- configured servers: public configuration (no secrets) ---------- */
-  if (pathname === '/api/config/servers' && req.method === 'GET') {
-    return json(res, 200, {
-      ok: true,
-      ...serverConfig.publicConfig(),
-      configured: serverConfig.configured(),
-      realtime: realtime.publicConfig(),
-      chat: { stream: true, sse: '/api/chat/stream', poll: '/api/chat/state', send: '/api/chat/send' },
-      telesign: telesign ? telesign.status() : { configured: false },
-      appwriteOrders: appwriteOrders ? appwriteOrders.configured() : false
-    });
-  }
-
-  /* --- Telesign: SMS OTP + SMS notifications (server-signed) ---------- */
-  if (pathname === '/api/telesign/status' && req.method === 'GET') {
-    return json(res, 200, { ok: true, ...(telesign ? telesign.status() : { configured: false }) });
-  }
-  if (pathname === '/api/telesign/start' && req.method === 'POST') {
-    if (!telesign) return json(res, 501, { ok: false, error: 'telesign_unavailable' });
-    const body = await readBody(req);
-    try {
-      const out = await telesign.startVerification({ phone: body.phone, purpose: body.purpose });
-      return json(res, 200, out);
-    } catch (e) {
-      return json(res, e.status || 400, { ok: false, error: e.message, retryAfterMs: e.retryAfterMs });
-    }
-  }
-  if (pathname === '/api/telesign/verify' && req.method === 'POST') {
-    if (!telesign) return json(res, 501, { ok: false, error: 'telesign_unavailable' });
-    const body = await readBody(req);
-    try { return json(res, 200, await telesign.checkVerification({ phone: body.phone, code: body.code, referenceId: body.referenceId })); }
-    catch (e) { return json(res, e.status || 400, { ok: false, error: e.message }); }
-  }
-  if (pathname === '/api/telesign/sms' && req.method === 'POST') {
-    if (!telesign) return json(res, 501, { ok: false, error: 'telesign_unavailable' });
-    const body = await readBody(req);
-    if (!adminAuth.currentAdmin() && !isAdmin(store.db, body.adminId)) return adminRequired(res);
-    try { return json(res, 200, await telesign.sendSms({ phone: body.phone, message: body.message, buttonLabel: body.buttonLabel, buttonUrl: body.buttonUrl })); }
-    catch (e) { return json(res, e.status || 400, { ok: false, error: e.message }); }
-  }
-  /* Admin → users SMS with an embeddable link button. The button is a
-     labelled https link on its own line: phones make it tappable. */
-  if (pathname === '/api/telesign/broadcast' && req.method === 'POST') {
-    if (!telesign) return json(res, 501, { ok: false, error: 'telesign_unavailable' });
-    const body = await readBody(req);
-    const admin = adminAuth.currentAdmin() || (isAdmin(store.db, body.adminId) ? body.adminId : null);
-    if (!admin) return adminRequired(res);
-    const audience = String(body.audience || 'all');
-    const ids = Array.isArray(body.userIds) ? body.userIds.map(String) : [];
-    const users = ((store.db && store.db.users) || []).filter(function (u) {
-      if (!u || !u.phone || u.banned) return false;
-      return audience === 'all' || ids.indexOf(String(u.id)) >= 0;
-    });
-    if (!users.length) return json(res, 400, { ok: false, error: 'no_recipients', message: 'No user account has a phone number yet.' });
-    try {
-      const out = await telesign.sendBulk({
-        message: body.message,
-        buttonLabel: body.buttonLabel,
-        buttonUrl: body.buttonUrl,
-        phones: users.map(function (u) { return u.phone; }),
-        limit: body.limit
-      });
-      store.db.smsCampaigns = store.db.smsCampaigns || [];
-      store.db.smsCampaigns.unshift({
-        id: 'sms_' + Date.now().toString(36),
-        message: String(body.message || '').slice(0, 700),
-        buttonLabel: out.button ? out.button.label : '',
-        buttonUrl: out.button ? out.button.url : '',
-        audience,
-        recipients: out.recipients,
-        sent: out.sent,
-        failed: out.failed,
-        by: String(admin),
-        createdAt: Date.now()
-      });
-      store.db.smsCampaigns = store.db.smsCampaigns.slice(0, 50);
-      store.rev += 1; store.updatedAt = Date.now(); persist();
-      broadcast('change', { rev: store.rev, source: 'sms-campaign', at: store.updatedAt });
-      return json(res, 200, out);
-    } catch (e) {
-      return json(res, e.status || 400, { ok: false, error: e.message });
-    }
-  }
-  if (pathname === '/api/telesign/log' && req.method === 'GET') {
-    if (!adminAuth.currentAdmin()) return adminRequired(res);
-    const list = ((store.db && store.db.smsCampaigns) || []).slice(0, 30);
-    return json(res, 200, { ok: true, campaigns: list, status: telesign ? telesign.status() : { configured: false } });
-  }
-
-  /* --- chat lane: tiny payload, one round trip ----------------------- */
-  if (pathname === '/api/chat/send' && req.method === 'POST') {
-    const body = await readBody(req);
-    const list = Array.isArray(body.messages) ? body.messages : (body.message ? [body.message] : []);
-    if (!list.length) return json(res, 400, { ok: false, error: 'no_messages' });
-    if (list.length > 60) return json(res, 413, { ok: false, error: 'too_many' });
-    const out = chatAppendMessages(list);
-    /* Fan the accepted messages out to the hosted WebSocket provider so the
-       peer's screen paints in 50-100 ms; the SSE/poll lanes stay authoritative. */
-    routeRealtime(out.accepted || []);
-    return json(res, 200, out);
-  }
-  if (pathname === '/api/chat/state' && req.method === 'GET') {
-    const q = new URL(req.url, 'http://x').searchParams;
-    const since = Number(q.get('since') || 0) || 0;
-    const evSince = Number(q.get('evSince') || 0) || 0;
-    const userId = String(q.get('userId') || '');
-    const room = String(q.get('chatId') || '');
-    const got = chatMessagesSince(since);
-    const messages = userId ? got.messages.filter((m) => m.from === userId || m.to === userId) : got.messages;
-    const evs = chatEventsSince(evSince, userId, room);
-    return json(res, 200, { ok: true, seq: got.seq, messages: messages, events: evs.events, evSeq: evs.seq });
-  }
-  if (pathname === '/api/chat/events' && req.method === 'GET') {
-    const q = new URL(req.url, 'http://x').searchParams;
-    const since = Number(q.get('since') || 0) || 0;
-    return json(res, 200, chatEventsSince(since, q.get('userId') || '', q.get('chatId') || ''));
-  }
-  if (pathname === '/api/chat/typing' && req.method === 'POST') {
-    const body = await readBody(req);
-    const ev = { type: 'typing', from: String(body.from || ''), to: String(body.to || ''), chatId: String(body.chatId || ''), typing: body.typing !== false };
-    if (!ev.from || (!ev.to && !ev.chatId)) return json(res, 400, { ok: false, error: 'from_required' });
-    chatEventPush(ev);
-    realtime.publishEvent('typing', ev).catch(() => {});
-    return json(res, 200, { ok: true });
-  }
-  if (pathname === '/api/chat/read' && req.method === 'POST') {
-    const body = await readBody(req);
-    const ids = Array.isArray(body.ids) ? body.ids.map(String).slice(0, 200) : [];
-    const reader = String(body.userId || '');
-    if (!ids.length || !reader) return json(res, 400, { ok: false, error: 'ids_and_user_required' });
-    const updates = [];
-    for (const m of chatRing.messages) {
-      if (ids.indexOf(m.id) < 0) continue;
-      m.readBy = Array.isArray(m.readBy) ? m.readBy : [];
-      if (m.readBy.indexOf(reader) < 0) m.readBy.push(reader);
-      m.status = 'seen';
-      updates.push({ id: m.id, status: 'seen', readBy: m.readBy, chatId: m.chatId, from: m.from, to: m.to, seq: m.seq });
-    }
-    if (updates.length) {
-      chatSaveSoon();
-      const ev = { type: 'read', by: reader, ids: ids, messages: updates };
-      chatEventPush(ev);
-      realtime.publishEvent('read', { from: reader, chatId: updates[0].chatId, ids: ids }).catch(() => {});
-      for (const sub of chatRing.subs) { try { sub(); } catch (e) {} }
-    }
-    return json(res, 200, { ok: true, updated: updates.length });
-  }
-  if (pathname === '/api/chat/presence' && req.method === 'POST') {
-    const body = await readBody(req);
-    const ev = { type: 'presence', userId: String(body.userId || ''), online: body.online !== false, at: Date.now() };
-    if (!ev.userId) return json(res, 400, { ok: false, error: 'userId_required' });
-    chatEventPush(ev);
-    realtime.publishEvent('presence', { from: ev.userId, online: ev.online }).catch(() => {});
-    return json(res, 200, { ok: true });
-  }
-
-  /* --- hosted realtime provider (Pusher / Ably) --------------------- */
-  if (pathname === '/api/realtime/config' && req.method === 'GET') {
-    return json(res, 200, realtime.publicConfig());
-  }
-  if (pathname === '/api/realtime/auth' && req.method === 'POST') {
-    const body = await readBody(req);
-    const socketId = String(body.socket_id || body.socketId || '');
-    const channel = String(body.channel_name || body.channel || '');
-    if (!socketId || !channel) return json(res, 400, { ok: false, error: 'socket_and_channel_required' });
-    const auth = realtime.pusherAuth(socketId, channel);
-    if (!auth) return json(res, 501, { ok: false, error: 'pusher_not_configured' });
-    return json(res, 200, auth);
-  }
-  if (pathname === '/api/realtime/token' && req.method === 'GET') {
-    const q = new URL(req.url, 'http://x').searchParams;
-    const channels = String(q.get('channels') || '').split(',').map((s) => s.trim()).filter(Boolean);
-    const token = await realtime.ablyToken({ channels: channels, clientId: q.get('clientId') || '' });
-    if (!token) return json(res, 501, { ok: false, error: 'ably_not_configured' });
-    return json(res, 200, { ok: true, token: token.token, keyName: token.keyName, expires: token.expires, provider: 'ably' });
-  }
-
-  /* --- admin SMS desk: send + engage in real time -------------------- */
-  if (pathname === '/api/admin/sms/send' && req.method === 'POST') {
-    const admin = adminAuth.currentAdmin();
-    if (!admin) return adminRequired(res);
-    const body = await readBody(req);
-    const text = String(body.message || body.text || '').trim();
-    if (!text) return json(res, 400, { ok: false, error: 'message_required' });
-    const userId = String(body.userId || '');
-    const db = store.db || {};
-    const user = (db.users || []).find((u) => u && String(u.id) === userId);
-    const phone = String(body.phone || (user && user.phone) || '').replace(/[^\d+]/g, '');
-    const wantSms = body.sms !== false && !!(telesign && telesign.configured && telesign.configured());
-    if (wantSms && !/^\+?\d{8,15}$/.test(phone)) return json(res, 400, { ok: false, error: 'invalid_phone_number' });
-    if (!wantSms && !userId) return json(res, 400, { ok: false, error: 'userId_required' });
-    const to = phone ? (phone.charAt(0) === '+' ? phone : '+' + phone) : '';
-    const out = {};
-    if (wantSms) {
-      try {
-        Object.assign(out, await telesign.sendSms({ phone: to, message: text, buttonLabel: body.buttonLabel, buttonUrl: body.buttonUrl }));
-      } catch (e) {
-        return json(res, 502, { ok: false, error: 'telesign_send_failed', message: e.message, code: e.telesignCode });
-      }
-    } else {
-      out.status = 'in_app_only';
-    }
-    (db.smsCampaigns = db.smsCampaigns || []).unshift({ id: 'sms_' + Date.now().toString(36), at: Date.now(), kind: wantSms ? 'single' : 'in-app', to: to || null, userId: userId || null, message: text, by: admin.id, status: out.status || 'queued', referenceId: out.referenceId || null });
-    db.smsCampaigns = db.smsCampaigns.slice(0, 100);
-    let chat = null;
-    if (userId && body.inApp !== false) chat = adminChatAppend(admin, user, text, body);
-    persist();
-    broadcast('change', { rev: store.rev, source: 'admin-sms', at: Date.now() });
-    realtime.publish(realtime.adminChannel(), { kind: 'sms', at: Date.now(), userId: userId || null, phone: to, message: text, status: out.status || 'sent', chatId: chat ? chat.chatId : null, inApp: !!chat }).catch(() => {});
-    return json(res, 200, Object.assign({ ok: true, to: to || null, userId: userId || null, chatId: chat ? chat.chatId : null, inApp: !!chat }, out));
-  }
-  if (pathname === '/api/admin/sms/stream' && req.method === 'GET') {
-    const admin = adminAuth.currentAdmin();
-    if (!admin) return adminRequired(res);
-    res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', connection: 'keep-alive', 'access-control-allow-origin': '*', 'x-accel-buffering': 'no' });
-    res.write('event: hello\ndata: ' + JSON.stringify({ ok: true, provider: realtime.configured(), at: Date.now() }) + '\n\n');
-    const feed = (frame) => { try { res.write(frame); } catch (e) {} };
-    const onSms = (payload) => feed('event: sms\ndata: ' + JSON.stringify(payload) + '\n\n');
-    adminSmsSubs.add(onSms);
-    const ping = setInterval(() => feed(': ping\n\n'), 20000);
-    req.on('close', () => { clearInterval(ping); adminSmsSubs.delete(onSms); });
-    const recent = ((store.db && store.db.smsCampaigns) || []).slice(0, 25);
-    feed('event: log\ndata: ' + JSON.stringify({ campaigns: recent }) + '\n\n');
-    return;
-  }
-  if (pathname === '/api/admin/sms/inbox' && req.method === 'GET') {
-    const admin = adminAuth.currentAdmin();
-    if (!admin) return adminRequired(res);
-    const q = new URL(req.url, 'http://x').searchParams;
-    const since = Number(q.get('since') || 0) || 0;
-    const adminIds = new Set(((store.db && store.db.users) || []).filter((u) => u && u.role === 'admin').map((u) => u.id));
-    const rows = chatRing.messages.filter((m) => Number(m.createdAt) > since && (adminIds.has(m.to) || adminIds.has(m.from))).slice(-200);
-    const users = ((store.db && store.db.users) || []).filter((u) => u && u.phone).map((u) => ({ id: u.id, fullName: u.fullName || u.username || '', phone: u.phone, banned: !!u.banned }));
-    return json(res, 200, { ok: true, messages: rows, users });
-  }
-  if (pathname === '/api/chat/sync' && (req.method === 'GET' || req.method === 'POST')) {
-    const q = new URL(req.url, 'http://x').searchParams;
-    const since = Number(q.get('since') || 0) || 0;
-    const wait = Math.min(25, Math.max(0, Number(q.get('wait') || 0) || 0));
-    const first = chatMessagesSince(since);
-    if (first.messages.length || !wait) {
-      return json(res, 200, { ok: true, seq: first.seq, messages: first.messages, waited: 0 });
-    }
-    let done = false;
-    const started = Date.now();
-    const tick = () => { const got = chatMessagesSince(since); if (got.messages.length) finish(); };
-    const finish = () => {
-      if (done) return;
-      done = true;
-      chatRing.subs.delete(tick);
-      clearTimeout(timer);
-      const got = chatMessagesSince(since);
-      try { json(res, 200, { ok: true, seq: got.seq, messages: got.messages, waited: Date.now() - started }); } catch (e) {}
-    };
-    const timer = setTimeout(finish, wait * 1000);
-    chatRing.subs.add(tick);
-    req.on('close', () => { done = true; chatRing.subs.delete(tick); clearTimeout(timer); });
-    return;
-  }
-  if (pathname === '/api/chat/stream' && req.method === 'GET') {
-    const q = new URL(req.url, 'http://x').searchParams;
-    res.writeHead(200, {
-      'content-type': 'text/event-stream; charset=utf-8',
-      'cache-control': 'no-store, no-transform',
-      connection: 'keep-alive',
-      'x-accel-buffering': 'no',
-      'access-control-allow-origin': '*'
-    });
-    const userId = String(q.get('userId') || '');
-    const room = String(q.get('chatId') || '');
-    let since = Number(q.get('since') || 0) || 0;
-    let evSince = Number(q.get('evSince') || 0) || 0;
-    /* Only events about this person leave the server on a personal stream. */
-    const mine = (m) => !userId || m.from === userId || m.to === userId || (room && m.chatId === room);
-    const send = () => {
-      const got = chatMessagesSince(since);
-      const list = got.messages.filter(mine);
-      if (!list.length) return;
-      since = got.seq;
-      try { res.write('event: messages\ndata: ' + JSON.stringify({ seq: got.seq, messages: list, at: Date.now() }) + '\n\n'); } catch (e) {}
-    };
-    const sendEvents = () => {
-      const got = chatEventsSince(evSince, userId, room);
-      if (!got.events.length) return;
-      evSince = got.seq;
-      try { res.write('event: events\ndata: ' + JSON.stringify({ seq: got.seq, events: got.events }) + '\n\n'); } catch (e) {}
-    };
-    try { res.write('event: hello\ndata: ' + JSON.stringify({ ok: true, seq: since, provider: realtime.configured(), at: Date.now() }) + '\n\n'); } catch (e) {}
-    chatRing.subs.add(send);
-    chatRing.subs.add(sendEvents);
-    send();
-    sendEvents();
-    const ping = setInterval(() => { try { res.write(': ping\n\n'); } catch (e) {} }, 15000);
-    req.on('close', () => { clearInterval(ping); chatRing.subs.delete(send); chatRing.subs.delete(sendEvents); });
-    return;
-  }
-
-  /* --- offline trade reconciliation ---------------------------------- */
-  if (pathname === '/api/orders/offline/push' && req.method === 'POST') {
-    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
-    const body = await readBody(req);
-    if (!body.userId) return json(res, 400, { ok: false, error: 'user_required' });
-    try {
-      const out = await reconciler.push({
-        userId: String(body.userId),
-        email: body.email,
-        orders: Array.isArray(body.orders) ? body.orders : []
-      });
-      return json(res, 200, out);
-    } catch (e) {
-      return json(res, 400, { ok: false, error: e.message, results: [] });
-    }
-  }
-  if (pathname === '/api/orders/offline/state' && req.method === 'GET') {
-    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
-    return json(res, 200, reconciler.state(query.get('userId') || ''));
-  }
-  if (pathname === '/api/orders/offline/settle' && req.method === 'POST') {
-    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
-    try { return json(res, 200, { ok: true, settled: reconciler.settleOpen(store.db) }); }
-    catch (e) { return json(res, 400, { ok: false, error: e.message }); }
-  }
-  if (pathname === '/api/appwrite/orders/health' && req.method === 'GET') {
-    return json(res, 200, appwriteOrders ? await appwriteOrders.health() : { configured: false });
-  }
-
   if (pathname === '/api/email/status' && req.method === 'GET') {
     return json(res, 200, email ? email.status() : { ok: true, configured: false, queued: 0 });
   }
   if (pathname === '/api/email/broadcast' && req.method === 'POST') {
-    if (!adminAuth.currentAdmin()) return adminRequired(res);
     if (!email || !email.configured()) return json(res, 503, { ok: false, error: 'email_not_configured' });
     const body = await readBody(req);
     const subject = String(body.subject || '').trim().slice(0, 160);
@@ -1952,7 +730,6 @@ async function api(req, res, pathname, query) {
     return json(res, 200, { ok: true, campaignId, recipients: users.length, queued });
   }
   if (pathname === '/api/email/backfill' && req.method === 'POST') {
-    if (!adminAuth.currentAdmin()) return adminRequired(res);
     if (!email || !email.configured()) return json(res, 503, { ok: false, error: 'smtp_not_configured' });
     const body = await readBody(req).catch(() => ({}));
     const type = body.type || 'welcome';
@@ -1967,7 +744,6 @@ async function api(req, res, pathname, query) {
     return json(res, 200, { ok: true, queued, type, users: (store.db.users || []).length, status: email.status() });
   }
   if (pathname === '/api/email/test' && req.method === 'POST') {
-    if (!adminAuth.currentAdmin()) return adminRequired(res);
     if (!email) return json(res, 503, { ok: false, error: 'email_unavailable' });
     const body = await readBody(req);
     const admin = (store.db && store.db.users.find(u => u.role === 'admin')) || {};
@@ -1984,31 +760,24 @@ async function api(req, res, pathname, query) {
   if (pathname === '/api/admin/mail' && req.method === 'POST') {
     const body = await readBody(req);
     const db = (store && store.db) || {};
-    const admin = adminFor(body.adminId);
+    const admin = (db.users || []).find(u => u.id === body.adminId && u.role === 'admin');
     if (!admin) return json(res, 403, { ok: false, error: 'admin only' });
     try {
       const file = path.join(DATA_DIR, 'mail.json');
       let cur = {};
       try { cur = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) {}
       if (body.brevoKey) cur.brevoKey = String(body.brevoKey).trim();
-      if (body.smtpKey) cur.smtpKey = String(body.smtpKey).trim();
-      if (body.smtpUser) cur.smtpUser = String(body.smtpUser).trim();
-      if (body.smtpHost) cur.smtpHost = String(body.smtpHost).trim();
-      if (body.smtpPort) cur.smtpPort = Number(body.smtpPort) || 587;
       if (body.from) cur.from = String(body.from).trim();
       if (body.fromName) cur.fromName = String(body.fromName).trim();
       if (body.resendKey) cur.resendKey = String(body.resendKey).trim();
       cur.updatedAt = new Date().toISOString();
       writeJSONAtomic(file, cur);
-      if (cur.smtpKey) process.env.BREVO_SMTP_KEY = cur.smtpKey;
-      if (cur.smtpUser) process.env.BREVO_SMTP_USER = cur.smtpUser;
       if (cur.brevoKey) process.env.BREVO_API_KEY = cur.brevoKey;
       if (cur.from) process.env.MAIL_FROM = cur.from;
-      return json(res, 200, { ok: true, configured: email.configured(), provider: email.status().provider, from: cur.from || null });
+      return json(res, 200, { ok: true, configured: email.configured(), from: cur.from || null });
     } catch (e) { return json(res, 500, { ok: false, error: e.message }); }
   }
   if (pathname === '/api/reload' && req.method === 'POST') {
-    if (!adminAuth.currentAdmin()) return adminRequired(res);
     const body = await readBody(req);
     broadcast('reload', { build: body.build || BUILD, version: body.version || null, at: Date.now() });
     return json(res, 200, { ok: true, clients: clients.size });
@@ -2031,7 +800,6 @@ async function api(req, res, pathname, query) {
     return res.end(data);
   }
   if (pathname === '/api/state/restore' && req.method === 'POST') {
-    if (!adminAuth.currentAdmin()) return adminRequired(res);
     const body = await readBody(req);
     const db = body && (body.db || body);
     if (!db || !Array.isArray(db.users) || !db.users.length) return json(res, 400, { ok: false, error: 'invalid_backup' });
@@ -2066,7 +834,6 @@ async function api(req, res, pathname, query) {
   // --- live trades: manual stop / take loss (server-authoritative close) ---
   if (pathname === '/api/market/trade/close' && req.method === 'POST') {
     if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
-    { const blocked = marketAdmin.gate('close'); if (blocked) return json(res, 423, { ok: false, error: blocked, code: 'trading_blocked' }); }
     const body = await readBody(req);
     const owner = (store.db.users || []).find((u) => u && u.id === body.userId);
     if (!owner) return json(res, 400, { ok: false, error: 'User not found' });
@@ -2101,7 +868,6 @@ async function api(req, res, pathname, query) {
   // --- live trades: manual take profit skims profit and keeps running ---
   if (pathname === '/api/market/trade/take-profit' && req.method === 'POST') {
     if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
-    { const blocked = marketAdmin.gate('close'); if (blocked) return json(res, 423, { ok: false, error: blocked, code: 'trading_blocked' }); }
     const body = await readBody(req);
     const owner = (store.db.users || []).find((u) => u && u.id === body.userId);
     if (!owner) return json(res, 400, { ok: false, error: 'User not found' });
@@ -2114,7 +880,6 @@ async function api(req, res, pathname, query) {
   if (pathname === '/api/market/spot/buy' && req.method === 'POST') {
     if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
     const body = await readBody(req);
-    { const blocked = marketAdmin.gate('open', { ticker: body.ticker, amountUsd: Number(body.amountUsd) > 0 ? Number(body.amountUsd) : (Number(body.amountCoins) > 0 ? Number(body.amountCoins) * 0.5 : null) }); if (blocked) return json(res, 423, { ok: false, error: blocked, code: 'trading_blocked' }); }
     try {
       const out = spot.buy(body);
       return json(res, 200, Object.assign({ ok: true }, out));
@@ -2122,7 +887,6 @@ async function api(req, res, pathname, query) {
   }
   if (pathname === '/api/market/spot/sell' && req.method === 'POST') {
     if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
-    { const blocked = marketAdmin.gate('close'); if (blocked) return json(res, 423, { ok: false, error: blocked, code: 'trading_blocked' }); }
     const body = await readBody(req);
     try {
       const out = spot.sell(Object.assign({ reason: 'Manual sell' }, body));
@@ -2256,12 +1020,7 @@ async function api(req, res, pathname, query) {
     if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
     const body = await readBody(req);
     if (!isAdmin(store.db, body.adminId)) return json(res, 403, { ok: false, error: 'admin_only' });
-    try {
-      const beforePlans = JSON.parse(JSON.stringify(shares.plans()));
-      const out = shares.savePlans(body);
-      await marketAdmin.audit(adminAuth.currentAdmin(), adminAuth.ctx(), 'share_plans_updated', 'share_plans', 'whalechat-shares', { plans: beforePlans }, { plans: out.plans }).catch((e) => console.error('[admin_logs]', e.message));
-      return json(res, 200, out);
-    }
+    try { return json(res, 200, shares.savePlans(body)); }
     catch (e) { return json(res, 400, { ok: false, error: e.message }); }
   }
 
@@ -2275,11 +1034,11 @@ const server = http.createServer(async (req, res) => {
   const u = new URL(req.url, 'http://localhost');
   const pathname = u.pathname;
   if (req.method === 'OPTIONS') {
-    res.writeHead(204, { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type, x-admin-token', 'access-control-allow-methods': 'GET,POST,OPTIONS', 'access-control-max-age': '86400' });
+    res.writeHead(204, { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type', 'access-control-allow-methods': 'GET,POST,OPTIONS', 'access-control-max-age': '86400' });
     return res.end();
   }
   if (pathname.startsWith('/api/')) {
-    try { return await adminAuth.run(req, () => store.db, () => api(req, res, pathname, u.searchParams)); }
+    try { return await api(req, res, pathname, u.searchParams); }
     catch (e) {
       const code = e.code === 413 ? 413 : e.code === 400 ? 400 : 500;
       console.error('[api]', pathname, e.message);
@@ -2290,46 +1049,21 @@ const server = http.createServer(async (req, res) => {
   try { if (handleBrandedRedirect(req, res, pathname)) return; } catch (e) { console.error('[redirect]', e.message); }
   serveStatic(req, res, pathname);
 });
-if (marketData) { try { marketData.attachWs(server); } catch (e) { console.error('[market-data] ws:', e.message); } }
 server.keepAliveTimeout = 65000;
 server.headersTimeout = 70000;
 (async () => {
   await initStorage();
-  initPush();
-  try { await marketAdmin.init(pool); } catch (e) { console.error('[market-admin] init:', e.message); }
-  try { if (typeof marketData !== 'undefined' && marketData && marketData.setQuoteSource) marketData.setQuoteSource((sym) => marketAdmin.quote(sym)); } catch (e) { console.error('[market-admin] quote hook:', e.message); }
-  /* 3.57: if this instance woke up with an empty disk, pull the last snapshot
-     back from Appwrite before the feeds start writing. Accounts are merged,
-     never deleted. */
-  try {
-    if (appwrite && appwrite.configured()) {
-      const r = await appwrite.restore({ db: store.db, rev: store.rev, updatedAt: store.updatedAt, persist: persistNow }, (m) => console.log(m));
-      if (r && r.ok) { ensureTradingAssets(); ensureServices(store.db); persistNow(); }
-      else console.log('[appwrite] no snapshot restored:', r && r.error);
-    }
-  } catch (e) { console.error('[appwrite] restore failed:', e.message); }
   ensureTradingAssets();
-  /* restore the candle ring buffer before any feed writes a new tick */
-  try { await loadMarketTicks(); } catch (e) { console.error('[market] tick restore:', e.message); }
   const durableMarket = await loadMarketConfig();
   if (durableMarket) {
     market.hydrateConfig(durableMarket);
     console.log('[market] restored durable config · mode', durableMarket.mode || 'simulated', '· key', durableMarket.apiKey ? 'set' : 'not set');
   }
   market.start();
-  try { bridgeCompanyStock(); } catch (e) {}
   if (binance) { binance.start(); console.log('[binance] live crypto price feed started'); }
-  if (twelvedata) { twelvedata.start(); console.log('[twelvedata] stock/forex price feed started'); }
   if (connections) { try { connections.boot(); } catch (e) { console.error('[connections] boot:', e.message); } }
   if (b2bAlerts) { b2bAlerts.start(); console.log('[b2b-alerts] watcher started (email + in-app)'); }
   ensureServices(store.db);
-  /* keep a durable Appwrite copy even when nobody is writing */
-  if (appwrite && appwrite.configured()) {
-    setInterval(() => { try { appwrite.backup(store, 'interval').catch(() => {}); } catch (e) {} }, 5 * 60000).unref();
-    appwrite.backup(store, 'boot').catch(() => {});
-    /* mirror uploaded product/app images into Appwrite Storage as well */
-    setTimeout(() => { try { appwrite.uploadFiles(PUBLIC_DIR, { max: 12 }).catch(() => {}); } catch (e) {} }, 20000);
-  }
   spot.startTimers();
   bots.startTimers();
   shares.startTimers();
@@ -2341,13 +1075,10 @@ server.headersTimeout = 70000;
   });
 })();
 let stopping = false;
-async function shutdown(signal) {
+function shutdown(signal) {
   if (stopping) return; stopping = true;
   try { market.stop(); } catch (e) {}
   try { if (binance) binance.stop(); } catch (e) {}
-  try { if (twelvedata) twelvedata.stop(); } catch (e) {}
-  /* let the final batch reach Postgres before the pool closes */
-  try { await flushMarketTicks(true); } catch (e) {}
   try { if (b2bAlerts) b2bAlerts.stop(); } catch (e) {}
   try { spot.stopTimers(); } catch (e) {}
   try { bots.stopTimers(); } catch (e) {}
@@ -2355,7 +1086,6 @@ async function shutdown(signal) {
   console.log(`[whalechat] ${signal} — saving and exiting`);
   try { if (store.db) snapshot('shutdown'); } catch (e) {}
   try { persistNow(); } catch (e) {}
-  try { if (appwrite && appwrite.configured() && store.db) await appwrite.backup(store, 'shutdown'); } catch (e) {}
   try { if (pool) pool.end().catch(() => {}); } catch (e) {}
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 1500).unref();

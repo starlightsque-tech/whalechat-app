@@ -1,8 +1,8 @@
 {
-  "version": "3.80.0",
-  "build": "2026-11-20T23:30:34Z",
+  "version": "3.45.0",
+  "build": "2026-11-18T17:35:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.80.0 — frontend and backend redeployed together on Appwrite. Email now goes through Appwrite Messaging (project SMTP provider) for verification codes and admin email, with Brevo SMTP/API fallback. State writes use a cross-instance lock and merge so a deposit or account change can no longer be overwritten by a parallel function instance. Chat keeps instant local echo, queues messages while a device is offline, and delivers them to the other device on reconnect.",
-  "releasedAt": "2026-11-20T23:30:34Z",
+  "notes": "WhaleChat 3.45.0 - Admin Markets: Binance and Alpaca key panels, Alpaca live US stock prices; new server URL card in Admin Servers; admin Trade Guide updates; background device notifications; share the app file as Whalechat.apk.",
+  "releasedAt": "2026-11-18T17:35:00Z",
   "minimum": "3.0.0"
 }
