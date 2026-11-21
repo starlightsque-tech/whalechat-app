@@ -43,6 +43,7 @@
         '<div class="card"><div class="tiny muted">' + esc(STATE.note || 'Reading the connection status…') + '</div></div>';
     }
     var fin = s.finnhub || {}, bin = s.binance || {}, bre = s.brevo || {}, smtp = s.smtp || {}, st = s.storage || {};
+    var twv = s.twelvedata || {}, twLive = twv.live || {};
     var finWs = fin.websocket || {};
     var binWs = bin.websocket || {};
 
@@ -73,6 +74,17 @@
         '<div class="row" style="gap:8px;margin-top:8px"><button class="btn btn-primary btn-sm grow" data-act="cn-save-binance">Save Binance</button>' +
           '<button class="btn btn-ghost btn-sm grow" data-act="cn-test" data-which="binance">Test</button></div></div>' +
 
+      /* Twelve Data */
+      '<div class="card cn-card"><div class="between"><div class="card-title" style="margin:0">' + dot(twLive.source === 'twelvedata') + ' Twelve Data · stocks, forex &amp; crypto</div>' +
+        '<span class="badge ' + (twLive.source === 'twelvedata' ? 'badge-success' : 'badge-warn') + '">' + esc(twLive.source || (twv.configured ? 'idle' : 'off')) + '</span></div>' +
+        '<div class="cn-grid">' + kv('API key', esc(twv.key) || '—') + kv('Symbols polled', String(twLive.symbols || 0)) +
+          kv('Ticks', String(twLive.ticks || 0)) + kv('Refresh', (twLive.everySec || 60) + 's') + '</div>' +
+        (twLive.lastError ? '<div class="tiny down" style="margin-top:6px">' + esc(twLive.lastError) + '</div>' : '') +
+        '<div class="field" style="margin-top:10px"><label class="label">Twelve Data API key</label>' +
+          '<input class="input" id="cnTwelveKey" type="password" placeholder="paste the key — stored on the server"/></div>' +
+        '<div class="row" style="gap:8px"><button class="btn btn-primary btn-sm grow" data-act="cn-save-twelve">Save Twelve Data</button>' +
+          '<button class="btn btn-ghost btn-sm grow" data-act="cn-test" data-which="twelvedata">Test</button></div></div>' +
+
       /* Brevo */
       '<div class="card cn-card"><div class="between"><div class="card-title" style="margin:0">' + dot(bre.configured) + ' Brevo · transactional email</div>' +
         '<span class="badge ' + (bre.configured ? 'badge-success' : 'badge-warn') + '">' + esc(bre.provider || 'none') + '</span></div>' +
@@ -102,6 +114,9 @@
     App.cnSaveBinance = async function () {
       await C.save({ binance: { apiKey: (document.getElementById('cnBinanceKey') || {}).value || '', enabled: !!(document.getElementById('cnBinanceOn') || {}).checked } });
     };
+    App.cnSaveTwelve = async function () {
+      await C.save({ twelvedata: { apiKey: (document.getElementById('cnTwelveKey') || {}).value || '', enabled: true } });
+    };
     App.cnSaveBrevo = async function () {
       await C.save({ brevo: {
         apiKey: (document.getElementById('cnBrevoKey') || {}).value || '',
@@ -130,7 +145,9 @@
         var r = await fetch(url('/api/connections/test'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ adminId: u && u.id, which: which }) });
         var d = await r.json();
         var res = (d && d.results && d.results[which]) || {};
-        var ok = which === 'binance' ? res.source === 'binance' || res.source === 'binance-ws' : (which === 'finnhub' ? !!res.hasKey || !!res.live : true);
+        var ok = which === 'binance' ? (res.source === 'binance' || res.source === 'binance-ws')
+          : which === 'twelvedata' ? res.source === 'twelvedata'
+          : which === 'finnhub' ? !!res.hasKey || !!res.live : true;
         tmsg(ok ? which + ' is live' : which + ' is not reachable — check the key', ok ? 'ok' : 'err');
         await C.load();
         try { render(); } catch (e) {}

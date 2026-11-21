@@ -28,6 +28,8 @@ let createBinanceFeed = null;
 try { createBinanceFeed = require('./binance').createBinanceFeed; } catch (e) { console.error('[binance] module unavailable:', e.message); }
 let createB2BAlertWatcher = null;
 try { createB2BAlertWatcher = require('./b2b-alerts').createB2BAlertWatcher; } catch (e) { console.error('[b2b-alerts] module unavailable:', e.message); }
+let createTwelveFeed = null;
+try { createTwelveFeed = require('./twelvedata').createTwelveFeed; } catch (e) { console.error('[twelvedata] module unavailable:', e.message); }
 const market = new MarketService({
   dataDir: DATA_DIR,
   getDb: () => store.db,
@@ -55,13 +57,31 @@ const shares = new ShareService({
 /* Binance live crypto prices alongside Finnhub (charts stay on Finnhub). */
 const binance = createBinanceFeed ? createBinanceFeed({ getDb: () => store.db, everyMs: Number(process.env.BINANCE_MS || 15000), onTick: (sym, price) => { try { market.ingestExternal(sym, price); } catch (e) {} } }) : null;
 
+/* Twelve Data: one REST key for US + global equities, forex and crypto pairs.
+   Same contract as the Binance/Alpaca feeds — every quote lands in the shared
+   market cache so trades and portfolios use it automatically. */
+const twelvedata = createTwelveFeed ? createTwelveFeed({
+  getDb: () => store.db,
+  everyMs: Number(process.env.TWELVEDATA_MS || 60000),
+  maxSymbols: Number(process.env.TWELVEDATA_MAX_SYMBOLS || 40),
+  getTickers: () => {
+    try {
+      return market.assetList()
+        .filter((a) => !a.hidden && !a.synthetic)
+        .map((a) => String(a.displayTicker || a.ticker || '').toUpperCase())
+        .filter(Boolean);
+    } catch (e) { return []; }
+  },
+  onTick: (sym, price) => { try { market.ingestExternal(sym, price); } catch (e) {} }
+}) : null;
+
 /* Durable third-party connection settings (Finnhub, Binance, Brevo, SMTP).
    Applied on every boot so a new release never comes up disconnected. */
 const connections = createConnections ? createConnections({
   getDb: () => store.db,
   persist: () => persist(),
   dataDir: DATA_DIR,
-  market, email, binance,
+  market, email, binance, twelvedata,
   log: (m) => console.log(m),
   storageBackend: () => (pool ? 'postgres' : 'file')
 }) : null;
@@ -301,6 +321,14 @@ function lifecycleEmails(pushes, events) {
   }
 }
 const VERIFY_CODES = new Map();
+/* signup email verification: email -> {hash, sentAt, exp, tries, sends} */
+const SIGNUP_CODES = new Map();
+function signupCodeHash(emailAddr, code) {
+  return require('crypto').createHash('sha256').update('signup::v1::' + String(emailAddr).toLowerCase() + '::' + String(code)).digest('hex');
+}
+function maskEmail(e) {
+  return String(e || '').replace(/^(.{2}).*(@.*)$/, '$1***$2');
+}
 function broadcast(event, data) {
   const frame = `event: ${event}\ndata: ${JSON.stringify(data || {})}\n\n`;
   for (const res of clients) { try { res.write(frame); } catch (e) {} }
@@ -462,6 +490,11 @@ async function api(req, res, pathname, query) {
     }
     if (which === 'all' || which === 'finnhub') {
       try { out.results.finnhub = market.status(); } catch (e) { out.results.finnhub = { error: e.message }; }
+    }
+    if (which === 'all' || which === 'twelvedata') {
+      try {
+        out.results.twelvedata = twelvedata ? await twelvedata.poll() : { error: 'twelvedata_disabled' };
+      } catch (e) { out.results.twelvedata = { error: e.message }; }
     }
     if (which === 'all' || which === 'brevo') {
       try {
@@ -660,6 +693,79 @@ async function api(req, res, pathname, query) {
     store.rev += 1; store.updatedAt = now; persist();
     broadcast('change', { rev: store.rev, source: 'bonus-claim', at: now });
     return json(res, 200, { ok: true, coins: coinsAmt, balance: user.balance, status: claim.status, bonus: bonus.title });
+  }
+  /* --- signup email verification (6-digit code, full-screen page) --------
+     Flow: signup -> code emailed -> full-screen verify page -> account marked
+     verified. The account is not treated as usable until the code matches.
+     Codes are stored hashed, never returned to a browser, and are limited by
+     a 60s resend cooldown, 5 sends per hour and 6 wrong guesses. */
+  if (pathname === '/api/verify/signup/send' && req.method === 'POST') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    const body = await readBody(req);
+    const emailAddr = String(body.email || '').trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(emailAddr)) return json(res, 400, { ok: false, error: 'bad_email', message: 'Enter a valid email address' });
+    const user = (store.db.users || []).find((u) => String(u.email || '').trim().toLowerCase() === emailAddr);
+    if (!user) return json(res, 404, { ok: false, error: 'user_missing', message: 'Account not found yet — please try again in a moment' });
+    if (user.emailVerified === true || user.verified === true) return json(res, 409, { ok: false, error: 'already_verified', message: 'This account is already verified' });
+    const now = Date.now();
+    const prev = SIGNUP_CODES.get(emailAddr);
+    if (prev && now - prev.sentAt < 60000) {
+      return json(res, 429, { ok: false, error: 'too_soon', message: 'Please wait before requesting another code', retryIn: Math.ceil((60000 - (now - prev.sentAt)) / 1000) });
+    }
+    const sends = (prev && now - prev.windowStart < 3600000) ? (prev.sends || 0) : 0;
+    if (sends >= 5) return json(res, 429, { ok: false, error: 'too_many', message: 'Too many codes requested. Try again in an hour.' });
+    const code = String(require('crypto').randomInt(100000, 1000000));
+    SIGNUP_CODES.set(emailAddr, {
+      hash: signupCodeHash(emailAddr, code),
+      sentAt: now,
+      windowStart: (prev && now - prev.windowStart < 3600000) ? prev.windowStart : now,
+      sends: sends + 1,
+      exp: now + 15 * 60000,
+      tries: 0,
+      userId: user.id
+    });
+    const appUrl = PUBLIC_URL || ('http://localhost:' + PORT);
+    const mailReady = !!(email && email.configured && email.configured());
+    let queued = false;
+    if (mailReady) {
+      queued = !!email.enqueue({ key: null, to: user.email, template: 'verifyCode', data: { code, name: user.fullName || user.username, purposeLabel: 'your WhaleChat account', purposeRoute: 'signup' }, appUrl });
+    }
+    /* never leak the code to the browser; the admin sees delivery status */
+    console.log('[verify] signup code for ' + emailAddr.slice(0, 2) + '*** queued=' + queued + ' mailReady=' + mailReady);
+    if (!mailReady) {
+      return json(res, 503, { ok: false, error: 'email_not_configured', message: 'Email sending is not configured yet. An admin must connect Brevo or SMTP in Admin → Servers.', to: maskEmail(emailAddr) });
+    }
+    return json(res, 200, { ok: true, queued, to: maskEmail(emailAddr), expiresIn: 900, attemptsLeft: 6 });
+  }
+  if (pathname === '/api/verify/signup/confirm' && req.method === 'POST') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    const body = await readBody(req);
+    const emailAddr = String(body.email || '').trim().toLowerCase();
+    const code = String(body.code || '').replace(/\D/g, '');
+    const rec = SIGNUP_CODES.get(emailAddr);
+    if (!rec) return json(res, 400, { ok: false, error: 'no_code', message: 'Request a verification code first' });
+    if (Date.now() > rec.exp) { SIGNUP_CODES.delete(emailAddr); return json(res, 400, { ok: false, error: 'expired', message: 'That code has expired — send a new one' }); }
+    if (rec.tries >= 6) { SIGNUP_CODES.delete(emailAddr); return json(res, 429, { ok: false, error: 'locked', message: 'Too many attempts — send a new code' }); }
+    if (code.length !== 6 || signupCodeHash(emailAddr, code) !== rec.hash) {
+      rec.tries += 1;
+      const left = Math.max(0, 6 - rec.tries);
+      return json(res, 400, { ok: false, error: 'invalid', message: 'That code is not correct', attemptsLeft: left });
+    }
+    const user = (store.db.users || []).find((u) => String(u.email || '').trim().toLowerCase() === emailAddr) || (rec.userId ? (store.db.users || []).find((u) => u.id === rec.userId) : null);
+    if (!user) return json(res, 404, { ok: false, error: 'user_missing' });
+    const now = Date.now();
+    user.verified = true;
+    user.emailVerified = true;
+    user.verifiedAt = now;
+    user.verificationMethod = 'email_code';
+    delete user.emailVerifyRequired;
+    SIGNUP_CODES.delete(emailAddr);
+    store.rev += 1; store.updatedAt = now; persistNow();
+    broadcast('change', { rev: store.rev, source: 'signup-verified', at: now });
+    (store.db.notifications = store.db.notifications || []).unshift({ id: 'nt_' + now.toString(36) + Math.random().toString(36).slice(2, 7), userId: user.id, title: 'Email verified ✅', body: 'Your account is verified. Welcome to WhaleChat.', link: '#/account', icon: 'shield', read: false, createdAt: now });
+    persistNow();
+    console.log('[verify] signup verified @' + (user.username || user.id));
+    return json(res, 200, { ok: true, verifiedAt: now, userId: user.id, username: user.username || '', role: user.role || 'user' });
   }
   // --- email verification codes (account deletion etc.) -------------
   if (pathname === '/api/verify/send' && req.method === 'POST') {
@@ -1061,6 +1167,7 @@ server.headersTimeout = 70000;
   }
   market.start();
   if (binance) { binance.start(); console.log('[binance] live crypto price feed started'); }
+  if (twelvedata) { twelvedata.start(); console.log('[twelvedata] price feed started'); }
   if (connections) { try { connections.boot(); } catch (e) { console.error('[connections] boot:', e.message); } }
   if (b2bAlerts) { b2bAlerts.start(); console.log('[b2b-alerts] watcher started (email + in-app)'); }
   ensureServices(store.db);
@@ -1079,6 +1186,7 @@ function shutdown(signal) {
   if (stopping) return; stopping = true;
   try { market.stop(); } catch (e) {}
   try { if (binance) binance.stop(); } catch (e) {}
+  try { if (twelvedata) twelvedata.stop(); } catch (e) {}
   try { if (b2bAlerts) b2bAlerts.stop(); } catch (e) {}
   try { spot.stopTimers(); } catch (e) {}
   try { bots.stopTimers(); } catch (e) {}

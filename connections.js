@@ -32,6 +32,7 @@ function createConnections(opts) {
   const market = opts.market;
   const email = opts.email;
   const binance = opts.binance;
+  const twelvedata = opts.twelvedata;
   let alpaca = null;
   try {
     alpaca = require('./alpaca').createAlpacaFeed({
@@ -123,6 +124,21 @@ function createConnections(opts) {
       } catch (e) { log('[connections] alpaca apply failed: ' + e.message); }
     }
 
+    if (c.twelvedata && (c.twelvedata.apiKey || c.twelvedata.enabled !== undefined)) {
+      try {
+        const db = getDb();
+        if (db) {
+          if (!db.settings) db.settings = {};
+          db.settings.twelvedata = Object.assign({}, db.settings.twelvedata || {}, {
+            enabled: c.twelvedata.enabled !== false,
+            apiKey: c.twelvedata.apiKey || (db.settings.twelvedata || {}).apiKey || ''
+          });
+        }
+        applied.push('twelvedata');
+        if (twelvedata) twelvedata.poll().catch(() => {});
+      } catch (e) { log('[connections] twelvedata apply failed: ' + e.message); }
+    }
+
     if (c.brevo && c.brevo.apiKey && email) {
       try {
         const mail = {
@@ -175,6 +191,12 @@ function createConnections(opts) {
         feed: (c.alpaca && c.alpaca.feed) || 'iex',
         live: alpaca ? alpaca.status() : null
       },
+      twelvedata: {
+        configured: !!(c.twelvedata && c.twelvedata.apiKey),
+        key: mask(!!(c.twelvedata && c.twelvedata.apiKey)),
+        enabled: !(c.twelvedata && c.twelvedata.enabled === false),
+        live: twelvedata ? twelvedata.status() : null
+      },
       brevo: {
         configured: !!bre.apiKey || !!(mailStatus.provider === 'brevo'),
         key: mask(!!bre.apiKey),
@@ -218,6 +240,13 @@ function createConnections(opts) {
         feed: body.alpaca.feed === 'sip' ? 'sip' : 'iex'
       };
     }
+    if (body.twelvedata) {
+      const cur = stored().twelvedata || {};
+      next.twelvedata = {
+        enabled: body.twelvedata.enabled !== false,
+        apiKey: body.twelvedata.apiKey ? String(body.twelvedata.apiKey).trim() : cur.apiKey || ''
+      };
+    }
     if (body.brevo) {
       next.brevo = {
         apiKey: body.brevo.apiKey ? String(body.brevo.apiKey).trim() : (stored().brevo || {}).apiKey || '',
@@ -228,6 +257,7 @@ function createConnections(opts) {
     save(next);
     const applied = apply();
     if (body.alpacaPoll && alpaca) alpaca.poll().catch(() => {});
+    if (twelvedata && body.twelvedata) twelvedata.poll().catch(() => {});
     return { ok: true, applied, status: status() };
   }
 

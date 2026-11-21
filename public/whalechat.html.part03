@@ -40,6 +40,7 @@
     pendingReferralCode: pendingReferralCode || null,
     referralPaid: false,
     trustScore: 80, completedSales: 0, rating: 5, verified: false, banned: false,
+    emailVerified: false, emailVerifyRequired: true,
     vendorId: null, cart: [], stars: [], settings: { notifications: true, theme: document.documentElement.getAttribute('data-theme') },
     createdAt: Date.now()
   };
@@ -59,10 +60,194 @@
   SESSION = { userId: u.id, at: Date.now() };
   localStorage.setItem(LS_SESSION, JSON.stringify(SESSION));
   sync();
-  toast('Account created — welcome aboard!', 'ok');
-  go('set-pin');
+  toast('Account created — check your email for the 6-digit code', 'ok');
+  go('verify?email=' + encodeURIComponent(email));
   requestNotifyPermission(false);
   if (Remote.enabled) setTimeout(() => Push.ensure(false), 1200);
+};
+
+/* ---------------- email verification (6-digit, full screen) ----------------
+   Signup now finishes on the verification screen. Until the code emailed to
+   the account is accepted the router refuses to open the rest of the app, so
+   a half-registered account can never reach a profile or wallet.
+   Enforced whenever a sync server is connected (that is what sends the mail).
+   In pure local mode there is no server to send mail, so the gate is skipped
+   rather than locking a user out of their own device. */
+function needsEmailVerify(u) {
+  if (!u) return false;
+  if (!Remote.enabled) return false;
+  if (u.emailVerified === true || u.verified === true) return false;
+  return u.emailVerifyRequired === true;
+}
+
+let VERIFY_COOLDOWN = 0;
+let VERIFY_TIMER = null;
+function verifyLeft() {
+  return Math.max(0, Math.ceil((VERIFY_COOLDOWN - Date.now()) / 1000));
+}
+
+function viewVerify() {
+  const u = me() || {};
+  const to = String(u.email || '').replace(/^(.{2}).*(@.*)$/, '$1***$2');
+  return `<style>
+    .verify-screen{min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:24px;position:relative;z-index:1;
+      background:radial-gradient(70% 55% at 50% 0%,rgba(46,230,201,.14),transparent 72%),radial-gradient(60% 50% at 80% 100%,rgba(122,92,255,.12),transparent 70%)}
+    .verify-card{width:100%;max-width:430px;background:var(--card,#0b1723);border:1px solid rgba(46,230,201,.22);border-radius:22px;
+      padding:30px 26px 24px;box-shadow:0 30px 90px -30px rgba(0,0,0,.75);text-align:center}
+    .verify-badge{width:60px;height:60px;margin:0 auto 16px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+      color:var(--accent,#2ee6c9);background:rgba(46,230,201,.12);border:1px solid rgba(46,230,201,.3)}
+    .verify-card h1{font-size:24px;margin:0 0 8px;letter-spacing:-.02em}
+    .verify-card .sub{color:var(--muted,#8fa6b5);font-size:14px;line-height:1.55;margin:0 0 20px}
+    .verify-input{font-size:26px!important;letter-spacing:.5em;text-align:center;font-variant-numeric:tabular-nums;
+      padding:14px 10px 14px 18px!important;font-weight:700}
+    .verify-err{color:#ff6b6b;font-size:12.5px;min-height:18px;margin:8px 0 4px;line-height:1.4}
+    .verify-foot{margin-top:14px;font-size:13px;color:var(--muted,#8fa6b5)}
+    .verify-foot .link{color:var(--accent,#2ee6c9);background:none;border:0;padding:0;cursor:pointer;font:inherit;text-decoration:underline}
+  </style>
+  <div class="verify-screen">
+    <div class="verify-card">
+      <div class="verify-badge">${ic('shield', 26)}</div>
+      <h1>Verify your email</h1>
+      <p class="sub">We sent a 6-digit code to <b>${esc(to || 'your email')}</b>.<br/>Enter it below to finish creating your account.</p>
+      <form id="verifyForm" autocomplete="off">
+        <input class="input verify-input" id="vcCode" name="vcCode" type="text" inputmode="numeric"
+          maxlength="6" autocomplete="one-time-code" placeholder="000000" aria-label="6 digit verification code" />
+        <div class="verify-err" id="vcErr" role="alert"></div>
+        <button class="btn btn-primary btn-block btn-lg" type="submit" id="vcBtn">Verify &amp; continue</button>
+      </form>
+      <button class="btn btn-ghost btn-block" id="vcPaste" type="button" style="margin-top:10px">${ic('copy', 15)} Paste code from email</button>
+      <div class="verify-foot">
+        <span class="muted small" id="vcResendNote">Didn't get it? Check spam, or&nbsp;</span>
+        <button class="link" id="vcResend" type="button">resend code</button>
+      </div>
+      <div class="verify-foot" style="margin-top:18px">
+        <button class="link small" id="vcSwitch" type="button">Use a different account</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function bindVerify() {
+  const form = document.getElementById('verifyForm');
+  if (form) form.addEventListener('submit', (e) => { e.preventDefault(); App.verifyAccount(); });
+  const inp = document.getElementById('vcCode');
+  if (inp) {
+    inp.addEventListener('input', () => {
+      inp.value = String(inp.value || '').replace(/\D/g, '').slice(0, 6);
+      const err = document.getElementById('vcErr');
+      if (err) err.textContent = '';
+      if (inp.value.length === 6) App.verifyAccount();
+    });
+    setTimeout(() => { try { inp.focus(); } catch (e) {} }, 120);
+  }
+  const paste = document.getElementById('vcPaste');
+  if (paste) paste.onclick = async () => {
+    let text = '';
+    try { text = await navigator.clipboard.readText(); } catch (e) { toast('Allow clipboard access, or type the code', 'err'); return; }
+    const code = String(text || '').replace(/\D/g, '').slice(0, 6);
+    if (!code) return toast('No code found on the clipboard', 'err');
+    const f = document.getElementById('vcCode');
+    if (f) { f.value = code; if (code.length === 6) App.verifyAccount(); }
+  };
+  const resend = document.getElementById('vcResend');
+  if (resend) resend.onclick = () => App.sendSignupCode(true);
+  const sw = document.getElementById('vcSwitch');
+  if (sw) sw.onclick = () => {
+    SESSION = null;
+    try { localStorage.removeItem(LS_SESSION); } catch (e) {}
+    go('login');
+  };
+  startVerifyCooldown();
+  /* first arrival: fire the code automatically */
+  const key = 'wc.vcode.sent.' + (me() ? me().id : '');
+  let already = false;
+  try { already = !!sessionStorage.getItem(key); } catch (e) {}
+  if (!already) { try { sessionStorage.setItem(key, '1'); } catch (e) {} App.sendSignupCode(false); }
+}
+
+function startVerifyCooldown() {
+  clearInterval(VERIFY_TIMER);
+  const tick = () => {
+    const left = verifyLeft();
+    const btn = document.getElementById('vcResend');
+    const note = document.getElementById('vcResendNote');
+    if (!btn) { clearInterval(VERIFY_TIMER); return; }
+    if (left > 0) { btn.textContent = 'resend in ' + left + 's'; btn.disabled = true; btn.style.opacity = '.55'; }
+    else { btn.textContent = 'resend code'; btn.disabled = false; btn.style.opacity = '1'; }
+    if (note && left > 0) note.textContent = 'Code sent. You can request another in a moment.';
+  };
+  tick();
+  VERIFY_TIMER = setInterval(tick, 1000);
+}
+
+function verifyError(msg) {
+  const err = document.getElementById('vcErr');
+  if (err) err.textContent = msg || '';
+  if (msg) toast(msg, 'err');
+}
+
+App.sendSignupCode = async function (manual) {
+  const u = me();
+  if (!u) { go('login'); return; }
+  if (!Remote.enabled) { verifyError('No sync server is connected, so email cannot be sent.'); return; }
+  if (manual && verifyLeft() > 0) return;
+  VERIFY_COOLDOWN = Date.now() + 60000;
+  startVerifyCooldown();
+  try {
+    const r = await Remote.fetchJSON('/api/verify/signup/send', { method: 'POST', body: JSON.stringify({ email: u.email }) }, 15000);
+    const d = r.data || {};
+    if (!r.res.ok || d.ok === false) {
+      if (d.error === 'too_soon') { VERIFY_COOLDOWN = Date.now() + (Number(d.retryIn) || 60) * 1000; startVerifyCooldown(); return; }
+      verifyError(d.message || 'Could not send the code. Try again.');
+      return;
+    }
+    toast('Code sent to ' + (d.to || u.email), 'ok');
+    const note = document.getElementById('vcResendNote');
+    if (note) note.textContent = 'Code sent to ' + (d.to || u.email) + '. ';
+  } catch (e) {
+    verifyError('Network problem — check your connection and resend.');
+  }
+};
+
+App.verifyAccount = async function () {
+  const u = me();
+  if (!u) { go('login'); return; }
+  const inp = document.getElementById('vcCode');
+  const btn = document.getElementById('vcBtn');
+  const raw = inp ? inp.value : '';
+  const code = String(raw || '').replace(/\D/g, '');
+  if (code.length !== 6) { if (inp) inp.focus(); return verifyError('Enter the 6-digit code from the email'); }
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Verifying…'; }
+  const restore = () => { if (btn) { btn.disabled = false; btn.innerHTML = 'Verify &amp; continue'; } };
+  try {
+    const r = await Remote.fetchJSON('/api/verify/signup/confirm', { method: 'POST', body: JSON.stringify({ email: u.email, code }) }, 15000);
+    const d = r.data || {};
+    if (!r.res.ok || d.ok === false) {
+      restore();
+      if (inp) { inp.value = ''; inp.focus(); }
+      const tail = d.attemptsLeft !== undefined ? ' (' + d.attemptsLeft + ' attempts left)' : '';
+      return verifyError((d.message || 'That code is not correct') + tail);
+    }
+    /* mark the account verified on this device too, then land on the profile */
+    const meUser = me();
+    if (meUser) {
+      meUser.emailVerified = true;
+      meUser.verified = true;
+      meUser.verifiedAt = d.verifiedAt || Date.now();
+      meUser.verificationMethod = 'email_code';
+      delete meUser.emailVerifyRequired;
+    }
+    persist(true);
+    try { if (Remote.enabled) await Remote.flush(); } catch (e) {}
+    try { sessionStorage.removeItem('wc.vcode.sent.' + u.id); } catch (e) {}
+    clearInterval(VERIFY_TIMER);
+    toast('Email verified — welcome aboard!', 'ok');
+    if ((me() || {}).role === 'admin') go('admin');
+    else go('account');
+  } catch (e) {
+    restore();
+    verifyError('Network problem — try again.');
+  }
 };
 
 function uniqueReferralCode() {
@@ -441,6 +626,14 @@ function render() {
   if (parts[0] === 'set-pin') {
     if (u.pin) { go('home'); return; }
     app.innerHTML = viewSetPin(); bindAuth(); return;
+  }
+
+  /* email verification gate — nothing else opens until the code is accepted */
+  if (needsEmailVerify(u)) {
+    document.body.dataset.route = 'verify';
+    app.innerHTML = viewVerify();
+    bindVerify();
+    return;
   }
 
   const routeKey = parts[0] === 'admin' ? (parts[1] ? 'admin-' + parts[1] : 'admin') : (parts[0] || 'home');
