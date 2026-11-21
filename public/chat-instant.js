@@ -486,6 +486,23 @@
   /* ------------------------------------------------------------------ *
    *  REALTIME — one subscription for the whole app lifetime             *
    * ------------------------------------------------------------------ */
+  /* Extra realtime channels (presence, typing, receipts) register here so the
+     app keeps ONE EventSource for its whole lifetime. */
+  const rtHandlers = {};
+  WCI.onRealtime = function (name, fn) {
+    if (typeof fn !== 'function') return function () {};
+    (rtHandlers[name] = rtHandlers[name] || []).push(fn);
+    return function () { rtHandlers[name] = (rtHandlers[name] || []).filter((f) => f !== fn); };
+  };
+  WCI.emit = function (name, data) {
+    (rtHandlers[name] || []).forEach((fn) => { try { fn(data); } catch (e) {} });
+    (rtHandlers['*'] || []).forEach((fn) => { try { fn(name, data); } catch (e) {} });
+  };
+  WCI.realtimeUrl = function () {
+    const uid = meId() || '';
+    return (Remote.base || '') + '/api/events?client=' + encodeURIComponent(Remote.clientId) + '&user=' + encodeURIComponent(uid);
+  };
+
   let es = null, esRetry = 0, esWatchdog = null, lastEventAt = 0;
 
   function connectRealtime() {
@@ -498,7 +515,22 @@
     const uid = meId() || '';
     const url = (Remote.base || '') + '/api/events?client=' + encodeURIComponent(Remote.clientId) + '&user=' + encodeURIComponent(uid);
     try { es = new EventSource(url); } catch (e) { return; }
-    es.addEventListener('hello', () => { esRetry = 0; lastEventAt = now(); WCI.rtStatus = 'online'; });
+    es.addEventListener('hello', () => { esRetry = 0; lastEventAt = now(); WCI.rtStatus = 'online'; WCI.emit('hello', {}); });
+    es.addEventListener('presence', (e) => {
+      lastEventAt = now();
+      let d = {}; try { d = JSON.parse(e.data); } catch (err) { return; }
+      WCI.emit('presence', d);
+    });
+    es.addEventListener('presence-snapshot', (e) => {
+      lastEventAt = now();
+      let d = {}; try { d = JSON.parse(e.data); } catch (err) { return; }
+      WCI.emit('presence-snapshot', d);
+    });
+    es.addEventListener('typing', (e) => {
+      lastEventAt = now();
+      let d = {}; try { d = JSON.parse(e.data); } catch (err) { return; }
+      WCI.emit('typing', d);
+    });
     es.addEventListener('message', (e) => {
       lastEventAt = now();
       let d = {}; try { d = JSON.parse(e.data); } catch (err) { return; }
