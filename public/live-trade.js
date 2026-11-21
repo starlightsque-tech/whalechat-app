@@ -1015,7 +1015,8 @@ LT.paintMarket = function () {
       if (el.textContent !== txt) {
         el.textContent = txt;
         el.classList.remove('lt-up', 'lt-down');
-        el.classList.add(q.dir > 0 ? 'lt-up' : q.dir < 0 ? 'lt-down' : '');
+        const dirClass = q.dir > 0 ? 'lt-up' : q.dir < 0 ? 'lt-down' : '';
+        if (dirClass) el.classList.add(dirClass);
         setTimeout(() => el.classList.remove('lt-up', 'lt-down'), 800);
       }
     } else if (kind === 'wc') {
@@ -2644,13 +2645,22 @@ AFTER.invest = (function (orig) {
 /* ---------------- engine ---------------- */
 setInterval(() => {
   try {
-    if (!DB || !me() || document.hidden) return;
+    if (!DB || !me()) return;
+    /* Auto take-profit / stop-loss must keep evaluating while the app is in the
+       background: a phone that locks the screen must not miss a TP hit. */
     LT.auto();
-    LT.paint();
-    LT.paintDash();
-    LT.paintMarket();
+    if (!document.hidden) {
+      LT.paint();
+      LT.paintDash();
+      LT.paintMarket();
+    }
   } catch (e) { console.error('lt tick', e); }
-}, 500);
+}, 400);
+/* catch up immediately when the tab becomes visible again */
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  try { if (DB && me()) { LT.auto(); LT.paint(); LT.paintDash(); LT.paintMarket(); } } catch (e) {}
+});
 
 /* catch the app after login/first paint too */
 setInterval(() => {
@@ -3066,6 +3076,6 @@ setInterval(() => {
     if (LT.autoSecureOn(me().id)) {
       LT.open(me().id).forEach((t) => { if (!LT.serverCovered(t)) LT.secureLocal(t, 'Auto Secure'); });
     }
-    if (!document.hidden) LT.paintSecure();
+    LT.paintSecure();
   } catch (e) { console.error('auto secure tick', e); }
 }, 1000);

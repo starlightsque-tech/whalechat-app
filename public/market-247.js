@@ -81,7 +81,18 @@
     I.visibleStocks = function () {
       var list = [];
       try { list = I.stocks(); } catch (e) { return []; }
-      return list.filter(function (s) { return is247(s) && s.hidden !== true; });
+      /* Show the full catalogue the admin has enabled (100+ stocks, crypto,
+         forex and indices). The 24/7 whitelist used to filter this list down
+         to a handful of synthetic tickers, which blanked the Market page with
+         "No markets are currently enabled" once real symbols were listed. */
+      return list.filter(function (s) {
+        if (!s || !s.ticker || s.hidden === true) return false;
+        try {
+          if (typeof I.classEnabled === 'function' && typeof I.classOf === 'function' &&
+              !I.classEnabled(I.classOf(s))) return false;
+        } catch (e) {}
+        return true;
+      });
     };
     I.visibleCats = function () { return CATS.slice(); };
     I.CATS = CATS.slice();

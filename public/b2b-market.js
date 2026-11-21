@@ -39,6 +39,19 @@
     { t: 'SPACEX', name: 'SpaceX', kind: 'Pre-IPO', sym: null, c: '#005288' }
   ];
 
+  /* The B2B desk lists the full shared 100-stock universe alongside the
+     crypto / company instruments above. The universe file is injected before
+     this module; a static fallback keeps the desk complete if it is missing. */
+  (function expandCatalogue() {
+    var univ = (window.WC_STOCK_UNIVERSE || []);
+    univ.forEach(function (s) {
+      var t = String(s.t || '').toUpperCase();
+      if (!t) return;
+      if (CATALOG.some(function (x) { return String(x.t).toUpperCase() === t; })) return;
+      CATALOG.push({ t: t, name: s.name || t, kind: 'Stock', sym: null, c: s.c || '#2ee6c9' });
+    });
+  })();
+
   var WC_USD = 0.50;             /* WhaleChat token value */
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
   function money(v) { return '$' + (Math.round((Number(v) || 0) * 100) / 100).toFixed(2); }
@@ -192,7 +205,7 @@
     var list = CATALOG.filter(function (x) { return kind === 'All' || x.kind === kind; });
     var kinds = ['All', 'Crypto', 'Meme', 'Stock', 'Company', 'Pre-IPO'];
     var favs = (a && a.b2bFav) || [];
-    return head('B2B marketplace', 'Real market prices · buy from the WhaleChat contract · sell back to the company contract', '#/investment/b2b') +
+    return head('B2B marketplace', CATALOG.length + ' instruments live · 100 stocks + crypto, memes and pre-IPO · real market prices · buy from the WhaleChat contract · sell back to the company contract', '#/investment/b2b') +
       '<div class="row b2b-cats" style="gap:6px;flex-wrap:wrap;margin-bottom:8px">' +
         kinds.map(function (k) { return '<a class="chip b2b-cat ' + (k === kind ? 'on' : '') + '" href="#/investment/b2b/market?kind=' + encodeURIComponent(k) + '">' + k + '</a>'; }).join('') +
         '<a class="chip b2b-cat" href="#/investment/b2b/alerts">Price alerts</a>' +

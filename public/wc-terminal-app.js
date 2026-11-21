@@ -128,7 +128,7 @@
 
   function symbols() {
     try {
-      return INV.stocks().slice(0, 50).map((s) => ({
+      return INV.stocks().slice(0, 100).map((s) => ({
         ticker: s.ticker, name: s.name || s.ticker, base: Number(s.price) || price(s.ticker) || 100
       }));
     } catch (e) { return null; }

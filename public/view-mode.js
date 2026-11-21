@@ -10,11 +10,22 @@
   if (typeof window === 'undefined') return;
   const V = window.WC_VIEW = window.WC_VIEW || {};
   const KEY = 'wc.viewMode';
-  V.mode = 'desktop';
+  V.mode = 'mobile';
 
   function stored() {
-    try { return localStorage.getItem(KEY) === 'mobile' ? 'mobile' : 'desktop'; }
-    catch (e) { return 'desktop'; }
+    try {
+      var v = localStorage.getItem(KEY);
+      if (v === 'mobile' || v === 'desktop') return v;
+    } catch (e) {}
+    /* first visit: phones and small screens get the native mobile layout —
+       the old desktop default forced width=1280 on a phone and squashed the
+       whole app (two tiny stock columns, sidebar over the content) */
+    try {
+      if (isHandheld()) return 'mobile';
+      var sw = (window.screen && Number(window.screen.width)) || window.innerWidth || 0;
+      if (sw && sw < 1024) return 'mobile';
+    } catch (e) {}
+    return 'desktop';
   }
   function viewport() { return document.querySelector('meta[name="viewport"]'); }
   function content(mode) {

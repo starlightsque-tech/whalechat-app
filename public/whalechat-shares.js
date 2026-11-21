@@ -25,8 +25,8 @@
   }
   function money(v) { return '$' + num(v, 2); }
   function wc(v) { return num(v) + ' WC'; }
-  function both(coins) { return num(coins) + ' WC (' + money(Number(coins) * 0.5) + ')'; }
-  function bothEarn(coins) { return tinyNum(coins) + ' WC (' + (Math.abs(Number(coins)) < 1 ? '$' + (Number(coins) * 0.5).toFixed(6).replace(/0+$/, '').replace(/\.$/, '') : money(Number(coins) * 0.5)) + ')'; }
+  function both(coins) { return money(Number(coins) * 0.5) + ' USD'; }
+  function bothEarn(coins) { return (Math.abs(Number(coins)) < 1 ? '$' + (Number(coins) * 0.5).toFixed(6).replace(/0+$/, '').replace(/\.$/, '') : money(Number(coins) * 0.5)) + ' USD'; }
   function when(ms) { try { return new Date(ms).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch (e) { return '—'; } }
   function left(ms) {
     if (!(ms > 0)) return 'Matured';
@@ -133,13 +133,13 @@
         <span class="badge ${chg >= 0 ? 'badge-success' : 'badge-danger'}">${chg >= 0 ? '+' : '−'}${Math.abs(chg).toFixed(2)}%</span>
       </div>
       <div class="shares-price-row">
-        <div class="shares-price">$${num(last, 2)} <span class="tiny muted">(${num(last * 2, 2)} WC)</span></div>
+        <div class="shares-price">$${num(last, 2)} <span class="tiny muted">USD</span></div>
         <div class="tiny muted" data-share-upd>${st && st.shareMarket ? 'updated ' + when(st.shareMarket.updatedAt) : ''}</div>
       </div>
       <div class="shares-chart">${svgChart(hist, { height: 130, color: chg >= 0 ? '#22c55e' : '#ef4444', prefix: '$' })}</div>
       <div class="shares-stats">
         <div><span>Share price</span><b data-share-px>$${num(last, 2)}</b></div>
-        <div><span>In WC</span><b data-share-pxwc>${num(last * 2, 2)} WC</b></div>
+        <div><span>Quote</span><b data-share-pxwc>USD</b></div>
         <div><span>Your shares</span><b>${num(st && st.summary ? st.summary.shares : 0, 4)}</b></div>
         <div><span>Holders' earning</span><b data-share-earn>+${tinyNum(st && st.summary ? st.summary.totalEarnedCoins : 0)} WC</b></div>
       </div>
@@ -158,8 +158,8 @@
       </div>
       <div class="shares-hero-grid">
         <div><span>Active plans</span><b>${s.activeCount || 0}</b></div>
-        <div><span>Invested</span><b>${num(s.investedCoins)} WC</b></div>
-        <div><span>Accrued</span><b class="up">+${tinyNum(s.accruedCoins)} WC</b></div>
+        <div><span>Invested</span><b>${money(s.investedCoins * 0.5)} USD</b></div>
+        <div><span>Accrued</span><b class="up">+${money(s.accruedCoins * 0.5)} USD</b></div>
         <div><span>Share price</span><b>$${num(s.sharePriceUsd, 2)}</b></div>
       </div>
     </div>`;
@@ -182,6 +182,26 @@
   }
 
   function investmentCard(v) {
+    /* WC-investing payout formula (client display mirrors the server):
+       profit = capital(USD) x plan daily % x (share price at activation x days) */
+    try {
+      const days = Math.max(1, Number(v.durationDays) || 1);
+      const dailyPct = Number(v.dailyReturnPct) > 0 ? Number(v.dailyReturnPct) : (Number(v.returnPct) || 0) / days;
+      const capUsd = Number(v.amountUsd) > 0 ? Number(v.amountUsd) : (Number(v.amountCoins) || 0) * 0.5;
+      const px = Number(v.entryPriceUsd) > 0 ? Number(v.entryPriceUsd) : Number((S.state && S.state.shareMarket && S.state.shareMarket.priceUsd) || 12.5);
+      const totalUsd = capUsd * (dailyPct / 100) * px * days;
+      const prog = Math.max(0, Math.min(1, (Number(v.progressPct) || 0) / 100));
+      v = Object.assign({}, v, {
+        amountUsd: capUsd,
+        dailyReturnPct: dailyPct,
+        targetProfitUsd: totalUsd,
+        targetProfitCoins: totalUsd * 2,
+        accruedUsd: totalUsd * prog,
+        accruedCoins: totalUsd * prog * 2,
+        currentValueUsd: capUsd + totalUsd * prog,
+        currentValueCoins: (Number(v.amountCoins) || 0) + totalUsd * prog * 2
+      });
+    } catch (e) {}
     const eq = equitySeries(v.equityHistory);
     return `<div class="shares-inv">
       <div class="between" style="align-items:flex-start">
@@ -756,7 +776,7 @@
         S.plansSig = sig;
         refreshLiveMount();
       });
-    }, 6000);
+    }, 2500);
     setInterval(tickEarnings, 1000);
   }
 

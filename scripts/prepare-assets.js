@@ -59,6 +59,9 @@ if (!parts.length) {
 const MODULES = [
   { file: 'subscriptions.js', marker: 'wc-subs' },
   { file: 'tawk-control.js', marker: 'wc-tawk-control' },
+  { file: 'stocks-universe.js', marker: 'wc-stock-universe' },
+  { file: 'wc-live-chart.js', marker: 'wc-live-chart' },
+  { file: 'no-chat-widget.js', marker: 'wc-no-chat-widget' },
   { file: 'live-trade.js', marker: 'wc-live-trade' },
   { file: 'spot-orders.js', marker: 'wc-spot-orders' },
   { file: 'whalechat-shares.js', marker: 'wc-shares' },
@@ -66,6 +69,7 @@ const MODULES = [
   { file: 'assets-multi.js', marker: 'wc-assets-multi' },
   { file: 'market-live.js', marker: 'wc-market-live' },
   { file: 'binance-live.js', marker: 'wc-binance-live' },
+  { file: 'stock-100.js', marker: 'wc-stock-100' },
   { file: 'market-keys.js', marker: 'wc-market-keys' },
   { file: 'wc-extras.js', marker: 'wc-extras' },
   { file: 'market-247.js', marker: 'wc-market-247' },
@@ -79,16 +83,29 @@ const MODULES = [
   { file: 'view-mode.js', marker: 'wc-view-mode' },
   { file: 'portfolio-share.js', marker: 'wc-portfolio-share' },
   { file: 'pro-chart.js', marker: 'wc-pro-chart' },
+  { file: 'shares-perf-live.js', marker: 'wc-perf-live' },
+  { file: 'chart-watchdog.js', marker: 'wc-chart-watchdog' },
+  { file: 'charts-unify.js', marker: 'wc-charts-unify' },
   { file: 'readability.js', marker: 'wc-readability' },
   { file: 'b2b-market.js', marker: 'wc-b2b-market' },
   { file: 'connections-admin.js', marker: 'wc-connections-admin' },
   { file: 'wc-invest-plans.js', marker: 'wc-invest-plans' },
   { file: 'wc-invest-ui.js', marker: 'wc-invest-ui' },
+  { file: 'b2b-auto-sell.js', marker: 'wc-b2b-auto-sell' },
   { file: 'typography.js', marker: 'wc-typography' },
   { file: 'session-guard.js', marker: 'wc-session-guard' },
   { file: 'scroll-stability.js', marker: 'wc-scroll-stability' },
   { file: 'apk-download.js', marker: 'wc-apk-download' },
-  { file: 'chat-instant.js', marker: 'wc-chat-instant' }
+  { file: 'chat-instant.js', marker: 'wc-chat-instant' },
+  { file: 'chat-media.js', marker: 'wc-chat-media' },
+  { file: 'keyboard-fix.js', marker: 'wc-keyboard' },
+  { file: 'layout-fix.js', marker: 'wc-layout-fix' },
+  { file: 'otp-bridge.js', marker: 'wc-otp-bridge' },
+  { file: 'login-guard.js', marker: 'wc-login-guard' },
+  { file: 'sync-guard.js', marker: 'wc-sync-guard' },
+  { file: 'verify-gate.js', marker: 'wc-verify-gate' },
+  { file: 'email-notify.js', marker: 'wc-email-notify' },
+  { file: 'welcome-mail.js', marker: 'wc-welcome-mail' }
 ];
 try {
   let page = fs.readFileSync(APP, 'utf8');

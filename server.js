@@ -711,7 +711,7 @@ async function api(req, res, pathname, query) {
   }
   if (pathname === '/api/market/history' && req.method === 'GET') {
     const raw = (query.get('tickers') || query.get('ticker') || '').toUpperCase();
-    const tickers = raw.split(',').map(t => t.trim()).filter(Boolean).slice(0, 24);
+    const tickers = raw.split(',').map(t => t.trim()).filter(Boolean).slice(0, 120);
     const limit = Number(query.get('limit')) || 600;
     return json(res, 200, {
       ok: true, at: Date.now(), source: market.source(), notice: market.notice(),
@@ -873,6 +873,14 @@ async function api(req, res, pathname, query) {
     (store.db.notifications = store.db.notifications || []).unshift({ id: 'nt_' + now.toString(36) + Math.random().toString(36).slice(2, 7), userId: user.id, title: 'Email verified ✅', body: 'Your account is verified. Welcome to WhaleChat.', link: '#/account', icon: 'shield', read: false, createdAt: now });
     persistNow();
     console.log('[verify] signup verified @' + (user.username || user.id));
+    /* The welcome mail goes out now that the address is proven — separate key
+       from the signup notice so it is never deduped away. */
+    try {
+      if (email && email.enqueue) {
+        const appUrl = PUBLIC_URL || ('http://localhost:' + PORT);
+        email.enqueue({ key: 'welcome-verified:' + user.id, to: user.email, template: 'welcome', data: user, appUrl });
+      }
+    } catch (e) { console.error('[email] welcome-after-verify:', e.message); }
     return json(res, 200, { ok: true, verifiedAt: now, userId: user.id, username: user.username || '', role: user.role || 'user' });
   }
   // --- email verification codes (account deletion etc.) -------------

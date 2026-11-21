@@ -142,9 +142,15 @@ class ShareService {
     const invDays = Number(inv.durationDays) || Math.max(1, Math.round((end - start) / 86400000));
     const dailyRate = inv.dailyReturnPct != null ? Number(inv.dailyReturnPct) : null;
     const totalPct = inv.totalReturnPct != null ? Number(inv.totalReturnPct) : (dailyRate != null ? dailyRate * invDays : (Number(inv.returnPct) || 0));
-    const targetProfit = amount * totalPct / 100;
+    /* WC-investing: profit (USD) = capital x plan% x (live WC price x days held) */
+    const capitalUsd = Number(inv.amountUsd) || amount * 0.5;
+    const livePrice = (inv.status === 'completed' && Number(inv.entryPriceUsd) > 0) ? Number(inv.entryPriceUsd) : this.sharePrice();
+    const formulaProfitUsd = round(capitalUsd * ((Number(inv.returnPct) || 0) / 100) * livePrice * invDays, 2);
+    const targetProfit = round((inv.targetProfitUsd != null ? Number(inv.targetProfitUsd) : formulaProfitUsd) * 2, 6);
     const matured = inv.status === 'completed' || now >= end;
-    const profitCoins = inv.status === 'completed' ? (Number(inv.profitCoins) || targetProfit) : round(targetProfit * (elapsed / duration), 6);
+    const profitCoins = inv.status === 'completed'
+      ? (Number(inv.profitCoins) || targetProfit)
+      : (inv.profitUsd != null ? round(Number(inv.profitUsd) * 2, 6) : round(targetProfit * (elapsed / duration), 6));
     const accrued = inv.status === 'completed' ? (Number(inv.profitCoins) || targetProfit) : Math.min(targetProfit, profitCoins);
     const progress = inv.status === 'completed' ? 100 : Math.min(100, (elapsed / duration) * 100);
     const shares = Number(inv.shares) || (Number(inv.amountUsd) || 0) / (Number(inv.entryPriceUsd) || this.sharePrice());
@@ -263,6 +269,14 @@ class ShareService {
       durationLabel: durationLabel(plan.durationValue, plan.durationUnit),
       entryPriceUsd: round(price, 4), shares: round(amountUsd / price, 6),
       startAt: now, endAt: now + ms, status: 'active',
+      /* WC-investing payout formula:
+         profit (USD) = capital (USD) x plan % x (WhaleChat share price x days held)
+         The price is accumulated from the live share market, so a day at $12.45
+         and a day at $8 contribute exactly what they should. */
+      startPriceUsd: round(price, 4),
+      wcPriceAccum: 0, wcLastAt: now,
+      targetProfitUsd: round(amountUsd * ((Number(plan.returnPct) || 0) / 100) * price * durationDays(plan.durationValue, plan.durationUnit), 2),
+      profitUsd: 0,
       profitCoins: 0, lastAccrualAt: now,
       equityHistory: [{ t: now, coins: costCoins }],
       createdAt: now
@@ -355,7 +369,7 @@ class ShareService {
     market.updatedAt = now;
     market.history = market.history || [];
     const lastPt = market.history[market.history.length - 1];
-    if (!lastPt || now - (Number(lastPt.t) || 0) >= 4500) {
+    if (!lastPt || now - (Number(lastPt.t) || 0) >= 1800) {
       market.history.push({ t: now, p: market.priceUsd });
       if (market.history.length > 720) market.history.splice(0, market.history.length - 720);
     }
@@ -370,13 +384,32 @@ class ShareService {
       const totalPct = inv.totalReturnPct != null ? Number(inv.totalReturnPct) : (dailyRate != null ? dailyRate * invDays : (Number(inv.returnPct) || 0));
       const target = round(amount * totalPct / 100, 2);
       if (end && now >= end) {
+        /* fold the final interval of live price into the accumulated payout */
+        try {
+          const lastAt0 = Number(inv.wcLastAt) || now;
+          const dt0 = Math.max(0, Math.min(120, (now - lastAt0) / 1000));
+          inv.wcPriceAccum = round((Number(inv.wcPriceAccum) || 0) + market.priceUsd * dt0, 6);
+          inv.wcLastAt = now;
+          const amtUsd0 = Number(inv.amountUsd) || (Number(inv.amountCoins) || 0) * 0.5;
+          inv.profitUsd = round(amtUsd0 * ((Number(inv.returnPct) || 0) / 100) * ((Number(inv.wcPriceAccum) || 0) / 86400), 2);
+        } catch (e) {}
         this.complete(db, inv, target);
         changed = true;
         continue;
       }
       const start = Number(inv.startAt) || now;
       const elapsed = Math.max(0, Math.min(end - start, now - start));
-      const accrued = round(target * (elapsed / Math.max(1, end - start)), 6);
+      /* accumulate the live share price over time (price x seconds) */
+      const lastAt = Number(inv.wcLastAt) || now;
+      const dt = Math.max(0, Math.min(120, (now - lastAt) / 1000));
+      inv.wcPriceAccum = round((Number(inv.wcPriceAccum) || 0) + market.priceUsd * dt, 6);
+      inv.wcLastAt = now;
+      const amountUsd = Number(inv.amountUsd) || (Number(inv.amountCoins) || 0) * 0.5;
+      const pct = Number(inv.returnPct) || 0;
+      const profitUsd = round(amountUsd * (pct / 100) * ((Number(inv.wcPriceAccum) || 0) / 86400), 2);
+      inv.profitUsd = profitUsd;
+      inv.targetProfitUsd = round(amountUsd * (pct / 100) * market.priceUsd * (Number(inv.durationDays) || 1), 2);
+      const accrued = round(profitUsd * 2, 6);   /* stored in WC coins for the existing UI */
       inv.profitCoins = accrued;
       if (now - (Number(inv.lastAccrualAt) || 0) >= 30000) {
         inv.lastAccrualAt = now;
@@ -398,20 +431,33 @@ class ShareService {
     if (!u) return;
     const now = Date.now();
     const days = Number(inv.durationDays) || 1;
-    const totalPct = inv.totalReturnPct != null ? Number(inv.totalReturnPct) : (inv.dailyReturnPct != null ? Number(inv.dailyReturnPct) * days : (Number(inv.returnPct) || 0));
-    const profit = round(targetProfit != null ? targetProfit : (Number(inv.amountCoins) || 0) * totalPct / 100, 2);
-    const payout = round((Number(inv.amountCoins) || 0) + profit, 2);
+    const amountCoins = Number(inv.amountCoins) || 0;
+    const amountUsd = Number(inv.amountUsd) || amountCoins * 0.5;
+    /* profit is taken from the accumulated live price (WC formula); the coin
+       argument is only a fallback for plans created before this version */
+    let profitUsd = Number(inv.profitUsd);
+    if (!(profitUsd >= 0) || inv.profitUsd == null) {
+      const fallbackCoins = targetProfit != null ? Number(targetProfit) : amountCoins * ((Number(inv.returnPct) || 0) * days / 100);
+      profitUsd = round(fallbackCoins * 0.5, 2);
+    }
+    profitUsd = round(profitUsd, 2);
+    const profit = round(profitUsd * 2, 2);       /* coins equivalent for existing views */
+    const payout = round(amountCoins + profit, 2);
     inv.status = 'completed';
     inv.completedAt = now;
+    inv.profitUsd = profitUsd;
     inv.profitCoins = profit;
     inv.payoutCoins = payout;
+    inv.payoutUsd = round(amountUsd + profitUsd, 2);
     inv.endAt = Math.min(Number(inv.endAt) || now, now);
     inv.equityHistory = inv.equityHistory || [];
     inv.equityHistory.push({ t: now, coins: payout });
     if (inv.equityHistory.length > 240) inv.equityHistory.splice(0, inv.equityHistory.length - 240);
     const ia = invAcct(u);
-    const payoutUsd = round(payout * 0.5, 2);
-    ia.payout = round((Number(ia.payout) || 0) + payoutUsd, 2);
+    /* capital returns to the WC-investing capital balance; profit to the profit balance */
+    setPf(u, 'wc', pf(u, 'wc') + amountUsd);
+    ia.payout = round((Number(ia.payout) || 0) + profitUsd, 2);
+    const payoutUsd = round(amountUsd + profitUsd, 2);
     this.tx(db, inv.userId, `WhaleChat shares matured · ${inv.planName}`, payout, 'share-maturity', {
       investmentId: inv.id, principalCoins: inv.amountCoins, profitCoins: profit, payoutCoins: payout, payoutUsd, returnPct: inv.returnPct
     });
@@ -423,7 +469,7 @@ class ShareService {
     this.running = true;
     this.timer = setInterval(() => {
       try { this.tick(); } catch (e) { this.lastError = e.message; console.error('[shares] tick failed:', e.message); }
-    }, 5000);
+    }, 2000);
     if (this.timer.unref) this.timer.unref();
     setTimeout(() => { try { this.tick(); } catch (e) {} }, 2000);
     console.log('[shares] WhaleChat share price + investment worker started');

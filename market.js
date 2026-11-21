@@ -263,6 +263,66 @@ const DEFAULT_ASSETS = [
   { ticker: 'SHOP', displayTicker: 'SHOP', finnhubSymbol: 'SHOP', assetClass: 'us', name: 'Shopify Inc.', exchange: 'NYSE', currency: 'USD', color: '#96bf48', sector: 'Technology' }
 ];
 
+/* The 100-stock US catalogue shared with the app (public/stocks-universe.js).
+   Keeping it here too means a fresh self-hosted install starts with all 100
+   instruments already priced by the feed, not just the legacy short list. */
+const EXTRA_US_STOCKS = [
+  ['NVDA', 'NVIDIA Corporation', 'Semiconductors', '#76b900'], ['META', 'Meta Platforms, Inc.', 'Technology', '#0866ff'],
+  ['BRK_B', 'Berkshire Hathaway Inc.', 'Financials', '#7b8aa3'], ['AVGO', 'Broadcom Inc.', 'Semiconductors', '#cc092f'],
+  ['LLY', 'Eli Lilly and Company', 'Healthcare', '#d52b1e'], ['JPM', 'JPMorgan Chase & Co.', 'Financials', '#5a7fb0'],
+  ['V', 'Visa Inc.', 'Financials', '#1a1f71'], ['XOM', 'Exxon Mobil Corporation', 'Energy', '#ef3123'],
+  ['UNH', 'UnitedHealth Group Inc.', 'Healthcare', '#002677'], ['MA', 'Mastercard Incorporated', 'Financials', '#eb001b'],
+  ['COST', 'Costco Wholesale Corp.', 'Retail', '#e31837'], ['HD', 'The Home Depot, Inc.', 'Retail', '#f96302'],
+  ['PG', 'Procter & Gamble Co.', 'Consumer', '#003da5'], ['JNJ', 'Johnson & Johnson', 'Healthcare', '#d7141a'],
+  ['WMT', 'Walmart Inc.', 'Retail', '#0071ce'], ['ABBV', 'AbbVie Inc.', 'Healthcare', '#071d49'],
+  ['NFLX', 'Netflix, Inc.', 'Media', '#e50914'], ['KO', 'The Coca-Cola Company', 'Consumer', '#f40009'],
+  ['CRM', 'Salesforce, Inc.', 'Technology', '#00a1e0'], ['BAC', 'Bank of America Corp.', 'Financials', '#e31837'],
+  ['ORCL', 'Oracle Corporation', 'Technology', '#f80000'], ['CVX', 'Chevron Corporation', 'Energy', '#1d63a5'],
+  ['MRK', 'Merck & Co., Inc.', 'Healthcare', '#00857c'], ['AMD', 'Advanced Micro Devices', 'Semiconductors', '#ed1c24'],
+  ['PEP', 'PepsiCo, Inc.', 'Consumer', '#004b93'], ['TMO', 'Thermo Fisher Scientific', 'Healthcare', '#f58220'],
+  ['ADBE', 'Adobe Inc.', 'Technology', '#ff0000'], ['CSCO', 'Cisco Systems, Inc.', 'Technology', '#1ba0d7'],
+  ['ACN', 'Accenture plc', 'Technology', '#a100ff'], ['MCD', "McDonald's Corporation", 'Restaurants', '#ffbc0d'],
+  ['LIN', 'Linde plc', 'Materials', '#00a3e0'], ['ABT', 'Abbott Laboratories', 'Healthcare', '#008fc5'],
+  ['WFC', 'Wells Fargo & Company', 'Financials', '#d71e28'], ['DIS', 'The Walt Disney Company', 'Media', '#113ccf'],
+  ['INTC', 'Intel Corporation', 'Semiconductors', '#0071c5'], ['QCOM', 'Qualcomm Incorporated', 'Semiconductors', '#3253dc'],
+  ['VZ', 'Verizon Communications', 'Telecom', '#cd040b'], ['TXN', 'Texas Instruments Inc.', 'Semiconductors', '#cc0000'],
+  ['DHR', 'Danaher Corporation', 'Healthcare', '#f36f21'], ['INTU', 'Intuit Inc.', 'Technology', '#236cff'],
+  ['AMGN', 'Amgen Inc.', 'Healthcare', '#005eb8'], ['PM', 'Philip Morris International', 'Consumer', '#0033a0'],
+  ['CAT', 'Caterpillar Inc.', 'Industrial', '#ffcd11'], ['IBM', 'International Business Machines', 'Technology', '#054ada'],
+  ['GE', 'GE Aerospace', 'Industrial', '#0b5ed7'], ['NOW', 'ServiceNow, Inc.', 'Technology', '#62d84e'],
+  ['UBER', 'Uber Technologies, Inc.', 'Technology', '#000000'], ['SPGI', 'S&P Global Inc.', 'Financials', '#d6001c'],
+  ['RTX', 'RTX Corporation', 'Industrial', '#0033a0'], ['PFE', 'Pfizer Inc.', 'Healthcare', '#0093d0'],
+  ['COP', 'ConocoPhillips', 'Energy', '#e30613'], ['NEE', 'NextEra Energy, Inc.', 'Utilities', '#00843d'],
+  ['LOW', "Lowe's Companies, Inc.", 'Retail', '#004990'], ['HON', 'Honeywell International', 'Industrial', '#e2231a'],
+  ['UNP', 'Union Pacific Corporation', 'Transport', '#ffcc00'], ['BKNG', 'Booking Holdings Inc.', 'Travel', '#003580'],
+  ['T', 'AT&T Inc.', 'Telecom', '#00a8e0'], ['AMAT', 'Applied Materials, Inc.', 'Semiconductors', '#0f4c81'],
+  ['ELV', 'Elevance Health, Inc.', 'Healthcare', '#0073cf'], ['ISRG', 'Intuitive Surgical, Inc.', 'Healthcare', '#0057b8'],
+  ['SYK', 'Stryker Corporation', 'Healthcare', '#005eb8'], ['PLTR', 'Palantir Technologies Inc.', 'Technology', '#101113'],
+  ['MU', 'Micron Technology, Inc.', 'Semiconductors', '#005a9c'], ['LMT', 'Lockheed Martin Corporation', 'Industrial', '#003087'],
+  ['ADP', 'Automatic Data Processing', 'Technology', '#d0021b'], ['BLK', 'BlackRock, Inc.', 'Financials', '#000000'],
+  ['VRTX', 'Vertex Pharmaceuticals', 'Healthcare', '#f47b20'], ['C', 'Citigroup Inc.', 'Financials', '#056dae'],
+  ['MDT', 'Medtronic plc', 'Healthcare', '#0b4ea2'], ['SCHW', 'The Charles Schwab Corporation', 'Financials', '#00a0df'],
+  ['GILD', 'Gilead Sciences, Inc.', 'Healthcare', '#e4002b'], ['ADI', 'Analog Devices, Inc.', 'Semiconductors', '#005f86'],
+  ['TJX', 'The TJX Companies, Inc.', 'Retail', '#d71920'], ['CB', 'Chubb Limited', 'Insurance', '#003087'],
+  ['SBUX', 'Starbucks Corporation', 'Restaurants', '#00704a'], ['MDLZ', 'Mondelez International', 'Consumer', '#7b2d8e'],
+  ['BMY', 'Bristol-Myers Squibb Co.', 'Healthcare', '#c8102e'], ['PGR', 'The Progressive Corporation', 'Insurance', '#0a3161'],
+  ['SO', 'The Southern Company', 'Utilities', '#00539b'], ['DE', 'Deere & Company', 'Industrial', '#367c2b'],
+  ['CI', 'The Cigna Group', 'Healthcare', '#007a33'], ['MO', 'Altria Group, Inc.', 'Consumer', '#00447c'],
+  ['ETN', 'Eaton Corporation plc', 'Industrial', '#0057a8'], ['REGN', 'Regeneron Pharmaceuticals', 'Healthcare', '#004b87'],
+  ['ZTS', 'Zoetis Inc.', 'Healthcare', '#f58220'], ['BSX', 'Boston Scientific Corp.', 'Healthcare', '#005eb8'],
+  ['APD', 'Air Products and Chemicals', 'Materials', '#00a3e0'], ['DUK', 'Duke Energy Corporation', 'Utilities', '#00539b'],
+  ['SHW', 'The Sherwin-Williams Company', 'Materials', '#003da5'], ['KLAC', 'KLA Corporation', 'Semiconductors', '#005a9c'],
+  ['SNOW', 'Snowflake Inc.', 'Technology', '#29b5e8'], ['ABNB', 'Airbnb, Inc.', 'Travel', '#ff5a5f'],
+  ['COIN', 'Coinbase Global, Inc.', 'Financials', '#0052ff']
+];
+EXTRA_US_STOCKS.forEach(([ticker, name, sector, color]) => {
+  if (DEFAULT_ASSETS.some((a) => a.ticker === ticker)) return;
+  DEFAULT_ASSETS.push({
+    ticker, displayTicker: ticker.replace('_', '.'), finnhubSymbol: ticker.replace('_', '.'),
+    assetClass: 'us', name, exchange: 'US', currency: 'USD', color, sector
+  });
+});
+
 function assetKey(finnhubSymbol, assetClass) {
   const sym = String(finnhubSymbol || '').toUpperCase();
   if (assetClass === 'forex') return sym.split(':').pop().replace(/_/g, '');
