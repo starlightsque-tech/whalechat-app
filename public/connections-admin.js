@@ -22,7 +22,9 @@
   function dot(ok) { return '<i class="cn-dot ' + (ok ? 'ok' : 'off') + '"></i>'; }
   function kv(k, v) { return '<div class="cn-kv"><span>' + esc(k) + '</span><b>' + v + '</b></div>'; }
 
+  function isAdmin() { try { var x = me2(); return !!(x && x.role === 'admin'); } catch (e) { return false; } }
   C.load = async function () {
+    if (!isAdmin()) return null;
     var u = me2();
     try {
       var r = await fetch(url('/api/connections?adminId=' + encodeURIComponent(u && u.id)), { headers: { accept: 'application/json' } });
@@ -188,8 +190,10 @@
         nav.splice(Math.max(0, nav.length - 2), 0, { key: 'admin-connections', label: 'Connections', icon: 'shield', href: '#/admin/connections' });
       }
     } catch (e) {}
-    C.load();
-    setInterval(function () { C.load(); }, 30000);
+    if (isAdmin()) {
+      C.load();
+      setInterval(function () { if (isAdmin()) C.load(); }, 30000);
+    }
   })();
 
   (function styles() {

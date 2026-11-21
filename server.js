@@ -445,12 +445,24 @@ function applyOps(db, ops) {
     const arr = db[op.col];
     if (op.op === 'push' && op.item && op.item.id) {
       const i = arr.findIndex(x => x && x.id === op.item.id);
-      if (i >= 0) arr[i] = op.item; else arr.push(op.item);
+      if (i >= 0) {
+        /* verification is monotonic: a stale device must never clear it */
+        if (op.col === 'users' && arr[i] && arr[i].verified === true) {
+          op.item.verified = true;
+          op.item.emailVerified = true;
+          if (!op.item.verifiedAt) op.item.verifiedAt = arr[i].verifiedAt || Date.now();
+        }
+        arr[i] = op.item;
+      } else arr.push(op.item);
       pushes.push({ col: op.col, item: op.item, isNew: i < 0 });
     } else if (op.op === 'update' && op.id) {
       const i = arr.findIndex(x => x && x.id === op.id);
       if (i >= 0) {
         const before = arr[i] ? arr[i].status : null;
+        if (op.col === 'users' && arr[i] && arr[i].verified === true) {
+          op.patch = Object.assign({}, op.patch, { verified: true, emailVerified: true });
+          if (!op.patch.verifiedAt) op.patch.verifiedAt = arr[i].verifiedAt || Date.now();
+        }
         arr[i] = Object.assign({}, arr[i], op.patch || {});
         if (op.patch && op.patch.status && op.patch.status !== before) events.push({ col: op.col, item: arr[i], from: before, to: op.patch.status });
       } else if (op.patch && op.patch.id) arr.push(op.patch);

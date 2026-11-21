@@ -289,9 +289,15 @@ async function flush() {
     for (const item of [...queue]) {
       try {
         if (provider() === 'brevo') {
-          const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+          /* The Fly Render host's IP is not on Brevo's allow-list, so mail is
+             relayed through the Cloudflare edge when a relay is configured. */
+          const relayUrl = String(process.env.MAIL_RELAY_URL || '').trim();
+          const relaySecret = String(process.env.MAIL_RELAY_SECRET || '').trim();
+          const target = (relayUrl && relaySecret) ? relayUrl : 'https://api.brevo.com/v3/smtp/email';
+          const apiKey = (relayUrl && relaySecret) ? relaySecret : cfg.brevoKey;
+          const res = await fetch(target, {
             method: 'POST',
-            headers: { 'api-key': cfg.brevoKey, 'content-type': 'application/json', accept: 'application/json' },
+            headers: { 'api-key': apiKey, 'content-type': 'application/json', accept: 'application/json' },
             body: JSON.stringify({
               sender: { name: cfg.fromName, email: cfg.from },
               to: [{ email: item.to }],

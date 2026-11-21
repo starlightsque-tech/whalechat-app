@@ -1,8 +1,8 @@
 {
-  "version": "3.53.0",
-  "build": "2026-11-22T01:00:00Z",
+  "version": "3.54.0",
+  "build": "2026-11-22T03:00:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.53.0 — Auto Secure Take Profit subscription is synced from the server to every page and every device; it now actively takes profit on open trades and auto-credits secured profits to the Profit balance; each trade card shows its moves, profit taken and secured profits.",
-  "releasedAt": "2026-11-22T01:00:00Z",
+  "notes": "WhaleChat 3.54.0 — email now relays through the Cloudflare edge so the Fly host can always send (codes, welcome, orders, alerts) despite Brevo IP rules; verification can no longer be reverted by a stale device; Auto Secure subscription sync, automatic profit crediting and per-trade moves/secured display verified end-to-end on Fly.",
+  "releasedAt": "2026-11-22T03:00:00Z",
   "minimum": "3.0.0"
 }

@@ -18,7 +18,7 @@
   function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
   async function readStatus() {
-    try {
+    try { if (!(me() && me().role === 'admin')) return null;
       var r = await fetch(url('/api/connections?adminId=' + encodeURIComponent(adminId())), { headers: { accept: 'application/json' } });
       var d = await r.json();
       return d && d.ok ? d : null;
