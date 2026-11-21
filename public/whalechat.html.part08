@@ -784,11 +784,35 @@ const Remote = {
   },
   url(p) { return (this.base || '') + p; },
 
+  /* A path or an already-absolute URL resolves to exactly one URL. Passing a
+     path that went through Remote.url() used to prefix the base twice and build
+     a host like https://hosthttps://host/api/... which every browser rejects as
+     "Failed to fetch". */
+  absolute(pathname) {
+    const p = String(pathname == null ? '' : pathname);
+    if (/^https?:\/\//i.test(p)) return p;
+    return this.url(p);
+  },
+
   async fetchJSON(pathname, opts = {}, timeout = 7000) {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeout);
+    const send = (url) => fetch(url, Object.assign({ signal: ctrl.signal, headers: { 'content-type': 'application/json' } }, opts));
     try {
-      const res = await fetch(this.url(pathname), Object.assign({ signal: ctrl.signal, headers: { 'content-type': 'application/json' } }, opts));
+      let res;
+      try {
+        res = await send(this.absolute(pathname));
+      } catch (e) {
+        /* the sync host is unreachable: when this page was served by our own
+           server, same-origin is always the right answer */
+        if (this.base && window.__WC_SERVER__) {
+          this.base = '';
+          this.setStoredBase('');
+          this.status = 'online';
+          this.lastError = '';
+          res = await send(this.absolute(pathname));
+        } else { throw e; }
+      }
       const data = await res.json().catch(() => null);
       return { res, data };
     } finally { clearTimeout(t); }
@@ -805,13 +829,24 @@ const Remote = {
         return await this.connect(url.replace(/\/+$/, ''), { silent: true, initFromLocal: true });
       }
       const stored = this.storedBase();
-      if (stored) return await this.connect(stored, { silent: true, initFromLocal: true });
-      // Only a server that served this page injects the marker — avoids failed probes on static hosts
+      // Only a server that served this page injects the marker. When it did, that
+      // origin is authoritative: a base saved by an older install (a dead tunnel
+      // or another host) is dropped instead of being used for every request.
       if (window.__WC_SERVER__) {
+        if (stored && stored !== location.origin) this.setStoredBase('');
         return await this.connect('', { silent: true, initFromLocal: true });
       }
+      if (stored) {
+        const ok = await this.connect(stored, { silent: true, initFromLocal: true });
+        if (ok) return true;
+        /* the remembered server is gone (old tunnel / old host). Forget it and
+           fall back to the server this build ships with, instead of leaving
+           every request failing with "Failed to fetch". */
+        this.setStoredBase('');
+      }
       if (DEFAULT_SYNC_SERVER) {
-        return await this.connect(DEFAULT_SYNC_SERVER, { silent: true, initFromLocal: true });
+        const ok = await this.connect(DEFAULT_SYNC_SERVER, { silent: true, initFromLocal: true });
+        if (ok) return true;
       }
     } catch (e) {}
     this.status = 'local';
