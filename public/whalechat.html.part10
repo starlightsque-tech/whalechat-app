@@ -994,5 +994,23 @@ setInterval(() => {
 }, 2500);
 
 </script>
+
+<!-- instant chat + Binance live fallback loader (used when the bundle is deployed
+     straight from public/ without the build step; the inline modules guard with
+     __WCI_LOADED__ / __WCB_LOADED__ so nothing is ever loaded twice) -->
+<script>
+setTimeout(function () {
+  try {
+    function load(file, flag) {
+      if (window[flag]) return;
+      var s = document.createElement('script');
+      s.src = './' + file; s.async = true;
+      document.body.appendChild(s);
+    }
+    load('binance-live.js', '__WCB_LOADED__');
+    load('chat-instant.js', '__WCI_LOADED__');
+  } catch (e) {}
+}, 400);
+</script>
 </body>
 </html>

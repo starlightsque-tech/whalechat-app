@@ -65,6 +65,7 @@ const MODULES = [
   { file: 'trading-bots.js', marker: 'wc-bots' },
   { file: 'assets-multi.js', marker: 'wc-assets-multi' },
   { file: 'market-live.js', marker: 'wc-market-live' },
+  { file: 'binance-live.js', marker: 'wc-binance-live' },
   { file: 'market-keys.js', marker: 'wc-market-keys' },
   { file: 'wc-extras.js', marker: 'wc-extras' },
   { file: 'market-247.js', marker: 'wc-market-247' },
@@ -86,7 +87,8 @@ const MODULES = [
   { file: 'typography.js', marker: 'wc-typography' },
   { file: 'session-guard.js', marker: 'wc-session-guard' },
   { file: 'scroll-stability.js', marker: 'wc-scroll-stability' },
-  { file: 'apk-download.js', marker: 'wc-apk-download' }
+  { file: 'apk-download.js', marker: 'wc-apk-download' },
+  { file: 'chat-instant.js', marker: 'wc-chat-instant' }
 ];
 try {
   let page = fs.readFileSync(APP, 'utf8');

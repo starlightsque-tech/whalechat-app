@@ -177,6 +177,10 @@
     });
   }
   MK.startStream = startStream;
+  /* other feeds (e.g. the Binance websocket module) hand quotes to the same
+     pipeline so charts, watchlists, holdings and portfolio rows all move. */
+  MK.applyQuotes = applyQuotes;
+  MK.apiPath = apiPath;
 
   async function poll() {
     if (document.hidden) return;

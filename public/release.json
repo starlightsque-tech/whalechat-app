@@ -1,8 +1,8 @@
 {
-  "version": "3.45.0",
-  "build": "2026-11-18T17:35:00Z",
+  "version": "3.46.0",
+  "build": "2026-11-19T12:00:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.45.0 - Admin Markets: Binance and Alpaca key panels, Alpaca live US stock prices; new server URL card in Admin Servers; admin Trade Guide updates; background device notifications; share the app file as Whalechat.apk.",
-  "releasedAt": "2026-11-18T17:35:00Z",
+  "notes": "WhaleChat 3.46.0 — instant + offline chat (optimistic send in <10ms, IndexedDB outbox, realtime message delivery, WhatsApp-style ticks, cache-first history), live Binance websocket prices for the top 100 crypto pairs on every stock page with auto-reconnect, and 1:1 messaging between users who have not saved each other. No Render proxy in the chat path.",
+  "releasedAt": "2026-11-19T12:00:00Z",
   "minimum": "3.0.0"
 }

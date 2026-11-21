@@ -107,7 +107,8 @@ Use this if you only want to host the HTML on Cloudflare and already run `server
    wrangler pages project create whalechat
    wrangler pages deploy whalechat-app --project-name whalechat
    ```
-   Files needed: `whalechat.html`, `index.html`, `manifest.webmanifest`, `sw.js`, `assets/`, `release.json`. (No `server.js`, no `data/`.)
+   Files needed: `whalechat.html`, `index.html`, `manifest.webmanifest`, `sw.js`, `assets/`, `release.json`,
+   **`chat-instant.js`** and **`binance-live.js`** (instant/offline chat + the live Binance feed). (No `server.js`, no `data/`.)
 3. Add your custom domain: Pages → Custom domains → `app.yourdomain.com` (CNAME is created automatically).
 4. The server must allow cross-origin API calls — it already sends `Access-Control-Allow-Origin: *`.
 5. Push subscriptions are created for the Pages origin; the service worker on Pages receives them even though the API lives on the sync server. Both must be HTTPS.

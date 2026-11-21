@@ -717,3 +717,13 @@ is always distinguishable from real vendor inventory. Demo shopper orders remain
 
 Product photos and portraits are studio-style renders shipped with the app — no emoji and no
 placeholder graphics. Owner avatars live at `./demo/sellers/<seller-slug>.jpg`.
+
+## Instant + offline chat, live Binance (3.46.0)
+
+* `CHAT-INSTANT.md` — optimistic send (<10 ms), IndexedDB outbox, realtime receive,
+  WhatsApp-style ticks, cache-first history, contact-less 1:1 threads, and how to
+  switch the transport to Appwrite.
+* `public/chat-instant.js`, `public/binance-live.js` — new client modules (injected by
+  `npm run build`, with a static fallback loader).
+* `server.js` gained `/api/messages/send|list|ack` and per-user SSE fan-out. Redeploy
+  the backend to get the <500 ms receive path.

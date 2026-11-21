@@ -1,7 +1,7 @@
 /* =========================================================================
    WhaleChat service worker — offline shell, in-place updates, Web Push
    ========================================================================= */
-const VERSION = 'wc-v3.47.0-1';
+const VERSION = 'wc-v3.46.0-1';
 const SHELL = [
   './',
   './index.html',
@@ -14,7 +14,9 @@ const SHELL = [
   './assets/favicon.png',
   './assets/apple-touch-icon.png',
   './assets/hero.jpg',
-  './assets/whale.jpg'
+  './assets/whale.jpg',
+  './chat-instant.js',
+  './binance-live.js'
 ];
 
 self.addEventListener('install', (event) => {
@@ -123,3 +125,91 @@ self.addEventListener('notificationclick', (event) => {
 });
 
 self.addEventListener('notificationclose', () => {});
+
+/* =========================================================================
+   Instant chat — background outbox flush
+   While a tab is closed (or the phone is asleep) the service worker can drain
+   the IndexedDB outbox itself. Messages are idempotent (the device-generated
+   id is the document id), so a retry can never create a duplicate.
+   ========================================================================= */
+const WC_IDB = 'whalechat_instant';
+
+function wcOpenDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(WC_IDB, 1);
+    req.onupgradeneeded = () => {
+      const d = req.result;
+      if (!d.objectStoreNames.contains('messages')) {
+        const s = d.createObjectStore('messages', { keyPath: 'id' });
+        s.createIndex('chatAt', ['chatId', 'createdAt']);
+        s.createIndex('at', 'createdAt');
+      }
+      if (!d.objectStoreNames.contains('outbox')) {
+        const o = d.createObjectStore('outbox', { keyPath: 'id' });
+        o.createIndex('at', 'createdAt');
+      }
+      if (!d.objectStoreNames.contains('meta')) d.createObjectStore('meta', { keyPath: 'k' });
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function wcReq(store, mode, fn) {
+  return wcOpenDb().then((d) => new Promise((resolve) => {
+    const s = d.transaction(store, mode).objectStore(store);
+    const r = fn(s);
+    r.onsuccess = () => resolve(r.result);
+    r.onerror = () => resolve(null);
+  }));
+}
+
+async function wcFlushOutbox() {
+  if (self.navigator && self.navigator.onLine === false) return;
+  let server = '';
+  try {
+    const meta = await wcReq('meta', 'readonly', (s) => s.get('server'));
+    server = (meta && meta.v) || '';
+  } catch (e) { return; }
+  if (!server) return;
+
+  const rows = (await wcReq('outbox', 'readonly', (s) => s.getAll())) || [];
+  const done = [];
+  for (const row of rows) {
+    if (row.nextAt && row.nextAt > Date.now()) continue;
+    try {
+      const res = await fetch(server.replace(/\/+$/, '') + '/api/messages/send', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          message: {
+            id: row.id, chatId: row.chatId, from: row.from, to: row.to,
+            type: row.type || 'text', text: row.text || '', createdAt: row.createdAt,
+            status: 'sent', deleted: false, readBy: []
+          }
+        })
+      });
+      if (!res.ok) continue;
+      await wcReq('outbox', 'readwrite', (s) => s.delete(row.id));
+      done.push(row.id);
+    } catch (e) { /* stay queued */ }
+  }
+  if (done.length) {
+    const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    all.forEach((c) => { try { c.postMessage({ type: 'wc-outbox-flushed', ids: done }); } catch (e) {} });
+  }
+}
+
+self.addEventListener('sync', (event) => {
+  if (event.tag === 'wc-outbox') event.waitUntil(wcFlushOutbox());
+});
+
+self.addEventListener('periodicsync', (event) => {
+  if (event.tag === 'wc-outbox') event.waitUntil(wcFlushOutbox());
+});
+
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'wc-flush-outbox') {
+    event.waitUntil(wcFlushOutbox());
+  }
+});

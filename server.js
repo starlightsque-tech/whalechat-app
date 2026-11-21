@@ -110,7 +110,7 @@ const STATE_FILE = path.join(DATA_DIR, 'state.json');
 const SUBS_FILE = path.join(DATA_DIR, 'push-subscriptions.json');
 const VAPID_FILE = path.join(DATA_DIR, 'vapid.json');
 const store = { rev: 0, db: null, updatedAt: 0, loadedFrom: 'empty' };
-const clients = new Set();
+const clients = new Map();   // res -> { user: <userId|null>, at: <connectedAt> }
 /* live price stream: every 400 ms push only the quotes that changed */
 const marketClients = new Set();
 let marketStreamSince = Date.now();
@@ -329,9 +329,29 @@ function signupCodeHash(emailAddr, code) {
 function maskEmail(e) {
   return String(e || '').replace(/^(.{2}).*(@.*)$/, '$1***$2');
 }
+function frameOf(event, data) {
+  return `event: ${event}\ndata: ${JSON.stringify(data || {})}\n\n`;
+}
 function broadcast(event, data) {
-  const frame = `event: ${event}\ndata: ${JSON.stringify(data || {})}\n\n`;
-  for (const res of clients) { try { res.write(frame); } catch (e) {} }
+  const frame = frameOf(event, data);
+  for (const res of clients.keys()) { try { res.write(frame); } catch (e) {} }
+}
+/* Deliver only to the devices of the listed users — chat traffic must never be
+   fanned out to every connected client. */
+function broadcastTo(userIds, event, data) {
+  const want = new Set((userIds || []).filter(Boolean));
+  if (!want.size) return 0;
+  const frame = frameOf(event, data);
+  let sent = 0;
+  for (const [res, meta] of clients) {
+    if (!meta || !want.has(meta.user)) continue;
+    try { res.write(frame); sent++; } catch (e) {}
+  }
+  return sent;
+}
+function isOnline(userId) {
+  for (const meta of clients.values()) if (meta && meta.user === userId) return true;
+  return false;
 }
 function mime(file) {
   return ({ '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.webmanifest': 'application/manifest+json', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8' })[path.extname(file).toLowerCase()] || 'application/octet-stream';
@@ -574,19 +594,107 @@ async function api(req, res, pathname, query) {
       setImmediate(() => { try { market.onAssetsChanged(); } catch (e) { console.error('[market] asset refresh:', e.message); } });
     }
     store.rev += 1; store.updatedAt = Date.now(); persist();
-    broadcast('change', { rev: store.rev, source: body.clientId || null, at: store.updatedAt });
+    const onlyMessages = Array.isArray(body.ops) && body.ops.length > 0 && body.ops.every((o) => o && o.col === 'messages');
+    broadcast('change', { rev: store.rev, source: body.clientId || null, at: store.updatedAt, messagesOnly: onlyMessages });
+    /* a message written through the generic state path still has to land on the
+       other participant instantly — otherwise the chat would wait for a full
+       state download (the old 3-5s behaviour). */
+    if (onlyMessages) {
+      const users = new Set();
+      const items = result.pushes.map((p) => p.item).filter((m) => m && m.id && m.chatId && m.from);
+      items.forEach((m) => { users.add(m.from); if (m.to) users.add(m.to); });
+      items.forEach((m) => {
+        broadcastTo([m.from, m.to].filter(Boolean), 'message', { message: m, rev: store.rev, at: Date.now() });
+      });
+      if (items.length) broadcastTo([...users], 'messages-committed', { ids: items.map((m) => m.id), rev: store.rev });
+    }
     if (pushes.length) setImmediate(() => dispatchPushes(pushes, store.db).catch(() => {}));
     try { lifecycleEmails(pushes, result.events); } catch (e) { console.error('[email] lifecycle:', e.message); }
     return json(res, 200, { ok: true, rev: store.rev });
   }
   if (pathname === '/api/events' && req.method === 'GET') {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache, no-transform', connection: 'keep-alive', 'x-accel-buffering': 'no', 'access-control-allow-origin': '*' });
-    res.write('retry: 3000\n\n');
-    res.write(`event: hello\ndata: ${JSON.stringify({ rev: store.rev })}\n\n`);
-    clients.add(res);
-    const ping = setInterval(() => { try { res.write(': ping\n\n'); } catch (e) {} }, 25000);
+    res.write('retry: 1500\n\n');
+    res.write(`event: hello\ndata: ${JSON.stringify({ rev: store.rev, at: Date.now() })}\n\n`);
+    const userId = String(query.get('user') || '') || null;
+    clients.set(res, { user: userId, at: Date.now() });
+    const ping = setInterval(() => { try { res.write(': ping\n\n'); } catch (e) {} }, 20000);
     req.on('close', () => { clearInterval(ping); clients.delete(res); });
     return;
+  }
+
+  /* ---------------- instant chat: message-level realtime API ----------------
+     The chat client never waits for a full state download. A message is written
+     with the id the sender already generated (idempotent retries), then pushed to
+     exactly the two participants over SSE. */
+  if (pathname === '/api/messages/send' && req.method === 'POST') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    const body = await readBody(req);
+    const msg = body && body.message;
+    if (!msg || !msg.id || !msg.chatId || !msg.from) return json(res, 400, { ok: false, error: 'invalid_message' });
+    if (!Array.isArray(store.db.messages)) store.db.messages = [];
+    const existing = store.db.messages.find((m) => m && m.id === msg.id);
+    if (existing) {
+      return json(res, 200, { ok: true, duplicate: true, id: msg.id, rev: store.rev, status: existing.status || 'sent' });
+    }
+    const sender = (store.db.users || []).find((u) => u.id === msg.from);
+    if (!sender) return json(res, 403, { ok: false, error: 'unknown_sender' });
+    const clean = Object.assign({}, msg, {
+      id: String(msg.id).slice(0, 120),
+      chatId: String(msg.chatId).slice(0, 200),
+      status: 'sent',
+      serverAt: Date.now(),
+      deleted: false,
+      readBy: Array.isArray(msg.readBy) ? msg.readBy : []
+    });
+    delete clean.tempId;
+    delete clean.queuedAt;
+    delete clean.attempts;
+    store.db.messages.push(clean);
+    store.rev += 1; store.updatedAt = Date.now(); persist();
+    const recipients = [clean.from, clean.to].filter(Boolean);
+    const delivered = broadcastTo(recipients, 'message', { message: clean, rev: store.rev, at: Date.now() });
+    return json(res, 200, { ok: true, id: clean.id, rev: store.rev, status: 'sent', online: recipients.map((u) => ({ user: u, online: isOnline(u) })), fanout: delivered });
+  }
+  if (pathname === '/api/messages/list' && req.method === 'GET') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    const chatId = String(query.get('chatId') || '');
+    const userId = String(query.get('user') || '');
+    const limit = Math.min(500, Math.max(1, Number(query.get('limit')) || 100));
+    const since = Number(query.get('since')) || 0;
+    let rows = (store.db.messages || []).filter((m) => m && (!chatId || m.chatId === chatId) && (Number(m.createdAt) || 0) > since);
+    if (userId) rows = rows.filter((m) => m.from === userId || m.to === userId);
+    rows = rows.sort((a, b) => (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0));
+    return json(res, 200, { ok: true, at: Date.now(), rev: store.rev, messages: rows.slice(-limit) });
+  }
+  if (pathname === '/api/messages/ack' && req.method === 'POST') {
+    if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
+    const body = await readBody(req);
+    const chatId = String(body.chatId || '');
+    const userId = String(body.userId || '');
+    const ids = Array.isArray(body.ids) ? body.ids.slice(0, 500) : [];
+    const kind = body.kind === 'read' ? 'read' : 'delivered';
+    if (!chatId || !userId) return json(res, 400, { ok: false, error: 'invalid_ack' });
+    const changed = [];
+    (store.db.messages || []).forEach((m) => {
+      if (!m || m.chatId !== chatId || !ids.includes(m.id)) return;
+      if (kind === 'read') {
+        m.readBy = Array.isArray(m.readBy) ? m.readBy : [];
+        if (!m.readBy.includes(userId)) m.readBy.push(userId);
+        if (m.to === userId) m.status = 'seen';
+        m.seenAt = m.seenAt || Date.now();
+      } else if (m.status !== 'seen') {
+        m.status = 'delivered';
+        m.deliveredAt = m.deliveredAt || Date.now();
+      }
+      changed.push(m);
+    });
+    if (!changed.length) return json(res, 200, { ok: true, changed: 0 });
+    store.rev += 1; store.updatedAt = Date.now(); persist();
+    const targets = new Set();
+    changed.forEach((m) => { if (m.from !== userId) targets.add(m.from); });
+    broadcastTo([...targets], kind === 'read' ? 'read' : 'delivered', { chatId, userId, ids: changed.map((m) => m.id), at: Date.now(), rev: store.rev });
+    return json(res, 200, { ok: true, changed: changed.length, rev: store.rev });
   }
   // --- market data (Finnhub stays server-side) -------------------------
   if (pathname === '/api/market/stream' && req.method === 'GET') {
