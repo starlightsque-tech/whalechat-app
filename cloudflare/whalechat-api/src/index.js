@@ -253,6 +253,34 @@ export class ChatHub {
       this.scheduleSave();
       return json({ ok: true, rev: this.rev });
     }
+    if (path === '/api/state/merge' && request.method === 'POST') {
+      /* Union a device's local database into the hub. Used once when a user
+         arrives from an older sync host so an account created locally is
+         never replaced by a server that has never seen it. */
+      if (!this.db) return json({ ok: false, error: 'not_initialised' }, 409);
+      const b = await body();
+      const local = b && b.db;
+      if (!local || !Array.isArray(local.users)) return json({ ok: false, error: 'invalid_db' }, 400);
+      const added = {};
+      COLLECTIONS.forEach((col) => {
+        if (!Array.isArray(local[col])) return;
+        if (!Array.isArray(this.db[col])) this.db[col] = [];
+        const have = new Set(this.db[col].map((x) => x && x.id).filter(Boolean));
+        let n = 0;
+        local[col].forEach((item) => {
+          if (!item || !item.id || have.has(item.id)) return;
+          this.db[col].push(item); have.add(item.id); n++;
+        });
+        if (n) added[col] = n;
+      });
+      ['settings', 'chatsMeta', 'presence'].forEach((key) => {
+        if (!local[key] || typeof local[key] !== 'object' || Array.isArray(local[key])) return;
+        if (!this.db[key] || typeof this.db[key] !== 'object') this.db[key] = {};
+        Object.keys(local[key]).forEach((k) => { if (this.db[key][k] === undefined) this.db[key][k] = local[key][k]; });
+      });
+      this.rev += 1; this.updatedAt = Date.now(); await this.persistNow();
+      return json({ ok: true, rev: this.rev, added, db: this.db });
+    }
     if (path === '/api/ops' && request.method === 'POST') {
       if (!this.db) return json({ ok: false, error: 'not_initialised' }, 409);
       const b = await body();

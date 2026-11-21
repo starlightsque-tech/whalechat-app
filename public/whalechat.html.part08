@@ -877,10 +877,26 @@ const Remote = {
         this.rev = r.data.rev || 1;
         this.last = cloneDB(DB);
       } else {
-        DB = migrateDB(st.data.db);
+        /* An account created while an older sync host was offline must not be
+           wiped by the first connect to a new host. When this device holds a
+           session user the server has never seen, merge the local database
+           (union by id) before adopting the server copy. */
+        let serverDb = st.data.db;
+        let merged = false;
+        try {
+          const sid = SESSION && SESSION.userId;
+          const localHas = !!(sid && DB && Array.isArray(DB.users) && DB.users.some((u) => u.id === sid));
+          const serverHas = Array.isArray(serverDb.users) && serverDb.users.some((u) => u.id === sid);
+          if (sid && localHas && !serverHas) {
+            const m = await this.fetchJSON('/api/state/merge', { method: 'POST', body: JSON.stringify({ db: DB }) }, 20000);
+            if (m.res.ok && m.data && m.data.db) { serverDb = m.data.db; merged = true; }
+          }
+        } catch (e) { console.warn('state merge skipped', e.message); }
+        DB = migrateDB(serverDb);
         this.rev = st.data.rev || 0;
         this.last = cloneDB(DB);
         saveLocalNow();
+        if (merged) { try { toast('Your account and chats were restored to this server', 'ok'); } catch (e) {} }
       }
       try { resolvePendingReferrals(); reconcileReferralBonuses(); } catch (e) {}
       // session may point at a user this server doesn't know
