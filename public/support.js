@@ -75,14 +75,7 @@ App.openChat = function (id) {
   if (!id) return;
   const u = me();
   const other = findUser(id);
-  if (u && other && u.role !== 'admin' && other.role !== 'admin' && u.id !== other.id) {
-    const uVendor = isVendorAccount(u);
-    const oVendor = isVendorAccount(other);
-    if (uVendor !== oVendor) {
-      toast('Vendor and shopper chats are disabled — connecting you to company support', 'ok', 3600);
-      return App.liveSupport();
-    }
-  }
+  /* vendors and shoppers can chat directly once they are contacts */
   return _openChat.call(App, id);
 };
 
@@ -90,9 +83,7 @@ const _chatView = VIEWS.chat;
 VIEWS.chat = function (parts) {
   const u = me();
   const other = findUser(parts[1] || '');
-  if (u && other && u.role !== 'admin' && other.role !== 'admin' && u.id !== other.id) {
-    if (isVendorAccount(u) !== isVendorAccount(other)) return supportOnlyView();
-  }
+  /* direct vendor↔shopper conversations are allowed (support remains available) */
   return _chatView.apply(this, arguments);
 };
 

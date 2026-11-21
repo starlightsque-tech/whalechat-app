@@ -2674,7 +2674,7 @@ setInterval(() => {
       LT.paintMarket();
     }
   } catch (e) { console.error('lt tick', e); }
-}, 400);
+}, 200);
 /* catch up immediately when the tab becomes visible again */
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) return;
@@ -2966,7 +2966,7 @@ LT.splitLabel = function (sp) {
 LT.secureLocal = function (t, reason) {
   if (!t || t.status !== 'Open') return false;
   const now = Date.now();
-  if (t.lastSecureAt && now - Number(t.lastSecureAt) < 2000) return false;
+  if (t.lastSecureAt && now - Number(t.lastSecureAt) < 700) return false;
   const p = this.calc(t);
   const tpLvl = LT.tpLevelOf(t);
   const levels = tpLvl > 0 ? LT.tpMoves(t, p.price) : 0;
@@ -3114,4 +3114,4 @@ setInterval(() => {
     }
     LT.paintSecure();
   } catch (e) { console.error('auto secure tick', e); }
-}, 1000);
+}, 500);

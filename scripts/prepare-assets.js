@@ -97,6 +97,7 @@ const MODULES = [
   { file: 'session-guard.js', marker: 'wc-session-guard' },
   { file: 'scroll-stability.js', marker: 'wc-scroll-stability' },
   { file: 'apk-download.js', marker: 'wc-apk-download' },
+  { file: 'contacts-plus.js', marker: 'wc-contacts-plus' },
   { file: 'chat-instant.js', marker: 'wc-chat-instant' },
   { file: 'chat-media.js', marker: 'wc-chat-media' },
   { file: 'keyboard-fix.js', marker: 'wc-keyboard' },
@@ -106,7 +107,9 @@ const MODULES = [
   { file: 'sync-guard.js', marker: 'wc-sync-guard' },
   { file: 'verify-gate.js', marker: 'wc-verify-gate' },
   { file: 'email-notify.js', marker: 'wc-email-notify' },
-  { file: 'welcome-mail.js', marker: 'wc-welcome-mail' }
+  { file: 'welcome-mail.js', marker: 'wc-welcome-mail' },
+  { file: 'live-chat-open.js', marker: 'wc-live-chat-open' },
+  { file: 'ui-smooth.js', marker: 'wc-ui-smooth' }
 ];
 try {
   let page = fs.readFileSync(APP, 'utf8');

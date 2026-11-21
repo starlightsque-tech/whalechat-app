@@ -21,13 +21,14 @@
   var css = document.createElement('style');
   css.id = 'wc-no-chat-widget-style';
   css.textContent = [
-    'iframe[title="Chat widget"],',
-    '#tawk-bubble-container, .tawk-min-container, .tawk-max-container,',
-    'div[id^="tawk"], div[class*="tawk-"]{display:none!important;visibility:hidden!important;pointer-events:none!important;width:0!important;height:0!important}'
+    'body:not(.wc-livechat-open) iframe[title="Chat widget"],',
+    'body:not(.wc-livechat-open) #tawk-bubble-container, body:not(.wc-livechat-open) .tawk-min-container, body:not(.wc-livechat-open) .tawk-max-container,',
+    'body:not(.wc-livechat-open) div[id^="tawk"], body:not(.wc-livechat-open) div[class*="tawk-"]{display:none!important;visibility:hidden!important;pointer-events:none!important;width:0!important;height:0!important}'
   ].join('\n');
   if (!document.getElementById('wc-no-chat-widget-style')) document.head.appendChild(css);
 
   function kill() {
+    if (window.__wcLiveChatOpen) return;
     try { if (window.Tawk_API && window.Tawk_API.hideWidget) window.Tawk_API.hideWidget(); } catch (e) {}
     var sel = 'iframe[title="Chat widget"], #tawk-bubble-container, .tawk-min-container, .tawk-max-container, div[id^="tawk"]';
     Array.prototype.forEach.call(document.querySelectorAll(sel), function (el) {

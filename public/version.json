@@ -1,8 +1,8 @@
 {
-  "version": "3.54.0",
-  "build": "2026-11-22T03:00:00Z",
+  "version": "3.55.0",
+  "build": "2026-11-22T05:00:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.54.0 — email now relays through the Cloudflare edge so the Fly host can always send (codes, welcome, orders, alerts) despite Brevo IP rules; verification can no longer be reverted by a stale device; Auto Secure subscription sync, automatic profit crediting and per-trade moves/secured display verified end-to-end on Fly.",
-  "releasedAt": "2026-11-22T03:00:00Z",
+  "notes": "WhaleChat 3.55.0 — add contacts by username, @username, email or phone; vendors and shoppers can chat directly; messages deliver instantly both ways; Live Chat button opens the chat box on tap; trades evaluate every 200ms and auto-secure credits profit every 700ms; background refreshes defer while typing; B2B sell-only Auto Buy/Sell retained.",
+  "releasedAt": "2026-11-22T05:00:00Z",
   "minimum": "3.0.0"
 }
