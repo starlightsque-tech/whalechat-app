@@ -32,3 +32,15 @@ state, keeping their original id and password hash, and heals verification.
 Run it against the server's `DATA_DIR` (and `DATABASE_URL` when Postgres is
 used). Live accounts `jane` and `investorD` were recreated and verified on the
 Cloudflare sync host because no 3.56.0 snapshot still contained them.
+
+## Cloudflare database (D1)
+Every account and all app data is mirrored from the Durable Object into the
+Cloudflare D1 database `whalechat_db` (`env.DB`) and restored from it when the
+object storage is empty, so publishing never wipes users.
+- Binding: `wrangler.toml` → `[[d1_databases]] binding = "DB"`.
+- Tables: `app_state_chunks`, `users`, `messages`, `files`, `sessions`
+  (`cloudflare/whalechat-api/schema.sql`, apply with `npm run db:init`).
+- Only the active Durable Object may write to D1; leftover older instances are
+  locked out so they cannot overwrite fresh data after a publish.
+- `npm run db:check` verifies the binding, tables, snapshot rev, and the
+  restored `jane` / `investorD` accounts.
