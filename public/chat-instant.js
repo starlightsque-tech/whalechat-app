@@ -417,7 +417,10 @@
     if (contactsChanged) changed = true;
 
     idbPut('messages', stripVolatile(next));
-    if (!opts || opts.persist !== false) persistNow();
+    /* IndexedDB is the durable write. The whole-database localStorage snapshot
+       is deferred until after the bubble is painted, so a large account never
+       adds hundreds of milliseconds to an incoming message. */
+    if (!opts || opts.persist !== false) setTimeout(persistNow, 0);
 
     const open = activeChat() || hashChatId();
     const isOpen = open && next.chatId === open;
@@ -826,7 +829,8 @@
       const msg = {
         id: newId(), chatId: cid, from: u.id, to: otherId,
         createdAt: now(), status: ST.QUEUED, type: 'text', text,
-        deleted: false, readBy: [], forwarded: false, queuedAt: now()
+        deleted: false, readBy: [], forwarded: false, queuedAt: now(),
+        __instant: true
       };
 
       const db = appDb();
@@ -848,7 +852,10 @@
       /* never block the UI on storage, notifications or network */
       setTimeout(() => {
         persistNow();
-        try { if (typeof notify === 'function') notify(otherId, u.fullName, text.slice(0, 120), '#/chat/' + u.id, 'chat'); } catch (e) {}
+        /* No in-app notification row for the recipient: the message itself is
+           the notification (and the worker sends the lock-screen push). Adding
+           one made the recipient download the whole state right after the
+           message, which stalled the bubble. */
         try { if (typeof sync === 'function') sync(); } catch (e) {}
       }, 0);
     };
@@ -923,7 +930,12 @@
     const orig = diffDB;
     const patched = function (prev, next) {
       const ops = orig.apply(this, arguments) || [];
-      return ops.filter((op) => !(op && op.col === 'messages' && op.item && pendingIds.has(op.item.id)));
+      /* Messages sent through the instant engine already travelled over
+         /api/messages/send. Letting them leak into the generic state diff made
+         the server broadcast a full-state change to the other device right
+         after delivery, which triggered a whole-app refresh and stalled the
+         incoming bubble. Keep them out of state sync for good. */
+      return ops.filter((op) => !(op && op.col === 'messages' && op.item && (pendingIds.has(op.item.id) || op.item.__instant)));
     };
     patched.__wci = true;
     try { diffDB = patched; window.diffDB = patched; } catch (e) {}

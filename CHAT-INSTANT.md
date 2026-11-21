@@ -102,6 +102,32 @@ the moment the tunnel returns. Deep link: `…/whalechat#/session/CODE`.
 
 ---
 
+## 1d. 3.59.0 — lock-screen push + live quotes on Cloudflare
+
+The sync host now does both jobs inside the Durable Object:
+
+**Web Push.** `/api/push/key` publishes the VAPID P-256 key (generated once and
+stored in the object), `/api/push/subscribe` stores each device, and every new
+1:1 message or session-room message is encrypted with RFC 8291 `aes128gcm` and
+posted to the browser's push endpoint with an ES256 VAPID JWT. The existing
+service worker shows the notification and opens `#/chat/<sender>` on tap.
+Devices that answer 404/410 are pruned automatically.
+
+```http
+GET  /api/push/key
+POST /api/push/subscribe   { userId, subscription, device }
+GET  /api/push/status?user=<id>
+POST /api/push/test        { userId, title, body, link }
+```
+
+**Live market quotes.** `/api/market/quotes` refreshes 120 tickers from the
+public Yahoo Finance `spark` feed (stocks, ETFs, FX and crypto) in batches of
+20 every 30 s and returns the same snapshot shape the app already understood.
+`/api/market/history` returns 1-minute points for sparklines, and
+`/api/market/stream` is an SSE feed of the same snapshot. No API key required.
+
+---
+
 ## 2. Architecture
 
 ```

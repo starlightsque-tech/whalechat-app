@@ -20,6 +20,14 @@ export CLOUDFLARE_ACCOUNT_ID=...
 npx wrangler deploy
 ```
 
+## Updating the Worker
+
+A running Durable Object keeps the code it started with, so bump `DO_NAME` and
+set `PREV_DO_NAME` to the old name at the top of `src/index.js` before deploying.
+The new object copies the database (including the VAPID key and push
+subscriptions) from the previous one on first use. Chat and markets come back
+without signing anyone out.
+
 ## Verify
 
 ```bash
@@ -30,7 +38,12 @@ curl -N 'https://whalechat-api.starlightsque.workers.dev/api/events?user=test'
 - `GET /api/state` returns the whole app state, `POST /api/ops` applies diffs.
 - `POST /api/messages/send`, `GET /api/messages/list`, `POST /api/messages/ack`.
 - `POST /api/presence`, `POST /api/typing`, `GET /api/events` (SSE).
+- `GET /api/push/key`, `POST /api/push/subscribe`, `POST /api/push/test` (Web Push).
+- `GET /api/market/quotes|history|stream` (Yahoo Finance public feed).
 - `POST /api/rooms/create|join|message|read|typing`, `GET /api/rooms/list|get`.
+
+Push notifications use a VAPID key generated once and stored in Durable Object
+storage. Market quotes refresh from Yahoo Finance in batches of 20 every 30 s.
 
 Email OTP verification still runs on the Pages Functions (`functions/api/otp/*`)
 because that is where the Brevo key and KV binding live.

@@ -1,8 +1,8 @@
 {
-  "version": "3.58.1",
-  "build": "2026-11-21T22:00:00Z",
+  "version": "3.59.0",
+  "build": "2026-11-22T00:30:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.58.1 — chat is local-first and realtime. Send paints from IndexedDB with no network wait; receive rides one persistent stream (no polling); offline sends queue with a clock and drain automatically. Presence is a 15 s heartbeat plus the open socket, typing is debounced and kept alive while composing, delivered ticks fire the moment the recipient is connected, and read receipts are now durable (queued offline, retried on reconnect) with unread badges fixed. Sync now runs on Cloudflare Workers + Durable Objects (no Fly dependency). New: Share Internet Session — a 6-character session room you can invite contacts into, with live messages, typing, presence, ticks, a zero-data tunnel outbox and a Lagos ↔ Warri offline simulator.",
-  "releasedAt": "2026-11-21T22:00:00Z",
+  "notes": "WhaleChat 3.59.0 — lock-screen push notifications are back: the Cloudflare sync worker now signs VAPID requests, encrypts payloads (aes128gcm) and delivers every new chat or session message to the recipient's registered devices. Live market quotes are restored too: the worker serves 120 stock, ETF, FX and crypto quotes from the public Yahoo Finance feed with a 30-second refresh, SSE streaming and historical sparklines, so watchlists, holdings and charts move again. Chat remains local-first and realtime.",
+  "releasedAt": "2026-11-22T00:30:00Z",
   "minimum": "3.0.0"
 }

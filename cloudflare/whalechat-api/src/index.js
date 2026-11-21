@@ -5,8 +5,10 @@
    stays local-first and never polls.
    ========================================================================= */
 const APP = 'whalechat';
-const VERSION = '3.58.1';
-const BUILD = '2026-11-21T22:00:00Z';
+const VERSION = '3.59.0';
+const DO_NAME = 'global:v7';
+const PREV_DO_NAME = 'global:v6';
+const BUILD = '2026-11-22T00:30:00Z';
 const COLLECTIONS = ['users', 'vendors', 'companyProducts', 'products', 'orders', 'deposits', 'withdrawals', 'messages', 'statuses', 'notifications', 'contacts', 'blocks', 'txs', 'referrals', 'purchases', 'refunds', 'vendorApplications', 'reports', 'bonuses', 'bonusClaims', 'emailCampaigns', 'stocks', 'holdings', 'trades', 'watchlist', 'alerts', 'audit', 'portfolioAudit', 'botAccounts', 'botEvents', 'traffic', 'shareInvestments', 'serviceRequests'];
 const PRESENCE_STALE_MS = 35000;
 const CORS = {
@@ -20,7 +22,73 @@ const json = (data, code = 200) => new Response(JSON.stringify(data), {
   headers: Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, CORS)
 });
 const frameOf = (event, data) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+
 const enc = new TextEncoder();
+const dec = new TextDecoder();
+const b64u = (buf) => {
+  const b = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+  let s = '';
+  for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+};
+const unb64u = (str) => {
+  const s = String(str || '').replace(/-/g, '+').replace(/_/g, '/');
+  const pad = '='.repeat((4 - (s.length % 4)) % 4);
+  const raw = atob(s + pad);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+};
+const concat = (...parts) => {
+  const len = parts.reduce((a, p) => a + p.length, 0);
+  const out = new Uint8Array(len);
+  let o = 0;
+  for (const p of parts) { out.set(p, o); o += p.length; }
+  return out;
+};
+async function hmac(keyBytes, data) {
+  const key = await crypto.subtle.importKey('raw', keyBytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return new Uint8Array(await crypto.subtle.sign('HMAC', key, data));
+}
+async function hkdfExpand(prk, info, len) {
+  const blocks = [];
+  let t = new Uint8Array(0);
+  for (let i = 1; i <= 255; i++) {
+    t = await hmac(prk, concat(t, info, new Uint8Array([i])));
+    blocks.push(t);
+    if (blocks.reduce((a, b) => a + b.length, 0) >= len) break;
+  }
+  return concat(...blocks).slice(0, len);
+}
+function previewText(m) {
+  if (!m) return 'New message';
+  if (m.type === 'image') return '📷 Photo';
+  if (m.type === 'video') return '🎥 Video';
+  if (m.type === 'voice' || m.type === 'audio') return '🎤 Voice note';
+  return String(m.text || '').slice(0, 140) || 'New message';
+}
+/* ticker -> Yahoo Finance symbol (public, keyless) */
+function yahooSymbol(asset) {
+  if (!asset) return '';
+  const ticker = String(asset.ticker || asset.displayTicker || '').toUpperCase();
+  const display = String(asset.displayTicker || asset.finnhubSymbol || asset.ticker || '').toUpperCase();
+  const cls = String(asset.assetClass || '').toLowerCase();
+  if (cls === 'crypto' || /USDT$/.test(ticker)) {
+    if (/USDT$/.test(ticker)) return ticker.slice(0, -4) + '-USD';
+    if (/USD$/.test(ticker)) return ticker.slice(0, -3) + '-USD';
+    return ticker;
+  }
+  if (cls === 'forex' || /^[A-Z]{6}$/.test(ticker) && /USD$/.test(ticker)) {
+    if (ticker === 'XAUUSD') return 'GC=F';
+    if (ticker === 'XAGUSD') return 'SI=F';
+    return ticker + '=X';
+  }
+  const clean = display.replace(/^[A-Z]+:/, '');
+  const m = /\.([A-Z]{1,3})$/.exec(clean);
+  if (m && ['L', 'DE', 'T', 'TO', 'AX', 'PA', 'AS', 'MI', 'MC', 'SW', 'SI', 'HK', 'KS', 'TW', 'NS', 'BO', 'SA', 'F', 'V'].includes(m[1])) return clean;
+  return clean.replace(/\./g, '-');
+}
+
 
 export class ChatHub {
   constructor(state, env) {
@@ -30,16 +98,33 @@ export class ChatHub {
     this.rev = 0;
     this.updatedAt = 0;
     this.clients = new Map();      // id -> { user, controller, at }
+    this.marketClients = new Map();// id -> controller (separate quote stream)
     this.presence = new Map();     // userId -> { ts, lastSeen, currentChatWith, device, visible }
+    this.quotes = {};
+    this.marketAt = 0;
+    this.marketRefreshing = null;
+    this.vapid = null;
     this.loaded = false;
     this.saveTimer = null;
-    this.pingTimer = setInterval(() => this.ping(), 20000);
-    this.sweepTimer = setInterval(() => this.sweepPresence(), 10000);
     this.ready = this.load();
   }
   async load() {
     try {
-      const meta = await this.state.storage.get('state:meta');
+      let meta = await this.state.storage.get('state:meta');
+      if ((!meta || !meta.chunks) && PREV_DO_NAME && PREV_DO_NAME !== DO_NAME) {
+        /* one-time copy from the previous, still-running object after a
+           versioned deploy — the new instance always runs the newest code */
+        try {
+          const prev = this.env.CHAT_HUB.get(this.env.CHAT_HUB.idFromName(PREV_DO_NAME));
+          const res = await prev.fetch(new Request('https://do/api/state'));
+          const st = await res.json();
+          if (st && st.db) {
+            this.db = st.db; this.rev = st.rev || 0; this.updatedAt = st.updatedAt || Date.now();
+            await this.persistNow();
+            meta = await this.state.storage.get('state:meta');
+          }
+        } catch (e) { console.error('[hub] previous state copy failed', e.message); }
+      }
       if (meta && meta.chunks) {
         let s = '';
         for (let i = 0; i < meta.chunks; i++) s += (await this.state.storage.get('state:' + i)) || '';
@@ -50,8 +135,22 @@ export class ChatHub {
           this.updatedAt = parsed.updatedAt || 0;
         }
       }
+      const mkt = await this.state.storage.get('market:snapshot');
+      if (mkt && mkt.quotes) { this.quotes = mkt.quotes; this.marketAt = mkt.at || 0; }
     } catch (e) { console.error('[hub] load failed', e.message); }
     this.loaded = true;
+    try { await this.state.storage.setAlarm(Date.now() + 15000); } catch (e) {}
+  }
+  async alarm() {
+    try {
+      this.ping();
+      this.sweepPresence();
+      if (this.marketClients.size || (this.marketAt && Date.now() - this.marketAt > 60000)) {
+        try { await this.refreshMarket(); } catch (e) {}
+      }
+    } finally {
+      try { await this.state.storage.setAlarm(Date.now() + 20000); } catch (e) {}
+    }
   }
   async persistNow() {
     if (!this.db) return;
@@ -75,6 +174,10 @@ export class ChatHub {
     for (const [id, c] of this.clients) {
       try { c.controller.enqueue(enc.encode(': ping\n\n')); }
       catch (e) { this.clients.delete(id); }
+    }
+    for (const [id, c] of this.marketClients) {
+      try { c.enqueue(enc.encode(': ping\n\n')); }
+      catch (e) { this.marketClients.delete(id); }
     }
   }
   online(userId) {
@@ -232,6 +335,247 @@ export class ChatHub {
   roomBroadcast(room, event, data, except) {
     this.broadcastTo((room.members || []).filter((id) => id !== except), event, data);
   }
+
+  /* ------------------------------------------------------------------ *
+   *  Web Push (VAPID + RFC 8291 aes128gcm)                              *
+   * ------------------------------------------------------------------ */
+  async ensureVapid() {
+    if (this.vapid) return this.vapid;
+    /* The key lives in the synced database so a versioned deploy (which starts
+       a fresh Durable Object) keeps the same VAPID identity — otherwise every
+       existing push subscription would become invalid. */
+    if (this.db && this.db.pushVapid && this.db.pushVapid.jwk && this.db.pushVapid.pub) {
+      this.vapid = this.db.pushVapid;
+      return this.vapid;
+    }
+    let saved = null;
+    try { saved = await this.state.storage.get('push:vapid'); } catch (e) {}
+    if (!saved || !saved.jwk || !saved.pub) {
+      const kp = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+      const jwk = await crypto.subtle.exportKey('jwk', kp.privateKey);
+      const raw = new Uint8Array(await crypto.subtle.exportKey('raw', kp.publicKey));
+      saved = { jwk, pub: b64u(raw), at: Date.now() };
+    }
+    try { await this.state.storage.put('push:vapid', saved); } catch (e) {}
+    if (this.db) { this.db.pushVapid = saved; this.scheduleSave(); }
+    this.vapid = saved;
+    return saved;
+  }
+  async vapidAuthorization(endpoint) {
+    const v = await this.ensureVapid();
+    const aud = new URL(endpoint).origin;
+    const header = b64u(enc.encode(JSON.stringify({ typ: 'JWT', alg: 'ES256' })));
+    const payload = b64u(enc.encode(JSON.stringify({ aud, exp: Math.floor(Date.now() / 1000) + 12 * 3600, sub: 'mailto:support@whalechat.app' })));
+    const data = header + '.' + payload;
+    const key = await crypto.subtle.importKey('jwk', v.jwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
+    const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, key, enc.encode(data));
+    return 'vapid t=' + data + '.' + b64u(new Uint8Array(sig)) + ', k=' + v.pub;
+  }
+  async encryptPush(subscription, payload) {
+    const uaPub = unb64u(subscription.keys.p256dh);
+    const auth = unb64u(subscription.keys.auth);
+    const eph = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+    const ephPub = new Uint8Array(await crypto.subtle.exportKey('raw', eph.publicKey));
+    const uaKey = await crypto.subtle.importKey('raw', uaPub, { name: 'ECDH', namedCurve: 'P-256' }, false, []);
+    const shared = new Uint8Array(await crypto.subtle.deriveBits({ name: 'ECDH', public: uaKey }, eph.privateKey, 256));
+    const keyInfo = concat(enc.encode('WebPush: info'), new Uint8Array([0]), uaPub, ephPub);
+    const ikm = await hkdfExpand(await hmac(auth, shared), keyInfo, 32);
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const prk = await hmac(salt, ikm);
+    const cek = await hkdfExpand(prk, concat(enc.encode('Content-Encoding: aes128gcm'), new Uint8Array([0])), 16);
+    const nonce = await hkdfExpand(prk, concat(enc.encode('Content-Encoding: nonce'), new Uint8Array([0])), 12);
+    const aesKey = await crypto.subtle.importKey('raw', cek, 'AES-GCM', false, ['encrypt']);
+    const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce, tagLength: 128 }, aesKey, concat(enc.encode(JSON.stringify(payload)), new Uint8Array([2]))));
+    const rs = new Uint8Array(4);
+    new DataView(rs.buffer).setUint32(0, 4096);
+    return concat(salt, rs, new Uint8Array([65]), ephPub, ct);
+  }
+  async sendPushTo(subscription, payload) {
+    try {
+      if (!subscription || !subscription.endpoint || !subscription.keys) return false;
+      const body = await this.encryptPush(subscription, payload);
+      const auth = await this.vapidAuthorization(subscription.endpoint);
+      const res = await fetch(subscription.endpoint, {
+        method: 'POST',
+        headers: {
+          'content-encoding': 'aes128gcm',
+          'content-type': 'application/octet-stream',
+          'TTL': String(payload.ttl || 86400),
+          'Urgency': payload.urgency || 'high',
+          'Authorization': auth
+        },
+        body
+      });
+      if (res.status === 404 || res.status === 410) return 'gone';
+      return res.ok ? true : 'retry';
+    } catch (e) {
+      return 'retry';
+    }
+  }
+  async pushMessage(msg) {
+    if (!msg || !msg.to || msg.to === msg.from) return 0;
+    const subs = (this.db && Array.isArray(this.db.pushSubscriptions) ? this.db.pushSubscriptions : []).filter((s) => s && s.userId === msg.to);
+    if (!subs.length) return 0;
+    const sender = (this.db.users || []).find((u) => u && u.id === msg.from) || {};
+    const payload = {
+      title: sender.fullName || sender.username || 'WhaleChat',
+      body: previewText(msg),
+      link: '#/chat/' + msg.from,
+      tag: 'wc-msg-' + (msg.chatId || msg.from),
+      icon: './assets/logo-192.png',
+      badge: './assets/badge-72.png',
+      requireInteraction: true,
+      renotify: true,
+      ts: Date.now()
+    };
+    let sent = 0;
+    const gone = [];
+    for (const sub of subs) {
+      const r = await this.sendPushTo(sub, payload);
+      if (r === true) sent++;
+      else if (r === 'gone') gone.push(sub.endpoint);
+    }
+    if (gone.length) {
+      this.db.pushSubscriptions = this.db.pushSubscriptions.filter((s) => !gone.includes(s.endpoint));
+      this.scheduleSave();
+    }
+    return sent;
+  }
+  async pushRoomMessage(room, msg) {
+    if (!room || !msg) return 0;
+    const subs = (this.db && Array.isArray(this.db.pushSubscriptions) ? this.db.pushSubscriptions : []).filter((s) => s && s.userId && s.userId !== msg.from && (room.members || []).includes(s.userId));
+    const sender = (this.db.users || []).find((u) => u && u.id === msg.from) || {};
+    const payload = {
+      title: sender.fullName || sender.username || 'WhaleChat',
+      body: previewText(msg),
+      link: '#/session/' + room.code,
+      tag: 'wc-room-' + room.code,
+      icon: './assets/logo-192.png',
+      badge: './assets/badge-72.png',
+      requireInteraction: true,
+      renotify: true,
+      ts: Date.now()
+    };
+    let sent = 0;
+    for (const sub of subs) { if (await this.sendPushTo(sub, payload) === true) sent++; }
+    return sent;
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  Market quotes (public Yahoo Finance spark + Binance fallback)      *
+   * ------------------------------------------------------------------ */
+  marketStatus() {
+    const quotes = this.quotes || {};
+    const priced = Object.keys(quotes).filter((t) => quotes[t] && quotes[t].price > 0).length;
+    return {
+      mode: 'live', source: 'yahoo', refreshSec: 30, tickers: priced,
+      unpriced: Math.max(0, ((this.db && this.db.stocks) || []).length - priced),
+      lastRealAt: this.marketAt, lastTickAt: this.marketAt, marketOpen: true, alwaysOpen: true,
+      notice: 'Live quotes · Yahoo Finance public feed (stocks, ETFs, FX, crypto)'
+    };
+  }
+  marketSnapshot() {
+    const st = this.marketStatus();
+    return { ok: true, at: Date.now(), source: 'live', marketOpen: true, alwaysOpen: true, notice: st.notice, status: st, quotes: this.quotes || {} };
+  }
+  async fetchSpark(symbols, interval) {
+    if (!symbols.length) return {};
+    const url = 'https://query1.finance.yahoo.com/v8/finance/spark?symbols=' + encodeURIComponent(symbols.join(',')) + '&interval=' + interval + '&range=1d';
+    const res = await fetch(url, { headers: { 'user-agent': 'Mozilla/5.0 (compatible; WhaleChat/3.58.2)', accept: 'application/json' } });
+    if (!res.ok) throw new Error('yahoo ' + res.status);
+    return await res.json();
+  }
+  async refreshMarket() {
+    if (this.marketRefreshing) return this.marketRefreshing;
+    this.marketRefreshing = (async () => {
+      try {
+        const assets = (this.db && Array.isArray(this.db.stocks) ? this.db.stocks : []).filter((a) => a && a.ticker);
+        if (!assets.length) return this.marketSnapshot();
+        const map = new Map();
+        assets.forEach((a) => { const y = yahooSymbol(a); if (y) map.set(y, a.ticker); });
+        const symbols = [...map.keys()];
+        const now = Date.now();
+        const next = {};
+        for (let i = 0; i < symbols.length; i += 20) {
+          const chunk = symbols.slice(i, i + 20);
+          let data = {};
+          try { data = await this.fetchSpark(chunk, '1d'); } catch (e) { continue; }
+          Object.keys(data || {}).forEach((sym) => {
+            const row = data[sym];
+            if (!row) return;
+            const closes = Array.isArray(row.close) ? row.close.filter((n) => Number(n) > 0) : [];
+            const price = Number(row.fulldayPrice || closes[closes.length - 1] || 0);
+            if (!(price > 0)) return;
+            const ticker = map.get(sym) || sym;
+            const prevClose = Number(row.chartPreviousClose || row.previousClose || price);
+            const prev = this.quotes[ticker] || {};
+            next[ticker] = {
+              ticker,
+              price: Math.round(price * 10000) / 10000,
+              prevClose: Math.round(prevClose * 10000) / 10000,
+              open: Math.round(prevClose * 10000) / 10000,
+              dayHigh: Math.max(Number(prev.dayHigh) || price, price),
+              dayLow: Math.min(Number(prev.dayLow) || price, price),
+              vol: 0,
+              dir: price > (Number(prev.price) || price) ? 1 : price < (Number(prev.price) || price) ? -1 : 0,
+              updatedAt: now,
+              source: 'yahoo',
+              real: true
+            };
+            const q = next[ticker];
+            q.changeUsd = Math.round((q.price - q.prevClose) * 10000) / 10000;
+            q.changePct = q.prevClose ? Math.round((q.changeUsd / q.prevClose) * 10000) / 100 : 0;
+          });
+        }
+        if (Object.keys(next).length) {
+          this.quotes = next;
+          this.marketAt = now;
+          try { this.state.waitUntil(this.state.storage.put('market:snapshot', { at: now, quotes: next })); } catch (e) {}
+          const frame = enc.encode(frameOf('snapshot', this.marketSnapshot()));
+          for (const [id, c] of this.marketClients) {
+            try { c.enqueue(frame); } catch (e) { this.marketClients.delete(id); }
+          }
+        }
+      } catch (e) {
+        console.error('[market] refresh failed', e.message);
+      } finally {
+        this.marketRefreshing = null;
+      }
+      return this.marketSnapshot();
+    })();
+    return this.marketRefreshing;
+  }
+  async historyFor(tickers, limit) {
+    const assets = (this.db && Array.isArray(this.db.stocks) ? this.db.stocks : []);
+    const map = new Map();
+    tickers.forEach((t) => {
+      const a = assets.find((x) => x && (x.ticker === t || x.displayTicker === t)) || { ticker: t };
+      const y = yahooSymbol(a);
+      if (y) map.set(y, t);
+    });
+    const out = {};
+    const symbols = [...map.keys()];
+    for (let i = 0; i < symbols.length; i += 20) {
+      const chunk = symbols.slice(i, i + 20);
+      let data = {};
+      try { data = await this.fetchSpark(chunk, '1m'); } catch (e) { continue; }
+      Object.keys(data || {}).forEach((sym) => {
+        const row = data[sym];
+        const ticker = map.get(sym);
+        if (!row || !ticker) return;
+        const ts = Array.isArray(row.timestamp) ? row.timestamp : [];
+        const closes = Array.isArray(row.close) ? row.close : [];
+        const points = [];
+        for (let k = 0; k < ts.length; k++) {
+          const p = Number(closes[k]);
+          if (Number(ts[k]) > 0 && p > 0) points.push({ t: Number(ts[k]) * 1000, p });
+        }
+        out[ticker] = points.slice(-(Math.min(900, Number(limit) || 240)));
+      });
+    }
+    return out;
+  }
+
   async fetch(request) {
     await this.ready;
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
@@ -293,6 +637,9 @@ export class ChatHub {
           const m = p.item;
           if (!m || !m.id || !m.chatId) return;
           this.broadcastTo([m.from, m.to].filter(Boolean), 'message', { message: m, rev: this.rev, at: Date.now() });
+          if (p.isNew && m.to && m.from !== m.to) {
+            try { this.state.waitUntil(this.pushMessage(m)); } catch (e) { this.pushMessage(m).catch(() => {}); }
+          }
         });
       }
       return json({ ok: true, rev: this.rev });
@@ -343,6 +690,7 @@ export class ChatHub {
       this.rev += 1; this.updatedAt = Date.now(); this.scheduleSave();
       this.broadcastTo([clean.from, clean.to].filter(Boolean), 'message', { message: clean, rev: this.rev, at: Date.now() });
       if (clean.status === 'delivered') this.broadcastTo([clean.from], 'delivered', { chatId: clean.chatId, userId: clean.to, ids: [clean.id], at: Date.now(), rev: this.rev });
+      try { this.state.waitUntil(this.pushMessage(clean)); } catch (e) { this.pushMessage(clean).catch(() => {}); }
       return json({ ok: true, id: clean.id, rev: this.rev, status: clean.status });
     }
     if (path === '/api/messages/list' && request.method === 'GET') {
@@ -439,6 +787,7 @@ export class ChatHub {
         if (room.messages.length > 2000) room.messages = room.messages.slice(-2000);
         room.updatedAt = Date.now(); this.rev += 1; this.updatedAt = Date.now(); this.scheduleSave();
         this.roomBroadcast(room, 'room-message', { code: room.code, message: msg, at: Date.now(), rev: this.rev });
+        try { this.state.waitUntil(this.pushRoomMessage(room, msg)); } catch (e) { this.pushRoomMessage(room, msg).catch(() => {}); }
       }
       return json({ ok: true, id: msg.id, message: existing || msg, rev: this.rev });
     }
@@ -477,16 +826,99 @@ export class ChatHub {
     if (path.startsWith('/api/email/')) return json({ ok: false, error: 'email_not_configured' }, 200);
     if (path === '/api/connections') return json({ ok: false, error: 'connections_disabled' }, 200);
 
+    /* web push */
+    if (path === '/api/push/key' && request.method === 'GET') {
+      const v = await this.ensureVapid();
+      return json({ ok: true, publicKey: v.pub });
+    }
+    if (path === '/api/push/subscribe' && request.method === 'POST') {
+      if (!this.db) return json({ ok: false, error: 'not_initialised' }, 409);
+      const b = await body();
+      const userId = String(b.userId || '');
+      const sub = b.subscription || {};
+      if (!userId || !sub.endpoint || !sub.keys || !sub.keys.p256dh || !sub.keys.auth) return json({ ok: false, error: 'invalid_subscription' }, 400);
+      if (!Array.isArray(this.db.pushSubscriptions)) this.db.pushSubscriptions = [];
+      this.db.pushSubscriptions = this.db.pushSubscriptions.filter((s) => s && s.endpoint !== sub.endpoint);
+      this.db.pushSubscriptions.push({ userId, endpoint: sub.endpoint, keys: { p256dh: sub.keys.p256dh, auth: sub.keys.auth }, device: String(b.device || '').slice(0, 180), at: Date.now() });
+      const own = this.db.pushSubscriptions.filter((s) => s.userId === userId);
+      if (own.length > 10) {
+        const drop = new Set(own.sort((a, c) => (a.at || 0) - (c.at || 0)).slice(0, own.length - 10).map((s) => s.endpoint));
+        this.db.pushSubscriptions = this.db.pushSubscriptions.filter((s) => !drop.has(s.endpoint));
+      }
+      this.scheduleSave();
+      return json({ ok: true, devices: this.db.pushSubscriptions.filter((s) => s.userId === userId).length, publicKey: (await this.ensureVapid()).pub });
+    }
+    if (path === '/api/push/unsubscribe' && request.method === 'POST') {
+      const b = await body();
+      if (this.db && Array.isArray(this.db.pushSubscriptions)) {
+        this.db.pushSubscriptions = this.db.pushSubscriptions.filter((s) => s && s.endpoint !== (b.endpoint || ''));
+        this.scheduleSave();
+      }
+      return json({ ok: true });
+    }
+    if (path === '/api/push/status' && request.method === 'GET') {
+      const userId = String(q.get('user') || '');
+      const subs = (this.db && Array.isArray(this.db.pushSubscriptions) ? this.db.pushSubscriptions : []).filter((s) => s.userId === userId);
+      return json({ ok: true, devices: subs.length, publicKey: (await this.ensureVapid()).pub });
+    }
+    if (path === '/api/push/test' && request.method === 'POST') {
+      const b = await body();
+      const userId = String(b.userId || '');
+      const subs = (this.db && Array.isArray(this.db.pushSubscriptions) ? this.db.pushSubscriptions : []).filter((s) => s.userId === userId);
+      if (!subs.length) return json({ ok: false, sent: 0, error: 'no_device' });
+      let sent = 0;
+      for (const sub of subs) {
+        const r = await this.sendPushTo(sub, { title: b.title || 'WhaleChat', body: b.body || 'Push notifications are working 🐋', link: b.link || '#/notifications', tag: 'wc-test', icon: './assets/logo-192.png', badge: './assets/badge-72.png', renotify: true, ts: Date.now() });
+        if (r === true) sent++;
+      }
+      return json({ ok: sent > 0, sent });
+    }
+
+    /* live market quotes */
+    if (path === '/api/market/quotes' && request.method === 'GET') {
+      if (!this.marketAt || Date.now() - this.marketAt > 30000) { try { await this.refreshMarket(); } catch (e) {} }
+      return json(this.marketSnapshot());
+    }
+    if (path === '/api/market/status' && request.method === 'GET') return json(Object.assign({ ok: true }, this.marketStatus()));
+    if (path === '/api/market/history' && request.method === 'GET') {
+      const raw = String(q.get('tickers') || q.get('ticker') || '').toUpperCase();
+      const tickers = raw.split(',').map((t) => t.trim()).filter(Boolean).slice(0, 40);
+      const limit = Number(q.get('limit')) || 240;
+      const history = await this.historyFor(tickers, limit);
+      return json({ ok: true, at: Date.now(), source: 'live', notice: this.marketStatus().notice, status: this.marketStatus(), history });
+    }
+    if (path === '/api/market/stream' && request.method === 'GET') {
+      return this.marketStream(request);
+    }
+
     /* optional services the app probes — keep the shell quiet, never fatal */
-    if (path.startsWith('/api/push/')) return json({ ok: false, disabled: true, reason: 'push_not_configured' });
-    if (path === '/api/market/quotes') return json({ quotes: {}, at: Date.now(), ok: true, mode: 'offline' });
-    if (path === '/api/market/status') return json({ ok: true, mode: 'offline', source: 'offline', marketOpen: true, alwaysOpen: true, tickers: 0, refreshSec: 30 });
-    if (path === '/api/market/stream') return new Response('event: snapshot\ndata: {"quotes":{},"at":' + Date.now() + '}\n\nretry: 5000\n\n', { headers: Object.assign({ 'content-type': 'text/event-stream', 'cache-control': 'no-cache, no-transform' }, CORS) });
     if (path === '/api/bots/state') return json({ ok: true, bots: [], enabled: false });
     if (path === '/api/shares/state') return json({ ok: true, shares: [], enabled: false });
 
     return json({ ok: false, error: 'not_found', path }, 404);
   }
+  marketStream(request) {
+    const id = 'm_' + Math.random().toString(36).slice(2);
+    let controller;
+    const stream = new ReadableStream({
+      start: (c) => { controller = c; },
+      cancel: () => { this.marketClients.delete(id); }
+    });
+    this.marketClients.set(id, controller);
+    try {
+      controller.enqueue(enc.encode('retry: 5000\n\n'));
+      controller.enqueue(enc.encode(frameOf('status', { source: 'live', notice: this.marketStatus().notice, status: this.marketStatus() })));
+      if (this.quotes && Object.keys(this.quotes).length && Date.now() - this.marketAt < 60000) {
+        controller.enqueue(enc.encode(frameOf('snapshot', this.marketSnapshot())));
+      }
+    } catch (e) {}
+    const go = () => { this.refreshMarket().catch(() => {}); };
+    if (!this.marketAt || Date.now() - this.marketAt > 30000) go();
+    else setTimeout(go, Math.max(1000, 30000 - (Date.now() - this.marketAt)));
+    if (request.signal) request.signal.addEventListener('abort', () => this.marketClients.delete(id));
+    return new Response(stream, { headers: Object.assign({ 'content-type': 'text/event-stream', 'cache-control': 'no-cache, no-transform', connection: 'keep-alive', 'x-accel-buffering': 'no' }, CORS) });
+  }
+
   events(request, userId) {
     const id = 'c_' + Math.random().toString(36).slice(2);
     let controller;
@@ -519,7 +951,7 @@ export default {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
     const url = new URL(request.url);
     if (url.pathname === '/' || url.pathname === '/health') return json({ ok: true, app: APP, version: VERSION });
-    const id = env.CHAT_HUB.idFromName('global');
+    const id = env.CHAT_HUB.idFromName(DO_NAME);
     return env.CHAT_HUB.get(id).fetch(request);
   }
 };

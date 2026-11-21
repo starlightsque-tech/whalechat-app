@@ -143,13 +143,19 @@
       if (cached && cached.length) cached[cached.length - 1] = from;
       if (Math.abs(to - from) > 1e-9) moved.push({ ticker, from, to });
     });
-    try { INV.paint(); } catch (e) {}
-    try { if (typeof LT !== 'undefined' && LT.paint) LT.paint(); } catch (e) {}
-    paintNotice();
-    paintAdminStatus();
-    updateChart();
-    moved.forEach((m) => animateQuote(m.ticker, m.from, m.to));
-    try { checkSettledToasts(); } catch (e) {}
+    /* While a chat is open, repainting the whole market can block the
+       message bubble. Keep the data fresh and paint it when the user comes
+       back to a market/portfolio screen. */
+    const chatting = document.body && document.body.dataset && document.body.dataset.route === 'chat';
+    if (!chatting) {
+      try { INV.paint(); } catch (e) {}
+      try { if (typeof LT !== 'undefined' && LT.paint) LT.paint(); } catch (e) {}
+      paintNotice();
+      paintAdminStatus();
+      updateChart();
+      moved.forEach((m) => animateQuote(m.ticker, m.from, m.to));
+      try { checkSettledToasts(); } catch (e) {}
+    }
   }
 
   /* live push stream: the server sends changed quotes every 400 ms */
