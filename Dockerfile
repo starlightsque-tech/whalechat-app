@@ -3,14 +3,9 @@ ENV NODE_ENV=production WORKDIR=/app
 WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm install --omit=dev --no-audit --no-fund
-COPY server.js ./
-COPY market.js ./
-COPY spot.js ./
-COPY bots.js ./
-COPY shares.js ./
-COPY email.js ./
-COPY finnhub.js ./
-COPY b2b-alerts.js ./
+/* every root module, not a hand-maintained list — a missing COPY silently
+   disables a feature at runtime because server.js guards its requires */
+COPY *.js ./
 COPY scripts ./scripts
 COPY public ./public
 RUN node scripts/prepare-assets.js
