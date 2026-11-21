@@ -45,17 +45,10 @@ object storage is empty, so publishing never wipes users.
 - `npm run db:check` verifies the binding, tables, snapshot rev, and the
   restored `jane` / `investorD` accounts.
 
-## Session rooms: realtime + offline catch-up
-- Every room message is stored on the worker and broadcast over the single SSE
-  stream, so a shared session updates both members instantly.
-- New `POST /api/rooms/sync` webhook: uploads this device's queued room
-  messages and returns **only the other members' messages**. A's messages are
-  pulled into B's chat and B's replies into A's chat, never a member's own copy.
-- `GET /api/rooms/pull` gives the same directional pull with a `since` cursor.
-- The app syncs the open room every 3 s, on reconnect, on visibility change and
-  on every outbox flush, so an offline device catches up automatically.
-- The offline banner ("Offline — your work is saved…" and "Offline · messages
-  queue automatically") and the Lagos ↔ Warri simulator are removed. Queueing
-  and catch-up are silent.
-- Verified with two users: A and B offline, each queued a message, both
-  reconnected and each saw only the other's message exactly once.
+## Session rooms removed
+The Share Internet Session / room-code feature is removed from the app.
+- `session-bridge.js` is no longer bundled (no Share session button, no
+  sessions modal, no #/session deep link, no room chat overlay).
+- The worker answers every `/api/rooms/*` request with a clean 404, so cached
+  clients and old links cannot open a room.
+- Existing user accounts, direct chats and data are untouched.

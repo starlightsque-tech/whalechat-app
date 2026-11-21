@@ -954,8 +954,8 @@ globalThis.process = cloudflare_default2;
 // src/index.js
 var APP = "whalechat";
 var VERSION = "3.60.0";
-var DO_NAME = "global:v11";
-var PREV_DO_NAME = "global:v10";
+var DO_NAME = "global:v12";
+var PREV_DO_NAME = "global:v11";
 var BUILD = "2026-11-22T23:00:00Z";
 var COLLECTIONS = ["users", "vendors", "companyProducts", "products", "orders", "deposits", "withdrawals", "messages", "statuses", "notifications", "contacts", "blocks", "txs", "referrals", "purchases", "refunds", "vendorApplications", "reports", "bonuses", "bonusClaims", "emailCampaigns", "stocks", "holdings", "trades", "watchlist", "alerts", "audit", "portfolioAudit", "botAccounts", "botEvents", "traffic", "shareInvestments", "serviceRequests"];
 var PRESENCE_STALE_MS = 35e3;
@@ -1909,6 +1909,10 @@ var ChatHub = class {
         return {};
       }
     }, "body");
+    /* Session rooms were removed from the app. Old links and cached clients
+       get a clean 404 instead of opening a room. */
+    if (path === "/api/rooms" || path.indexOf("/api/rooms/") === 0)
+      return json({ ok: false, error: "not_found", path }, 404);
     if (path === "/api/health") {
       return json({ ok: true, app: APP, version: VERSION, build: BUILD, uptimeSec: 0, rev: this.rev, users: this.db && this.db.users ? this.db.users.length : 0, clients: this.clients.size, push: false, publicUrl: null, storage: this.env.DB ? "d1+durable-object" : "durable-object", d1: this.env.DB ? "whalechat_db" : "unbound", email: false, market: { mode: "offline", source: "offline", marketOpen: true, alwaysOpen: true, tickers: 0 } });
     }
