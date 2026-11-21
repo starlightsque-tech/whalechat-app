@@ -3,8 +3,8 @@ ENV NODE_ENV=production WORKDIR=/app
 WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm install --omit=dev --no-audit --no-fund
-/* every root module, not a hand-maintained list — a missing COPY silently
-   disables a feature at runtime because server.js guards its requires */
+# every root module, not a hand-maintained list — a missing COPY silently
+# disables a feature at runtime because server.js guards its requires
 COPY *.js ./
 COPY scripts ./scripts
 COPY public ./public
