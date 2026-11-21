@@ -353,6 +353,91 @@ function isOnline(userId) {
   for (const meta of clients.values()) if (meta && meta.user === userId) return true;
   return false;
 }
+
+/* ============================ presence engine ============================ */
+const PRESENCE = new Map();              // userId -> { ts, lastSeen, currentChatWith, device, visible }
+const PRESENCE_STALE_MS = 35000;         // no heartbeat for 35 s -> offline
+let presencePersistAt = 0;
+
+function presenceView(userId) {
+  const id = String(userId || '');
+  const p = PRESENCE.get(id);
+  const fresh = !!(p && Date.now() - Number(p.ts) < PRESENCE_STALE_MS);
+  const online = fresh && p.visible !== false && (p.sockets > 0 || Date.now() - Number(p.ts) < PRESENCE_STALE_MS) && isOnline(id);
+  const stored = (store.db && store.db.presence && store.db.presence[id]) || null;
+  return {
+    userId: id,
+    online,
+    lastSeen: online ? Date.now() : Math.max(Number(p && p.lastSeen) || 0, Number(stored && stored.lastSeen) || 0),
+    currentChatWith: (p && p.currentChatWith) || (stored && stored.currentChatWith) || ''
+  };
+}
+/* who cares about this user's presence: their chat partners + themselves */
+function presenceAudience(userId) {
+  const ids = new Set([String(userId)]);
+  const db = store.db || {};
+  (db.messages || []).forEach((m) => {
+    if (!m) return;
+    if (m.from === userId && m.to) ids.add(String(m.to));
+    else if (m.to === userId && m.from) ids.add(String(m.from));
+  });
+  ((db.contacts) || []).forEach((c) => {
+    if (!c) return;
+    if (c.ownerId === userId && c.userId) ids.add(String(c.userId));
+    else if (c.userId === userId && c.ownerId) ids.add(String(c.ownerId));
+  });
+  return [...ids];
+}
+function persistPresence(userId, view) {
+  try {
+    if (!store.db) return;
+    if (!store.db.presence || typeof store.db.presence !== 'object') store.db.presence = {};
+    store.db.presence[userId] = { lastSeen: view.lastSeen, currentChatWith: view.currentChatWith };
+    const t = Date.now();
+    if (t - presencePersistAt > 5000) { presencePersistAt = t; persist(); }
+  } catch (e) {}
+}
+function broadcastPresence(userId) {
+  const view = presenceView(userId);
+  try { broadcastTo(presenceAudience(userId), 'presence', { presence: view, at: Date.now() }); } catch (e) {}
+  persistPresence(userId, view);
+  return view;
+}
+function touchPresence(userId, patch) {
+  const id = String(userId || '');
+  if (!id) return null;
+  const prev = PRESENCE.get(id) || { ts: 0, lastSeen: 0, currentChatWith: '', device: '', visible: true, sockets: 0 };
+  const next = Object.assign({}, prev, patch || {}, { ts: Date.now() });
+  next.sockets = countSockets(id);
+  PRESENCE.set(id, next);
+  return broadcastPresence(id);
+}
+function markPresenceOffline(userId) {
+  const id = String(userId || '');
+  const prev = PRESENCE.get(id);
+  if (!prev) { PRESENCE.set(id, { ts: 0, lastSeen: Date.now(), currentChatWith: '', device: '', visible: false, sockets: 0 }); return broadcastPresence(id); }
+  prev.ts = 0; prev.visible = false; prev.lastSeen = Date.now(); prev.currentChatWith = '';
+  PRESENCE.set(id, prev);
+  return broadcastPresence(id);
+}
+function countSockets(userId) {
+  let n = 0;
+  for (const meta of clients.values()) if (meta && meta.user === userId) n++;
+  return n;
+}
+/* silence sweeper: a phone that lost its network without closing the tab */
+setInterval(() => {
+  const now = Date.now();
+  PRESENCE.forEach((p, id) => {
+    if (!p) return;
+    const live = now - Number(p.ts) < PRESENCE_STALE_MS;
+    if (!live && (p.visible !== false || p.sockets)) {
+      p.visible = false; p.sockets = 0; p.lastSeen = now; p.currentChatWith = '';
+      PRESENCE.set(id, p);
+      try { broadcastPresence(id); } catch (e) {}
+    }
+  });
+}, 10000).unref();
 function mime(file) {
   return ({ '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.webmanifest': 'application/manifest+json', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8' })[path.extname(file).toLowerCase()] || 'application/octet-stream';
 }
@@ -495,6 +580,25 @@ async function dispatchPushes(pushes, db) {
   }
 }
 
+/* everything addressed to `userId` that was still 'sent' is now on their device */
+function markMessagesDelivered(userId) {
+  if (!store.db || !Array.isArray(store.db.messages)) return 0;
+  const changed = [];
+  store.db.messages.forEach((m) => {
+    if (!m || m.to !== userId || m.status === 'seen' || m.status === 'delivered') return;
+    m.status = 'delivered';
+    m.deliveredAt = m.deliveredAt || Date.now();
+    changed.push(m);
+  });
+  if (!changed.length) return 0;
+  store.rev += 1; store.updatedAt = Date.now(); persist();
+  const senders = new Set(changed.map((m) => m.from).filter(Boolean));
+  changed.forEach((m) => {
+    try { broadcastTo([m.from], 'delivered', { chatId: m.chatId, userId, ids: [m.id], at: Date.now(), rev: store.rev }); } catch (e) {}
+  });
+  return changed.length;
+}
+
 async function api(req, res, pathname, query) {
   /* --- durable connection settings (admin only) -------------------------- */
   if (pathname === '/api/connections' && req.method === 'GET') {
@@ -631,8 +735,68 @@ async function api(req, res, pathname, query) {
     const userId = String(query.get('user') || '') || null;
     clients.set(res, { user: userId, at: Date.now() });
     const ping = setInterval(() => { try { res.write(': ping\n\n'); } catch (e) {} }, 20000);
-    req.on('close', () => { clearInterval(ping); clients.delete(res); });
+    if (userId) {
+      /* the socket itself is the online signal: announce it straight away and
+         hand the newcomer the presence of everyone they talk to */
+      const snap = {};
+      const ids = new Set(presenceAudience(userId));
+      ids.forEach((id) => { snap[id] = presenceView(id); });
+      try { res.write('event: presence-snapshot\ndata: ' + JSON.stringify({ at: Date.now(), presence: snap }) + '\n\n'); } catch (e) {}
+      try { touchPresence(userId, { visible: true }); } catch (e) {}
+      /* everything the recipient received while this user was away is now delivered */
+      try { markMessagesDelivered(userId); } catch (e) {}
+    }
+    req.on('close', () => {
+      clearInterval(ping);
+      clients.delete(res);
+      if (userId && countSockets(userId) === 0) { try { markPresenceOffline(userId); } catch (e) {} }
+    });
     return;
+  }
+
+  /* ---------------- presence + typing (realtime, no polling) ----------------
+     Online state used to be a localStorage guess, so another user could never
+     appear online and typing only worked between tabs of the same browser.
+     It now lives on the server and is pushed over the same SSE stream:
+       - heartbeat every 15 s from the client (POST /api/presence)
+       - the open SSE socket is the source of truth; closing it marks the user
+         offline immediately, and a 35 s silence marks them offline as well
+       - typing is a short-lived flag pushed straight to the other participant
+     Nothing here needs polling, and both events reach the other device in a
+     few milliseconds because they share the message fan-out. */
+  if (pathname === '/api/presence' && req.method === 'POST') {
+    const body = await readBody(req);
+    const userId = String(body.userId || '');
+    if (!userId) return json(res, 400, { ok: false, error: 'userId_required' });
+    touchPresence(userId, {
+      currentChatWith: body.currentChatWith == null ? undefined : String(body.currentChatWith || ''),
+      device: body.device == null ? undefined : String(body.device || '').slice(0, 120),
+      visible: body.visible === undefined ? undefined : !!body.visible
+    });
+    return json(res, 200, { ok: true, presence: presenceView(userId), online: isOnline(userId) });
+  }
+  if (pathname === '/api/presence/offline' && req.method === 'POST') {
+    const body = await readBody(req);
+    if (body && body.userId) markPresenceOffline(String(body.userId));
+    return json(res, 200, { ok: true });
+  }
+  if (pathname === '/api/typing' && req.method === 'POST') {
+    const body = await readBody(req);
+    const userId = String(body.userId || '');
+    const to = String(body.to || '');
+    const chatId = String(body.chatId || '');
+    if (!userId || !chatId) return json(res, 400, { ok: false, error: 'invalid_typing' });
+    /* typing is ephemeral: never stored, never persisted */
+    const payload = { chatId, from: userId, to, isTyping: !!body.isTyping, at: Date.now() };
+    const targets = [to, userId].filter(Boolean);
+    broadcastTo(targets, 'typing', payload);
+    return json(res, 200, { ok: true, at: payload.at });
+  }
+  if (pathname === '/api/presence/state' && req.method === 'GET') {
+    const ids = String(query.get('users') || '').split(',').map((x) => x.trim()).filter(Boolean).slice(0, 200);
+    const out = {};
+    ids.forEach((id) => { out[id] = presenceView(id); });
+    return json(res, 200, { ok: true, at: Date.now(), presence: out });
   }
 
   /* ---------------- instant chat: message-level realtime API ----------------
@@ -665,8 +829,18 @@ async function api(req, res, pathname, query) {
     store.db.messages.push(clean);
     store.rev += 1; store.updatedAt = Date.now(); persist();
     const recipients = [clean.from, clean.to].filter(Boolean);
+    /* if the other device is connected right now the message is delivered the
+       instant it lands, so the sender sees double grey ticks without waiting
+       for the recipient to open the app */
+    if (clean.to && clean.from !== clean.to && isOnline(clean.to)) {
+      clean.status = 'delivered';
+      clean.deliveredAt = Date.now();
+    }
     const delivered = broadcastTo(recipients, 'message', { message: clean, rev: store.rev, at: Date.now() });
-    return json(res, 200, { ok: true, id: clean.id, rev: store.rev, status: 'sent', online: recipients.map((u) => ({ user: u, online: isOnline(u) })), fanout: delivered });
+    if (clean.status === 'delivered') {
+      try { broadcastTo([clean.from], 'delivered', { chatId: clean.chatId, userId: clean.to, ids: [clean.id], at: Date.now(), rev: store.rev }); } catch (e) {}
+    }
+    return json(res, 200, { ok: true, id: clean.id, rev: store.rev, status: clean.status, online: recipients.map((u) => ({ user: u, online: isOnline(u) })), fanout: delivered });
   }
   if (pathname === '/api/messages/list' && req.method === 'GET') {
     if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
