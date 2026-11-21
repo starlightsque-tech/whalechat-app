@@ -79,6 +79,7 @@
     if (!host) return false;
     if (host.querySelector('canvas')) return false;       /* real chart is drawing */
     if (host.querySelector('.wcpl')) return false;         /* perf chart module owns it */
+    if (host.classList && host.classList.contains('wclc')) return false; /* shared wave chart owns it */
     if (host.querySelector('svg polyline, svg path')) return false;
     var txt = (host.textContent || '').trim();
     if (/could not load|failed|chart could not/i.test(txt)) return true;

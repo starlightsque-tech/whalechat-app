@@ -1,8 +1,8 @@
 {
-  "version": "3.55.0",
-  "build": "2026-11-22T05:00:00Z",
+  "version": "3.56.0",
+  "build": "2026-11-22T07:00:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.55.0 — add contacts by username, @username, email or phone; vendors and shoppers can chat directly; messages deliver instantly both ways; Live Chat button opens the chat box on tap; trades evaluate every 200ms and auto-secure credits profit every 700ms; background refreshes defer while typing; B2B sell-only Auto Buy/Sell retained.",
-  "releasedAt": "2026-11-22T05:00:00Z",
+  "notes": "WhaleChat 3.56.0 — one smooth TradingView-style wave chart everywhere (stock trading, B2B, WC-Investing plan and ROI, portfolio/bot): green rising waves, red falling waves, soft gradient and live price pill. Verified B2B sell-only Auto Buy/Sell, Auto Secure subscription/credit/moves, and contact adding by username and email with instant two-way vendor chat.",
+  "releasedAt": "2026-11-22T07:00:00Z",
   "minimum": "3.0.0"
 }

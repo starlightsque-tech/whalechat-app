@@ -75,14 +75,18 @@
     var x = function (i) { return padL + (i / (pts.length - 1)) * innerW; };
     var y = function (v) { return padT + innerH - ((v - min) / (max - min)) * innerH; };
 
-    /* one path per segment, coloured by the tick direction */
+    /* Smooth "wave" style: every segment is a cubic curve, coloured green when
+       the price is rising and red when it is falling (one continuous wave). */
     var segs = '';
+    var line = 'M' + x(0).toFixed(1) + ' ' + y(pts[0].v).toFixed(1);
     for (var i = 1; i < pts.length; i++) {
       var upSeg = pts[i].v >= pts[i - 1].v;
-      var d = 'M' + x(i - 1).toFixed(1) + ' ' + y(pts[i - 1].v).toFixed(1) + ' L' + x(i).toFixed(1) + ' ' + y(pts[i].v).toFixed(1);
-      segs += '<path d="' + d + '" fill="none" stroke="' + (upSeg ? C.up : C.down) + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>';
+      var xa = x(i - 1), ya = y(pts[i - 1].v), xb = x(i), yb = y(pts[i].v);
+      var mx = (xa + xb) / 2;
+      var d = 'M' + xa.toFixed(1) + ' ' + ya.toFixed(1) + ' C' + mx.toFixed(1) + ' ' + ya.toFixed(1) + ', ' + mx.toFixed(1) + ' ' + yb.toFixed(1) + ', ' + xb.toFixed(1) + ' ' + yb.toFixed(1);
+      segs += '<path d="' + d + '" fill="none" stroke="' + (upSeg ? C.up : C.down) + '" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>';
+      line += ' C' + mx.toFixed(1) + ' ' + ya.toFixed(1) + ', ' + mx.toFixed(1) + ' ' + yb.toFixed(1) + ', ' + xb.toFixed(1) + ' ' + yb.toFixed(1);
     }
-    var line = pts.map(function (p, i) { return (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(p.v).toFixed(1); }).join(' ');
     var area = line + ' L' + x(pts.length - 1).toFixed(1) + ' ' + (padT + innerH) + ' L' + padL + ' ' + (padT + innerH) + ' Z';
     var first = pts[0].v, last = pts[pts.length - 1].v;
     var trendUp = last >= first;
@@ -109,8 +113,17 @@
         '<stop offset="0%" stop-color="' + (trendUp ? C.up : C.down) + '" stop-opacity=".30"/>' +
         '<stop offset="100%" stop-color="' + (trendUp ? C.up : C.down) + '" stop-opacity="0"/>' +
       '</linearGradient></defs>' + grid + lvls +
-      '<path d="' + area + '" fill="url(#' + gid + ')"/>' + segs +
-      '<circle cx="' + x(pts.length - 1).toFixed(1) + '" cy="' + lastY.toFixed(1) + '" r="3.2" fill="' + (trendUp ? C.up : C.down) + '"><animate attributeName="r" values="3.2;5;3.2" dur="1.6s" repeatCount="indefinite"/></circle>' +
+      '<path d="' + area + '" fill="url(#' + gid + ')"/>' +
+      '<path d="' + line + '" fill="none" stroke="' + (trendUp ? C.up : C.down) + '" stroke-width="9" stroke-opacity=".10" stroke-linecap="round"/>' +
+      segs +
+      '<circle cx="' + x(pts.length - 1).toFixed(1) + '" cy="' + lastY.toFixed(1) + '" r="3.4" fill="' + (trendUp ? C.up : C.down) + '"><animate attributeName="r" values="3.4;5.4;3.4" dur="1.6s" repeatCount="indefinite"/></circle>' +
+      (function () {
+        var chg = first ? ((last / first - 1) * 100) : 0;
+        var label = (chg >= 0 ? '↑ +' : '↓ ') + Math.abs(chg).toFixed(2) + '%';
+        var col = chg >= 0 ? C.up : C.down;
+        return '<g><rect x="' + (W / 2 - 30) + '" y="' + (H - 20) + '" width="60" height="15" rx="7.5" fill="rgba(0,0,0,.28)" stroke="' + col + '" stroke-opacity=".35"/>' +
+          '<text x="' + (W / 2) + '" y="' + (H - 9) + '" text-anchor="middle" fill="' + col + '" font-size="9" font-weight="700">' + label + '</text></g>';
+      })() +
       '<text x="' + padL + '" y="' + (H - 4) + '" fill="#5f7b8a" font-size="9">' + clock(pts[0].t) + '</text>' +
       '<text x="' + (W - padR) + '" y="' + (H - 4) + '" text-anchor="end" fill="#5f7b8a" font-size="9">' + clock(pts[pts.length - 1].t) + '</text>' +
       '</svg>';

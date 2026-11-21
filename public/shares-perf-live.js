@@ -194,6 +194,16 @@
     if (this.el.roi) { this.el.roi.textContent = fmtPct(live.roiPct); this.el.roi.className = Number(live.roiPct) >= 0 ? 'up' : 'down'; }
     if (this.el.earn) { this.el.earn.textContent = (Number(live.earnCoins) >= 0 ? '+' : '−') + fmtWC(Math.abs(Number(live.earnCoins) || 0)); this.el.earn.className = Number(live.earnCoins) >= 0 ? 'up' : 'down'; }
     if (this.el.matures) this.el.matures.textContent = live.matures || (this.opts.hud && this.opts.hud.matures) || '—';
+    /* Use the shared wave chart so WC-Investing plan + ROI progress matches
+       every other trading chart (green rise, red fall). */
+    try {
+      var stage = this.host.querySelector('.wcpl-stage');
+      if (stage && window.WC_LIVE_CHART) {
+        stage.innerHTML = '<span class="wcpl-live">● LIVE</span>' +
+          WC_LIVE_CHART.svg(pts, { height: 220, unit: 'wc', wcRate: 0.5, lines: this.opts.lines || [] });
+        this.el.svg = stage.querySelector('svg');
+      }
+    } catch (e) {}
   };
 
   Inst.prototype._start = function () {
