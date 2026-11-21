@@ -1,8 +1,8 @@
 {
-  "version": "3.58.0",
-  "build": "2026-11-21T21:40:00Z",
+  "version": "3.58.1",
+  "build": "2026-11-21T22:00:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.58.0 — chat is local-first and realtime. Send paints from IndexedDB with no network wait; receive rides one persistent stream (no polling); offline sends queue with a clock and drain automatically. Presence is a 15 s heartbeat plus the open socket, typing is debounced and kept alive while composing, delivered ticks fire the moment the recipient is connected, and read receipts are now durable (queued offline, retried on reconnect) with unread badges fixed. New: Share Internet Session — a 6-character session room you can invite contacts into, with live messages, typing, presence, ticks, a zero-data tunnel outbox and a Lagos ↔ Warri offline simulator.",
-  "releasedAt": "2026-11-21T21:40:00Z",
+  "notes": "WhaleChat 3.58.1 — chat is local-first and realtime. Send paints from IndexedDB with no network wait; receive rides one persistent stream (no polling); offline sends queue with a clock and drain automatically. Presence is a 15 s heartbeat plus the open socket, typing is debounced and kept alive while composing, delivered ticks fire the moment the recipient is connected, and read receipts are now durable (queued offline, retried on reconnect) with unread badges fixed. Sync now runs on Cloudflare Workers + Durable Objects (no Fly dependency). New: Share Internet Session — a 6-character session room you can invite contacts into, with live messages, typing, presence, ticks, a zero-data tunnel outbox and a Lagos ↔ Warri offline simulator.",
+  "releasedAt": "2026-11-21T22:00:00Z",
   "minimum": "3.0.0"
 }

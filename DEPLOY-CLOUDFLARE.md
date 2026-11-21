@@ -115,6 +115,40 @@ Use this if you only want to host the HTML on Cloudflare and already run `server
 
 **Important:** Pages alone cannot run `server.js` (no persistent process or disk). Without the sync server, the app runs in single-device mode and push/referrals/contacts across devices will not work.
 
+
+---
+
+## Option C — Cloudflare Workers + Durable Objects (current production)
+
+The pages app is static; the chat backend runs on Cloudflare itself:
+
+| Piece | URL |
+|---|---|
+| App | `https://whalechat.pages.dev/whalechat` |
+| Sync API + realtime | `https://whalechat-api.starlightsque.workers.dev` |
+| Source | `cloudflare/whalechat-api/` |
+
+```bash
+cd cloudflare/whalechat-api
+export CLOUDFLARE_API_TOKEN=...
+export CLOUDFLARE_ACCOUNT_ID=...
+npx wrangler deploy
+```
+
+The Worker exposes `/api/health`, `/api/state`, `/api/ops`, `/api/events` (SSE),
+`/api/messages/*`, `/api/presence`, `/api/typing` and `/api/rooms/*`.
+Durable Object storage holds the database, so deploys never wipe user data.
+
+Deploy the static app:
+
+```bash
+bash scripts/build-pages.sh
+npx wrangler pages deploy dist --project-name whalechat --branch main
+```
+
+Email verification remains on Pages Functions (`functions/api/otp/*`), where
+the Brevo key and KV binding live.
+
 ---
 
 ## What Cloudflare Workers cannot do here

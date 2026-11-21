@@ -201,6 +201,25 @@ App.sendSignupCode = async function (manual) {
       verifyError(d.message || 'Could not send the code. Try again.');
       return;
     }
+    if (d.autoVerified) {
+      /* this sync server has no mail transport — verify immediately instead of
+         trapping a brand-new account on a code screen it can never complete */
+      const meUser = me();
+      if (meUser) {
+        meUser.emailVerified = true;
+        meUser.verified = true;
+        meUser.verifiedAt = d.verifiedAt || Date.now();
+        meUser.verificationMethod = 'auto';
+        delete meUser.emailVerifyRequired;
+      }
+      persist(true);
+      try { if (Remote.enabled) await Remote.flush(); } catch (e) {}
+      try { sessionStorage.removeItem('wc.vcode.sent.' + u.id); } catch (e) {}
+      clearInterval(VERIFY_TIMER);
+      toast('Account ready — welcome to WhaleChat', 'ok');
+      go('account');
+      return;
+    }
     toast('Code sent to ' + (d.to || u.email), 'ok');
     const note = document.getElementById('vcResendNote');
     if (note) note.textContent = 'Code sent to ' + (d.to || u.email) + '. ';
