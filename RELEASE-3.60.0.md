@@ -52,3 +52,15 @@ The Share Internet Session / room-code feature is removed from the app.
 - The worker answers every `/api/rooms/*` request with a clean 404, so cached
   clients and old links cannot open a room.
 - Existing user accounts, direct chats and data are untouched.
+
+## WC-Investing admin editing
+Admin → **WC-Investing** lets an administrator:
+- edit each plan's name, daily rate, duration, minimum, maximum and description;
+- add, delete or reset plans to the defaults;
+- set the WhaleChat share price and the crash level;
+- adjust a running user plan's rate/duration (end date and projected ROI are
+  recalculated, capital is untouched).
+
+Plans save to `DB.settings.investPlans` and sync, so every device gets the new
+catalogue. The WC-Investing dashboard shows an "Admin · edit plans" shortcut to
+admins only.

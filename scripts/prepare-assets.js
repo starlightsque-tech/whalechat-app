@@ -93,6 +93,7 @@ const MODULES = [
   { file: 'connections-admin.js', marker: 'wc-connections-admin' },
   { file: 'wc-invest-plans.js', marker: 'wc-invest-plans' },
   { file: 'wc-invest-ui.js', marker: 'wc-invest-ui' },
+  { file: 'wc-invest-admin.js', marker: 'wc-invest-admin' },
   { file: 'b2b-auto-sell.js', marker: 'wc-b2b-auto-sell' },
   { file: 'typography.js', marker: 'wc-typography' },
   { file: 'session-guard.js', marker: 'wc-session-guard' },

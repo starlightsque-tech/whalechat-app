@@ -40,6 +40,7 @@
     { id: 'elite', name: 'Whale Elite', ratePct: 8, days: 30, minUsd: 250, maxUsd: 25000, blurb: 'Monthly plan for larger allocations.' }
   ];
 
+  P.defaults = DEFAULT_PLANS;
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
   function usd(v) { return '$' + (Math.round((Number(v) || 0) * 100) / 100).toFixed(2); }
   function wcv(v) { return (Math.round(((Number(v) || 0) / RATE) * 100) / 100).toFixed(2); }

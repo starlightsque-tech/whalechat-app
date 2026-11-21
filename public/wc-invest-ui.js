@@ -65,6 +65,7 @@
         '<a href="#/invest/shares/transfer" class="btn btn-ghost btn-sm" data-wci-go="transfer">Transfer</a>' +
         '<a href="#/invest/shares/roi" class="btn btn-ghost btn-sm" data-wci-go="roi">ROI progress</a>' +
         '<a href="#/invest/shares/history" class="btn btn-ghost btn-sm" data-wci-go="history">History</a>' +
+        (function () { try { var u = (typeof me === 'function') ? me() : null; return u && u.role === 'admin' ? '<a href="#/admin/wc-investing" class="btn btn-ghost btn-sm">Admin · edit plans</a>' : ''; } catch (e) { return ''; } })() +
       '</div></div>' +
 
       '<div class="card"><div class="between"><div class="card-title" style="margin:0">Auto reinvestment</div>' +
