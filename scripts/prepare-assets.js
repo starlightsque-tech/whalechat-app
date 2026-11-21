@@ -100,6 +100,7 @@ const MODULES = [
   { file: 'apk-download.js', marker: 'wc-apk-download' },
   { file: 'contacts-plus.js', marker: 'wc-contacts-plus' },
   { file: 'chat-instant.js', marker: 'wc-chat-instant' },
+  { file: 'chat-presence.js', marker: 'wc-chat-presence' },
   { file: 'chat-media.js', marker: 'wc-chat-media' },
   { file: 'keyboard-fix.js', marker: 'wc-keyboard' },
   { file: 'layout-fix.js', marker: 'wc-layout-fix' },
