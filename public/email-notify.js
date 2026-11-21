@@ -7,6 +7,9 @@
    - Per-recipient throttling keeps a busy conversation from flooding inboxes.
    ========================================================================= */
 'use strict';
+
+  var PAGES_MAIL_ORIGIN = 'https://whalechat.pages.dev';
+  function mailBase() { try { return /\.pages\.dev$/i.test(location.hostname) ? '' : PAGES_MAIL_ORIGIN; } catch (e) { return PAGES_MAIL_ORIGIN; } }
 (function () {
   if (typeof window === 'undefined') return;
   if (window.__wcEmailNotify) return;
@@ -36,7 +39,7 @@
   function postMail(userId, title, body, link, icon) {
     try {
       lastSent[userId] = Date.now();
-      fetch('/api/notify-email', {
+      fetch(mailBase() + '/api/notify-email', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ userId: userId, title: title, body: body, link: link, icon: icon }),

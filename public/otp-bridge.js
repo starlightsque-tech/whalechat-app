@@ -18,10 +18,15 @@
   var orig = window.fetch;
   if (typeof orig !== 'function') return;
 
+  var PAGES_ORIGIN = 'https://whalechat.pages.dev';
+  function origin() {
+    try { return /\.pages\.dev$/i.test(location.hostname) ? '' : PAGES_ORIGIN; } catch (e) { return PAGES_ORIGIN; }
+  }
   function rewrite(url) {
     var u = String(url || '');
-    if (/\/api\/verify\/signup\/send(?:[?#]|$)/.test(u)) return '/api/otp/send';
-    if (/\/api\/verify\/signup\/confirm(?:[?#]|$)/.test(u)) return '/api/otp/check';
+    var o = origin();
+    if (/\/api\/verify\/signup\/send(?:[?#]|$)/.test(u)) return o + '/api/otp/send';
+    if (/\/api\/verify\/signup\/confirm(?:[?#]|$)/.test(u)) return o + '/api/otp/check';
     return null;
   }
 

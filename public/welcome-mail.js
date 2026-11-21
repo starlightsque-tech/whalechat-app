@@ -8,6 +8,9 @@
    never depends on it.
    ========================================================================= */
 'use strict';
+
+  var PAGES_MAIL_ORIGIN = 'https://whalechat.pages.dev';
+  function mailBase() { try { return /\.pages\.dev$/i.test(location.hostname) ? '' : PAGES_MAIL_ORIGIN; } catch (e) { return PAGES_MAIL_ORIGIN; } }
 (function () {
   if (typeof window === 'undefined') return;
   if (window.__wcWelcomeMail) return;
@@ -23,7 +26,7 @@
       referralCode: u.referralCode || ''
     };
     try {
-      fetch('/api/welcome', {
+      fetch(mailBase() + '/api/welcome', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(payload),
