@@ -490,10 +490,16 @@ class ShareService {
       const amount = Number(inv.amountCoins) || 0;
       const invDays = Number(inv.durationDays) || 1;
       const dailyRate = inv.dailyReturnPct != null ? Number(inv.dailyReturnPct) : null;
-      const totalPct = inv.totalReturnPct != null ? Number(inv.totalReturnPct) : (dailyRate != null ? dailyRate * invDays : (Number(inv.returnPct) || 0));
-      const target = round(amount * totalPct / 100, 2);
+      const amountUsd = Number(inv.amountUsd) || (amount * 0.5);
+      /* WhaleChat shares payout:
+           daily profit = live share price x plan % per day
+           total profit = daily profit x plan duration days x capital USD
+         Capital is returned to WC-Investing capital; profit goes to payout. */
+      const dailyProfitUsd = round((Number(market.priceUsd) || 0) * ((Number(dailyRate) || 0) / 100), 6);
+      const targetUsd = round(dailyProfitUsd * invDays * amountUsd, 2);
+      const target = Math.round((targetUsd / 0.5) * 100) / 100; /* coins for equity display */
       if (end && now >= end) {
-        this.complete(db, inv, target);
+        this.complete(db, inv, targetUsd);
         changed = true;
         continue;
       }
@@ -501,6 +507,8 @@ class ShareService {
       const elapsed = Math.max(0, Math.min(end - start, now - start));
       const accrued = round(target * (elapsed / Math.max(1, end - start)), 6);
       inv.profitCoins = accrued;
+      inv.dailyProfitUsd = dailyProfitUsd;
+      inv.targetProfitUsd = targetUsd;
       if (now - (Number(inv.lastAccrualAt) || 0) >= 30000) {
         inv.lastAccrualAt = now;
         inv.equityHistory = inv.equityHistory || [];
@@ -516,29 +524,35 @@ class ShareService {
     return changed ? 1 : 0;
   }
 
-  complete(db, inv, targetProfit) {
+  complete(db, inv, targetProfitUsd) {
     const u = (db.users || []).find((x) => x.id === inv.userId);
     if (!u) return;
     const now = Date.now();
     const days = Number(inv.durationDays) || 1;
-    const totalPct = inv.totalReturnPct != null ? Number(inv.totalReturnPct) : (inv.dailyReturnPct != null ? Number(inv.dailyReturnPct) * days : (Number(inv.returnPct) || 0));
-    const profit = round(targetProfit != null ? targetProfit : (Number(inv.amountCoins) || 0) * totalPct / 100, 2);
+    const amountUsd = Number(inv.amountUsd) || 0;
+    const profitUsd = round(targetProfitUsd != null ? targetProfitUsd : (Number(inv.dailyProfitUsd) || 0) * days * amountUsd, 2);
+    const profit = round(profitUsd / 0.5, 2);              /* coins for the ledger */
     const payout = round((Number(inv.amountCoins) || 0) + profit, 2);
     inv.status = 'completed';
     inv.completedAt = now;
     inv.profitCoins = profit;
+    inv.profitUsd = profitUsd;
     inv.payoutCoins = payout;
+    inv.payoutUsd = round(amountUsd + profitUsd, 2);
     inv.endAt = Math.min(Number(inv.endAt) || now, now);
     inv.equityHistory = inv.equityHistory || [];
     inv.equityHistory.push({ t: now, coins: payout });
     if (inv.equityHistory.length > 240) inv.equityHistory.splice(0, inv.equityHistory.length - 240);
     const ia = invAcct(u);
-    const payoutUsd = round(payout * 0.5, 2);
-    ia.payout = round((Number(ia.payout) || 0) + payoutUsd, 2);
-    this.tx(db, inv.userId, `WhaleChat shares matured · ${inv.planName}`, payout, 'share-maturity', {
-      investmentId: inv.id, principalCoins: inv.amountCoins, profitCoins: profit, payoutCoins: payout, payoutUsd, returnPct: inv.returnPct
+    /* capital returns to WC-Investing capital, profit goes to the payout balance */
+    setPf(u, 'wc', pf(u, 'wc') + amountUsd);
+    ia.payout = round((Number(ia.payout) || 0) + profitUsd, 2);
+    this.tx(db, inv.userId, `WhaleChat shares matured · ${inv.planName}`, -profit, 'share-maturity', {
+      investmentId: inv.id, principalUsd: amountUsd, principalCoins: inv.amountCoins,
+      profitUsd, profitCoins: profit, payoutUsd: inv.payoutUsd, returnPct: inv.returnPct,
+      dailyProfitUsd: inv.dailyProfitUsd, durationDays: days
     });
-    this.notify(db, inv.userId, 'Investment matured', `Your ${inv.planName} plan paid out $${payoutUsd.toFixed(2)} into your investment payout balance — $${(profit * 0.5).toFixed(2)} profit.`, 'check');
+    this.notify(db, inv.userId, 'Investment matured', `Your ${inv.planName} plan returned $${amountUsd.toFixed(2)} capital to WC-Investing and paid $${profitUsd.toFixed(2)} profit into your investment payout balance.`, 'check');
   }
 
   startTimers() {

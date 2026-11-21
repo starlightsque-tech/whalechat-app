@@ -252,8 +252,10 @@
       /* the server bot engine charges its own balance — nothing to do here */
       if (!opts.skipPin && !(await pinOk('Confirm subscription', d.name))) return { ok: false, error: 'cancelled' };
       if (d.bot) {
-        var res = await pushToBotEngine();
-        if (res && res.error) return { ok: false, error: res.error };
+        /* The local record is the source of truth for the paid duration. A
+           cold/unreachable bot engine must not fail the subscription or show
+           "failed to fetch" — sync it in the background when it is available. */
+        try { await pushToBotEngine(); } catch (e) {}
       }
     }
 

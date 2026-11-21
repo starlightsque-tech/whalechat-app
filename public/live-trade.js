@@ -308,8 +308,9 @@ const LT = {
     if (!t || t.status !== 'Open') return false;
     const u = findUser(t.userId);
     if (!u) return false;
-    /* trade ended by timer with no manual / auto Take Profit: final move % from the last price at end time, no moves multiplier */
-    const p = this.calc(t, reason === 'Time limit reached');
+    /* every close (manual, stop, take-profit or timer) pays the move % at
+       exit multiplied by the number of moves gained during the trade */
+    const p = this.calc(t);
     const ia = INV.investAcct(u);
     const split = LT.bookClose(ia, t.capitalCoins, p.pnlCoins, LT.closeFee(t));
     const payout = split.payout;
@@ -431,11 +432,12 @@ const LT = {
     if (!DB || !DB.trades) return;
     this.open().forEach(t => {
       this.updateTrailing(t);
-      /* Finnhub-covered symbols are settled by the backend so a closed browser
-         cannot miss a payout — avoid paying the same trade twice. */
-      if (this.serverCovered(t)) return;
-      /* Auto Secure: lock any profit the moment it appears (backend does this for covered symbols) */
+      /* Auto Secure runs on the device as well as the backend: lock the
+         profit the moment it appears, before any backend round-trip. */
       if (this.autoSecureOn(t.userId)) this.secureLocal(t, 'Auto Secure');
+      /* Finnhub-covered symbols are also settled by the backend so a closed
+         browser cannot miss a payout — avoid paying the same trade twice. */
+      if (this.serverCovered(t)) return;
       const p = this.calc(t);
       const dir = this.dirOf(t);
       const lv = this.tpslOf(t);
@@ -1172,7 +1174,7 @@ LT.seriesWithTrades = function (tf, userId) {
   const win = LT_WINDOW[tf] || LT_WINDOW['1M'];
   const now = Date.now();
   const series = pos.map(p => ({ p, data: INV.series(p.ticker, tf) }));
-  const len = pos.length ? Math.max(...series.map(s => s.data.length)) : 60;
+  const len = Math.max(2, pos.length ? Math.max(2, ...series.map(s => s.data.length)) : 60);
   const out = [];
   for (let i = 0; i < len; i++) {
     const msAgo = (1 - i / Math.max(1, len - 1)) * win;
@@ -1188,7 +1190,7 @@ LT.seriesWithTrades = function (tf, userId) {
       if (msAgo > started) { v += p.capital; return; }           /* before entry: flat capital */
       const dir = t.side === 'short' ? -1 : 1;
       const move = LT.priceMovePct(t.entryPrice, price) / 100;
-      const pnl = Math.max(-p.capital, p.capital * (LT.movePctOf(t, price) / 100) * (t.leverage || 1) * dir * (LT.tpLevelOf(t) > 0 ? 1 : Math.max(1, Number(t.moveCount) || 0, t._cMoves || 0)));
+      const pnl = Math.max(-p.capital, p.capital * (LT.movePctOf(t, price) / 100) * (t.leverage || 1) * dir * (LT.tpLevelOf(t) > 0 ? 1 : Math.max(0, Number(t.clientMoveTotal) || 0, Number(t.moveCount) || 0, t._cMoves || 0)));
       v += Math.max(0, p.capital + pnl);
     });
     out.push(v);
@@ -1278,7 +1280,8 @@ LT.autoSecureStrip = function () {
 function kitPortfolio(series, tf, hasPerf) {
   try {
     if (window.WCChartKit && WCChartKit.autoHtml) {
-      const vals = (series || []).map((v) => Number(v) || 0).filter((v) => isFinite(v));
+      let vals = (series || []).map((v) => Number(v) || 0).filter((v) => isFinite(v));
+      if (vals.length === 1) vals = [vals[0], vals[0]];
       const count = vals.length;
       const step = { '1D': 6e4, '1W': 6e5, '1M': 18e5, '3M': 54e5, '1Y': 216e5, ALL: 216e5 }[tf] || 6e4;
       const now = Date.now();
@@ -2760,14 +2763,20 @@ LT.closeFee = function (t) {
    Single source of truth for live P&L, charts and the trade guide. */
 /* number of real price moves seen on the live feed since entry (or last re-base): each distinct new price counts once; never a fixed number */
 LT.movesOf = function (t, price) {
-  const n = Number(t.moveCount) || 0;
   const p = Number(price);
+  if (!t) return 0;
   if (t._cEntry !== t.entryPrice) { t._cEntry = t.entryPrice; t._cMoves = 0; t._cLast = undefined; }
   if (p > 0 && p !== t._cLast) {
-    if (t._cLast > 0) { t._cMoves = (t._cMoves || 0) + 1; t.clientMoveTotal = (Number(t.clientMoveTotal) || 0) + 1; }
+    /* count only a new tick in the user's direction: that is a trade move */
+    const dir = LT.dirOf(t) === 'FALL' ? -1 : 1;
+    if (t._cLast > 0 && (p - t._cLast) * dir > 0) {
+      t._cMoves = (Number(t._cMoves) || 0) + 1;
+      t.clientMoveTotal = (Number(t.clientMoveTotal) || 0) + 1;
+      t.moveCount = t.clientMoveTotal;
+    }
     t._cLast = p;
   }
-  return Math.max(1, n, t._cMoves || 0);
+  return Math.max(0, Number(t._cMoves) || 0, Number(t.clientMoveTotal) || 0);
 };
 /* Take-profit level in USD (a % TP is stored as its USD amount of the capital) */
 LT.tpLevelOf = function (t) {
@@ -2802,12 +2811,17 @@ LT.rebaseAfterTake = function (t, price, amount) {
    (totalMoveCount) wins; older trades fall back to the moves since the last re-base. */
 LT.totalMovesOf = function (t) {
   if (!t) return 0;
-  if (LT.tpLevelOf(t) > 0) {
-    if (t.status !== 'Open') return Number(t.totalMoveCount) || Number(t.tpMovesTaken) || 0;
-    const q = INV.quote(t.ticker);
-    return (Number(t.tpMovesTaken) || 0) + LT.tpMoves(t, q ? q.price : t.entryPrice);
-  }
-  return Math.max(Number(t.totalMoveCount) || 0, Number(t.clientMoveTotal) || 0, Number(t.moveCount) || 0, t._cMoves || 0);
+  /* the counter the user watches: real favourable price ticks since the trade
+     opened, never the number of take-profit levels */
+  const q = INV.quote(t.ticker);
+  const live = q && Number(q.price) > 0 ? LT.movesOf(t, q.price) : 0;
+  return Math.max(
+    live,
+    Number(t.clientMoveTotal) || 0,
+    Number(t.moveCount) || 0,
+    Number(t.totalMoveCount) || 0,
+    Number(t._cMoves) || 0
+  );
 };
 /* admin profit rate (%) for a stock: its own rate, else the market-type rate (Admin -> Stocks) */
 /* ---- trade move log: stock price and profit at every move, and who took it ---- */

@@ -337,6 +337,31 @@ async function verifyAdmin(env, token) {
   return u || null;
 }
 
+
+/* ------------------------------------------------- market connections -- */
+async function getConn(env) {
+  return (await env.WC_STATE.get('conn:cfg', 'json')) || {};
+}
+async function setConn(env, cfg) {
+  await env.WC_STATE.put('conn:cfg', JSON.stringify(cfg));
+}
+async function testFinnhub(key) {
+  if (!key) return { ok: false, error: 'no_key' };
+  try {
+    const r = await fetch('https://finnhub.io/api/v1/quote?symbol=AAPL&token=' + encodeURIComponent(key), { headers: { accept: 'application/json' } });
+    const j = await r.json().catch(() => null);
+    return { ok: r.ok && j && Number(j.c) > 0, price: j && j.c, error: r.ok ? (Number(j && j.c) > 0 ? '' : 'No price returned') : 'HTTP ' + r.status };
+  } catch (e) { return { ok: false, error: String(e.message || e) }; }
+}
+async function testTwelve(key) {
+  if (!key) return { ok: false, error: 'no_key' };
+  try {
+    const r = await fetch('https://api.twelvedata.com/quote?symbol=AAPL&apikey=' + encodeURIComponent(key), { headers: { accept: 'application/json' } });
+    const j = await r.json().catch(() => null);
+    return { ok: r.ok && j && !j.code && Number(j.close) > 0, price: j && j.close, error: j && j.message ? j.message : (r.ok ? '' : 'HTTP ' + r.status) };
+  } catch (e) { return { ok: false, error: String(e.message || e) }; }
+}
+
 /* ---------------------------------------------------------------- main -- */
 export default {
   async fetch(request, env) {
@@ -471,6 +496,66 @@ export default {
         if (!phone) return json({ ok: false, error: 'invalid_phone_number' }, 400);
         const verified = await checkCode(env, 'sms', phone, body.code);
         return json({ ok: true, verified: verified, status: verified ? 'VALID' : 'INVALID', provider: 'brevo' }, 200);
+      }
+
+      /* --- market provider connections (admin) --------------------- */
+      if (path === '/api/connections' && (request.method === 'GET' || request.method === 'POST')) {
+        const admin = await isAdmin(env, request);
+        if (!admin) return json({ ok: false, error: 'admin_required' }, 403);
+        const cfg = await getConn(env);
+        if (request.method === 'GET') {
+          const f = cfg.finnhub || {}, t = cfg.twelvedata || {}, b = cfg.binance || {};
+          return json({
+            ok: true,
+            finnhub: { configured: !!f.apiKey, source: f.apiKey ? 'finnhub' : 'offline', live: { source: f.apiKey ? 'finnhub' : 'offline', hasKey: !!f.apiKey } },
+            twelvedata: { configured: !!t.apiKey, source: t.apiKey ? 'twelvedata' : 'offline', live: { source: t.apiKey ? 'twelvedata' : 'offline', lastError: '' } },
+            binance: { configured: true, source: 'binance', live: { source: 'binance', ticks: 0 } },
+            brevo: { configured: !!env.BREVO_API_KEY, source: 'brevo' },
+            smtp: { configured: !!env.BREVO_API_KEY },
+            storage: { configured: true, provider: 'cloudflare-d1+kv' }
+          }, 200);
+        }
+        const body = await request.json().catch(() => ({}));
+        ['finnhub','twelvedata','binance'].forEach((k) => {
+          if (!body[k] || typeof body[k] !== 'object') return;
+          cfg[k] = Object.assign({}, cfg[k] || {}, body[k]);
+          if (cfg[k].apiKey) cfg[k].apiKey = String(cfg[k].apiKey).trim();
+        });
+        if (body.twelvedataPoll) cfg.twelvedataPoll = true;
+        await setConn(env, cfg);
+        return json({ ok: true, configured: true, storage: 'cloudflare-kv' }, 200);
+      }
+      if (path === '/api/connections/test' && request.method === 'POST') {
+        const admin = await isAdmin(env, request);
+        if (!admin) return json({ ok: false, error: 'admin_required' }, 403);
+        const body = await request.json().catch(() => ({}));
+        const cfg = await getConn(env);
+        const which = String(body.which || '');
+        const results = {};
+        if (which === 'all' || which === 'finnhub') results.finnhub = Object.assign({ hasKey: !!(cfg.finnhub && cfg.finnhub.apiKey) }, await testFinnhub(cfg.finnhub && cfg.finnhub.apiKey));
+        if (which === 'all' || which === 'twelvedata') results.twelvedata = Object.assign({ hasKey: !!(cfg.twelvedata && cfg.twelvedata.apiKey) }, await testTwelve(cfg.twelvedata && cfg.twelvedata.apiKey));
+        if (which === 'all' || which === 'binance') results.binance = { source: 'binance', ok: true };
+        if (which === 'all' || which === 'brevo') results.brevo = { configured: !!env.BREVO_API_KEY, ok: !!env.BREVO_API_KEY };
+        return json({ ok: true, results: results, resultsMap: results }, 200);
+      }
+      if (path === '/api/market/config' && (request.method === 'GET' || request.method === 'POST')) {
+        const admin = await isAdmin(env, request);
+        if (!admin) return json({ ok: false, error: 'admin_only' }, 403);
+        const cfg = await getConn(env);
+        if (request.method === 'GET') {
+          const f = cfg.finnhub || {};
+          return json({ ok: true, mode: f.mode || 'hybrid', refreshSec: Number(f.refreshSec) || 15, hasKey: !!f.apiKey, keyMasked: f.apiKey ? String(f.apiKey).slice(-4).padStart(8, '•') : '', source: f.apiKey ? 'finnhub' : 'offline', notice: f.apiKey ? 'Finnhub key saved on the Cloudflare edge' : 'No Finnhub key saved' }, 200);
+        }
+        const body = await request.json().catch(() => ({}));
+        cfg.finnhub = Object.assign({}, cfg.finnhub || {}, {
+          mode: body.mode === 'hybrid' ? 'hybrid' : 'simulated',
+          refreshSec: Math.min(300, Math.max(5, Number(body.refreshSec) || 15)),
+          updatedAt: Date.now()
+        });
+        if (body.clearKey) delete cfg.finnhub.apiKey;
+        if (body.apiKey) cfg.finnhub.apiKey = String(body.apiKey).trim();
+        await setConn(env, cfg);
+        return json({ ok: true, mode: cfg.finnhub.mode, refreshSec: cfg.finnhub.refreshSec, hasKey: !!cfg.finnhub.apiKey, keyMasked: cfg.finnhub.apiKey ? String(cfg.finnhub.apiKey).slice(-4).padStart(8, '•') : '' }, 200);
       }
 
       /* --- admin email through Brevo -------------------------------- */
