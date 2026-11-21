@@ -138,22 +138,204 @@ async function proxy(request, env, url) {
 
 async function isAdmin(env, request) {
   const token = String(request.headers.get('x-admin-token') || '');
-  if (!token) return null;
-  try {
-    const r = await fetch(syncOrigin(env) + '/api/admin/me', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ token: token })
-    });
-    const j = await r.json().catch(() => null);
-    return r.ok && j && j.ok ? j.admin : null;
-  } catch (e) { return null; }
+  return token ? await verifyAdmin(env, token) : null;
 }
 async function stateDb(env) {
-  const r = await fetch(syncOrigin(env) + '/api/state?t=' + Date.now(), { headers: { accept: 'application/json' } });
-  const j = await r.json().catch(() => null);
-  return j && j.db ? j.db : null;
+  const st = await readState(env);
+  return st && st.db ? st.db : null;
 }
 function cleanText(v, max) { return String(v == null ? '' : v).replace(/[\r\n]+/g, ' ').trim().slice(0, max || 700); }
+
+
+/* ======================================================================
+   Durable state on Cloudflare KV + D1
+   ====================================================================== */
+const COLLECTIONS = ['users','vendors','companyProducts','products','orders','deposits','withdrawals','messages','statuses','notifications','contacts','blocks','txs','referrals','purchases','refunds','vendorApplications','audit','portfolioAudit','botAccounts','botEvents','stocks','holdings','trades','watchlist','alerts','traffic'];
+const STATE_KEY = 'state:db';
+
+async function ensureSchema(env) {
+  if (!env.WC_DB) return false;
+  try {
+    await env.WC_DB.batch([
+      env.WC_DB.prepare('CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, json TEXT NOT NULL, updated_at INTEGER)'),
+      env.WC_DB.prepare('CREATE TABLE IF NOT EXISTS deposits (id TEXT PRIMARY KEY, user_id TEXT, status TEXT, json TEXT NOT NULL, updated_at INTEGER)'),
+      env.WC_DB.prepare('CREATE TABLE IF NOT EXISTS withdrawals (id TEXT PRIMARY KEY, user_id TEXT, status TEXT, json TEXT NOT NULL, updated_at INTEGER)'),
+      env.WC_DB.prepare('CREATE TABLE IF NOT EXISTS chat_messages (id TEXT PRIMARY KEY, seq INTEGER UNIQUE, chat_id TEXT, from_id TEXT, to_id TEXT, json TEXT NOT NULL, created_at INTEGER)'),
+      env.WC_DB.prepare('CREATE INDEX IF NOT EXISTS idx_chat_seq ON chat_messages(seq)'),
+      env.WC_DB.prepare('CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT)')
+    ]);
+    return true;
+  } catch (e) { return false; }
+}
+
+async function readState(env, migrate) {
+  let st = null;
+  /* D1 is strongly consistent: use it as the authoritative state row */
+  if (env.WC_DB) {
+    try {
+      await ensureSchema(env);
+      const row = await env.WC_DB.prepare("SELECT v FROM meta WHERE k='state:db'").first();
+      if (row && row.v) { try { st = JSON.parse(row.v); } catch (e) {} }
+    } catch (e) {}
+  }
+  if (!st || !st.db) st = await env.WC_STATE.get(STATE_KEY, 'json');
+  if (st && st.db) return st;
+  if (migrate !== false && env.SYNC_ORIGIN) {
+    try {
+      const r = await fetch(syncOrigin(env) + '/api/state?t=' + Date.now(), { headers: { accept: 'application/json' } });
+      const j = await r.json();
+      if (j && j.db) {
+        st = { rev: Number(j.rev) || 1, at: Date.now(), db: j.db, migratedFrom: syncOrigin(env) };
+        await writeState(env, st);
+        await mirrorAll(env, st.db);
+        return st;
+      }
+    } catch (e) {}
+  }
+  return st && st.db ? st : { rev: 0, at: 0, db: blankDb() };
+}
+
+async function writeState(env, st) {
+  const raw = JSON.stringify(st);
+  if (env.WC_DB) {
+    try { await ensureSchema(env); await env.WC_DB.prepare("INSERT OR REPLACE INTO meta (k,v) VALUES ('state:db',?)").bind(raw).run(); } catch (e) {}
+  }
+  try { await env.WC_STATE.put(STATE_KEY, raw); } catch (e) {}
+}
+
+function blankDb() {
+  const db = { users: [], deposits: [], withdrawals: [], messages: [], txs: [], notifications: [], contacts: [], blocks: [], trades: [], holdings: [], products: [], stocks: [], settings: {}, meta: {}, chatsMeta: {} };
+  COLLECTIONS.forEach((c) => { if (!Array.isArray(db[c])) db[c] = []; });
+  return db;
+}
+
+function itemTime(x) {
+  if (!x) return 0;
+  return Math.max(Number(x.updatedAt)||0, Number(x.reviewedAt)||0, Number(x.closedAt)||0, Number(x.createdAt)||0, Number(x.at)||0);
+}
+function applyOps(db, ops) {
+  const out = db || blankDb();
+  COLLECTIONS.forEach((c) => { if (!Array.isArray(out[c])) out[c] = []; });
+  (ops || []).forEach((o) => {
+    if (!o || !o.op) return;
+    if (o.op === 'set') { out[o.key] = o.value; return; }
+    const col = o.col; if (!col) return;
+    if (!Array.isArray(out[col])) out[col] = [];
+    if (o.op === 'push' && o.item && o.item.id) {
+      const i = out[col].findIndex((x) => x && x.id === o.item.id);
+      if (i >= 0) out[col][i] = o.item; else out[col].push(o.item);
+    } else if (o.op === 'update' && o.id) {
+      const i = out[col].findIndex((x) => x && x.id === o.id);
+      if (i >= 0) out[col][i] = Object.assign({}, out[col][i], o.patch || {});
+      else if (o.patch && o.patch.id) out[col].push(o.patch);
+    } else if (o.op === 'remove' && o.id) {
+      out[col] = out[col].filter((x) => !x || x.id !== o.id);
+      out.__deleted = out.__deleted || {};
+      out.__deleted[col + ':' + o.id] = Date.now();
+    }
+  });
+  return out;
+}
+
+async function mirrorAll(env, db) {
+  if (!env.WC_DB) return;
+  await ensureSchema(env);
+  const stmts = [
+    env.WC_DB.prepare('DELETE FROM users'),
+    env.WC_DB.prepare('DELETE FROM deposits'),
+    env.WC_DB.prepare('DELETE FROM withdrawals')
+  ];
+  (db.users || []).forEach((u) => { if (u && u.id) stmts.push(env.WC_DB.prepare('INSERT OR REPLACE INTO users (id,json,updated_at) VALUES (?,?,?)').bind(u.id, JSON.stringify(u), itemTime(u))); });
+  (db.deposits || []).forEach((d) => { if (d && d.id) stmts.push(env.WC_DB.prepare('INSERT OR REPLACE INTO deposits (id,user_id,status,json,updated_at) VALUES (?,?,?,?,?)').bind(d.id, d.userId || '', d.status || '', JSON.stringify(d), itemTime(d))); });
+  (db.withdrawals || []).forEach((w) => { if (w && w.id) stmts.push(env.WC_DB.prepare('INSERT OR REPLACE INTO withdrawals (id,user_id,status,json,updated_at) VALUES (?,?,?,?,?)').bind(w.id, w.userId || '', w.status || '', JSON.stringify(w), itemTime(w))); });
+  if (stmts.length) { try { await env.WC_DB.batch(stmts); } catch (e) {} }
+}
+
+async function mirrorOps(env, ops) {
+  if (!env.WC_DB) return;
+  await ensureSchema(env);
+  const stmts = [];
+  (ops || []).forEach((o) => {
+    if (!o || !o.col) return;
+    if (o.col === 'users' && o.item && o.item.id) stmts.push(env.WC_DB.prepare('INSERT OR REPLACE INTO users (id,json,updated_at) VALUES (?,?,?)').bind(o.item.id, JSON.stringify(o.item), itemTime(o.item)));
+    if (o.col === 'deposits' && o.item && o.item.id) stmts.push(env.WC_DB.prepare('INSERT OR REPLACE INTO deposits (id,user_id,status,json,updated_at) VALUES (?,?,?,?,?)').bind(o.item.id, o.item.userId || '', o.item.status || '', JSON.stringify(o.item), itemTime(o.item)));
+    if (o.col === 'withdrawals' && o.item && o.item.id) stmts.push(env.WC_DB.prepare('INSERT OR REPLACE INTO withdrawals (id,user_id,status,json,updated_at) VALUES (?,?,?,?,?)').bind(o.item.id, o.item.userId || '', o.item.status || '', JSON.stringify(o.item), itemTime(o.item)));
+  });
+  if (stmts.length) { try { await env.WC_DB.batch(stmts); } catch (e) {} }
+}
+
+/* --------------------------------------------------------------- chat -- */
+async function chatSeq(env) {
+  await ensureSchema(env);
+  try {
+    const r = await env.WC_DB.prepare('SELECT COALESCE(MAX(seq),0) AS s FROM chat_messages').first();
+    return Number(r && r.s) || 0;
+  } catch (e) { return 0; }
+}
+async function chatAppend(env, list) {
+  await ensureSchema(env);
+  let seq = await chatSeq(env);
+  const accepted = [];
+  for (const raw of (list || []).slice(0, 60)) {
+    if (!raw || !raw.id) continue;
+    const exists = await env.WC_DB.prepare('SELECT id FROM chat_messages WHERE id=?').bind(String(raw.id)).first().catch(() => null);
+    if (exists) { accepted.push({ id: String(raw.id), status: 'sent', duplicate: true }); continue; }
+    seq += 1;
+    const m = Object.assign({}, raw, { seq: seq, status: 'sent' });
+    await env.WC_DB.prepare('INSERT INTO chat_messages (id,seq,chat_id,from_id,to_id,json,created_at) VALUES (?,?,?,?,?,?,?)')
+      .bind(String(m.id), seq, String(m.chatId || ''), String(m.from || ''), String(m.to || ''), JSON.stringify(m), Number(m.createdAt) || Date.now()).run();
+    accepted.push({ id: String(m.id), status: 'sent', seq: seq });
+  }
+  return { ok: true, seq: seq, accepted: accepted };
+}
+async function chatSince(env, since, limit) {
+  await ensureSchema(env);
+  try {
+    const r = await env.WC_DB.prepare('SELECT json FROM chat_messages WHERE seq > ? ORDER BY seq ASC LIMIT ?').bind(Number(since) || 0, Math.min(500, Number(limit) || 200)).all();
+    return (r.results || []).map((x) => { try { return JSON.parse(x.json); } catch (e) { return null; } }).filter(Boolean);
+  } catch (e) { return []; }
+}
+async function migrateChat(env) {
+  if (!env.WC_DB || !env.SYNC_ORIGIN) return;
+  await ensureSchema(env);
+  const n = await chatSeq(env);
+  if (n > 0) return;
+  try {
+    const r = await fetch(syncOrigin(env) + '/api/chat/state?since=0', { headers: { accept: 'application/json' } });
+    const j = await r.json();
+    const list = (j && j.messages) || [];
+    if (list.length) await chatAppend(env, list);
+  } catch (e) {}
+}
+
+/* ------------------------------------------------------------- admin --- */
+async function sha256Hex(v) {
+  const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(v)));
+  return Array.from(new Uint8Array(b)).map((x) => x.toString(16).padStart(2, '0')).join('');
+}
+function b64u(buf) { return btoa(String.fromCharCode.apply(null, new Uint8Array(buf))).replace(/=+$/,'').replace(/\+/g,'-').replace(/\//g,'_'); }
+function unb64u(s) { return Uint8Array.from(atob(String(s).replace(/-/g,'+').replace(/_/g,'/')), (c) => c.charCodeAt(0)); }
+async function adminToken(env, user) {
+  const secret = env.ADMIN_SECRET || env.WC_OTP_SECRET || 'whalechat-admin';
+  const payload = { sub: user.id, role: 'admin', exp: Date.now() + 8 * 3600 * 1000 };
+  const data = b64u(new TextEncoder().encode(JSON.stringify(payload)));
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = b64u(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(data)));
+  return data + '.' + sig;
+}
+async function verifyAdmin(env, token) {
+  if (!token || token.indexOf('.') < 0) return null;
+  const secret = env.ADMIN_SECRET || env.WC_OTP_SECRET || 'whalechat-admin';
+  const [data, sig] = token.split('.');
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const good = b64u(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(data)));
+  if (good !== sig) return null;
+  let p = null; try { p = JSON.parse(new TextDecoder().decode(unb64u(data))); } catch (e) { return null; }
+  if (!p || !p.sub || Date.now() > Number(p.exp || 0)) return null;
+  const st = await readState(env);
+  const u = (st.db.users || []).find((x) => x && x.id === p.sub && x.role === 'admin' && !x.banned);
+  return u || null;
+}
 
 /* ---------------------------------------------------------------- main -- */
 export default {
@@ -163,6 +345,87 @@ export default {
     if (request.method === 'OPTIONS') return new Response('', { status: 204, headers: CORS });
 
     try {
+      /* --- durable state on Cloudflare KV + D1 ----------------------- */
+      if (path === '/api/health' && request.method === 'GET') {
+        const st = await readState(env, false);
+        return json({ ok: true, app: 'whalechat', version: '3.80.0', provider: 'cloudflare-edge', storage: 'cloudflare-kv+d1', stream: false, realtime: { provider: 'poll', enabled: false }, rev: st.rev || 0, users: (st.db.users || []).length, email: !!env.BREVO_API_KEY }, 200);
+      }
+      if (path === '/api/state' && request.method === 'GET') {
+        const st = await readState(env, true);
+        await migrateChat(env);
+        return json({ rev: st.rev || 0, db: st.db, updatedAt: st.at || 0, storage: 'cloudflare' }, 200);
+      }
+      if (path === '/api/state/init' && request.method === 'POST') {
+        const body = await request.json().catch(() => ({}));
+        if (!body.db || !Array.isArray(body.db.users) || !body.db.users.length) return json({ ok: false, error: 'invalid_db' }, 400);
+        const st = { rev: Math.max(1, Number(body.rev) || 1), at: Date.now(), db: body.db };
+        await writeState(env, st);
+        await mirrorAll(env, st.db);
+        return json({ ok: true, rev: st.rev }, 200);
+      }
+      if (path === '/api/ops' && request.method === 'POST') {
+        const body = await request.json().catch(() => ({}));
+        const st = await readState(env, true);
+        st.db = applyOps(st.db, body.ops || []);
+        st.rev = Math.max(1, Number(st.rev) || 0) + 1;
+        st.at = Date.now();
+        await writeState(env, st);
+        await mirrorAll(env, st.db);
+        return json({ ok: true, rev: st.rev }, 200);
+      }
+      if (path === '/api/release' && request.method === 'GET') {
+        const st = await readState(env, false);
+        return json({ ok: true, version: '3.80.0', build: 'cloudflare', uptimeSec: 0, clients: 0, rev: st.rev || 0, devices: 0, publicUrl: 'https://whalechat.pages.dev', users: (st.db.users || []).length, storage: 'cloudflare' }, 200);
+      }
+
+      /* --- chat lane on D1 ------------------------------------------ */
+      if (path === '/api/chat/send' && request.method === 'POST') {
+        const body = await request.json().catch(() => ({}));
+        const list = Array.isArray(body.messages) ? body.messages : (body.message ? [body.message] : []);
+        if (!list.length) return json({ ok: false, error: 'no_messages' }, 400);
+        return json(await chatAppend(env, list), 200);
+      }
+      if ((path === '/api/chat/state' || path === '/api/chat/sync') && (request.method === 'GET' || request.method === 'POST')) {
+        let since = Number(url.searchParams.get('since') || 0) || 0;
+        if (request.method === 'POST') { const b = await request.json().catch(() => ({})); since = Number(b.since || since) || 0; }
+        const messages = await chatSince(env, since, 300);
+        return json({ ok: true, seq: messages.length ? messages[messages.length - 1].seq : since, messages: messages, events: [], evSeq: since, waited: 0 }, 200);
+      }
+      if (path === '/api/chat/events' && request.method === 'GET') {
+        return json({ ok: true, seq: 0, events: [] }, 200);
+      }
+      if ((path === '/api/chat/read' || path === '/api/chat/typing' || path === '/api/chat/presence') && request.method === 'POST') {
+        return json({ ok: true }, 200);
+      }
+
+      /* --- admin auth on the edge ----------------------------------- */
+      if (path === '/api/admin/login' && request.method === 'POST') {
+        const body = await request.json().catch(() => ({}));
+        const login = String(body.login || body.email || body.username || body.userId || '').trim().toLowerCase();
+        const given = String(body.password || '');
+        const st = await readState(env, true);
+        const u = (st.db.users || []).find((x) => x && x.role === 'admin' && !x.banned &&
+          (String(x.email || '').toLowerCase() === login || String(x.username || '').toLowerCase() === login || String(x.id || '').toLowerCase() === login));
+        if (!u) return json({ ok: false, error: 'invalid', message: 'Incorrect admin email or password' }, 401);
+        const hash = await sha256Hex('whalechat::v1::' + given);
+        if (!u.pass || hash !== u.pass) return json({ ok: false, error: 'invalid', message: 'Incorrect admin email or password' }, 401);
+        const token = await adminToken(env, u);
+        return json({ ok: true, token: token, admin: { id: u.id, email: u.email || '', username: u.username || '', fullName: u.fullName || 'WhaleChat Admin' }, expiresAt: Date.now() + 8 * 3600 * 1000 }, 200);
+      }
+      if (path === '/api/admin/me' && request.method === 'POST') {
+        const body = await request.json().catch(() => ({}));
+        const u = await verifyAdmin(env, body.token || request.headers.get('x-admin-token'));
+        return u ? json({ ok: true, admin: { id: u.id, email: u.email || '', username: u.username || '', fullName: u.fullName || '' } }, 200) : json({ ok: false, error: 'unauthorised' }, 401);
+      }
+      if (path === '/api/admin/session/auto' && request.method === 'POST') {
+        const body = await request.json().catch(() => ({}));
+        const id = String(body.userId || body.adminId || body.login || '');
+        const st = await readState(env, true);
+        const u = (st.db.users || []).find((x) => x && x.id === id && x.role === 'admin' && !x.banned);
+        if (!u) return json({ ok: false, error: 'admin_not_found' }, 403);
+        return json({ ok: true, token: await adminToken(env, u), adminId: u.id, expiresAt: Date.now() + 8 * 3600 * 1000 }, 200);
+      }
+
       /* --- email verification codes ---------------------------------- */
       if (path === '/api/verify/email-code' && request.method === 'POST') {
         const body = await request.json().catch(() => ({}));
