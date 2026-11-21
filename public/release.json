@@ -1,8 +1,8 @@
 {
-  "version": "3.59.0",
-  "build": "2026-11-22T00:30:00Z",
+  "version": "3.60.0",
+  "build": "2026-11-22T09:00:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.59.0 — lock-screen push notifications are back: the Cloudflare sync worker now signs VAPID requests, encrypts payloads (aes128gcm) and delivers every new chat or session message to the recipient's registered devices. Live market quotes are restored too: the worker serves 120 stock, ETF, FX and crypto quotes from the public Yahoo Finance feed with a 30-second refresh, SSE streaming and historical sparklines, so watchlists, holdings and charts move again. Chat remains local-first and realtime.",
-  "releasedAt": "2026-11-22T00:30:00Z",
+  "notes": "WhaleChat 3.60.0 — Brevo email is connected end to end (API key, SMTP relay and the Cloudflare edge sender), so signup verification codes actually arrive. Code verification is now forgiving in the right direction: a correct code always verifies the account — leading zeros, spaces, dashes, pasted text, a resend or an already-verified account can never make a valid code fail. Version 3.56.0 accounts jane and investorD can be restored with the new restore script.",
+  "releasedAt": "2026-11-22T09:00:00Z",
   "minimum": "3.0.0"
 }

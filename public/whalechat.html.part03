@@ -201,6 +201,22 @@ App.sendSignupCode = async function (manual) {
       verifyError(d.message || 'Could not send the code. Try again.');
       return;
     }
+    if (d.alreadyVerified) {
+      const meUser = me();
+      if (meUser) {
+        meUser.emailVerified = true;
+        meUser.verified = true;
+        meUser.verifiedAt = d.verifiedAt || Date.now();
+        meUser.verificationMethod = 'email_code';
+        delete meUser.emailVerifyRequired;
+      }
+      persist(true);
+      try { if (Remote.enabled) await Remote.flush(); } catch (e) {}
+      clearInterval(VERIFY_TIMER);
+      toast('Email already verified — welcome back', 'ok');
+      go('account');
+      return;
+    }
     if (d.autoVerified) {
       /* this sync server has no mail transport — verify immediately instead of
          trapping a brand-new account on a code screen it can never complete */
@@ -228,22 +244,40 @@ App.sendSignupCode = async function (manual) {
   }
 };
 
+let VERIFY_BUSY = false;
 App.verifyAccount = async function () {
   const u = me();
   if (!u) { go('login'); return; }
+  if (VERIFY_BUSY) return;
   const inp = document.getElementById('vcCode');
   const btn = document.getElementById('vcBtn');
   const raw = inp ? inp.value : '';
-  const code = String(raw || '').replace(/\D/g, '');
+  /* Accept whatever the clipboard or keyboard produced: trim, NFKC for
+     full-width digits, then keep the digits. A correct code is never changed. */
+  let norm = String(raw || '');
+  try { norm = norm.normalize('NFKC'); } catch (e) {}
+  const code = norm.replace(/[^0-9]/g, '').slice(0, 6);
+  if (inp && inp.value !== code) inp.value = code;
   if (code.length !== 6) { if (inp) inp.focus(); return verifyError('Enter the 6-digit code from the email'); }
+  VERIFY_BUSY = true;
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Verifying…'; }
-  const restore = () => { if (btn) { btn.disabled = false; btn.innerHTML = 'Verify &amp; continue'; } };
+  const restore = () => { VERIFY_BUSY = false; if (btn) { btn.disabled = false; btn.innerHTML = 'Verify &amp; continue'; } };
   try {
-    const r = await Remote.fetchJSON('/api/verify/signup/confirm', { method: 'POST', body: JSON.stringify({ email: u.email, code }) }, 15000);
-    const d = r.data || {};
-    if (!r.res.ok || d.ok === false) {
+    let r;
+    try {
+      r = await Remote.fetchJSON('/api/verify/signup/confirm', { method: 'POST', body: JSON.stringify({ email: u.email, code }) }, 15000);
+    } catch (netErr) {
+      /* Network problems must not eat the code or look like a wrong code. */
       restore();
-      if (inp) { inp.value = ''; inp.focus(); }
+      return verifyError('Network problem — your code is still in the box, tap Verify again.');
+    }
+    const d = r.data || {};
+    const verified = r.res.ok && d.ok !== false;
+    if (!verified && d.error !== 'already_verified') {
+      restore();
+      /* Keep the typed code visible so the user can fix a single digit rather
+         than retyping all six. */
+      if (inp) { inp.focus(); try { inp.select(); } catch (e) {} }
       const tail = d.attemptsLeft !== undefined ? ' (' + d.attemptsLeft + ' attempts left)' : '';
       return verifyError((d.message || 'That code is not correct') + tail);
     }
@@ -1322,9 +1356,9 @@ function messageHTML(m, u, other) {
   const showFwd = m.forwarded && m.type !== 'audio'; // audio forwards intentionally look normal
   let content = '';
   if (m.type === 'image') {
-    content = `<img class="chat-media skeleton" data-media="${m.mediaId}" style="min-height:120px" alt="Photo" data-act="view-media" data-id="${m.id}"/>`;
+    content = `<img class="chat-media${m.mediaUrl ? '' : ' skeleton'}"${m.mediaUrl ? ` src="${m.mediaUrl}"` : ''} data-media="${m.mediaId}" style="min-height:120px" alt="Photo" data-act="view-media" data-id="${m.id}"/>`;
   } else if (m.type === 'video') {
-    content = `<video class="chat-media" data-media="${m.mediaId}" controls playsinline preload="metadata" style="min-height:120px"></video>`;
+    content = `<video class="chat-media"${m.mediaUrl ? ` src="${m.mediaUrl}"` : ''} data-media="${m.mediaId}" controls playsinline preload="metadata" style="min-height:120px"></video>`;
   } else if (m.type === 'audio') {
     content = `<div class="audio-player" data-audio="${m.id}">
       <button class="ap-btn" data-act="play-audio" data-id="${m.id}">${ic('play', 14)}</button>

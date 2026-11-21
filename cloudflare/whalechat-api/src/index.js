@@ -5,7 +5,7 @@
    stays local-first and never polls.
    ========================================================================= */
 const APP = 'whalechat';
-const VERSION = '3.59.0';
+const VERSION = '3.60.0';
 const DO_NAME = 'global:v7';
 const PREV_DO_NAME = 'global:v6';
 const BUILD = '2026-11-22T00:30:00Z';

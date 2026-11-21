@@ -175,7 +175,7 @@ App.send = async function () {
   if (media.length) {
     media.forEach((md, i) => {
       DB.messages.push(Object.assign({}, base, {
-        id: uid('msg'), type: md.type, mediaId: md.id, dur: md.dur || null,
+        id: uid('msg'), type: md.type, mediaId: md.id, mediaUrl: md.url || null, dur: md.dur || null,
         text: i === media.length - 1 ? text : '', forwarded: false
       }));
     });

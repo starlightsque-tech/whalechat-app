@@ -323,8 +323,40 @@ function lifecycleEmails(pushes, events) {
 const VERIFY_CODES = new Map();
 /* signup email verification: email -> {hash, sentAt, exp, tries, sends} */
 const SIGNUP_CODES = new Map();
+/* A signup code is only ever compared against hashes this server issued for
+   the same address. Any issued code within the keep-window stays valid, so a
+   correct code can never be rejected because a newer code was emailed, because
+   the user typed it a little late, or because earlier typos tripped a counter.
+   Verification is monotonic: once true it is never cleared. */
+const SIGNUP_CODE_KEEP_MS = 24 * 60 * 60 * 1000;
+const SIGNUP_CODE_HASHES = 10;
 function signupCodeHash(emailAddr, code) {
   return require('crypto').createHash('sha256').update('signup::v1::' + String(emailAddr).toLowerCase() + '::' + String(code)).digest('hex');
+}
+/* Accept anything a mail client might wrap around the digits: spaces, dashes,
+   non-breaking spaces, full-width digits, or a pasted sentence containing the
+   code. Never mutate a correct code into an incorrect one. */
+function normalizeCode(raw) {
+  let v = String(raw == null ? '' : raw);
+  try { v = v.normalize('NFKC'); } catch (e) {}
+  const digits = v.replace(/[^0-9]/g, '');
+  return digits.slice(0, 6);
+}
+function hashMatches(hash, candidates) {
+  const crypto = require('crypto');
+  const a = Buffer.from(String(hash || ''), 'utf8');
+  let ok = false;
+  for (const c of (candidates || [])) {
+    const b = Buffer.from(String(c || ''), 'utf8');
+    if (a.length === b.length && a.length > 0 && crypto.timingSafeEqual(a, b)) ok = true;
+  }
+  return ok;
+}
+function signupHashes(rec) {
+  if (!rec) return [];
+  const list = Array.isArray(rec.hashes) ? rec.hashes.slice() : [];
+  if (rec.hash && !list.includes(rec.hash)) list.unshift(rec.hash);
+  return list.filter(Boolean).slice(0, SIGNUP_CODE_HASHES);
 }
 function maskEmail(e) {
   return String(e || '').replace(/^(.{2}).*(@.*)$/, '$1***$2');
@@ -1176,8 +1208,11 @@ async function api(req, res, pathname, query) {
     const emailAddr = String(body.email || '').trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(emailAddr)) return json(res, 400, { ok: false, error: 'bad_email', message: 'Enter a valid email address' });
     const user = (store.db.users || []).find((u) => String(u.email || '').trim().toLowerCase() === emailAddr);
-    if (!user) return json(res, 404, { ok: false, error: 'user_missing', message: 'Account not found yet — please try again in a moment' });
-    if (user.emailVerified === true || user.verified === true) return json(res, 409, { ok: false, error: 'already_verified', message: 'This account is already verified' });
+    /* An already-verified account is a success, not an error: the signup screen
+       simply moves on. */
+    if (user && user.emailVerified === true) {
+      return json(res, 200, { ok: true, alreadyVerified: true, verifiedAt: user.verifiedAt || Date.now(), userId: user.id, to: maskEmail(emailAddr) });
+    }
     const now = Date.now();
     const prev = SIGNUP_CODES.get(emailAddr);
     if (prev && now - prev.sentAt < 60000) {
@@ -1186,23 +1221,29 @@ async function api(req, res, pathname, query) {
     const sends = (prev && now - prev.windowStart < 3600000) ? (prev.sends || 0) : 0;
     if (sends >= 5) return json(res, 429, { ok: false, error: 'too_many', message: 'Too many codes requested. Try again in an hour.' });
     const code = String(require('crypto').randomInt(100000, 1000000));
+    const hash = signupCodeHash(emailAddr, code);
+    /* Keep every code issued in the keep-window. A resend must never invalidate
+       a code the user already has in their inbox. */
+    const history = (prev && Array.isArray(prev.history)) ? prev.history.filter((h) => h && h.hash && now - Number(h.at || 0) < SIGNUP_CODE_KEEP_MS) : [];
+    history.unshift({ hash, at: now, exp: now + 15 * 60000 });
     SIGNUP_CODES.set(emailAddr, {
-      hash: signupCodeHash(emailAddr, code),
+      hash,
+      hashes: history.map((h) => h.hash).slice(0, SIGNUP_CODE_HASHES),
+      history: history.slice(0, SIGNUP_CODE_HASHES),
       sentAt: now,
       windowStart: (prev && now - prev.windowStart < 3600000) ? prev.windowStart : now,
       sends: sends + 1,
       exp: now + 15 * 60000,
       tries: 0,
-      userId: user.id
+      userId: user ? user.id : (prev && prev.userId) || null
     });
     const appUrl = PUBLIC_URL || ('http://localhost:' + PORT);
     const mailReady = !!(email && email.configured && email.configured());
     let queued = false;
     if (mailReady) {
-      queued = !!email.enqueue({ key: null, to: user.email, template: 'verifyCode', data: { code, name: user.fullName || user.username, purposeLabel: 'your WhaleChat account', purposeRoute: 'signup' }, appUrl });
+      queued = !!email.enqueue({ key: null, to: emailAddr, template: 'verifyCode', data: { code, name: (user && (user.fullName || user.username)) || '', purposeLabel: 'your WhaleChat account', purposeRoute: 'signup' }, appUrl });
     }
-    /* never leak the code to the browser; the admin sees delivery status */
-    console.log('[verify] signup code for ' + emailAddr.slice(0, 2) + '*** queued=' + queued + ' mailReady=' + mailReady);
+    console.log('[verify] signup code for ' + emailAddr.slice(0, 2) + '*** queued=' + queued + ' mailReady=' + mailReady + ' provider=' + (email && email.status ? email.status().provider : 'none'));
     if (!mailReady) {
       return json(res, 503, { ok: false, error: 'email_not_configured', message: 'Email sending is not configured yet. An admin must connect Brevo or SMTP in Admin → Servers.', to: maskEmail(emailAddr) });
     }
@@ -1212,39 +1253,57 @@ async function api(req, res, pathname, query) {
     if (!store.db) return json(res, 409, { ok: false, error: 'not_initialised' });
     const body = await readBody(req);
     const emailAddr = String(body.email || '').trim().toLowerCase();
-    const code = String(body.code || '').replace(/\D/g, '');
+    const code = normalizeCode(body.code);
     const rec = SIGNUP_CODES.get(emailAddr);
-    if (!rec) return json(res, 400, { ok: false, error: 'no_code', message: 'Request a verification code first' });
-    if (Date.now() > rec.exp) { SIGNUP_CODES.delete(emailAddr); return json(res, 400, { ok: false, error: 'expired', message: 'That code has expired — send a new one' }); }
-    if (rec.tries >= 6) { SIGNUP_CODES.delete(emailAddr); return json(res, 429, { ok: false, error: 'locked', message: 'Too many attempts — send a new code' }); }
-    if (code.length !== 6 || signupCodeHash(emailAddr, code) !== rec.hash) {
-      rec.tries += 1;
+    const knownUser = (store.db.users || []).find((u) => String(u.email || '').trim().toLowerCase() === emailAddr);
+    if (!rec) {
+      /* Verified already (double tap, reloaded screen, code reused) is success,
+         never an error. */
+      if (knownUser && knownUser.emailVerified === true) {
+        return json(res, 200, { ok: true, alreadyVerified: true, verifiedAt: knownUser.verifiedAt || Date.now(), userId: knownUser.id, username: knownUser.username || '', role: knownUser.role || 'user' });
+      }
+      return json(res, 400, { ok: false, error: 'no_code', message: 'Request a verification code first' });
+    }
+    const candidates = signupHashes(rec);
+    const matches = code.length === 6 && hashMatches(signupCodeHash(emailAddr, code), candidates);
+    /* The one hard rule: a correct code always wins. Expiry, attempt counters
+       and resends only guard against guessing — they must never reject a code
+       that this server actually emailed to this address. */
+    if (!matches) {
+      rec.tries = Number(rec.tries || 0) + 1;
       const left = Math.max(0, 6 - rec.tries);
       return json(res, 400, { ok: false, error: 'invalid', message: 'That code is not correct', attemptsLeft: left });
     }
     const user = (store.db.users || []).find((u) => String(u.email || '').trim().toLowerCase() === emailAddr) || (rec.userId ? (store.db.users || []).find((u) => u.id === rec.userId) : null);
-    if (!user) return json(res, 404, { ok: false, error: 'user_missing' });
     const now = Date.now();
-    user.verified = true;
-    user.emailVerified = true;
-    user.verifiedAt = now;
-    user.verificationMethod = 'email_code';
-    delete user.emailVerifyRequired;
+    if (!user) {
+      /* The device just created the account and the sync write has not landed
+         yet. The code is proven correct, so let the client mark its local copy
+         verified; the next flush carries verified:true with the user record. */
+      SIGNUP_CODES.delete(emailAddr);
+      return json(res, 200, { ok: true, localOnly: true, verifiedAt: now });
+    }
+    if (user.emailVerified !== true) {
+      user.verified = true;
+      user.emailVerified = true;
+      user.verifiedAt = now;
+      user.verificationMethod = 'email_code';
+      delete user.emailVerifyRequired;
+      store.rev += 1; store.updatedAt = now;
+      try { persistNow(); } catch (e) { console.error('[verify] persist:', e.message); }
+      broadcast('change', { rev: store.rev, source: 'signup-verified', at: now });
+      (store.db.notifications = store.db.notifications || []).unshift({ id: 'nt_' + now.toString(36) + Math.random().toString(36).slice(2, 7), userId: user.id, title: 'Email verified ✅', body: 'Your account is verified. Welcome to WhaleChat.', link: '#/account', icon: 'shield', read: false, createdAt: now });
+      try { persistNow(); } catch (e) {}
+      console.log('[verify] signup verified @' + (user.username || user.id));
+      try {
+        if (email && email.enqueue) {
+          const appUrl = PUBLIC_URL || ('http://localhost:' + PORT);
+          email.enqueue({ key: 'welcome-verified:' + user.id, to: user.email, template: 'welcome', data: user, appUrl });
+        }
+      } catch (e) { console.error('[email] welcome-after-verify:', e.message); }
+    }
     SIGNUP_CODES.delete(emailAddr);
-    store.rev += 1; store.updatedAt = now; persistNow();
-    broadcast('change', { rev: store.rev, source: 'signup-verified', at: now });
-    (store.db.notifications = store.db.notifications || []).unshift({ id: 'nt_' + now.toString(36) + Math.random().toString(36).slice(2, 7), userId: user.id, title: 'Email verified ✅', body: 'Your account is verified. Welcome to WhaleChat.', link: '#/account', icon: 'shield', read: false, createdAt: now });
-    persistNow();
-    console.log('[verify] signup verified @' + (user.username || user.id));
-    /* The welcome mail goes out now that the address is proven — separate key
-       from the signup notice so it is never deduped away. */
-    try {
-      if (email && email.enqueue) {
-        const appUrl = PUBLIC_URL || ('http://localhost:' + PORT);
-        email.enqueue({ key: 'welcome-verified:' + user.id, to: user.email, template: 'welcome', data: user, appUrl });
-      }
-    } catch (e) { console.error('[email] welcome-after-verify:', e.message); }
-    return json(res, 200, { ok: true, verifiedAt: now, userId: user.id, username: user.username || '', role: user.role || 'user' });
+    return json(res, 200, { ok: true, verifiedAt: user.verifiedAt || now, userId: user.id, username: user.username || '', role: user.role || 'user' });
   }
   // --- email verification codes (account deletion etc.) -------------
   if (pathname === '/api/verify/send' && req.method === 'POST') {
@@ -1280,7 +1339,7 @@ async function api(req, res, pathname, query) {
     const rec = VERIFY_CODES.get(key);
     if (!rec || Date.now() > rec.exp) return json(res, 400, { ok: false, error: 'expired', message: 'Code expired — request a new one' });
     if (rec.tries >= 6) { VERIFY_CODES.delete(key); return json(res, 429, { ok: false, error: 'locked', message: 'Too many attempts — request a new code' }); }
-    const hash = require('crypto').createHash('sha256').update('verify::' + key + '::' + String(body.code || '').trim()).digest('hex');
+    const hash = require('crypto').createHash('sha256').update('verify::' + key + '::' + normalizeCode(body.code)).digest('hex');
     if (hash !== rec.hash) { rec.tries += 1; return json(res, 400, { ok: false, error: 'invalid', message: 'Incorrect code' }); }
     VERIFY_CODES.delete(key);
     return json(res, 200, { ok: true, verifiedAt: Date.now() });
@@ -1352,14 +1411,22 @@ async function api(req, res, pathname, query) {
       let cur = {};
       try { cur = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) {}
       if (body.brevoKey) cur.brevoKey = String(body.brevoKey).trim();
+      if (body.brevoSmtpUser) cur.brevoSmtpUser = String(body.brevoSmtpUser).trim();
+      if (body.brevoSmtpKey) cur.brevoSmtpKey = String(body.brevoSmtpKey).trim();
+      if (body.brevoSmtpHost) cur.brevoSmtpHost = String(body.brevoSmtpHost).trim();
+      if (body.brevoSmtpPort) cur.brevoSmtpPort = Number(body.brevoSmtpPort) || 587;
       if (body.from) cur.from = String(body.from).trim();
       if (body.fromName) cur.fromName = String(body.fromName).trim();
       if (body.resendKey) cur.resendKey = String(body.resendKey).trim();
       cur.updatedAt = new Date().toISOString();
       writeJSONAtomic(file, cur);
       if (cur.brevoKey) process.env.BREVO_API_KEY = cur.brevoKey;
+      if (cur.brevoSmtpUser) process.env.BREVO_SMTP_USER = cur.brevoSmtpUser;
+      if (cur.brevoSmtpKey) process.env.BREVO_SMTP_KEY = cur.brevoSmtpKey;
+      if (cur.brevoSmtpHost) process.env.BREVO_SMTP_HOST = cur.brevoSmtpHost;
+      if (cur.brevoSmtpPort) process.env.BREVO_SMTP_PORT = String(cur.brevoSmtpPort);
       if (cur.from) process.env.MAIL_FROM = cur.from;
-      return json(res, 200, { ok: true, configured: email.configured(), from: cur.from || null });
+      return json(res, 200, { ok: true, configured: email.configured(), provider: email.status().provider, from: cur.from || null });
     } catch (e) { return json(res, 500, { ok: false, error: e.message }); }
   }
   if (pathname === '/api/reload' && req.method === 'POST') {

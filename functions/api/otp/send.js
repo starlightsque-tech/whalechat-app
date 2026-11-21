@@ -40,6 +40,13 @@ export async function onRequestPost(context) {
   const code = String(100000 + (bytes[0] % 900000));
   const secret = String(env.WC_OTP_SECRET || 'whalechat-otp');
   const hash = await otpHash(secret, email, code);
+  /* Keep every code issued in the last 24h: a resend must never invalidate a
+     code the user already has in their inbox. */
+  const KEEP_MS = 24 * 60 * 60 * 1000;
+  const history = (prev && Array.isArray(prev.history))
+    ? prev.history.filter((h) => h && h.hash && now - Number(h.at || 0) < KEEP_MS)
+    : [];
+  history.unshift({ hash, at: now, exp: now + 15 * 60000 });
 
   const appUrl = 'https://' + (request.headers.get('host') || 'whalechat.pages.dev');
   const purpose = String((body && body.purpose) || 'signup') === 'signup' ? 'your WhaleChat account' : 'your WhaleChat account';
@@ -57,6 +64,8 @@ export async function onRequestPost(context) {
 
   await env.WC_STATE.put(key, JSON.stringify({
     hash,
+    hashes: history.map((h) => h.hash).slice(0, 10),
+    history: history.slice(0, 10),
     exp: now + 15 * 60000,
     sentAt: now,
     windowStart: inWindow ? Number(prev.windowStart) : now,

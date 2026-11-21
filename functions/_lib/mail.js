@@ -38,6 +38,35 @@ export async function sendBrevo(env, { to, toName, subject, html }) {
   }
 }
 
+/* Normalise a pasted code: NFKC (full-width digits), then digits only. */
+export function normalizeCode(raw) {
+  let v = String(raw == null ? '' : raw);
+  try { v = v.normalize('NFKC'); } catch (e) {}
+  return v.replace(/[^0-9]/g, '').slice(0, 6);
+}
+
+/* Constant-time-ish comparison across every code issued to this address. */
+export function hashMatches(hash, candidates) {
+  const a = String(hash || '');
+  let ok = false;
+  for (const c of (Array.isArray(candidates) ? candidates : [])) {
+    const b = String(c || '');
+    if (a.length && a.length === b.length) {
+      let diff = 0;
+      for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+      if (diff === 0) ok = true;
+    }
+  }
+  return ok;
+}
+
+export function otpCandidates(rec) {
+  if (!rec) return [];
+  const list = Array.isArray(rec.hashes) ? rec.hashes.slice() : [];
+  if (rec.hash && !list.includes(rec.hash)) list.unshift(rec.hash);
+  return list.filter(Boolean).slice(0, 10);
+}
+
 export async function otpHash(secret, email, code) {
   const data = new TextEncoder().encode('whalechat::otp::v1::' + secret + '::' + String(email).toLowerCase() + '::' + String(code));
   const buf = await crypto.subtle.digest('SHA-256', data);
