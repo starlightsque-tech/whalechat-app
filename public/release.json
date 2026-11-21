@@ -1,8 +1,8 @@
 {
-  "version": "3.56.0",
-  "build": "2026-11-22T07:00:00Z",
+  "version": "3.57.0",
+  "build": "2026-11-23T09:00:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.56.0 — one smooth TradingView-style wave chart everywhere (stock trading, B2B, WC-Investing plan and ROI, portfolio/bot): green rising waves, red falling waves, soft gradient and live price pill. Verified B2B sell-only Auto Buy/Sell, Auto Secure subscription/credit/moves, and contact adding by username and email with instant two-way vendor chat.",
-  "releasedAt": "2026-11-22T07:00:00Z",
+  "notes": "WhaleChat 3.57.0 — chat is local-first and realtime: send is drawn from IndexedDB in ~6 ms with no network wait, receive rides one persistent realtime stream, and the outbox retries offline and drains automatically on reconnect. Presence is real: a 15 s heartbeat plus the open socket makes Online / Last seen update in under a second on the other device. Typing is real: debounced input flags reach the other participant over the same stream and show as animated dots in the chat, 'typing…' in the chat list and a 6 s auto-expiry. Delivered ticks now fire the moment the recipient's device is connected, read ticks when the thread is open. A stale saved server host can no longer break the app with \"Failed to fetch\": it is dropped and the build's own server is used.",
+  "releasedAt": "2026-11-23T09:00:00Z",
   "minimum": "3.0.0"
 }
