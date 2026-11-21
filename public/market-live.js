@@ -375,6 +375,36 @@
     return out;
   }
 
+  /* group 2-second ticks into 1-minute candles: the TradingView lightweight
+     candlestick look — green when the minute closes up, red when it closes down */
+  function toCandles(data) {
+    const out = [];
+    (data || []).forEach((pt) => {
+      const t = Number(pt.time) || 0, v = Number(pt.value);
+      if (!(t > 0) || !(v > 0)) return;
+      const bucket = Math.floor(t / 60) * 60;
+      const last = out[out.length - 1];
+      if (last && bucket <= last.time) {
+        last.high = Math.max(last.high, v);
+        last.low = Math.min(last.low, v);
+        last.close = v;
+      } else {
+        const open = last ? last.close : v;
+        out.push({ time: bucket, open: open, high: Math.max(open, v), low: Math.min(open, v), close: v });
+      }
+    });
+    /* Lightweight Charts needs a non-zero range; a perfectly flat minute
+       (high == low) breaks its price scale with "Value is undefined". */
+    out.forEach(function (c) {
+      if (!(c.high > c.low)) {
+        var eps = Math.max(0.00005, Math.abs(c.close) * 0.00004);
+        c.high = c.close + eps;
+        c.low = Math.max(0, c.close - eps);
+      }
+    });
+    return out;
+  }
+
   async function stockData(ticker) {
     const pts = cleanPoints(await fetchHistory(ticker), ticker, 900);
     let data = pts.length >= 2 ? pts : fallbackData(ticker, '1D');
@@ -457,22 +487,39 @@
         handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
         handleScale: { axisPressedMouseMove: true, mouseWheel: true, pinch: true }
       });
-      const series = chart.addBaselineSeries({
-        baseValue: { type: 'price', price: defaultBase },
-        topLineColor: '#22c55e', topFillColor1: 'rgba(34,197,94,.28)', topFillColor2: 'rgba(34,197,94,.02)',
-        bottomLineColor: '#ef4444', bottomFillColor1: 'rgba(239,68,68,.02)', bottomFillColor2: 'rgba(239,68,68,.28)',
-        lineWidth: 2, priceLineVisible: false, lastValueVisible: true,
-        crosshairMarkerVisible: true, crosshairMarkerRadius: 4,
-        crosshairMarkerBorderColor: '#04101a', crosshairMarkerBackgroundColor: side === 'short' ? '#ef4444' : '#22c55e'
-      });
-      applyBaselineColors(series, side);
-      series.setData(data);
+      /* TradingView Lightweight Charts area style. (Candles are kept in the
+         code path below but disabled: v4 throws on live candle updates.) */
+      const isStock = false;
+      const candles = isStock ? toCandles(data) : null;
+      const series = isStock
+        ? chart.addCandlestickSeries({
+            upColor: '#22c55e', downColor: '#ef4444',
+            borderUpColor: '#22c55e', borderDownColor: '#ef4444',
+            wickUpColor: 'rgba(34,197,94,.75)', wickDownColor: 'rgba(239,68,68,.75)',
+            priceLineVisible: false, lastValueVisible: true
+          })
+        : chart.addBaselineSeries({
+            baseValue: { type: 'price', price: defaultBase },
+            topLineColor: '#22c55e', topFillColor1: 'rgba(34,197,94,.28)', topFillColor2: 'rgba(34,197,94,.02)',
+            bottomLineColor: '#ef4444', bottomFillColor1: 'rgba(239,68,68,.02)', bottomFillColor2: 'rgba(239,68,68,.28)',
+            lineWidth: 2, priceLineVisible: false, lastValueVisible: true,
+            crosshairMarkerVisible: true, crosshairMarkerRadius: 4,
+            crosshairMarkerBorderColor: '#04101a', crosshairMarkerBackgroundColor: side === 'short' ? '#ef4444' : '#22c55e'
+          });
+      if (isStock) {
+        const cd = candles && candles.length ? candles : [{ time: Math.floor(Date.now() / 1000 / 60) * 60, open: 100, high: 100.01, low: 99.99, close: 100 }];
+        series.setData(cd);
+      } else {
+        applyBaselineColors(series, side);
+        series.setData(data);
+      }
       chart.timeScale().fitContent();
       MK.chart = {
         mode: cfg.mode || 'stock', ticker: cfg.ticker || '', chart, series, host, wrap, LWC,
-        basePrice: defaultBase, defaultBase, side,
-        lastTime: data[data.length - 1].time,
-        points: data.length, lines: [], lineKey: ''
+        basePrice: defaultBase, defaultBase, side, candle: isStock, candles: isStock ? (candles || []).slice() : null,
+        lastCandle: isStock && candles && candles.length ? candles[candles.length - 1] : null,
+        lastTime: isStock ? (candles && candles.length ? candles[candles.length - 1].time : Math.floor(Date.now() / 1000 / 60) * 60) : data[data.length - 1].time,
+        points: isStock ? (candles || []).length : data.length, lines: [], lineKey: ''
       };
       syncPriceLines();
       if (typeof ResizeObserver !== 'undefined') {
@@ -630,6 +677,31 @@
       applyBaselineColors(c.series, targetSide);
     }
     syncPriceLines();
+    if (c.candle) {
+      const bucket = Math.floor(Date.now() / 1000 / 60) * 60;
+      let last = c.lastCandle;
+      if (!last || bucket > last.time) {
+        last = { time: Math.max(bucket, (last ? last.time + 60 : bucket)), open: last ? last.close : q.price, high: q.price, low: q.price, close: q.price };
+        c.points += 1;
+      } else {
+        last.high = Math.max(Number(last.high) || q.price, q.price);
+        last.low = Math.min(Number(last.low) || q.price, q.price);
+        last.close = q.price;
+        if (!(last.high > last.low)) {
+          var eps2 = Math.max(0.00005, Math.abs(q.price) * 0.00004);
+          last.high = q.price + eps2;
+          last.low = Math.max(0, q.price - eps2);
+        }
+      }
+      c.lastCandle = last;
+      c.lastTime = last.time;
+      const arr = c.candles || (c.candles = []);
+      if (arr.length && arr[arr.length - 1].time === last.time) arr[arr.length - 1] = last;
+      else arr.push(last);
+      if (arr.length > 240) arr.splice(0, arr.length - 240);
+      try { c.series.setData(arr); } catch (e) {}
+      return;
+    }
     const now = Math.floor(Date.now() / 1000);
     const time = Math.max(now, c.lastTime);
     appendPoint(c, time, q.price);

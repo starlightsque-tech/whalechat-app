@@ -319,8 +319,10 @@
     try {
       const el = ensurePill();
       const live = B.status === 'live' && (Date.now() - lastMsgAt < 20000);
-      const show = routeShown() && B.symbols.length > 0;
-      el.style.display = show ? 'inline-flex' : 'none';
+      /* The Binance connection pill is disabled: prices still stream, but the
+         app no longer shows "Connecting to Binance…" status pop-ups. */
+      const show = false;
+      el.style.display = 'none';
       if (!show) return;
       const dotColor = live ? '#22c55e' : B.status === 'connecting' ? '#f0b90b' : '#ef4444';
       const label = live

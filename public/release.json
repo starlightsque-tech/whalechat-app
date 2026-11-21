@@ -1,8 +1,8 @@
 {
-  "version": "3.51.0",
-  "build": "2026-11-21T21:30:00Z",
+  "version": "3.52.0",
+  "build": "2026-11-21T23:00:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.51.0 — B2B Auto Buy/Sell sells a manually bought holding at market the moment the sell target is reached; one green/red live chart design across B2B, shares, portfolio and bot charts; live rising/falling counters; chat bubble removed; WC-investing payout formula (capital x plan% x WC price x days) with USD balances; stock trades buy from capital + leftover and all payouts show in USD.",
-  "releasedAt": "2026-11-21T21:30:00Z",
+  "notes": "WhaleChat 3.52.0 — every stock chart now uses the TradingView Lightweight Charts style (dark grid, right price scale, green rising / red falling, live movement) with a built-in SVG fallback; the Binance 'Connecting…' status pill no longer appears anywhere; chart errors removed.",
+  "releasedAt": "2026-11-21T23:00:00Z",
   "minimum": "3.0.0"
 }
