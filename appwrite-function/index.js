@@ -22,11 +22,13 @@ const PROJECT = process.env.APPWRITE_FUNCTION_PROJECT_ID || process.env.APPWRITE
 const KEY = process.env.WC_APPWRITE_KEY || process.env.APPWRITE_FUNCTION_API_KEY || '';
 const BUCKET = process.env.WC_BUCKET || '6aff48620020a44c714f';
 const STATE_FILE = 'whalechat-state';
+const STATE_LOCK_FILE = 'whalechat-state-lock';
+const STATE_LOCK_TTL = 20000;
 const CODES_FILE = 'whalechat-codes';
 const MAIL_FILE = 'whalechat-mail';
 const MAIL_LOG_FILE = 'whalechat-email-log';
 const NOTIF_LOG_LIMIT = 400;
-const VERSION = '3.79.0';
+const VERSION = '3.80.0';
 const crypto = require('crypto');
 const smtpClient = require('./smtp');
 /* project-scoped ids: env wins, but a stale/placeholder value never does */
@@ -529,13 +531,91 @@ async function readState() {
   return empty;
 }
 
+/* -------------------------------------------------------------------------
+   Cross-instance write lock.
+   Appwrite runs many Function instances. Reading a state snapshot, changing
+   it and replacing the file allowed a slower instance to write an older
+   snapshot over a newer one (a new user or deposit simply vanished). Every
+   write now takes a create-only lock, merges the incoming changes into the
+   latest state, and only then replaces the file.
+   ------------------------------------------------------------------------- */
+async function acquireStateLock() {
+  const token = crypto.randomBytes(8).toString('hex');
+  for (let i = 0; i < 30; i++) {
+    if (await rawCreate(STATE_LOCK_FILE, 'state.lock.json', { token, at: Date.now() })) return token;
+    const cur = await readJsonFile(STATE_LOCK_FILE, null);
+    if (!cur || !cur.at || (Date.now() - Number(cur.at)) > STATE_LOCK_TTL) {
+      await rawDelete(STATE_LOCK_FILE);
+    }
+    await new Promise((r) => setTimeout(r, 80 + Math.random() * 140));
+  }
+  return null;
+}
+async function releaseStateLock(token) {
+  try {
+    const cur = await readJsonFile(STATE_LOCK_FILE, null);
+    if (cur && cur.token === token) await rawDelete(STATE_LOCK_FILE);
+  } catch (e) {}
+}
+
+const MERGE_COLLECTIONS = ['users','vendors','companyProducts','products','orders','deposits','withdrawals','messages','statuses','notifications','contacts','blocks','txs','referrals','purchases','refunds','vendorApplications','audit','portfolioAudit','botAccounts','botEvents','stocks','holdings','trades','watchlist','alerts','traffic'];
+const FINAL_STATUS = ['approved','rejected','completed','cancelled','canceled','closed','delivered','seen','paid','settled'];
+function itemTime(x) {
+  if (!x) return 0;
+  return Math.max(
+    Number(x.updatedAt) || 0, Number(x.reviewedAt) || 0, Number(x.closedAt) || 0,
+    Number(x.settledAt) || 0, Number(x.acceptedAsAt) || 0, Number(x.at) || 0,
+    Number(x.createdAt) || 0
+  );
+}
+function mergeStateForWrite(latest, incoming) {
+  if (!latest || !latest.db || !incoming || !incoming.db) return incoming;
+  const base = latest.db, inc = incoming.db;
+  /* union the tombstones from both snapshots */
+  const deleted = Object.assign({}, (base.__deleted && typeof base.__deleted === 'object') ? base.__deleted : {}, (inc.__deleted && typeof inc.__deleted === 'object') ? inc.__deleted : {});
+  for (const col of MERGE_COLLECTIONS) {
+    const target = Array.isArray(base[col]) ? base[col] : (base[col] = []);
+    const rows = Array.isArray(inc[col]) ? inc[col] : [];
+    for (const row of rows) {
+      if (!row || !row.id) continue;
+      if (deleted[col + ':' + row.id] && itemTime(row) <= Number(deleted[col + ':' + row.id])) continue;
+      const i = target.findIndex((x) => x && x.id === row.id);
+      if (i < 0) { target.push(row); continue; }
+      const cur = target[i];
+      const newer = itemTime(row) > itemTime(cur);
+      const finalStatus = FINAL_STATUS.indexOf(String(row.status || '').toLowerCase()) >= 0 &&
+        FINAL_STATUS.indexOf(String(cur.status || '').toLowerCase()) < 0;
+      if (newer || finalStatus) target[i] = Object.assign({}, cur, row);
+    }
+    /* apply the tombstones to the merged list */
+    base[col] = target.filter((x) => !(x && x.id && deleted[col + ':' + x.id] && itemTime(x) <= Number(deleted[col + ':' + x.id])));
+  }
+  base.__deleted = deleted;
+  /* whole-object settings only move forward with the revision */
+  if (Number(incoming.rev) >= Number(latest.rev)) {
+    ['settings','meta','invest','chatsMeta'].forEach((k) => { if (inc[k] !== undefined) base[k] = inc[k]; });
+  }
+  incoming.db = base;
+  incoming.rev = Math.max(1, Number(incoming.rev) || 0, Number(latest.rev) || 0);
+  incoming.at = Date.now();
+  return incoming;
+}
+
 /* Every state write goes through here. It refuses the one catastrophic case:
    persisting zero users when the app is known to have accounts. That is what a
    storage hiccup or a bad deploy would otherwise turn into permanent data loss.
    An admin who really wants to clear the app can pass { force: true }. */
 async function persistState(st, opts) {
   const force = !!(opts && opts.force);
-  const users = countUsers(st);
+  const token = await acquireStateLock();
+  if (!token) {
+    console.error('[state] could not acquire the write lock — refusing to overwrite');
+    return false;
+  }
+  try {
+    const latest = await readJsonFile(STATE_FILE, null);
+    if (latest && latest.db && st && st.db) st = mergeStateForWrite(latest, st);
+    const users = countUsers(st);
   if (!force && users === 0 && KNOWN_USERS > 0) {
     console.error('[state] refused to persist an empty user table (had ' + KNOWN_USERS + ')');
     return false;
@@ -549,12 +629,15 @@ async function persistState(st, opts) {
       return false;
     }
   }
-  const ok = await writeJsonFile(STATE_FILE, 'whalechat-state.json', st);
-  if (ok) {
-    KNOWN_USERS = Math.max(KNOWN_USERS, users);
-    try { delete st.__emptyRead; } catch (e) {}
+    const ok = await writeJsonFile(STATE_FILE, 'whalechat-state.json', st);
+    if (ok) {
+      KNOWN_USERS = Math.max(KNOWN_USERS, users);
+      try { delete st.__emptyRead; } catch (e) {}
+    }
+    return ok;
+  } finally {
+    await releaseStateLock(token);
   }
-  return ok;
 }
 
 /* -------------------------------------------------------------------------
@@ -632,7 +715,13 @@ function applyOps(db, ops) {
       const i = out[col].findIndex((x) => x && x.id === o.id);
       if (i >= 0) out[col][i] = Object.assign({}, out[col][i], o.patch || {});
       else if (o.patch) out[col].push(o.patch);
-    } else if (o.op === 'remove') { out[col] = out[col].filter((x) => !x || x.id !== o.id); }
+    } else if (o.op === 'remove') {
+      out[col] = out[col].filter((x) => !x || x.id !== o.id);
+      /* deletions need a tombstone: state writes merge concurrent changes, and
+         without this the other instance's copy would re-add the item */
+      out.__deleted = (out.__deleted && typeof out.__deleted === 'object') ? out.__deleted : {};
+      out.__deleted[col + ':' + o.id] = Date.now();
+    }
   });
   return ensureMarketCatalogue(out);
 }
@@ -780,10 +869,57 @@ async function appendMailLog(entry) {
   } catch (e) { /* logging must never break sending */ }
 }
 
+/* Appwrite Messaging is the primary email service. The project has an SMTP
+   provider configured (WhaleChat SMTP); a message is created through the
+   Messaging API and its delivery status is checked before falling back. */
+async function appwriteMessagingEmail(to, subject, html, text) {
+  const providerId = String(process.env.APPWRITE_EMAIL_PROVIDER || 'whalechat-smtp').trim();
+  const messageId = 'wc' + Date.now().toString(36) + crypto.randomBytes(4).toString('hex');
+  const payload = {
+    messageId: messageId.slice(0, 36),
+    subject: String(subject || 'WhaleChat').slice(0, 200),
+    content: String(html || text || ''),
+    html: !!html,
+    emails: [String(to)],
+    draft: false
+  };
+  if (providerId) payload.providerId = providerId;
+  let r = await api('/messaging/messages/email', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
+  if (!r.ok) return { ok: false, provider: 'appwrite', messageId: '', error: (r.json && (r.json.message || r.json.error)) || ('Appwrite Messaging HTTP ' + r.status) };
+  const id = r.json && r.json.$id;
+  if (!id) return { ok: true, provider: 'appwrite', messageId: '', queued: true };
+  /* wait briefly for the provider result so a 535/failed send is visible */
+  for (let i = 0; i < 6; i++) {
+    await new Promise((res) => setTimeout(res, 900));
+    const g = await api('/messaging/messages/' + encodeURIComponent(id), { method: 'GET' });
+    if (!g.ok || !g.json) continue;
+    const st = String(g.json.status || '');
+    if (st === 'sent' || Number(g.json.deliveredTotal) > 0) return { ok: true, provider: 'appwrite', messageId: id };
+    if (st === 'failed') {
+      const why = (g.json.deliveryErrors && g.json.deliveryErrors[0]) || (g.json.data && g.json.data.deliveryErrors) || 'Appwrite email delivery failed';
+      return { ok: false, provider: 'appwrite', messageId: id, error: String(why).slice(0, 300) };
+    }
+  }
+  /* still processing: the message is accepted and Appwrite will deliver it */
+  return { ok: true, provider: 'appwrite', messageId: id, queued: true };
+}
+
 async function sendMail(cfg, to, subject, html, text) {
-  const chain = mailProviders(cfg);
-  if (!chain.length) return { ok: false, provider: 'none', messageId: '', error: 'Email server is not configured' };
   const errors = [];
+  /* 1 · Appwrite Messaging (project email service) */
+  try {
+    const aw = await appwriteMessagingEmail(to, subject, html, text);
+    if (aw.ok) {
+      aw.attempts = ['appwrite'];
+      return aw;
+    }
+    errors.push('appwrite: ' + aw.error);
+  } catch (e) {
+    errors.push('appwrite: ' + String(e.message || e).slice(0, 200));
+  }
+  /* 2 · configured SMTP/API providers (Brevo SMTP relay, Brevo API, Resend) */
+  const chain = mailProviders(cfg);
+  if (!chain.length) return { ok: false, provider: 'appwrite', messageId: '', error: errors.join(' · ') || 'Email server is not configured' };
   for (const provider of chain) {
     const out = await deliverOne(provider, cfg, to, subject, html, text);
     if (out.ok) {
@@ -2912,18 +3048,17 @@ module.exports = async ({ req, res, log, error }) => {
     }
 
     if (path === '/api/ops' && method === 'POST') {
-      if (localBusy) return res.json({ ok: false, error: 'busy' }, 429, CORS);
-      localBusy = true;
-      try {
-        const st = await readState();
-        if (!st.db) return res.json({ ok: false, error: 'not_initialised' }, 409, CORS);
-        st.db = applyOps(st.db, body.ops || []);
-        st.rev = Math.max(1, Number(st.rev) || 0) + 1;
-        st.at = Date.now();
-        const ok = await persistState(st);
-        if (!ok) return res.json({ ok: false, error: 'storage_write_failed' }, 502, CORS);
-        return res.json({ ok: true, rev: st.rev }, 200, CORS);
-      } finally { localBusy = false; }
+      /* No per-instance 429 gate: the cross-instance state lock serialises the
+         actual writes, and the merge step keeps concurrent changes. Returning
+         busy here made a client's approval retry forever on a warm instance. */
+      const st = await readState();
+      if (!st.db) return res.json({ ok: false, error: 'not_initialised' }, 409, CORS);
+      st.db = applyOps(st.db, body.ops || []);
+      st.rev = Math.max(1, Number(st.rev) || 0) + 1;
+      st.at = Date.now();
+      const ok = await persistState(st);
+      if (!ok) return res.json({ ok: false, error: 'storage_write_failed' }, 502, CORS);
+      return res.json({ ok: true, rev: st.rev }, 200, CORS);
     }
 
     if (path === '/api/events') {
@@ -3209,9 +3344,10 @@ module.exports = async ({ req, res, log, error }) => {
       } catch (e) {}
       return res.json({
         ok: true,
-        configured: chain.length > 0,
-        provider: chain[0] || '',
-        providers: chain,
+        configured: true,
+        provider: 'appwrite',
+        providers: ['appwrite-service'].concat(chain),
+        appwriteProvider: String(process.env.APPWRITE_EMAIL_PROVIDER || 'whalechat-smtp'),
         preference: cfg.prefer || '',
         from: cfg.from,
         fromName: cfg.fromName,

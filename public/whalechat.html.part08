@@ -955,7 +955,9 @@ const Remote = {
   },
 
   onLocalChange() {
-    if (!this.enabled || this.applying) return;
+    if (!this.enabled) return;
+    /* mark the change even while a server refresh is being applied: the flush
+       waits for that refresh to finish and then sends this local change */
     this.dirty = true;
     clearTimeout(this.timer);
     this.timer = setTimeout(() => this.flush(), 140);
@@ -964,8 +966,11 @@ const Remote = {
   async flush() {
     if (!this.enabled || this.applying || this.flushing) return;
     if (!this.dirty) return;
-    const ops = diffDB(this.last || blankDB(), DB);
-    if (!ops.length) { this.dirty = false; return; }
+    /* snapshot the database: a change made while this request is in flight
+       must stay dirty and be sent next, never be marked as synced */
+    const snapshot = cloneDB(DB);
+    const ops = diffDB(this.last || blankDB(), snapshot);
+    if (!ops.length) { this.last = snapshot; this.dirty = false; return; }
     this.flushing = true;
     this.status = 'syncing';
     try {
@@ -975,7 +980,7 @@ const Remote = {
       }, 10000);
       if (!r.res.ok) throw new Error((r.data && r.data.error) || ('Sync failed (' + r.res.status + ')'));
       this.rev = r.data.rev || this.rev;
-      this.last = cloneDB(DB);
+      this.last = snapshot;                 /* only what this request carried */
       this.dirty = false;
       this.status = 'online';
       this.lastError = '';
@@ -988,7 +993,12 @@ const Remote = {
       this.retryTimer = setTimeout(() => { this.flush(); }, 800 * this.retry);
     } finally {
       this.flushing = false;
-      if (this.dirty && this.status === 'online') setTimeout(() => this.flush(), 80);
+      let remaining = [];
+      try { remaining = diffDB(this.last, DB); } catch (e) {}
+      if ((this.dirty || remaining.length) && this.status === 'online') {
+        this.dirty = true;
+        setTimeout(() => this.flush(), 80);
+      }
     }
   },
 
@@ -1061,6 +1071,7 @@ const Remote = {
     } finally {
       this.applying = false;
       if (this.pendingRefresh) { this.pendingRefresh = false; setTimeout(() => this.refresh(true), 150); }
+      if (this.dirty) setTimeout(() => { try { this.flush(); } catch (e) {} }, 180);
     }
   }
 };

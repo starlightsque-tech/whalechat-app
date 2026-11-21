@@ -298,6 +298,7 @@
     var srcBefore = src.get(), dstBefore = dst.get();
     src.set(roundM(srcBefore - amt));
     dst.set(roundM(dstBefore + receive));
+    u.updatedAt = Date.now();
     /* both sides are written and persisted together */
     ledgerM(u, src.label + ' → ' + dst.label + ' · ' + display(src, amt) + ' sent', 0, 0, { from: src.id, to: dst.id, srcBefore: srcBefore, dstBefore: dstBefore });
     saveM(); toastM('Transfer complete — ' + display(dst, receive) + ' added to ' + dst.label, 'ok'); renderM();
@@ -515,6 +516,7 @@
     if (from === 'inv_payout') a.payout = roundM(a.payout - amt); else a.usd = roundM(a.usd - amt);
     var oa = ia(other);
     oa.usd = roundM((Number(oa.usd) || 0) + amt);
+    u.updatedAt = Date.now(); other.updatedAt = Date.now();
     ledgerM(u, 'Sent ' + moneyM(amt) + ' to ' + (other.accountId || other.referralCode), -amt, 0, { toUser: other.id });
     /* the receiver's balance and ledger both move with the same write, so a
        refresh can never show the money leaving one account and not arriving */

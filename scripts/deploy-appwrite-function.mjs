@@ -121,7 +121,7 @@ const VARS = [
   'BREVO_API_KEY', 'BREVO_SMTP_HOST', 'BREVO_SMTP_PORT', 'BREVO_SMTP_USER',
   'BREVO_SMTP_KEY', 'BREVO_SMTP_PASS', 'BREVO_SMS_SENDER', 'BREVO_SMS_CODE_TTL_MS',
   'RESEND_API_KEY', 'SENDGRID_API_KEY', 'MAIL_PROVIDER',
-  'MAIL_FROM', 'MAIL_FROM_NAME',
+  'MAIL_FROM', 'MAIL_FROM_NAME', 'APPWRITE_EMAIL_PROVIDER',
   'TELESIGN_CUSTOMER_ID', 'TELESIGN_API_KEY', 'TELESIGN_BASE_API', 'WC_OFFLINE_TOLERANCE_PCT',
   'BINANCE_WS', 'WC_BUCKET', 'APPWRITE_DATABASE_ID', 'WC_OFFLINE_COLLECTION', 'PUBLIC_URL',
   /* 3.71: hosted realtime provider for chat delivery (either provider works) */
@@ -143,7 +143,7 @@ async function syncVars() {
   }
 
   /* the function's own runtime key needs storage + database scopes */
-  const scopes = ['files.read', 'files.write', 'users.read', 'databases.read', 'databases.write', 'collections.read', 'collections.write', 'documents.read', 'documents.write'];
+  const scopes = ['files.read', 'files.write', 'users.read', 'databases.read', 'databases.write', 'collections.read', 'collections.write', 'documents.read', 'documents.write', 'messages.read', 'messages.write', 'providers.read', 'providers.write'];
   const current = await req('/functions/' + FN_ID);
   const name = (current.json && current.json.name) || FN_NAME;
   const runtime = (current.json && current.json.runtime) || RUNTIME;

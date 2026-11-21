@@ -102,6 +102,16 @@ SMS notifications and OTP use **Telesign** (`TELESIGN_CUSTOMER_ID`,
 (`BREVO_API_KEY` + `BREVO_SMS_SENDER`) remains a fallback when Telesign is not
 configured or a Telesign send fails. Admin → SMS uses Telesign first.
 
+On Appwrite, verification codes and admin email are sent through **Appwrite
+Messaging** (`POST /v1/messaging/messages/email`) using the project SMTP
+provider created in Appwrite Console → Messaging → Providers. The function
+tries Appwrite Messaging first and only then falls back to Brevo SMTP/API.
+Set `APPWRITE_EMAIL_PROVIDER=whalechat-smtp` (or your provider id).
+
+The function also holds a cross-instance state lock and merges concurrent
+writes, so a deposit, approval or account change can no longer be overwritten
+by another function instance.
+
 On an Appwrite Function deployment the email/SMS code runs inside
 `appwrite-function`; redeploy it after setting the variables:
 

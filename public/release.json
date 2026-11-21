@@ -1,8 +1,8 @@
 {
-  "version": "3.79.0",
-  "build": "2026-11-20T23:10:31Z",
+  "version": "3.80.0",
+  "build": "2026-11-20T23:30:34Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.79.0 — deposits now require a payment-slip photo, which travels with the request and is viewable in Admin → Deposits; approval credits the user's crypto deposit balance exactly once and the account page updates that number in place. Transfers now write both the sending and receiving balances (and both ledgers) together. Background repaints are suppressed app-wide after the user stops interacting, and every nested scroll panel, focused field and caret is preserved; admin sees new deposit/withdrawal requests through a fixed banner instead of the page refreshing underneath them.",
-  "releasedAt": "2026-11-20T23:10:31Z",
+  "notes": "WhaleChat 3.80.0 — frontend and backend redeployed together on Appwrite. Email now goes through Appwrite Messaging (project SMTP provider) for verification codes and admin email, with Brevo SMTP/API fallback. State writes use a cross-instance lock and merge so a deposit or account change can no longer be overwritten by a parallel function instance. Chat keeps instant local echo, queues messages while a device is offline, and delivers them to the other device on reconnect.",
+  "releasedAt": "2026-11-20T23:30:34Z",
   "minimum": "3.0.0"
 }
