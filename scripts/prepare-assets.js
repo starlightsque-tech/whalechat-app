@@ -60,6 +60,7 @@ const MODULES = [
   { file: 'subscriptions.js', marker: 'wc-subs' },
   { file: 'tawk-control.js', marker: 'wc-tawk-control' },
   { file: 'stocks-universe.js', marker: 'wc-stock-universe' },
+  { file: 'autosecure-sync.js', marker: 'wc-autosecure-sync' },
   { file: 'wc-live-chart.js', marker: 'wc-live-chart' },
   { file: 'no-chat-widget.js', marker: 'wc-no-chat-widget' },
   { file: 'live-trade.js', marker: 'wc-live-trade' },

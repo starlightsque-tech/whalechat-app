@@ -1,8 +1,8 @@
 {
-  "version": "3.52.0",
-  "build": "2026-11-21T23:00:00Z",
+  "version": "3.53.0",
+  "build": "2026-11-22T01:00:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.52.0 — every stock chart now uses the TradingView Lightweight Charts style (dark grid, right price scale, green rising / red falling, live movement) with a built-in SVG fallback; the Binance 'Connecting…' status pill no longer appears anywhere; chart errors removed.",
-  "releasedAt": "2026-11-21T23:00:00Z",
+  "notes": "WhaleChat 3.53.0 — Auto Secure Take Profit subscription is synced from the server to every page and every device; it now actively takes profit on open trades and auto-credits secured profits to the Profit balance; each trade card shows its moves, profit taken and secured profits.",
+  "releasedAt": "2026-11-22T01:00:00Z",
   "minimum": "3.0.0"
 }

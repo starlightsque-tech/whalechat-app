@@ -406,10 +406,17 @@ const LT = {
     if (!DB || !DB.trades) return;
     this.open().forEach(t => {
       this.updateTrailing(t);
-      /* Finnhub-covered symbols are settled by the backend so a closed browser
-         cannot miss a payout — avoid paying the same trade twice. */
-      if (this.serverCovered(t)) return;
-      /* Auto Secure: lock any profit the moment it appears (backend does this for covered symbols) */
+      /* When the server bot engine is actively auto-securing this account it is
+         authoritative; otherwise the app takes the profit itself so a local /
+         offline subscription still works on every device. */
+      const serverAuto = (function () {
+        try {
+          const st = window.WC_BOTS && window.WC_BOTS.state && window.WC_BOTS.state.autoSecure;
+          return !!(st && st.active && st.enabled);
+        } catch (e) { return false; }
+      })();
+      if (this.serverCovered(t) && serverAuto) return;
+      /* Auto Secure: take any available profit the moment it appears */
       if (this.autoSecureOn(t.userId)) this.secureLocal(t, 'Auto Secure');
       const p = this.calc(t);
       const dir = this.dirOf(t);
@@ -503,6 +510,18 @@ const LT = {
         return `<div class="tiny up" style="margin-top:6px">${pending.length} secured profit${pending.length === 1 ? '' : 's'} · <b>${usd(sum)} USD</b> pending claim — see Secured profits below</div>`;
       })()}
       <div class="tiny muted center" style="margin-top:6px">${Number(t.profitTakenCoins) > 0 ? `Profit already taken: <b class="up">+${usd(t.profitTakenCoins)} USD</b> · ` : ''}Returns ${usd(p.payoutCoins)} USD if stopped now</div>
+      ${(() => {
+        const moves = LT.moveList(t);
+        const secured = (t.securedProfits || []).filter((x) => x && Number(x.coins) > 0);
+        const taken = LT.moveTotals(t).tot.all;
+        if (!moves.length && !secured.length) return '';
+        const secSum = secured.reduce((a, x) => a + (Number(x.coins) || 0), 0);
+        return `<details class="lt-mv-details" style="margin-top:8px">
+          <summary>Trade moves <b>${LT.totalMovesOf(t)}</b> · Profit taken <b class="up">+${usd(taken)} USD</b>${secSum ? ` · Secured <b class="up">+${usd(secSum)} USD</b>` : ''}</summary>
+          ${LT.movesHTML(t)}
+          ${secured.length ? `<div class="tiny muted" style="margin-top:6px">Secured profits on this trade</div>` + secured.slice(0, 8).map((x) => `<div class="lt-od-row"><span>${x.autoClaimed ? 'Auto take profit · credited' : (x.claimed ? 'Secured · claimed' : 'Secured · awaiting claim')} · ${new Date(Number(x.at) || Date.now()).toLocaleTimeString()}</span><b class="up">+${usd(Number(x.coins) || 0)} USD</b></div>`).join('') : ''}
+        </details>`;
+      })()}
       ${Number(t.dividendBonus) > 0 ? `<div class="tiny center lt-div-line">+${usd(t.dividendBonus)} USD dividend at timer</div>` : ''}
     </div>`;
   },
@@ -2556,7 +2575,7 @@ function ltMountOrders() {
   if (document.getElementById('ltOrdersMount')) return;
   const host = document.createElement('div');
   host.id = 'ltOrdersMount';
-  host.innerHTML = LT.securedBlock(me().id) + LT.activeBlock() + LT.closedBlock();
+  host.innerHTML = LT.autoSecureStrip() + LT.securedBlock(me().id) + LT.activeBlock() + LT.closedBlock();
   if (!host.innerHTML.trim()) return;
   head.parentNode.insertBefore(host, head.nextSibling);
 }
@@ -2828,7 +2847,7 @@ LT.movesHTML = function (t) {
     let by = LT.MOVE_BY[m.by] || LT.MOVE_BY.manual;
     if (m.by === 'auto-secure') {
       const sp = (t.securedProfits || []).find((x) => x && ((x.moveFrom && x.moveFrom === m.from) || Number(x.at) === Number(m.at)));
-      if (sp) by += sp.claimed ? ' · claimed' : ' · awaiting claim';
+      if (sp) by += sp.autoClaimed ? ' · auto-credited' : (sp.claimed ? ' · claimed' : ' · awaiting claim');
     }
     rows.push('<div class="lt-mv-row"><span class="lt-mv-n">' + lbl + '</span><span class="lt-mv-t">' + tm(m.at) + '</span><span class="lt-mv-p">' + px(m.price) + '</span><span class="lt-mv-a up">+' + usd(m.amount) + '</span><span class="lt-mv-by ' + (m.by === 'manual' ? 'man' : 'auto') + '">' + esc(by) + '</span></div>');
   });
@@ -2962,6 +2981,23 @@ LT.secureLocal = function (t, reason) {
   if (t.securedProfits.length > 100) t.securedProfits.length = 100;
   t.securedProfitCoins = Math.round(((Number(t.securedProfitCoins) || 0) + profit) * 100) / 100;
   t.securedProfitCount = (Number(t.securedProfitCount) || 0) + 1;
+  /* Auto take profit credits the secured amount immediately, so the user does
+     not have to open Orders and claim it manually. */
+  try {
+    const entry = t.securedProfits[0];
+    if (entry && !entry.claimed) {
+      entry.claimed = true;
+      entry.claimedAt = now;
+      entry.autoClaimed = true;
+      const owner = findUser(t.userId);
+      if (owner) {
+        const ia2 = INV.investAcct(owner);
+        ia2.stockProfit = Math.round(((Number(ia2.stockProfit) || 0) + profit) * 100) / 100;
+        t.autoClaimedCoins = Math.round(((Number(t.autoClaimedCoins) || 0) + profit) * 100) / 100;
+        if (typeof tx === 'function') tx(t.userId, 'auto-take-profit', `Auto take profit · ${t.ticker} · +${usd(profit)} credited to Profit balance`, profit, { tradeId: t.id, price: p.price, reason: reason || 'Auto Secure' });
+      }
+    }
+  } catch (e) {}
   { const mv = LT.logMove(t, { price: p.price, entryBefore: t.entryPrice, amount: profit, levels: levels || 1, by: 'auto-secure', kind: 'secured' });
     if (mv && t.securedProfits[0]) { t.securedProfits[0].moveFrom = mv.from; t.securedProfits[0].moveTo = mv.to; } }
   t.entryPrice = tpLvl > 0 ? LT.rebaseAfterTake(t, p.price, profit) : Math.round(p.price * 1e6) / 1e6;
