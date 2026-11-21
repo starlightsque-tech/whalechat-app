@@ -20,6 +20,25 @@ export CLOUDFLARE_ACCOUNT_ID=...
 npx wrangler deploy
 ```
 
+## Cloudflare D1 database
+
+The Durable Object mirrors every save into D1 database **`whalechat_db`**
+(bound as `env.DB`), and hydrates from D1 when its own storage is empty.
+The deployed worker reports `"storage":"d1+durable-object"` on `/api/health`.
+
+```
+database_name = whalechat_db
+database_id   = 9fe22a65-e6f0-4e1b-a791-bc9ef8023f59
+```
+
+- `schema.sql` creates the tables (`app_state_chunks`, `users`, `messages`,
+  `files`, `sessions`). Apply it once with `npm run db:init`.
+- Verify the binding, tables, chunk snapshot and restored accounts with
+  `npm run db:check`.
+- Only the active Durable Object is allowed to write to D1. Instances left
+  over from an older version keep their alarms running after a publish, so
+  without this guard they could overwrite fresh data with their old copy.
+
 ## Updating the Worker
 
 A running Durable Object keeps the code it started with, so bump `DO_NAME` and

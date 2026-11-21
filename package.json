@@ -20,7 +20,9 @@
     "test:chat": "node scripts/test-chat-live.js",
     "test:chat-client": "node scripts/test-chat-presence-client.js",
     "build:pages": "bash scripts/build-pages.sh",
-    "restore:users": "node scripts/restore-users-360.mjs"
+    "restore:users": "node scripts/restore-users-360.mjs",
+    "db:init": "cd cloudflare/whalechat-api && wrangler d1 execute whalechat_db --file=./schema.sql --remote",
+    "db:check": "node scripts/check-cloudflare-db.mjs"
   },
   "dependencies": {
     "web-push": "^3.6.7",

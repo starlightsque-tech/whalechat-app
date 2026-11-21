@@ -6,6 +6,14 @@ compatibility_flags = ["nodejs_compat"]
 [observability]
 enabled = true
 
+# Cloudflare D1 — durable database for every account and all app data.
+# The Durable Object mirrors itself here on every save and hydrates from here
+# when its own storage is empty, so publishing never wipes users.
+[[d1_databases]]
+binding = "DB"
+database_name = "whalechat_db"
+database_id = "9fe22a65-e6f0-4e1b-a791-bc9ef8023f59"
+
 [[durable_objects.bindings]]
 name = "CHAT_HUB"
 class_name = "ChatHub"
