@@ -37,7 +37,8 @@
     "test:chat-e2e:live": "WC_E2E_BASE=https://whalechat-api.appwrite.network node scripts/test-chat-e2e.mjs",
     "test:live-trades": "node scripts/test-live-trades.mjs",
     "test:370": "node scripts/test-370.mjs",
-    "deploy:appwrite:admin": "node scripts/deploy-appwrite-admin.mjs"
+    "deploy:appwrite:admin": "node scripts/deploy-appwrite-admin.mjs",
+    "deploy:cloudflare": "node scripts/deploy-cloudflare.mjs"
   },
   "dependencies": {
     "web-push": "^3.6.7",
