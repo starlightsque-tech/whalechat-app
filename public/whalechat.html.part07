@@ -257,10 +257,18 @@ function adminDeposits() {
           return '<div class="row gap6" style="flex-wrap:wrap">' + slips.slice(0, 3).map((src, i) =>
             '<img class="dslip-thumb" src="' + src + '" alt="Payment slip ' + (i + 1) + '" data-act="dep-slip" data-id="' + d.id + '" data-ix="' + i + '"/>').join('') + '</div>';
         })()}</td>
-        <td>${statusBadge(d.status)}</td>
+        <td>${statusBadge(d.status)}${(function () {
+          if (d.status !== 'approved') return '';
+          const uu = findUser(d.userId);
+          const credited = uu && (uu.acctLedger || []).some(l => l && l.meta && l.meta.depositId === d.id);
+          return credited
+            ? '<div class="tiny up" style="margin-top:3px">✓ credited' + (d.creditedCoin ? ' · ' + esc(d.creditedCoin) : '') + (d.creditedUsd ? ' $' + Number(d.creditedUsd).toFixed(2) : '') + '</div>'
+            : '<div class="tiny down" style="margin-top:3px">not in the balance</div>';
+        })()}</td>
         <td><div class="row gap6" style="justify-content:flex-end">
           ${d.status === 'pending' ? `<button class="btn btn-xs btn-primary" data-act="dep-approve" data-id="${d.id}">Approve</button>
           <button class="btn btn-xs btn-danger" data-act="dep-reject" data-id="${d.id}">Reject</button>` : ''}
+          ${d.status === 'approved' && d.creditedToDeposit !== false ? `<button class="btn btn-xs btn-ghost" data-act="dep-credit" data-id="${d.id}" title="Credit this approved deposit to the user's crypto balance">${ic('wallet', 12)} Credit</button>` : ''}
           <button class="btn btn-xs btn-ghost" data-act="dep-del" data-id="${d.id}">${ic('trash', 12)}</button></div></td></tr>`;
     }).join('') : `<tr><td colspan="7" class="center muted" style="padding:30px">No deposit requests</td></tr>`}
     </tbody></table></div>
@@ -273,27 +281,164 @@ App.depSlip = function (id, ix) {
   if (src && typeof App.viewImage === 'function') return App.viewImage(src, 'Payment slip · ' + usd(d.usd));
   toast('No payment slip on this deposit', 'err');
 };
-App.depApprove = async function (id) {
-  const d = DB.deposits.find(x => x.id === id); if (!d || d.status !== 'pending') return;
-  const u = findUser(d.userId); if (!u) return toast('User not found', 'err');
-  d.status = 'approved'; d.reviewedAt = Date.now();
-  const coin = String(d.coin || (typeof depositCoinOf === 'function' ? depositCoinOf(d) : 'USD')).toUpperCase();
+/* ---- deposit credit helpers (idempotent) -------------------------------- */
+function depCoinOf(d) {
+  let c = String((d && d.coin) || '').toUpperCase().trim();
+  if (!/^[A-Z]{2,6}$/.test(c)) {
+    try { c = String((typeof depositCoinOf === 'function' ? depositCoinOf(d) : '') || '').toUpperCase(); } catch (e) { c = ''; }
+  }
+  if (!/^[A-Z]{2,6}$/.test(c) || c === 'COIN') c = (d && d.method === 'bank') ? 'USD' : 'USDT';
+  return c;
+}
+function depAmountOf(d) {
+  let usd = Number(d && d.usd);
+  if (!(usd > 0)) usd = (Number(d && d.coins) || 0) * 0.5;
+  return Math.round(usd * 100) / 100;
+}
+function depAccountOf(u) {
+  if (!u.depositBalances || typeof u.depositBalances !== 'object' || Array.isArray(u.depositBalances)) u.depositBalances = {};
+  if (!Array.isArray(u.acctLedger)) u.acctLedger = [];
+  return u;
+}
+function depLedgerHas(u, id) {
+  return (u.acctLedger || []).some(l => l && l.meta && l.meta.depositId === id);
+}
+/* Credit one approved deposit to the user's crypto balance exactly once.
+   The account ledger is the proof of the credit, so a retry can never double
+   pay and a lost approval can always be re-applied. */
+function applyDepositCredit(u, d) {
+  if (!u || !d) return { credited: false };
+  depAccountOf(u);
+  const coin = depCoinOf(d);
+  const usd = depAmountOf(d);
   d.coin = coin;
-  u.depositBalances = (u.depositBalances && typeof u.depositBalances === 'object' && !Array.isArray(u.depositBalances)) ? u.depositBalances : {};
-  u.depositBalances[coin] = Math.round(((Number(u.depositBalances[coin]) || 0) + Number(d.usd || 0)) * 100) / 100;
+  if (!(usd > 0)) return { credited: false, coin, usd: 0 };
+  if (depLedgerHas(u, d.id)) {
+    d.creditedToDeposit = true;
+    d.creditedCoin = coin;
+    d.creditedUsd = usd;
+    return { credited: false, already: true, coin, usd, balance: Number(u.depositBalances[coin]) || 0 };
+  }
+  u.depositBalances[coin] = Math.round(((Number(u.depositBalances[coin]) || 0) + usd) * 100) / 100;
+  u.acctLedger.unshift({
+    id: 'al_' + d.id,
+    label: 'Deposit approved · $' + usd.toFixed(2) + ' || ' + coin,
+    usd: usd, wc: 0,
+    meta: { depositId: d.id, coin },
+    at: Date.now()
+  });
   d.creditedToDeposit = true;
-  u.acctLedger = Array.isArray(u.acctLedger) ? u.acctLedger : [];
-  u.acctLedger.unshift({ id: 'al_' + d.id, label: 'Deposit approved · $' + Number(d.usd || 0).toFixed(2) + ' || ' + coin, usd: Number(d.usd) || 0, wc: 0, meta: { depositId: d.id, coin }, at: Date.now() });
-  u.totalDeposits = Math.round(((u.totalDeposits || 0) + d.usd) * 100) / 100;
-  notify(u.id, 'Deposit approved ✅', `$${Number(d.usd || 0).toFixed(2)} || ${coin} has been credited to your crypto balance. Convert it to WC anytime from your WhaleChat account.`, '#/account', 'wallet');
-  // referral payout on first approved deposit (idempotent)
+  d.creditedCoin = coin;
+  d.creditedUsd = usd;
+  d.creditedAt = d.creditedAt || Date.now();
+  u.totalDeposits = Math.round(((Number(u.totalDeposits) || 0) + usd) * 100) / 100;
+  return { credited: true, coin, usd, balance: u.depositBalances[coin] };
+}
+/* Re-apply any approved deposit whose credit never landed on this account
+   (approval done on another device, a lost sync, an older build…). */
+function reconcileDepositCredits(u) {
+  if (!u || !Array.isArray(DB.deposits)) return false;
+  let changed = false;
+  DB.deposits.forEach(d => {
+    if (!d || d.userId !== u.id || d.status !== 'approved') return;
+    if (d.creditedToDeposit === false || d.creditedToDeposit == null) return; /* legacy: went to the WC wallet */
+    const coin = depCoinOf(d);
+    const usd = depAmountOf(d);
+    if (!(usd > 0)) return;
+    if (depLedgerHas(u, d.id)) {
+      if (d.creditedToDeposit !== true || d.creditedCoin !== coin || Number(d.creditedUsd) !== usd) {
+        d.creditedToDeposit = true; d.creditedCoin = coin; d.creditedUsd = usd; changed = true;
+      }
+      return;
+    }
+    const res = applyDepositCredit(u, d);
+    if (res.credited) {
+      changed = true;
+      try {
+        notify(u.id, 'Deposit credited ✅',
+          '$' + res.usd.toFixed(2) + ' || ' + res.coin + ' from your approved deposit is now in your crypto balance.',
+          '#/account', 'wallet');
+      } catch (e) {}
+    }
+  });
+  return changed;
+}
+try {
+  window.applyDepositCredit = applyDepositCredit;
+  window.reconcileDepositCredits = reconcileDepositCredits;
+} catch (e) {}
+
+App.depApprove = async function (id) {
+  const d = DB.deposits.find(x => x.id === id);
+  if (!d) return toast('Deposit request not found', 'err');
+  const u = findUser(d.userId);
+  if (!u) return toast('User not found — the account was removed', 'err');
+  if (d.status === 'approved' && d.creditedToDeposit === true && depLedgerHas(u, d.id)) {
+    return toast('This deposit is already approved and credited', 'ok');
+  }
+  d.status = 'approved';
+  d.reviewedAt = d.reviewedAt || Date.now();
+  d.approvedAt = d.approvedAt || Date.now();
+  d.approvedBy = (function () { try { return me() ? me().username : ''; } catch (e) { return ''; } })();
+  const res = applyDepositCredit(u, d);
+  try {
+    notify(u.id, 'Deposit approved ✅',
+      '$' + res.usd.toFixed(2) + ' || ' + res.coin + ' has been credited to your crypto balance' +
+      (res.credited ? ' (new balance $' + Number(res.balance || 0).toFixed(2) + ')' : '') +
+      '. Convert it to WC anytime from your WhaleChat account.',
+      '#/account', 'wallet');
+  } catch (e) {}
   try { resolvePendingReferrals(); } catch (e) {}
   let bonus = false;
   try { bonus = referralBonus(u.id); } catch (e) {}
-  sync();
-  toast(bonus ? 'Deposit approved · 10 WC referral bonus paid' : 'Deposit approved and credited to deposit balance', 'ok');
+  try { sync(); } catch (e) {}
+  toast(
+    bonus ? 'Deposit approved · 10 WC referral bonus paid'
+      : res.credited ? 'Approved · $' + res.usd.toFixed(2) + ' added to the ' + res.coin + ' balance ($' + Number(res.balance || 0).toFixed(2) + ')'
+      : 'Deposit approved · already credited',
+    'ok');
   render();
 };
+/* "Credit to balance" repair button for an approved deposit that is missing its credit */
+App.depRepair = async function (id) {
+  const d = DB.deposits.find(x => x.id === id);
+  if (!d) return toast('Deposit not found', 'err');
+  const u = findUser(d.userId);
+  if (!u) return toast('User not found', 'err');
+  if (d.status !== 'approved') return toast('Approve the deposit first', 'err');
+  if (d.creditedToDeposit === false) return toast('This older deposit was already credited to the WC wallet', 'err');
+  const res = applyDepositCredit(u, d);
+  try { sync(); } catch (e) {}
+  toast(res.credited ? '$' + res.usd.toFixed(2) + ' ' + res.coin + ' credited · balance $' + Number(res.balance || 0).toFixed(2) : 'Already credited to the balance', res.credited ? 'ok' : '');
+  render();
+};
+
+/* Any device self-heals a missing deposit credit (approval made elsewhere,
+   lost sync, older build) — the ledger proves what was applied. */
+(function depCreditWatch() {
+  if (typeof window === 'undefined' || window.__wcDepCreditWatch) return;
+  window.__wcDepCreditWatch = true;
+  let busy = false;
+  const tick = () => {
+    if (busy) return;
+    busy = true;
+    try {
+      if (typeof DB !== 'undefined' && DB && typeof me === 'function') {
+        const u = me();
+        if (u && reconcileDepositCredits(u)) {
+          try { sync(); } catch (e) {}
+          try { if (typeof render === 'function') render(); } catch (e) {}
+        }
+      }
+    } catch (e) {}
+    busy = false;
+  };
+  setTimeout(tick, 3500);
+  setInterval(tick, 12000);
+  window.addEventListener('hashchange', () => setTimeout(tick, 900));
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) setTimeout(tick, 600); });
+})();
+
 App.depReject = async function (id) {
   const d = DB.deposits.find(x => x.id === id); if (!d) return;
   const reason = await promptDialog({ title: 'Reject deposit', label: 'Reason (sent to user)', placeholder: 'Payment not received' });

@@ -56,6 +56,13 @@
       u.depositBalances = map;
     }
     if (!Array.isArray(u.acctLedger)) u.acctLedger = [];
+    /* an approved deposit whose credit never reached this account is
+       re-applied here, so the crypto balance is always correct */
+    try {
+      if (typeof window.reconcileDepositCredits === 'function') {
+        if (window.reconcileDepositCredits(u)) { try { sync(); } catch (e) {} }
+      }
+    } catch (e) {}
     return u;
   }
 

@@ -74,3 +74,21 @@ Finishing pass on the account dashboard card and the WC-Investing plan view.
   them); the confirmation screen states how many were attached.
 - Admin → Deposit requests has a **Slip** column with thumbnails and a full-size
   viewer, so a reviewer can check the receipt before approving.
+
+## Deposit approval always credits the crypto balance (3.62.3)
+- `App.depApprove` no longer writes the balance inline. It calls
+  `applyDepositCredit(user, deposit)`, which:
+  - normalises the coin (`USDT`, `BTC`, …, bank → `USD`) and the amount,
+  - repairs a `depositBalances` field that is not a plain object,
+  - writes the credit **and** an `acctLedger` entry with `meta.depositId`,
+  - marks `creditedToDeposit / creditedCoin / creditedUsd / creditedAt`,
+  - refuses to credit twice — the ledger entry is the proof of the credit.
+- `reconcileDepositCredits(user)` re-applies any approved deposit that has no
+  ledger entry, so an approval made on another device, a lost sync or an older
+  build heals automatically: it runs on every account view and every 12 s on
+  every device, then syncs and notifies the user "Deposit credited ✅".
+- The admin deposit queue shows **✓ credited · COIN $amount** or
+  **not in the balance**, with a one-tap **Credit** button to re-apply an
+  approved deposit that is missing its credit.
+- Approving an already-credited deposit is a no-op (no double credit), and the
+  approve toast now reports the new coin balance.
