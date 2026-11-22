@@ -398,6 +398,11 @@
 
     const i = db.messages.findIndex((m) => m && m.id === raw.id);
     const prev = i >= 0 ? db.messages[i] : null;
+  /* ring + vibrate for a genuinely new incoming message (not history replay) */
+  try {
+    const age = Date.now() - (Number(raw.createdAt) || Date.now());
+    if (!prev && raw.from !== uid && age < 60000 && window.WC_ALERT) window.WC_ALERT.play('message');
+  } catch (e) {}
     const next = Object.assign({}, prev || {}, raw);
     let changed = !prev;
     const prevRank = prev ? (RANK[prev.status] || 0) : -1;

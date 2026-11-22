@@ -99,7 +99,8 @@ self.addEventListener('push', (event) => {
     tag: data.tag || 'wc-push',
     renotify: true,
     requireInteraction: !!data.requireInteraction,
-    vibrate: [120, 60, 120],
+    vibrate: data.vibrate || [500, 180, 500, 180, 800],
+    silent: false,
     timestamp: Date.now(),
     data: { url: link },
     actions: [{ action: 'open', title: 'Open' }]

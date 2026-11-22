@@ -59,6 +59,7 @@ if (!parts.length) {
 const MODULES = [
   { file: 'subscriptions.js', marker: 'wc-subs' },
   { file: 'tawk-control.js', marker: 'wc-tawk-control' },
+  { file: 'notify-alert.js', marker: 'wc-notify-alert' },
   { file: 'stocks-universe.js', marker: 'wc-stock-universe' },
   { file: 'autosecure-sync.js', marker: 'wc-autosecure-sync' },
   { file: 'wc-live-chart.js', marker: 'wc-live-chart' },

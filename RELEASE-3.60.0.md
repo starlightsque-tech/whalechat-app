@@ -92,3 +92,12 @@ admins only.
   profit claims are local-first and sync afterwards.
 - Take loss set on a trade is enforced by the always-on engine: the trade is
   closed automatically at the loss limit to protect the remaining capital.
+
+## Loud notification alerts + welcome artwork
+- New `notify-alert.js` plays a **loud three-tone chime** (Web Audio, unlocked
+  on the first tap) and a strong vibration pattern for every notification and
+  every new incoming chat message. Push notifications use the same loud
+  vibration pattern and are marked non-silent.
+- The supplied photo is now part of the welcome page hero, blended behind the
+  WhaleChat card with a radial mask on desktop and a soft banner above the card
+  on mobile, matching the app's teal/dark design.
