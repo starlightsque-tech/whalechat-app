@@ -306,7 +306,7 @@
     if (paidFrom === 'capital') w.capital = round2(w.capital - capital);
     inv.paidFrom = paidFrom;
     w.plans.unshift(inv);
-    log(w, 'Activated ' + plan.name + ' · ' + usd(capital) + ' for ' + days + ' days' + (paidFrom === 'capital' ? '' : ' · paid from ' + coin), -0);
+    log(w, 'Activated ' + plan.name + ' · ' + usd(capital) + ' for ' + days + ' days · funded from ' + (paidFrom === 'capital' ? 'WC-Investing capital' : 'crypto ' + coin), -0);
     ledgerLine(u, 'WC-Investing plan activated · ' + plan.name, 0);
     save(); repaint();
     return { ok: true, investment: inv };

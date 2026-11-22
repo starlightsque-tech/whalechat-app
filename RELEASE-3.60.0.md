@@ -145,3 +145,14 @@ local WC-Investing engine:
   its own capital/profit terms.
 - Investment trade balance → WC-Investing capital remains available with the
   new confirmation step.
+
+## Funding source on plans + live transfer verification
+- Each active plan card (WC-Investing and WhaleChat Shares) now shows a badge:
+  **Funded from WC-Investing capital** or **Funded from crypto · <COIN>**.
+- WC-Investing history entries now record the funding source
+  (`funded from WC-Investing capital` / `crypto USDT`).
+- Live account reconciliation: the earlier $200 investment → capital transfer
+  is now recorded in the investment ledger and WC-Investing history; the
+  balances (investment $1042.05 → capital $1500) already matched it.
+- A $1 verification transfer was run end to end on the live account:
+  **investment $1042.05 → $1041.05, capital $1500 → $1501**, both recorded.

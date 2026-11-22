@@ -34,6 +34,9 @@
         '<b>' + esc(inv.planName) + '</b> <span class="badge badge-success">' + s.pct.toFixed(1) + '%</span>' +
         '<div class="tiny muted">' + usd(inv.capitalUsd) + ' capital · ' + inv.ratePct + '%/day · ' + inv.days + ' days · ' +
           (s.daysLeft > 0 ? s.daysLeft + ' day' + (s.daysLeft === 1 ? '' : 's') + ' left' : 'maturing') + '</div>' +
+        '<div class="tiny" style="margin-top:2px">' + (inv.paidFrom && String(inv.paidFrom).indexOf('crypto:') === 0
+          ? '<span class="badge">Funded from crypto · ' + esc(String(inv.paidFrom).slice(7)) + '</span>'
+          : '<span class="badge">Funded from WC-Investing capital</span>') + '</div>' +
       '</div><div style="text-align:right">' +
         '<b class="up">+' + usd(s.accruedUsd) + '</b>' +
         '<div class="tiny muted">of ' + usd(s.totalRoiUsd) + ' projected</div>' +

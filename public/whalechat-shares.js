@@ -89,6 +89,7 @@
         durationDays: Number(inv.days) || 1, totalReturnPct: (Number(inv.ratePct) || 0) * (Number(inv.days) || 1),
         durationLabel: (Number(inv.days) || 1) + ' days',
         entryPriceUsd: Number(inv.entryPriceUsd) || price,
+        paidFrom: inv.paidFrom || 'capital',
         shares: Number(inv.shares) || (price > 0 ? capUsd / price : 0),
         startAt: Number(inv.startedAt) || Date.now(), endAt: Number(inv.endsAt) || Date.now(),
         status: inv.status, accruedCoins: accruedUsd * 2, accruedUsd,
@@ -290,7 +291,10 @@
     return `<div class="shares-inv">
       <div class="between" style="align-items:flex-start">
         <div><b>${escS(v.planName)}</b>
-          <div class="tiny muted">${num(v.shares, 4)} shares @ $${num(v.entryPriceUsd)} · ${num(v.dailyReturnPct, 2)}% daily × ${num(v.durationDays, 0)} days = ${num(v.totalReturnPct, 2)}% total</div></div>
+          <div class="tiny muted">${num(v.shares, 4)} shares @ $${num(v.entryPriceUsd)} · ${num(v.dailyReturnPct, 2)}% daily × ${num(v.durationDays, 0)} days = ${num(v.totalReturnPct, 2)}% total</div>
+          <div class="tiny" style="margin-top:2px">${v.paidFrom && String(v.paidFrom).indexOf('crypto:') === 0
+            ? '<span class="badge">Funded from crypto · ' + escS(String(v.paidFrom).slice(7)) + '</span>'
+            : '<span class="badge">Funded from WC-Investing capital</span>'}</div></div>
         <span class="badge badge-warn">${left(v.remainingMs)}</span>
       </div>
       <div class="shares-inv-grid">
