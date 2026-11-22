@@ -504,6 +504,7 @@ const LT = {
           ${ic('down', 13)} Take loss <span data-lt-sl-amt="${t.id}">${p.pnlCoins < 0 ? '(−' + usd(Math.abs(p.pnlCoins)) + ')' : ''}</span></button>
       </div>
       <div class="lt-secure-line" data-lt-secure="${t.id}">${this.secureTradeHTML(t)}</div>
+      ${LT.moveTapeHTML(t)}
       ${(() => {
         const pending = (t.securedProfits || []).filter((x) => x && !x.claimed);
         if (!pending.length) return '';
@@ -629,6 +630,7 @@ const LT = {
       set('[data-lt-move="' + t.id + '"]', (p.movePct >= 0 ? '▲ ' : '▼ ') + Math.abs(p.movePct).toFixed(2) + '%');
       set('[data-lt-left="' + t.id + '"]', '⏱ ' + this.clock(p.left));
       set('[data-lt-moves="' + t.id + '"]', String(LT.totalMovesOf(t)));
+      document.querySelectorAll('[data-lt-tape="' + t.id + '"]').forEach(el => { el.innerHTML = LT.moveTapeInner(t); });
       document.querySelectorAll('[data-lt-pnl="' + t.id + '"], [data-lt-pct="' + t.id + '"]').forEach(el => {
         el.classList.toggle('up', p.pnlCoins > 0);
         el.classList.toggle('down', p.pnlCoins < 0);
@@ -2281,25 +2283,12 @@ App.ltStart = function (id, ds) {
     trailingPct: trailPct
   });
 };
-App.ltTp = async function (id, ds) {
+App.ltTp = function (id, ds) {
+  /* Local-first so the button responds instantly on every page. The closed /
+     skimmed trade state syncs to the server in the background. */
   const t = DB.trades.find(x => x.id === ds.id);
   if (!t || t.status !== 'Open') return toast('This trade is already closed', 'err');
   if (!(LT.calc(t).pnlCoins > 0)) return toast('No profit to take yet', 'err');
-  /* the backend skim is atomic; fall back to the local bookkeeping offline */
-  if (typeof Remote !== 'undefined' && Remote && Remote.enabled) {
-    try {
-      const r = await Remote.fetchJSON('/api/market/trade/take-profit', {
-        method: 'POST',
-        body: JSON.stringify({ userId: me().id, tradeId: t.id })
-      }, 8000);
-      if (r.res && r.res.ok && r.data && r.data.ok) {
-        await Remote.refresh(true);
-        toast(`Profit taken — ${usd(coinsToUsd(Number(r.data.profit) || 0))} credited. Trade continues`, 'ok');
-        return;
-      }
-      if (r.data && r.data.error) return toast(r.data.error, 'err');
-    } catch (e) { /* offline: local skim below */ }
-  }
   LT.takeProfit(t, 'Take Profit Taken');
 };
 App.ltClaimAllProfits = async function () {
@@ -2309,19 +2298,6 @@ App.ltClaimAllProfits = async function () {
   if (typeof confirmDialog === 'function') {
     const ok = await confirmDialog({ title: 'Claim all secured profits?', body: `${list.length} entries totalling ${usd(total)} USD will be credited to your stock Profit balance.`, ok: 'Claim all' });
     if (!ok) return;
-  }
-  if (typeof Remote !== 'undefined' && Remote && Remote.enabled) {
-    try {
-      const r = await Remote.fetchJSON('/api/market/secure-profit/claim-all', {
-        method: 'POST', body: JSON.stringify({ userId: me().id })
-      }, 10000);
-      if (r.res && r.res.ok && r.data && r.data.ok) {
-        await Remote.refresh(true);
-        toast(`Claimed ${r.data.count} secured profit${Number(r.data.count) === 1 ? '' : 's'} — +${usd(Number(r.data.coins) || 0)} USD to Profit balance`, 'ok');
-        return;
-      }
-      if (r.data && r.data.error) return toast(r.data.error, 'err');
-    } catch (e) { /* offline fallback */ }
   }
   const u = findUser(me().id);
   if (!u) return toast('User not found', 'err');
@@ -2337,7 +2313,7 @@ App.ltClaimAllProfits = async function () {
   ia.stockProfit = Math.round(((Number(ia.stockProfit) || 0) + coinsTotal) * 100) / 100;
   tx(u.id, 'secured-profit-claim', `Claimed ${list.length} secured profits · +${usd(coinsToUsd(coinsTotal))}`, coinsTotal, { count: list.length, all: true });
   notify(u.id, 'Secured profits credited', `+${usd(coinsToUsd(coinsTotal))} was added to your balance.`, '#/wallet', 'check');
-  persist(); render();
+  persist(); render(); try { LT.paintOfflineAlert(); } catch (e) {}
   toast(`Claimed ${list.length} secured profits — +${usd(coinsToUsd(coinsTotal))} credited`, 'ok');
 };
 
@@ -2348,20 +2324,6 @@ App.ltClaimProfit = async function (id, ds) {
   const rec = t && (t.securedProfits || []).find((x) => x && x.id === profitId);
   if (!t || !rec) return toast('That secured profit was not found', 'err');
   if (rec.claimed) return toast('This profit has already been claimed', 'err');
-  if (typeof Remote !== 'undefined' && Remote && Remote.enabled) {
-    try {
-      const r = await Remote.fetchJSON('/api/market/secure-profit/claim', {
-        method: 'POST',
-        body: JSON.stringify({ userId: me().id, tradeId, profitId })
-      }, 8000);
-      if (r.res && r.res.ok && r.data && r.data.ok) {
-        await Remote.refresh(true);
-        toast(`Secured profit claimed — +${usd(Number(r.data.coins) || 0)} USD to Profit balance`, 'ok');
-        return;
-      }
-      if (r.data && r.data.error) return toast(r.data.error, 'err');
-    } catch (e) { /* fall through to local */ }
-  }
   const u = findUser(t.userId);
   if (!u) return toast('User not found', 'err');
   const ia2 = INV.investAcct(u);
@@ -2371,37 +2333,26 @@ App.ltClaimProfit = async function (id, ds) {
   tx(u.id, 'secured-profit-claim', `Secured profit claimed · ${t.ticker} · +${usd(coinsToUsd(rec.coins))}`, rec.coins,
     { tradeId: t.id, profitId: rec.id });
   notify(u.id, 'Secured profit credited', `+${usd(coinsToUsd(rec.coins))} from ${t.ticker} was added to your balance.`, '#/wallet', 'check');
-  persist(); render();
+  persist(); render(); try { LT.paintOfflineAlert(); } catch (e) {}
   toast(`Take profit claimed — +${usd(coinsToUsd(rec.coins))} credited`, 'ok');
 };
 
-async function ltManualClose(t, action, reason) {
-  if (typeof Remote !== 'undefined' && Remote && Remote.enabled) {
-    try {
-      const r = await Remote.fetchJSON('/api/market/trade/close', {
-        method: 'POST',
-        body: JSON.stringify({ userId: me().id, tradeId: t.id, action })
-      }, 8000);
-      if (r.res && r.res.ok && r.data && r.data.ok) {
-        await Remote.refresh(true);
-        toast(LT.splitLabel(r.data.settlement || { capital: 0, profit: 0, leftover: Number(r.data.payout) || 0, loss: 1 }), 'ok');
-        return true;
-      }
-      if (r.data && r.data.error) { toast(r.data.error, 'err'); return false; }
-    } catch (e) { /* offline: local close below */ }
-  }
+/* Manual Stop / Take loss close the trade in the same click. No network round
+   trip is allowed to hold the button; the settled trade syncs afterwards. */
+function ltManualClose(t, action, reason) {
+  if (!t || t.status !== 'Open') return false;
   return LT.settle(t, reason);
 }
-App.ltStop = async function (id, ds) {
+App.ltStop = function (id, ds) {
   const t = DB.trades.find(x => x.id === ds.id);
   if (!t || t.status !== 'Open') return toast('This trade is already closed', 'err');
-  await ltManualClose(t, 'stop', 'Stopped by user');
+  ltManualClose(t, 'stop', 'Stopped by user');
 };
-App.ltSl = async function (id, ds) {
+App.ltSl = function (id, ds) {
   const t = DB.trades.find(x => x.id === ds.id);
   if (!t || t.status !== 'Open') return toast('This trade is already closed', 'err');
   if (!(LT.calc(t).pnlCoins < 0)) return toast('The trade is not in loss — take loss is only available while losing', 'err');
-  await ltManualClose(t, 'sl', 'Stop Loss Hit');
+  ltManualClose(t, 'sl', 'Stop Loss Hit');
 };
 
 App.ltEditTpsl = function (id, ds) {
@@ -2679,8 +2630,9 @@ setInterval(() => {
 /* catch up immediately when the tab becomes visible again */
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) return;
-  try { if (DB && me()) { LT.auto(); LT.paint(); LT.paintDash(); LT.paintMarket(); } } catch (e) {}
+  try { if (DB && me()) { LT.auto(); LT.paint(); LT.paintDash(); LT.paintMarket(); LT.paintOfflineAlert(); } } catch (e) {}
 });
+window.addEventListener('online', () => { try { LT.paintOfflineAlert(); } catch (e) {} });
 
 /* catch the app after login/first paint too */
 setInterval(() => {
@@ -2739,6 +2691,10 @@ LT.trackMove = function (t, price) {
       t.favorableMoves = (Number(t.favorableMoves) || 0) + 1;
       /* keep the legacy fields in step for older cards */
       t.totalMoveCount = Math.max(Number(t.totalMoveCount) || 0, t.favorableMoves);
+      /* visible move tape: Move 1, Move 2 … with the price at each move */
+      t.moveTape = Array.isArray(t.moveTape) ? t.moveTape : [];
+      t.moveTape.push({ n: t.favorableMoves, at: Date.now(), price: Math.round(px * 1e6) / 1e6, secured: 0 });
+      if (t.moveTape.length > 120) t.moveTape.splice(0, t.moveTape.length - 120);
       const stamp = Date.now();
       if (!t._moveSavedAt || stamp - Number(t._moveSavedAt) > 3000) {
         t._moveSavedAt = stamp;
@@ -3017,6 +2973,17 @@ LT.secureLocal = function (t, reason) {
      manually from Saved / Secured profits. It is never silently credited. */
   { const mv = LT.logMove(t, { price: p.price, entryBefore: t.entryPrice, amount: profit, levels: levels || 1, by: 'auto-secure', kind: 'secured' });
     if (mv && t.securedProfits[0]) { t.securedProfits[0].moveFrom = mv.from; t.securedProfits[0].moveTo = mv.to; } }
+  /* mark the move that produced this lock so the tape shows the amount */
+  const offlineLock = (typeof navigator !== 'undefined' && navigator.onLine === false);
+  const sec = t.securedProfits && t.securedProfits[0];
+  if (sec) sec.offlineLock = offlineLock;
+  if (Array.isArray(t.moveTape) && t.moveTape.length) {
+    const tape = t.moveTape[t.moveTape.length - 1];
+    if (tape && !tape.secured) { tape.secured = profit; tape.securedAt = now; }
+    else t.moveTape.push({ n: Number(t.favorableMoves) || 1, at: now, price: Math.round(p.price * 1e6) / 1e6, secured: profit, securedAt: now });
+    if (t.moveTape.length > 120) t.moveTape.splice(0, t.moveTape.length - 120);
+  }
+  if (offlineLock) LT.offlineLockNotice(t, profit);
   t.entryPrice = tpLvl > 0 ? LT.rebaseAfterTake(t, p.price, profit) : Math.round(p.price * 1e6) / 1e6;
   if (tpLvl > 0) t.tpMovesTaken = (Number(t.tpMovesTaken) || 0) + levels;
   t.moveCount = 0;
@@ -3048,6 +3015,80 @@ LT.tradeSecured = function (t) {
   });
   return { sum: Math.round(sum * 100) / 100, n, last };
 };
+/* Visible move-by-move tape: Move 1, Move 2 … with price and the amount
+   Auto Secure locked at that move. Shown under every active trade. */
+LT.moveTapeInner = function (t) {
+  const tape = Array.isArray(t && t.moveTape) ? t.moveTape : [];
+  const tp = LT.tpLevelOf(t);
+  const rows = tape.slice(-30).map((m) => {
+    const secured = Number(m.secured) || 0;
+    return '<div class="lt-tape-row' + (secured > 0 ? ' on' : '') + '">' +
+      '<b>Move ' + esc(String(m.n || '')) + '</b>' +
+      '<span>' + esc(LT.px(t.ticker, m.price)) + '</span>' +
+      '<span class="' + (secured > 0 ? 'up' : 'muted') + '">' + (secured > 0 ? '+' + usd(secured) + ' secured' : (tp > 0 ? 'below ' + usd(tp) + ' TP' : '—')) + '</span>' +
+      '</div>';
+  }).join('');
+  return '<div class="lt-tape-head"><b>Trade moves</b><span>' + tape.length + ' counted</span></div>' +
+    (rows || '<div class="lt-tape-row"><span class="muted" style="grid-column:1/-1">Waiting for the first move in your direction…</span></div>');
+};
+LT.moveTapeHTML = function (t) {
+  return '<div class="lt-tape" data-lt-tape="' + t.id + '">' + LT.moveTapeInner(t) + '</div>';
+};
+
+/* One in-app alert listing every profit Auto Secure locked while the device
+   was offline, with a Claim all button. */
+LT.offlineLocked = function (userId) {
+  const out = [];
+  (DB.trades || []).forEach((t) => {
+    if (!t || t.userId !== userId) return;
+    (t.securedProfits || []).forEach((sp) => {
+      if (sp && !sp.claimed && sp.offlineLock) out.push({ trade: t, profit: sp });
+    });
+  });
+  return out;
+};
+LT.offlineLockNotice = function (t, profit) {
+  try {
+    LT._offlineAlertDismissed = false;
+    if (!t || !DB || !DB.notifications) return;
+    const total = LT.offlineLocked(t.userId).reduce((a, x) => a + (Number(x.profit.coins) || 0), 0);
+    const found = DB.notifications.find((n) => n && n.userId === t.userId && n.action && n.action.type === 'claim-all-secured' && n.action.tradeId === t.id && !n.read);
+    if (found) {
+      found.body = `${t.ticker}: +${usd(profit)} USD was locked while you were offline. Total waiting to claim: ${usd(total)} USD. Press Claim all to credit it now.`;
+      found.createdAt = Date.now();
+      found.amount = Math.round((Number(found.amount) || 0) + profit * 100) / 100;
+      return;
+    }
+    notify(t.userId, 'Auto Secure locked profit while you were offline',
+      `${t.ticker}: +${usd(profit)} USD was secured while you were offline. Total waiting to claim: ${usd(total)} USD. Press Claim all to credit it now.`,
+      '#/invest/orders', 'lock', { type: 'claim-all-secured', tradeId: t.id });
+  } catch (e) {}
+};
+LT.paintOfflineAlert = function () {
+  const u = me(); if (!u) return;
+  const list = LT.offlineLocked(u.id);
+  const old = document.getElementById('ltOfflineLockAlert');
+  if (!list.length) { if (old) old.remove(); return; }
+  if (LT._offlineAlertDismissed && old) return;
+  if (old) {
+    const total = list.reduce((a, x) => a + (Number(x.profit.coins) || 0), 0);
+    const b = old.querySelector('[data-lt-alert-total]');
+    if (b) b.textContent = '+' + usd(total) + ' USD';
+    return;
+  }
+  const total = list.reduce((a, x) => a + (Number(x.profit.coins) || 0), 0);
+  const el = document.createElement('div');
+  el.id = 'ltOfflineLockAlert';
+  el.className = 'lt-offline-alert';
+  el.innerHTML = '<div class="lt-oa-ic">' + (typeof ic === 'function' ? ic('lock', 16) : '') + '</div>' +
+    '<div class="grow"><b>Auto Secure locked profit while you were offline</b>' +
+    '<div class="tiny">' + list.length + ' lock' + (list.length === 1 ? '' : 's') + ' · <b class="up" data-lt-alert-total>+' + usd(total) + ' USD</b> waiting for you.</div></div>' +
+    '<button class="btn btn-sm btn-primary" data-act="lt-claim-all-profits">Claim all</button>' +
+    '<button class="lt-oa-x" data-lt-alert-dismiss="1" aria-label="Dismiss">×</button>';
+  el.querySelector('[data-lt-alert-dismiss]').addEventListener('click', () => { LT._offlineAlertDismissed = true; el.remove(); });
+  document.body.appendChild(el);
+};
+
 LT.secureTradeHTML = function (t) {
   if (!this.autoSecureOn(t.userId)) return '';
   const p = this.calc(t);
@@ -3118,7 +3159,16 @@ LT.paintSecure = function () {
       .lt-as-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-top:8px}
       .lt-as-grid div{display:flex;flex-direction:column;gap:1px;padding:7px;border:1px solid var(--border);border-radius:9px;background:var(--surface-2)}
       .lt-as-grid span{font-size:9px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted-2);font-weight:700}
-      .lt-as-grid b{font-size:12.5px;font-variant-numeric:tabular-nums}`;
+      .lt-as-grid b{font-size:12.5px;font-variant-numeric:tabular-nums}
+      .lt-tape{margin-top:8px;border:1px solid rgba(46,214,166,.22);border-radius:10px;overflow:hidden;background:rgba(46,214,166,.04);max-height:210px;overflow-y:auto}
+      .lt-tape-head{display:flex;justify-content:space-between;padding:6px 9px;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted-2);border-bottom:1px solid rgba(46,214,166,.16)}
+      .lt-tape-row{display:grid;grid-template-columns:64px 1fr auto;gap:8px;padding:5px 9px;font-size:11.5px;border-top:1px solid rgba(127,127,127,.1)}
+      .lt-tape-row:first-of-type{border-top:0}
+      .lt-tape-row.on{background:rgba(46,214,166,.07)}
+      .lt-offline-alert{position:fixed;left:14px;right:14px;bottom:84px;z-index:9998;display:flex;align-items:center;gap:10px;padding:11px 12px;border-radius:14px;border:1px solid rgba(46,230,201,.45);background:linear-gradient(135deg,rgba(7,28,43,.98),rgba(10,40,52,.98));color:#e9f4f9;font:600 12.5px/1.4 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;box-shadow:0 18px 44px rgba(0,0,0,.55)}
+      .lt-oa-ic{width:32px;height:32px;border-radius:50%;background:rgba(46,230,201,.16);color:#2ee6c9;display:flex;align-items:center;justify-content:center;flex:none}
+      .lt-oa-x{border:0;background:transparent;color:#8ba4b6;font-size:18px;line-height:1;padding:4px;cursor:pointer}
+      @media(min-width:900px){.lt-offline-alert{left:auto;right:20px;width:430px;bottom:20px}}`;
     document.head.appendChild(css);
   } catch (e) {}
 })();
@@ -3133,5 +3183,6 @@ setInterval(() => {
       });
     }
     LT.paintSecure();
+    LT.paintOfflineAlert();
   } catch (e) { console.error('auto secure tick', e); }
 }, 500);

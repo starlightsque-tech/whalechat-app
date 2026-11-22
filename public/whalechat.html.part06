@@ -267,6 +267,7 @@ VIEWS.notifications = function () {
       <div style="width:36px;height:36px;border-radius:10px;background:var(--surface-3);color:var(--accent);display:flex;align-items:center;justify-content:center;flex:none">${ic(n.icon || 'bell', 16)}</div>
       <div class="grow" style="min-width:0"><div class="small" style="font-weight:650">${esc(n.title)}</div>
         <div class="tiny muted mt6" style="line-height:1.55">${esc(n.body)}</div>
+        ${n.action && n.action.type === 'claim-all-secured' ? `<button class="btn btn-xs btn-primary" style="margin-top:7px" onclick="event.stopPropagation()" data-act="lt-claim-all-profits">${ic('lock', 11)} Claim all secured profit</button>` : ''}
         <div class="tiny" style="color:var(--muted-2);margin-top:5px">${timeAgo(n.createdAt)} ago</div></div>
       ${!n.read ? '<span class="dot" style="background:var(--accent)"></span>' : ''}
     </div>`).join('')}</div>` : `<div class="card empty"><div class="ic">${ic('bell', 26)}</div><h3>No notifications</h3><p>Messages, orders and wallet updates will appear here.</p></div>`}`;

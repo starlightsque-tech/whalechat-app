@@ -189,8 +189,8 @@ function totalUnread() {
 }
 function cartCount() { const u = me(); return u ? (u.cart || []).reduce((s, i) => s + i.qty, 0) : 0; }
 function unreadNotifs() { const u = me(); if (!u) return 0; return DB.notifications.filter(n => n.userId === u.id && !n.read).length; }
-function notify(userId, title, body, link, icon) {
-  DB.notifications.unshift({ id: uid('nt'), userId, title, body, link: link || null, icon: icon || 'bell', read: false, createdAt: Date.now() });
+function notify(userId, title, body, link, icon, action) {
+  DB.notifications.unshift({ id: uid('nt'), userId, title, body, link: link || null, icon: icon || 'bell', read: false, createdAt: Date.now(), action: action || null });
   const u = findUser(userId);
   const isMe = !!(SESSION && SESSION.userId === userId);
   if (isMe && u && u.settings && u.settings.notifications !== false && typeof Notification !== 'undefined' && Notification.permission === 'granted' && document.hidden) {

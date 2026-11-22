@@ -78,3 +78,17 @@ admins only.
   user who was offline can claim everything on return.
 - The server engine (`market.js`) does the same for subscribed users while the
   app is closed, and mirrors the directional move count.
+
+## Offline Auto Secure alerts, move tape and instant trade buttons
+- Auto Secure marks locks created while the device is offline and raises both
+  an in-app notification and a floating "locked while you were offline" alert
+  with a **Claim all** button. Server locks are marked offline too, so locks
+  created while the app was closed surface when the user returns.
+- Every active trade shows a visible **Trade moves** tape: Move 1, Move 2 …
+  with the price at each move and the amount Auto Secure locked there (or
+  "below TP" when the move did not reach the user's level).
+- **Stop trade** and **Take loss** now settle the trade in the same click — no
+  network round trip is allowed to delay the button. Take profit and secured
+  profit claims are local-first and sync afterwards.
+- Take loss set on a trade is enforced by the always-on engine: the trade is
+  closed automatically at the loss limit to protect the remaining capital.

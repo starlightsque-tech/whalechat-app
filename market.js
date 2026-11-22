@@ -1314,7 +1314,8 @@ class MarketService {
     t.securedProfits = Array.isArray(t.securedProfits) ? t.securedProfits : [];
     const rec = {
       id: id('sp_'), coins: profit, at: now, price: round(q.price, 6),
-      entryBefore: round(entry, 6), reason: reason || 'Auto Secure', claimed: false
+      entryBefore: round(entry, 6), reason: reason || 'Auto Secure', claimed: false,
+      offlineLock: true
     };
     t.securedProfits.unshift(rec);
     if (t.securedProfits.length > 100) t.securedProfits.length = 100;
