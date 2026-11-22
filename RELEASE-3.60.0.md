@@ -156,3 +156,11 @@ local WC-Investing engine:
   balances (investment $1042.05 → capital $1500) already matched it.
 - A $1 verification transfer was run end to end on the live account:
   **investment $1042.05 → $1041.05, capital $1500 → $1501**, both recorded.
+
+## Account quick buttons + reference-style WC-Investing charts
+- The WhaleChat account dashboard card now has two quick buttons:
+  **Chat** → chat page, **WC-Investing** → WC-Investing account page.
+- WC-Investing active-plan charts, the dashboard ROI progress chart and the
+  ROI page chart now use the reference market-chart style: dark panel,
+  red/green line with soft fill, right-hand USD scale, the current value in a
+  coloured badge, dashed grid and time labels along the bottom.

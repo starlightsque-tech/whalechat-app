@@ -45,7 +45,7 @@
       '<div class="tiny muted" style="margin-top:6px">Day ' + s.dayNo + ' of ' + s.days + ' · Whalecoin now ' + usd(s.priceNow) + ' → today ' + usd(s.priceNow * (Number(inv.ratePct) || 0) / 100) + ' × ' + usd(inv.capitalUsd) + ' = <b class="up">' + usd(s.todayDailyUsd) + '</b>/day</div>' +
       '<div class="tiny muted">Entry ' + usd(inv.entryPriceUsd) + ' · average ' + usd(s.avgPriceUsd) + ' · crash level ' + usd(s.crashLevelUsd) + ' · matures ' + new Date(Number(inv.endsAt)).toLocaleDateString() + '</div>' +
       (s.atRisk ? '<div class="tiny down" style="margin-top:4px"><b>At risk:</b> the average Whalecoin price is below the crash level. If it ends the plan below ' + usd(s.crashLevelUsd) + ' the plan is a total loss.</div>' : '') +
-      '<div class="wci-chartwrap">' + P.chart(P.series(inv, 24), { height: 78, color: '#2ee6c9', uid: inv.id }) + '</div>' +
+      '<div class="wci-chartwrap">' + P.chart(P.series(inv, 24), { height: 110, color: s.atRisk ? '#ff4d5e' : '#2ee6c9', uid: inv.id, start: inv.startedAt, end: inv.endsAt }) + '</div>' +
       '<div class="between tiny"><span class="muted">20%</span><span class="up">ROI ' + usd(s.accruedUsd) + '</span><span class="muted">100%</span></div>' +
     '</div>';
   }
@@ -54,6 +54,8 @@
   P.viewDashboard = function () {
     var s = P.summary();
     var plans = s.active.slice(0, 3);
+    var winStart = s.active.length ? Math.min.apply(null, s.active.map(function (p) { return Number(p.startedAt) || Date.now(); })) : Date.now() - 6 * 3600e3;
+    var winEnd = s.active.length ? Math.max.apply(null, s.active.map(function (p) { return Number(p.endsAt) || Date.now(); })) : Date.now();
     return head('WC-Investing', 'WhaleChat Shares plans, profits and ROI.', '#/investment') +
       '<div class="ih-cards">' +
         '<div class="ih-card"><span>Capital balance</span><b>' + usd(s.capital) + '</b><small>Used to activate plans</small></div>' +
@@ -83,7 +85,7 @@
 
       '<div class="card"><div class="between"><div class="card-title" style="margin:0">ROI progress</div>' +
         '<a href="#/invest/shares/roi" class="tiny">Open chart →</a></div>' +
-        '<div class="wci-chartwrap">' + P.chart(P.combinedSeries(24), { height: 110, color: '#2ee6c9', uid: 'dash' }) + '</div>' +
+        '<div class="wci-chartwrap">' + P.chart(P.combinedSeries(24), { height: 150, color: '#2ee6c9', uid: 'dash', start: winStart, end: winEnd }) + '</div>' +
         '<div class="tiny muted">Total ROI accrued across every active plan: <b class="up">+' + usd(s.accruedUsd) + '</b></div></div>';
   };
 
@@ -162,6 +164,8 @@
     s.active.forEach(function (p) { if (p.id === sel) one = p; });
     var series = one ? P.series(one, 30) : P.combinedSeries(30);
     var accrued = one ? P.progress(one, P.sharePrice()).accruedUsd : s.accruedUsd;
+    var winStart = one ? (Number(one.startedAt) || Date.now()) : (s.active.length ? Math.min.apply(null, s.active.map(function (p) { return Number(p.startedAt) || Date.now(); })) : Date.now() - 6 * 3600e3);
+    var winEnd = one ? (Number(one.endsAt) || Date.now()) : (s.active.length ? Math.max.apply(null, s.active.map(function (p) { return Number(p.endsAt) || Date.now(); })) : Date.now());
     var pills = '<a class="chip wci-pill' + (sel === '__all__' ? ' on' : '') + '" href="#/invest/shares/roi">All plans</a>' +
       s.active.map(function (p) {
         return '<a class="chip wci-pill' + (p.id === sel ? ' on' : '') + '" href="#/invest/shares/roi?plan=' + encodeURIComponent(p.id) + '">' + esc(p.planName) + '</a>';
@@ -170,7 +174,7 @@
       '<div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:8px">' + pills + '</div>' +
       '<div class="card"><div class="between"><div class="card-title" style="margin:0">' + (one ? esc(one.planName) : 'All active plans') + '</div>' +
         '<b class="up">+' + usd(accrued) + '</b></div>' +
-        '<div class="wci-chartwrap big">' + P.chart(series, { height: 150, color: one ? '#2ee6c9' : '#3aa0ff', uid: 'roi' }) + '</div>' +
+        '<div class="wci-chartwrap big">' + P.chart(series, { height: 190, color: one ? (one.atRisk ? '#ff4d5e' : '#2ee6c9') : '#3aa0ff', uid: 'roi', start: winStart, end: winEnd }) + '</div>' +
         '<div class="tiny muted" style="margin-top:6px">' + (one
           ? 'Capital ' + usd(one.capitalUsd) + ' · ' + one.ratePct + '%/day · ' + one.days + ' days · projected ' + usd(one.projectedRoiUsd)
           : 'Accrued across ' + s.activeCount + ' plan' + (s.activeCount === 1 ? '' : 's') + ' · working capital ' + usd(s.investedUsd)) + '</div></div>' +
@@ -432,7 +436,11 @@
     .wci-chartwrap{margin-top:8px}
     .wci-chartwrap.big{margin-top:10px}
     .wci-chart{width:100%;height:86px;display:block}
+    .wci-chart-v2{height:auto!important;border-radius:10px;display:block}
     .wci-chartwrap.big .wci-chart{height:150px}
+    .wci-chart-y{font:600 8.5px -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;fill:#8fa6b5}
+    .wci-chart-now{font:800 9px -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;fill:#fff}
+    .wci-chart-x{font:600 8px -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;fill:#7e97a8}
     .wci-pill.on{border-color:var(--accent);color:var(--accent)}
     .wci-switch{display:inline-flex;align-items:center;gap:7px;padding:5px 9px;border-radius:99px;border:1px solid var(--border);
       background:var(--surface-2);color:var(--muted);font-size:11px;font-weight:700;cursor:pointer}

@@ -465,26 +465,63 @@
   };
 
   /* ---- small svg chart, live-safe --------------------------------------- */
+  function num2(v) { var n = Number(v); if (!isFinite(n)) n = 0; return Math.abs(n) >= 0.01 ? n.toFixed(2) : n.toFixed(4); }
+  /* Dark market chart in the reference style: red/green line, soft fill,
+     right-hand USD scale with the current value in a coloured badge, time
+     labels along the bottom. Used for every WC-Investing/ROI chart. */
   P.chart = function (points, opts) {
     opts = opts || {};
-    var W = 300, H = opts.height || 90, pad = 6;
-    var pts = (points || []).filter(function (v) { return isFinite(v); });
+    var W = 340, H = opts.height || 140;
+    var padL = 8, padR = 58, padT = 12, padB = 20;
+    var plotW = W - padL - padR, plotH = H - padT - padB;
+    var pts = (points || []).filter(function (v) { return isFinite(v); }).map(Number);
     if (pts.length < 2) pts = [0, 0.0001];
     var min = Math.min.apply(null, pts), max = Math.max.apply(null, pts);
-    var span = (max - min) || Math.abs(max) * 0.02 || 1;
-    var step = (W - pad * 2) / (pts.length - 1);
-    var d = pts.map(function (v, i) {
-      var x = pad + i * step;
-      var y = H - pad - ((v - min) / span) * (H - pad * 2);
-      return (i ? 'L' : 'M') + x.toFixed(1) + ' ' + y.toFixed(1);
-    }).join(' ');
-    var color = opts.color || '#2ee6c9';
-    return '<svg viewBox="0 0 ' + W + ' ' + H + '" class="wci-chart" preserveAspectRatio="none">' +
-      '<defs><linearGradient id="wciFill' + (opts.uid || 'a') + '" x1="0" y1="0" x2="0" y2="1">' +
-        '<stop offset="0%" stop-color="' + color + '" stop-opacity=".32"/>' +
+    if (max - min < 1e-9) { max += Math.max(0.01, Math.abs(max) * 0.02); min -= Math.max(0.01, Math.abs(min) * 0.02); }
+    var span = max - min;
+    var rising = pts[pts.length - 1] >= pts[0];
+    var color = opts.color || (rising ? '#2ee6c9' : '#ff4d5e');
+    var uid = String(opts.uid || 'a').replace(/[^a-z0-9_-]/gi, '');
+    var xAt = function (i) { return padL + (i / (pts.length - 1)) * plotW; };
+    var yAt = function (v) { return padT + plotH - ((v - min) / span) * plotH; };
+    var line = pts.map(function (v, i) { return (i ? 'L' : 'M') + xAt(i).toFixed(1) + ' ' + yAt(v).toFixed(1); }).join(' ');
+    var area = line + ' L' + xAt(pts.length - 1).toFixed(1) + ' ' + (padT + plotH) + ' L' + padL + ' ' + (padT + plotH) + ' Z';
+    var ticks = 5, grid = '', labels = '';
+    for (var t = 0; t < ticks; t++) {
+      var val = max - (span * t) / (ticks - 1);
+      var y = yAt(val).toFixed(1);
+      grid += '<line x1="' + padL + '" y1="' + y + '" x2="' + (padL + plotW) + '" y2="' + y + '" stroke="rgba(255,255,255,.055)" stroke-dasharray="2 4"/>';
+      if (Math.abs(Number(y) - yAt(pts[pts.length - 1])) > 12)
+        labels += '<text x="' + (W - 4) + '" y="' + (Number(y) + 3.5).toFixed(1) + '" text-anchor="end" class="wci-chart-y" font-size="8.5" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" font-weight="600">$' + num2(val) + '</text>';
+    }
+    for (var gx = 1; gx <= 2; gx++) {
+      var gxp = (padL + (plotW * gx / 3)).toFixed(1);
+      grid += '<line x1="' + gxp + '" y1="' + padT + '" x2="' + gxp + '" y2="' + (padT + plotH) + '" stroke="rgba(255,255,255,.045)"/>';
+    }
+    var lastY = yAt(pts[pts.length - 1]);
+    var badge = '<rect x="' + (W - 70) + '" y="' + (lastY - 9).toFixed(1) + '" width="66" height="18" rx="4" fill="' + color + '"/>' +
+      '<text x="' + (W - 67) + '" y="' + (lastY + 3.8).toFixed(1) + '" text-anchor="start" class="wci-chart-now" font-size="9" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" font-weight="800">$' + num2(pts[pts.length - 1]) + '</text>';
+    var now = Date.now();
+    var startT = Number(opts.start) || now - 6 * 3600e3;
+    var endT = Number(opts.end) || now;
+    var tl = [];
+    if (Array.isArray(opts.times) && opts.times.length) tl = opts.times;
+    else for (var k = 0; k < 3; k++) tl.push(startT + ((endT - startT) * k) / 2);
+    var xlabels = '';
+    tl.slice(0, 3).forEach(function (ts, i) {
+      var xx = padL + (plotW * i / 2);
+      var lbl = ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+      xlabels += '<text x="' + xx.toFixed(1) + '" y="' + (H - 4) + '" text-anchor="' + (i === 0 ? 'start' : i === 2 ? 'end' : 'middle') + '" class="wci-chart-x" font-size="8" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" font-weight="600">' + lbl + '</text>';
+    });
+    return '<svg viewBox="0 0 ' + W + ' ' + H + '" class="wci-chart wci-chart-v2" preserveAspectRatio="none">' +
+      '<defs><linearGradient id="wciFill' + uid + '" x1="0" y1="0" x2="0" y2="1">' +
+        '<stop offset="0%" stop-color="' + color + '" stop-opacity=".30"/>' +
         '<stop offset="100%" stop-color="' + color + '" stop-opacity="0"/></linearGradient></defs>' +
-      '<path d="' + d + ' L' + (pad + (pts.length - 1) * step).toFixed(1) + ' ' + (H - pad) + ' L' + pad + ' ' + (H - pad) + ' Z" fill="url(#wciFill' + (opts.uid || 'a') + ')" stroke="none"/>' +
-      '<path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="1.8" stroke-linejoin="round"/>' +
+      '<rect x="0" y="0" width="' + W + '" height="' + H + '" rx="8" fill="rgba(6,12,18,.55)"/>' +
+      grid +
+      '<path d="' + area + '" fill="url(#wciFill' + uid + ')" stroke="none"/>' +
+      '<path d="' + line + '" fill="none" stroke="' + color + '" stroke-width="1.7" stroke-linejoin="round" stroke-linecap="round"/>' +
+      labels + badge + xlabels +
     '</svg>';
   };
 

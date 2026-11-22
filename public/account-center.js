@@ -139,6 +139,10 @@
           '<div class="ac-big">' + moneyA(depTotal) + '</div>' +
           '<div class="ac-sub">' + rows.length + ' coin' + (rows.length === 1 ? '' : 's') + ' · total value · convert to WC to spend or invest</div>' +
           '<div class="ac-coins">' + depBody + '</div>' +
+          '<div class="row" style="gap:8px;margin-top:10px">' +
+            '<a href="#/home" class="btn btn-ghost btn-sm" style="flex:1">' + iconA('chat', 14) + ' Chat</a>' +
+            '<a href="#/invest/shares" class="btn btn-primary btn-sm" style="flex:1">' + iconA('trend', 14) + ' WC-Investing</a>' +
+          '</div>' +
           '<a href="#/account/convert" class="ac-link">Convert crypto to WC →</a></div>' +
         (Number(u.walletUsd) > 0.004 ? '<div class="ac-card ac-card-usd"><div class="ac-card-top"><span>Old $ balance</span><span class="ac-ic">' + iconA('download', 17) + '</span></div>' +
           '<div class="ac-big">' + moneyA(u.walletUsd) + '</div>' +
