@@ -108,6 +108,14 @@
           '<div class="input-wrap"><span class="inv-prefix">$</span>' +
           '<input class="input" id="wciAmount" type="number" step="0.01" min="0" placeholder="' + Number(selPlan.minUsd || 0).toFixed(2) + '" data-wci-amount/></div>' +
           '<div class="tiny muted mt6">Charged from your WC-Investing capital · <span id="wciAmountWc">' + usd(0) + '</span></div></div>' +
+        (function () {
+          var u = me2(); var coins = [];
+          try { coins = Object.keys((u && u.depositBalances) || {}).filter(function (k) { return Number(u.depositBalances[k]) > 0.004; }); } catch (e) {}
+          return '<div class="field"><label class="label">Pay from</label><select class="input" id="wciPayFrom">' +
+            '<option value="capital">WC-Investing capital · ' + usd(s.capital) + '</option>' +
+            coins.map(function (c) { return '<option value="crypto:' + esc(c) + '">' + esc(c) + ' balance · ' + usd(Number(u.depositBalances[c]) || 0) + '</option>'; }).join('') +
+            '</select><div class="tiny muted mt6">Crypto balances are spent at their USD value.</div></div>';
+        })() +
         '<div class="field"><label class="label">Duration in days (optional)</label>' +
           '<input class="input" id="wciDays" type="number" step="1" min="1" placeholder="' + Number(selPlan.days || 1) + ' (plan default)" data-wci-days/>' +
           '<div class="tiny muted mt6">Leave empty to use the plan duration of ' + Number(selPlan.days) + ' days.</div></div>' +
@@ -216,19 +224,82 @@
       var amount = Number((document.getElementById('wciAmount') || {}).value) || 0;
       var daysEl = document.getElementById('wciDays');
       var days = daysEl ? Number(daysEl.value) || 0 : 0;
-      var r = P.activate({ planId: planId, capitalUsd: amount, days: days });
+      var pay = (document.getElementById('wciPayFrom') || {}).value || 'capital';
+      var source = pay.indexOf('crypto:') === 0 ? 'crypto' : 'capital';
+      var coin = pay.indexOf('crypto:') === 0 ? pay.slice(7) : '';
+      var r = P.activate({ planId: planId, capitalUsd: amount, days: days, source: source, coin: coin });
       if (r.error) return (typeof toast === 'function' ? toast(r.error, 'err') : null);
       if (typeof toast === 'function') toast('Plan activated · ' + usd(amount) + ' working now', 'ok');
       if (typeof go === 'function') go('invest/shares/active'); else if (typeof render === 'function') render();
     };
 
     App.wciTransfer = function () {
-      var mode = (document.getElementById('wciTrMode') || {}).value || 'profit2invest';
+      var mode = (document.getElementById('wciTrMode') || {}).value || 'invest2capital';
       var amount = Number((document.getElementById('wciTrAmount') || {}).value) || 0;
-      var r = P.transfer({ mode: mode, amountUsd: amount });
-      if (r.error) return (typeof toast === 'function' ? toast(r.error, 'err') : null);
-      if (typeof toast === 'function') toast('Transfer complete', 'ok');
-      if (typeof render === 'function') render();
+      var u = me2(); if (!u) return (typeof toast === 'function' ? toast('Not signed in', 'err') : null);
+      var a = u.investAcct || {};
+      var s = P.summary();
+      var invBefore = Number(a.usd) || 0;
+      var capBefore = Number(s.capital) || 0;
+      var label = {
+        invest2capital: 'Investment account → WC-Investing capital',
+        capital2invest: 'WC-Investing capital → investment account',
+        profit2capital: 'Profit balance → capital balance',
+        profit2invest: 'Profit balance → investment account',
+        leftover2capital: 'Leftover capital → capital balance',
+        leftover2invest: 'Leftover capital → investment account'
+      }[mode] || 'Transfer';
+      var avail = {
+        invest2capital: invBefore, capital2invest: capBefore,
+        profit2capital: s.profit, profit2invest: s.profit,
+        leftover2capital: s.leftover, leftover2invest: s.leftover
+      }[mode];
+      if (!(amount > 0)) return (typeof toast === 'function' ? toast('Enter an amount', 'err') : null);
+      if (amount > Number(avail) + 1e-9) return (typeof toast === 'function' ? toast('Not enough in that balance', 'err') : null);
+      var invAfter = invBefore, capAfter = capBefore;
+      if (mode === 'invest2capital') { invAfter = invBefore - amount; capAfter = capBefore + amount; }
+      else if (mode === 'capital2invest') { invAfter = invBefore + amount; capAfter = capBefore - amount; }
+      else if (mode === 'profit2capital') { capAfter = capBefore + amount; }
+      else if (mode === 'profit2invest') { invAfter = invBefore + amount; }
+      else if (mode === 'leftover2capital') { capAfter = capBefore + amount; }
+      else if (mode === 'leftover2invest') { invAfter = invBefore + amount; }
+
+      function row(name, before, after) {
+        return '<div class="between" style="padding:7px 0;border-top:1px solid var(--border)">' +
+          '<span class="small muted">' + esc(name) + '</span>' +
+          '<span style="font-variant-numeric:tabular-nums"><b class="muted">' + usd(before) + '</b> <span class="muted">→</span> <b class="up">' + usd(after) + '</b></span></div>';
+      }
+      var body = '<div class="tiny muted" style="margin-bottom:8px">' + esc(label) + '</div>' +
+        '<div class="panel" style="padding:12px;margin-bottom:10px"><div class="between"><span>Transfer amount</span><b style="font-size:18px">' + usd(amount) + '</b></div></div>' +
+        row('Investment trade balance', invBefore, invAfter) +
+        row('WC-Investing capital balance', capBefore, capAfter) +
+        '<div class="tiny muted" style="margin-top:8px">The new capital balance is what the WC-Investing dashboard and WhaleChat Shares page will show immediately.</div>';
+      function doIt() {
+        var r = P.transfer({ mode: mode, amountUsd: amount });
+        if (r.error) return (typeof toast === 'function' ? toast(r.error, 'err') : null);
+        var s2 = P.summary(); var a2 = me2().investAcct || {};
+        var result = '<div class="center" style="padding:4px 0 10px"><div style="width:56px;height:56px;border-radius:50%;background:rgba(46,230,166,.14);color:#2ee6a6;display:flex;align-items:center;justify-content:center;margin:0 auto;font-size:26px">✓</div>' +
+          '<h3 class="mt12" style="margin-bottom:2px">Transfer complete</h3><div class="tiny muted">' + usd(amount) + ' moved to your WC-Investing capital.</div></div>' +
+          row('Investment trade balance', invBefore, Number(a2.usd) || 0) +
+          row('WC-Investing capital balance', capBefore, Number(s2.capital) || 0) +
+          '<div class="tiny up" style="margin-top:8px">New capital balance: <b>' + usd(Number(s2.capital) || 0) + '</b></div>';
+        if (typeof closeModal === 'function') closeModal();
+        if (typeof openModal === 'function' && typeof modalShell === 'function') {
+          openModal(modalShell('Transfer complete', result,
+            '<button class="btn btn-primary" data-close style="width:100%">Done</button>'), { width: '430px' });
+        }
+        if (typeof toast === 'function') toast('Transfer complete · capital ' + usd(Number(s2.capital) || 0), 'ok');
+        if (typeof render === 'function') render();
+      }
+      if (typeof openModal === 'function' && typeof modalShell === 'function') {
+        openModal(modalShell('Confirm WC-Investing transfer', body,
+          '<button class="btn btn-ghost" data-close style="flex:1">Cancel</button>' +
+          '<button class="btn btn-primary" id="wciTrConfirm" style="flex:1">Confirm transfer</button>'), { width: '460px' });
+        var btn = document.getElementById('wciTrConfirm');
+        if (btn) btn.onclick = doIt;
+      } else {
+        doIt();
+      }
     };
 
     App.wciAutoReinvest = function () {

@@ -264,7 +264,22 @@
     if (!(capital > 0)) return { error: 'Enter the amount you want to invest' };
     if (Number(plan.minUsd) && capital < Number(plan.minUsd)) return { error: 'Minimum for ' + plan.name + ' is ' + usd(plan.minUsd) };
     if (Number(plan.maxUsd) && capital > Number(plan.maxUsd)) return { error: 'Maximum for ' + plan.name + ' is ' + usd(plan.maxUsd) };
-    if (round2(w.capital) < capital) return { error: 'Not enough capital in your WC-Investing balance — top up ' + usd(capital - w.capital) };
+    /* Pay from the WC-Investing capital, or directly from a crypto balance.
+       Crypto balances are stored in USD, so the USD value is spent as-is. */
+    var source = String(opts.source || 'capital');
+    var coin = String(opts.coin || '');
+    var paidFrom = 'capital';
+    if (source === 'crypto') {
+      if (!coin) return { error: 'Choose a crypto balance' };
+      if (!u.depositBalances) u.depositBalances = {};
+      var availCrypto = Number(u.depositBalances[coin]) || 0;
+      if (availCrypto + 1e-9 < capital) return { error: 'Not enough ' + coin + ' — you need ' + usd(capital) + ' (available ' + usd(availCrypto) + ')' };
+      u.depositBalances[coin] = round2(availCrypto - capital);
+      if (u.depositBalances[coin] <= 0.004) delete u.depositBalances[coin];
+      paidFrom = 'crypto:' + coin;
+    } else if (round2(w.capital) < capital) {
+      return { error: 'Not enough capital in your WC-Investing balance — top up ' + usd(capital - w.capital) };
+    }
 
     var days = Number(opts.days) > 0 ? Math.round(Number(opts.days)) : Number(plan.days) || 1;
     var price = P.sharePrice();
@@ -288,9 +303,10 @@
       shares: price > 0 ? Math.round((capital / price) * 1e6) / 1e6 : 0
     };
 
-    w.capital = round2(w.capital - capital);
+    if (paidFrom === 'capital') w.capital = round2(w.capital - capital);
+    inv.paidFrom = paidFrom;
     w.plans.unshift(inv);
-    log(w, 'Activated ' + plan.name + ' · ' + usd(capital) + ' for ' + days + ' days', -0);
+    log(w, 'Activated ' + plan.name + ' · ' + usd(capital) + ' for ' + days + ' days' + (paidFrom === 'capital' ? '' : ' · paid from ' + coin), -0);
     ledgerLine(u, 'WC-Investing plan activated · ' + plan.name, 0);
     save(); repaint();
     return { ok: true, investment: inv };

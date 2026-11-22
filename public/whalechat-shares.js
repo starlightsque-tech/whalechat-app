@@ -127,6 +127,11 @@
   S.localState = localState;
   async function load(force) {
     if (S.loading && S.pending) return S.pending;
+    /* WC-Investing is the single source of truth: capital, active plans and
+       share price come from the same engine the WC-Investing page uses, so
+       both pages always agree. */
+    const authoritative = localState();
+    if (authoritative) { S.state = authoritative; S.loadedAt = Date.now(); return S.state; }
     if (!force && S.state && S.state.__local) { const ls = localState(); if (ls) { S.state = ls; S.loadedAt = Date.now(); return S.state; } }
     if (!force && S.state && Date.now() - S.loadedAt < 4000) return S.state;
     if (typeof Remote === 'undefined' || !Remote.enabled) return S.state;

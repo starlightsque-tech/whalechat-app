@@ -132,3 +132,16 @@ local WC-Investing engine:
   `WC_INVEST.activate` engine when the server has no shares engine;
 - the page rebuilds its state on every visit, so a top-up is visible
   immediately after the transfer.
+
+## WC-Investing transfer confirmation, unified Shares data, crypto funding
+- The WC-Investing transfer now opens a **confirmation screen** showing the
+  investment trade balance **before → after**, the WC-Investing capital balance
+  **before → after**, and the new capital balance after confirming.
+- The WhaleChat Shares page now reads the **same WC-Investing engine** as the
+  WC-Investing page — capital, active plans and share price always agree.
+- Plans can be activated from the WC-Investing page and can be paid from the
+  **WC-Investing capital balance or any crypto balance** (crypto is spent at
+  its USD value). The crypto balance is debited only once and the plan keeps
+  its own capital/profit terms.
+- Investment trade balance → WC-Investing capital remains available with the
+  new confirmation step.
