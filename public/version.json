@@ -1,8 +1,8 @@
 {
-  "version": "3.62.4",
-  "build": "2026-11-22T15:40:00Z",
+  "version": "3.62.7",
+  "build": "2026-11-22T17:50:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.62.4 - sign-in is now permanent: an account stays logged in across reloads, updates, offline starts and sync races, and only the Sign out button ends the session. The signed-in account is backed up on the device and restored automatically if the server copy is missing.",
-  "releasedAt": "2026-11-22T15:40:00Z",
+  "notes": "WhaleChat 3.62.7 - every Live chat / Live support button opens a real chat box: the Tawk widget is no longer removed, it is loaded with the official embed and retried as a plain script if a network blocks it, and if the embed still cannot start the app shows Tawk's hosted live chat page in a full-screen frame so the chat always opens.",
+  "releasedAt": "2026-11-22T17:50:00Z",
   "minimum": "3.0.0"
 }

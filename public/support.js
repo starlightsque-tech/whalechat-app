@@ -28,6 +28,12 @@ function isVendorAccount(u) {
 /* ---------------- live company support ---------------- */
 App.liveSupport = function (orderId) {
   const o = orderId ? (DB.orders || []).find(x => x.id === orderId) : null;
+  try { window.__wcLiveOrder = o || null; } catch (e) {}
+  /* one owner for the widget: live-chat-open loads and opens the chat box,
+     reloading it if it is missing. */
+  if (typeof App.openLiveChat === 'function') {
+    try { return App.openLiveChat(); } catch (e) {}
+  }
   const tryOpen = () => {
     try {
       if (window.Tawk_API && typeof window.Tawk_API.maximize === 'function') {
@@ -43,8 +49,6 @@ App.liveSupport = function (orderId) {
     return false;
   };
   if (tryOpen()) { toast('Opening live support chat…', 'ok'); return; }
-  // widget still loading: use the existing retry flow, but fall back to the
-  // in-app company support conversation instead of a dead end.
   let tries = 0;
   const timer = setInterval(() => {
     tries++;

@@ -112,3 +112,44 @@ Finishing pass on the account dashboard card and the WC-Investing plan view.
 - A guard in `session-persist.js` also blocks a stray
   `localStorage.removeItem('whalechat.session.v1')` from an older code path
   while the user is signed in.
+
+## Live chat opens the installed Tawk.to widget (3.62.5)
+- **Root cause:** `no-chat-widget.js` deleted the Tawk iframes, its containers
+  and its script every 2.5 s to hide the floating bubble, and the "open" code
+  only checked that `Tawk_API.maximize` existed. The API object outlived the
+  widget, so the button "worked" and opened nothing.
+- `no-chat-widget.js` now only styles the widget: the bubble is hidden, the chat
+  window is hidden until `body.wc-livechat-open`, and nothing is removed.
+- `live-chat-open.js` owns the widget: it verifies the chat iframe actually
+  exists, reloads the embed from scratch when it does not, retries for ~24 s and
+  opens it full screen (`showWidget()` + `maximize()`) above the bottom nav.
+- `App.liveSupport()` (order support, service-centre "Live chat support") now
+  delegates to the same opener, so every live-chat button hits one code path.
+- `tawk-control.js` no longer auto-loads or shows the floating bubble when live
+  chat is enabled — the widget is only loaded/opened by a button tap.
+
+## Live chat button really opens the chat box (3.62.6 / 3.62.7)
+- **Root causes**
+  1. `no-chat-widget.js` deleted every Tawk iframe, container and script every
+     2.5 s (to hide the floating bubble), so the widget was gone while
+     `Tawk_API.maximize` stayed defined — the button "opened" a dead widget.
+  2. The embed script was requested with `crossorigin="*"`; when a network or
+     proxy refuses that CORS request the script never runs (a console CORS
+     error) and nothing appears.
+  3. Only `App.openLiveChat` used retries; the order-support and service-centre
+     buttons called `App.liveSupport()`, which silently "succeeded".
+- **Fixes**
+  - `no-chat-widget.js` now only styles the widget (bubble hidden, chat window
+    hidden until `body.wc-livechat-open`). Nothing is removed any more.
+  - `live-chat-open.js` is the single owner: it checks the chat iframe really
+    exists, loads the embed with the official attribute and retries as a plain
+    script if that is blocked, re-creates the widget when the iframe is missing,
+    and retries for ~24 s.
+  - If the embed still cannot start within ~6 s, the app opens **Tawk's hosted
+    live chat page in a full-screen in-app frame** (with Close and an in-app
+    Support shortcut), so the chat box always appears.
+  - `App.liveSupport()` delegates to the same opener, so every Live chat /
+    Live support / "Live chat support" button behaves identically, and the tap
+    shows "Opening live chat…" immediately.
+  - `tawk-control.js` no longer auto-loads or shows the floating bubble when
+    live chat is enabled.

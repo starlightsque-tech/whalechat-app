@@ -68,7 +68,6 @@ const WC_TAWK = {
     s.async = true;
     s.src = 'https://embed.tawk.to/' + c.propertyId + '/' + c.widgetId;
     s.charset = 'UTF-8';
-    s.setAttribute('crossorigin', '*');
     s.id = 'wc-tawk-embed';
     document.head.appendChild(s);
   },
@@ -77,14 +76,18 @@ const WC_TAWK = {
     this.css();
     const on = this.enabled();
     document.documentElement.classList.toggle('wc-tawk-off', !on);
-    if (on) {
-      this.load();
-      try { window.Tawk_API && window.Tawk_API.showWidget && window.Tawk_API.showWidget(); } catch (e) {}
-    } else {
+    if (!on) {
+      /* switched off: hide and unload the widget everywhere */
       try { window.Tawk_API && window.Tawk_API.hideWidget && window.Tawk_API.hideWidget(); } catch (e) {}
-      const host = document.getElementById('wc-tawk-embed');
-      if (host) { /* stop re-injection after a reload while off */ host.remove(); this.loaded = false; }
+      Array.prototype.forEach.call(document.querySelectorAll('#wc-tawk-embed, #wc-livechat-embed'), function (n) { try { n.remove(); } catch (e) {} });
+      this.loaded = false;
+      return;
     }
+    /* switched on: the widget itself is loaded and opened on demand by the
+       app's Live chat buttons (live-chat-open.js). Never show the floating
+       bubble here — that is what covered the app. */
+    this.loaded = true;
+    try { window.Tawk_API && window.Tawk_API.hideWidget && window.Tawk_API.hideWidget(); } catch (e) {}
   },
 
   watch() {
@@ -114,10 +117,11 @@ const WC_TAWK = {
 /* keep the existing in-app "Live chat" entry point honest */
 const _openLiveChat = App.openLiveChat;
 App.openLiveChat = function () {
-  if (!WC_TAWK.enabled() || !WC_TAWK.loaded) {
+  if (!WC_TAWK.enabled()) {
     toast('Live chat is currently switched off', 'err');
     return App.liveChatHelp ? App.liveChatHelp(true) : undefined;
   }
+  /* loading is handled by live-chat-open.js — it reloads the widget if needed */
   return _openLiveChat.apply(this, arguments);
 };
 
