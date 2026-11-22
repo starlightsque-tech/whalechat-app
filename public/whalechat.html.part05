@@ -1064,6 +1064,15 @@ VIEWS.deposit = function () {
           </div>`).join('') : `<div class="empty" style="padding:18px"><p>No bank details configured yet. Contact support.</p></div>`}
           <div class="field mt16"><label class="label">Payment reference (optional)</label><input class="input" id="depRef" placeholder="Bank transfer reference / sender name"/></div>
         </div>
+        <div class="field mt16">
+          <label class="label">Payment slip <span class="tiny muted">(recommended — speeds up approval)</span></label>
+          <div class="dslip-grid" id="depSlipGrid"></div>
+          <div class="dslip-actions">
+            <button type="button" class="btn btn-soft btn-sm" id="depSlipCamera">${ic('camera', 15)} Take photo</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="depSlipGallery">${ic('image', 15)} Gallery</button>
+          </div>
+          <div class="help">Photograph or pick the receipt / transfer confirmation that shows the amount, date and reference. Up to 3 photos.</div>
+        </div>
         <div class="panel mt16" style="padding:12px"><div class="row gap6 tiny" style="font-weight:600;color:var(--accent)">${ic('shield', 13)} Reviewed by our team</div>
           <div class="tiny muted mt6" style="line-height:1.6">${esc(s.depositNote || '')}</div></div>
         <button class="btn btn-primary btn-block btn-lg mt16" id="depSubmit">${ic('check', 16)} I have sent the payment</button>
@@ -1109,7 +1118,57 @@ AFTER.deposit = function () {
     upd();
   });
   upd();
+
+  /* payment slip: camera capture + gallery pick, up to 3 photos */
+  DEP_SLIPS = [];
+  const grid = document.getElementById('depSlipGrid');
+  const paintSlips = () => {
+    if (!grid) return;
+    grid.innerHTML = DEP_SLIPS.map((d, i) =>
+      '<div class="dslip"><img src="' + d + '" alt="Payment slip ' + (i + 1) + '" data-act="view-image" data-src="' + i + '"/>' +
+      '<button type="button" class="dslip-x" data-slip-del="' + i + '" aria-label="Remove">' + ic('x', 12) + '</button></div>').join('');
+    grid.querySelectorAll('[data-slip-del]').forEach((b) => {
+      b.onclick = () => { DEP_SLIPS.splice(Number(b.getAttribute('data-slip-del')), 1); paintSlips(); };
+    });
+    grid.querySelectorAll('[data-act="view-image"]').forEach((img) => {
+      img.onclick = () => App.viewImage(DEP_SLIPS[Number(img.getAttribute('data-src'))], 'Payment slip');
+    });
+  };
+  const addSlip = async (capture) => {
+    if (DEP_SLIPS.length >= 3) return toast('You can attach up to 3 payment slip photos', 'err');
+    try {
+      const f = await pickFile({ accept: 'image/*', capture: !!capture });
+      if (!f) return;
+      if (!/^image\//i.test(f.type || 'image')) return toast('Choose an image of your payment slip', 'err');
+      const small = await compressImage(f, 1000, 0.7);
+      const data = await fileToDataURL(small);
+      DEP_SLIPS.push(data);
+      paintSlips();
+      toast('Payment slip attached', 'ok');
+    } catch (e) { toast('Could not read that photo', 'err'); }
+  };
+  const cam = document.getElementById('depSlipCamera');
+  const gal = document.getElementById('depSlipGallery');
+  if (cam) cam.onclick = () => addSlip(true);
+  if (gal) gal.onclick = () => addSlip(false);
+  App.depSlipCamera = () => addSlip(true);
+  App.depSlipGallery = () => addSlip(false);
+  paintSlips();
+
   document.getElementById('depSubmit').onclick = () => App.submitDeposit(mode);
+};
+let DEP_SLIPS = [];
+App.viewImage = function (src, title) {
+  if (!src) return;
+  openModal(modalShell(title || 'Image', `<img src="${src}" alt="" style="width:100%;border-radius:12px;display:block"/>`,
+    `<a class="btn btn-primary" download="payment-slip.jpg" href="${src}" style="width:100%">${ic('download', 15)} Save image</a>`), { width: '520px' });
+};
+App.depSlipAdd = async function (capture) {
+  /* kept for the click bindings injected by the deposit page */
+  try {
+    if (typeof App.depSlipCamera === 'function' && capture) return App.depSlipCamera();
+    if (typeof App.depSlipGallery === 'function') return App.depSlipGallery();
+  } catch (e) {}
 };
 App.depQuick = function (v) {
   const i = document.getElementById('depUsd');
@@ -1137,9 +1196,11 @@ App.submitDeposit = function (mode) {
     if (!(DB.settings.banks || []).length) return toast('No bank details configured', 'err');
   }
   const coin = depositCoinOf({ method: mode, methodName });
+  const slips = Array.isArray(DEP_SLIPS) ? DEP_SLIPS.slice(0, 3) : [];
   DB.deposits.unshift({
     id: uid('dep'), userId: u.id, usd: usdAmt, coins: usdToCoins(usdAmt), coin,
-    method: mode, methodName, detail, status: 'pending', createdAt: Date.now(), note: ''
+    method: mode, methodName, detail, status: 'pending', createdAt: Date.now(), note: '',
+    proof: slips[0] || null, proofs: slips
   });
   notify('usr_admin', 'New deposit request', `${u.fullName} (@${u.username}) submitted ${usd(usdAmt)} via ${methodName}.`, '#/admin/deposits', 'wallet');
   notify(u.id, 'Deposit submitted', `Your ${usd(usdAmt)} || ${coin} deposit is pending review. It will be credited to your deposit balance once approved.`, '#/account', 'wallet');
@@ -1149,8 +1210,10 @@ App.submitDeposit = function (mode) {
       <div style="width:58px;height:58px;border-radius:50%;background:rgba(255,176,32,.14);color:var(--warn);display:flex;align-items:center;justify-content:center;margin:0 auto">${ic('clock', 26)}</div>
       <h3 class="mt16" style="font-size:17px">Awaiting confirmation</h3>
       <p class="small muted mt10" style="line-height:1.7">We've received your ${usd(usdAmt)} request via ${esc(methodName)}. Our team will verify and credit <b style="color:var(--accent)">$${usdAmt.toFixed(2)} || ${esc(coin)}</b> to your deposit balance.</p>
+      <p class="tiny muted mt10" style="line-height:1.7">${slips.length ? '✔ ' + slips.length + ' payment slip photo' + (slips.length === 1 ? '' : 's') + ' attached — the team can match your payment faster.' : 'No payment slip attached. You can still be approved, but attaching the receipt usually speeds up the review.'}</p>
     </div>`,
     `<a href="#/account" class="btn btn-primary" data-close style="width:100%">Back to account</a>`));
+  DEP_SLIPS = [];
   setTimeout(() => render(), 60);
 };
 

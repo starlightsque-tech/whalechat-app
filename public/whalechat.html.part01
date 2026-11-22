@@ -385,6 +385,13 @@ html[data-theme="light"] .topbar{background:rgba(255,255,255,.78)}
 .wallet-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-top:18px}
 .wallet-actions .btn{height:40px;font-size:12px;padding:0 4px;background:rgba(255,255,255,.92);border:1px solid rgba(255,255,255,.5);color:#062b25;backdrop-filter:blur(6px);font-weight:700}
 .wallet-actions .btn:hover{background:#fff;transform:translateY(-1px)}
+.dslip-grid{display:flex;gap:8px;flex-wrap:wrap}
+.dslip{position:relative;width:84px;height:84px;border-radius:11px;overflow:hidden;border:1px solid var(--border);background:var(--surface-2)}
+.dslip img{width:100%;height:100%;object-fit:cover;display:block;cursor:zoom-in}
+.dslip-x{position:absolute;top:3px;right:3px;width:20px;height:20px;border-radius:50%;border:0;background:rgba(0,0,0,.6);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0}
+.dslip-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.dslip-actions .btn{flex:1;min-width:130px}
+.dslip-thumb{width:44px;height:44px;border-radius:8px;object-fit:cover;border:1px solid var(--border);cursor:zoom-in;display:block}
 .wallet-quick{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:10px}
 .wallet-quick a{display:flex;align-items:center;justify-content:center;gap:7px;height:46px;border-radius:13px;
   font:750 12.5px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;text-decoration:none;letter-spacing:.01em;

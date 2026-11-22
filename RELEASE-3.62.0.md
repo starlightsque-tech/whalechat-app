@@ -63,3 +63,14 @@ Finishing pass on the account dashboard card and the WC-Investing plan view.
   right-hand WC scale, an INVESTED dashed line and a live percentage badge.
 - The Plan performance chart now reads the same engine values, so the chart
   value, ROI, earnings and the plan cards can never disagree.
+
+## Payment slip photos on deposits (3.62.2)
+- The deposit page has a new **Payment slip** field with two buttons:
+  **Take photo** (`capture="environment"`, opens the phone camera) and
+  **Gallery** (`accept="image/*"`, opens the photo picker).
+- Up to **3 photos**: each is compressed to 1000 px JPEG, shown as a thumbnail
+  with a remove button, and can be tapped to view full size or saved.
+- On submit the deposit record stores `proof` (first slip) and `proofs` (all of
+  them); the confirmation screen states how many were attached.
+- Admin → Deposit requests has a **Slip** column with thumbnails and a full-size
+  viewer, so a reviewer can check the receipt before approving.

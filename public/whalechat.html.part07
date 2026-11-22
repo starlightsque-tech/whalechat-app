@@ -245,21 +245,34 @@ function adminDeposits() {
     <div class="between mb16"><h3 style="font-size:15px">Deposit requests</h3>
       <div class="row gap8"><span class="badge badge-warn">${list.filter(d => d.status === 'pending').length} pending</span>
       <button class="btn btn-sm btn-ghost" data-nav="#/admin/settings">${ic('settings', 14)} Payment methods</button></div></div>
-    <div class="table-wrap"><table class="tbl"><thead><tr><th>User</th><th>Amount</th><th>Whale Coin</th><th>Method</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+    <div class="table-wrap"><table class="tbl"><thead><tr><th>User</th><th>Amount</th><th>Whale Coin</th><th>Method</th><th>Slip</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead><tbody>
     ${list.length ? list.map(d => {
       const u = findUser(d.userId);
       return `<tr><td><div style="font-weight:600">${esc(u ? u.fullName : 'Deleted user')}</div><div class="tiny muted">${esc(u ? '@' + u.username : '')} · ${timeAgo(d.createdAt)} ago</div></td>
         <td style="font-weight:600">${usd(d.usd)}</td><td>${coins(d.coins)} WC</td>
         <td><div class="small">${esc(d.methodName || d.method)}</div><div class="tiny muted" style="max-width:180px;overflow:hidden;text-overflow:ellipsis">${esc(d.detail || '')}</div></td>
+        <td>${(function () {
+          const slips = Array.isArray(d.proofs) && d.proofs.length ? d.proofs : (d.proof ? [d.proof] : []);
+          if (!slips.length) return '<span class="tiny muted">—</span>';
+          return '<div class="row gap6" style="flex-wrap:wrap">' + slips.slice(0, 3).map((src, i) =>
+            '<img class="dslip-thumb" src="' + src + '" alt="Payment slip ' + (i + 1) + '" data-act="dep-slip" data-id="' + d.id + '" data-ix="' + i + '"/>').join('') + '</div>';
+        })()}</td>
         <td>${statusBadge(d.status)}</td>
         <td><div class="row gap6" style="justify-content:flex-end">
           ${d.status === 'pending' ? `<button class="btn btn-xs btn-primary" data-act="dep-approve" data-id="${d.id}">Approve</button>
           <button class="btn btn-xs btn-danger" data-act="dep-reject" data-id="${d.id}">Reject</button>` : ''}
           <button class="btn btn-xs btn-ghost" data-act="dep-del" data-id="${d.id}">${ic('trash', 12)}</button></div></td></tr>`;
-    }).join('') : `<tr><td colspan="6" class="center muted" style="padding:30px">No deposit requests</td></tr>`}
+    }).join('') : `<tr><td colspan="7" class="center muted" style="padding:30px">No deposit requests</td></tr>`}
     </tbody></table></div>
   </div>`;
 }
+App.depSlip = function (id, ix) {
+  const d = DB.deposits.find(x => x.id === id); if (!d) return;
+  const slips = Array.isArray(d.proofs) && d.proofs.length ? d.proofs : (d.proof ? [d.proof] : []);
+  const src = slips[Number(ix) || 0];
+  if (src && typeof App.viewImage === 'function') return App.viewImage(src, 'Payment slip · ' + usd(d.usd));
+  toast('No payment slip on this deposit', 'err');
+};
 App.depApprove = async function (id) {
   const d = DB.deposits.find(x => x.id === id); if (!d || d.status !== 'pending') return;
   const u = findUser(d.userId); if (!u) return toast('User not found', 'err');
