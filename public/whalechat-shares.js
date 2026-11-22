@@ -96,7 +96,12 @@
         targetProfitCoins: targetUsd * 2, targetProfitUsd: targetUsd,
         currentValueCoins: (capUsd + accruedUsd) * 2, currentValueUsd: capUsd + accruedUsd,
         progressPct: Number(pr.pct) || 0, remainingMs: Math.max(0, (Number(inv.endsAt) || 0) - Date.now()),
-        completedAt: inv.completedAt || null, equityHistory: []
+        completedAt: inv.completedAt || null,
+        equityHistory: (function () {
+          try {
+            return (P.planSeriesUsd ? P.planSeriesUsd(inv, 40) : []).map(function (p) { return { t: p.t, coins: (Number(p.v) || 0) / 0.5 }; });
+          } catch (e) { return []; }
+        })()
       };
     });
     const investedUsd = active.reduce((a, x) => a + x.amountUsd, 0);
@@ -120,7 +125,16 @@
         shares: active.reduce((a, x) => a + x.shares, 0),
         sharePriceUsd: price, sharePriceCoins: price * 2
       },
-      shareMarket: { priceUsd: price, priceCoins: price * 2, updatedAt: Date.now(), history: [] },
+      shareMarket: {
+        priceUsd: price, priceCoins: price * 2, updatedAt: Date.now(),
+        history: (function () {
+          try {
+            var h = (DB && DB.shareMarket && Array.isArray(DB.shareMarket.history)) ? DB.shareMarket.history : [];
+            return h.map(function (x) { return { t: Number(x.t || x.time) || 0, p: Number(x.p != null ? x.p : (x.price || x.priceUsd)) || 0 }; })
+              .filter(function (x) { return x.t > 0 && x.p > 0; });
+          } catch (e) { return []; }
+        })()
+      },
       serverTime: Date.now()
     };
   }
@@ -238,6 +252,13 @@
         <div class="shares-price">$${num(last, 2)} <span class="tiny muted">USD</span></div>
         <div class="tiny muted" data-share-upd>${st && st.shareMarket ? 'updated ' + when(st.shareMarket.updatedAt) : ''}</div>
       </div>
+      <div class="shares-mov" data-share-mov>
+        <span class="shares-mov-dot"></span>
+        <span class="shares-mov-label">Live movement</span>
+        <b data-share-mov-usd>$${num(last, 2)}</b>
+        <span class="shares-mov-chg ${chg >= 0 ? 'up' : 'down'}" data-share-mov-chg>${chg >= 0 ? '▲ +' : '▼ '}${Math.abs(chg).toFixed(2)}%</span>
+        <span class="tiny muted" data-share-mov-note>updated live</span>
+      </div>
       <div class="shares-chart">${svgChart(hist, { height: 130, color: chg >= 0 ? '#22c55e' : '#ef4444', prefix: '$' })}</div>
       <div class="shares-stats">
         <div><span>Share price</span><b data-share-px>$${num(last, 2)}</b></div>
@@ -305,6 +326,16 @@
       });
     } catch (e) {}
     const eq = equitySeries(v.equityHistory);
+    /* the same live chart the stock trading view uses (green rise, red fall) */
+    const liveChart = (function () {
+      try {
+        if (window.WC_LIVE_CHART && eq.length >= 2) {
+          const eqUsd = eq.map((p) => ({ t: p.t, v: (Number(p.v) || 0) * 0.5 }));
+          return '<div class="shares-inv-livechart">' + WC_LIVE_CHART.svg(eqUsd, { height: 118, unit: 'usd' }) + '</div>';
+        }
+      } catch (e) {}
+      return '<div class="shares-chart" style="margin-top:8px">' + svgChart(eq, { height: 80, color: '#2ee6c9' }) + '</div>';
+    })();
     return `<div class="shares-inv">
       <div class="between" style="align-items:flex-start">
         <div><b>${escS(v.planName)}</b>
@@ -316,14 +347,22 @@
       </div>
       <div class="shares-inv-grid">
         <div><span>Invested</span><b>${both(v.amountCoins)}</b></div>
-        <div><span>Earnings</span><b class="up" data-share-inv-earn data-start="${v.startAt}" data-end="${v.endAt}" data-amount="${v.amountCoins}" data-ret="${v.returnPct}" data-value="${v.amountCoins}">+${bothEarn(v.accruedCoins)}</b></div>
-        <div><span>Current value</span><b data-share-inv-value data-start="${v.startAt}" data-end="${v.endAt}" data-amount="${v.amountCoins}" data-ret="${v.returnPct}">${both(v.currentValueCoins)}</b></div>
+        <div><span>Earnings</span><b class="up" data-share-inv-earn data-plan="${escS(v.id)}" data-start="${v.startAt}" data-end="${v.endAt}" data-amount="${v.amountCoins}" data-ret="${v.returnPct}" data-value="${v.amountCoins}">+${bothEarn(v.accruedCoins)}</b></div>
+        <div><span>Current value</span><b data-share-inv-value data-plan="${escS(v.id)}" data-start="${v.startAt}" data-end="${v.endAt}" data-amount="${v.amountCoins}" data-ret="${v.returnPct}">${both(v.currentValueCoins)}</b></div>
         <div><span>Target profit</span><b>+${bothEarn(v.targetProfitCoins)}</b></div>
       </div>
       <div class="shares-progress"><i style="width:${Math.max(0, Math.min(100, Number(v.progressPct) || 0))}%"></i></div>
       <div class="between tiny muted" style="margin-top:3px">
         <span>${num(v.progressPct, 1)}% complete</span><span>Matures ${when(v.endAt)}</span></div>
-      <div class="shares-chart" style="margin-top:8px">${svgChart(eq, { height: 80, color: '#2ee6c9' })}</div>
+      <div class="shares-inv-live" data-inv-live="${escS(v.id)}">
+        <span class="sil-dot"></span>
+        <span class="sil-label">Live earnings</span>
+        <b class="up" data-share-inv-earn-usd>+${money(Number(v.accruedUsd) || 0)}</b>
+        <span class="sil-sep">·</span>
+        <span class="sil-px">Whalecoin <b data-share-inv-px>$${num((S.state && S.state.shareMarket && S.state.shareMarket.priceUsd) || v.entryPriceUsd || 12.45, 2)}</b>
+          <em data-share-inv-chg class="up">+0.00%</em></span>
+      </div>
+      ${liveChart}
     </div>`;
   }
 
@@ -399,7 +438,7 @@
     return `<div class="card shares-perfcard" id="sharesPerfCard">
       <div class="between" style="align-items:flex-start;gap:10px">
         <div><div class="card-title" style="margin:0">Plan performance · ROI progress</div>
-          <div class="tiny muted" style="margin-top:3px">Principal + accrued profit, updated live every second. Finnhub feeds the market chart; plan ROI is accrued by the server.</div></div>
+          <div class="tiny muted" style="margin-top:3px">Principal + accrued profit, updated live every second from the WhaleChat share price movements.</div></div>
         <span class="badge badge-success">Live</span>
       </div>
       <div class="shares-perf-pills">${pills}</div>
@@ -808,25 +847,89 @@
     return true;
   }
 
-  /* live earning counter — recalculates once per second between server polls */
+  /* live earning counter — recalculated every second between server polls.
+     It uses the WC-Investing engine so the number follows the real Whalecoin
+     share-price movements, and it also drives the live price counter. */
   function tickEarnings() {
     if (!onSharesPage()) return;
     const now = Date.now();
+    const P = localEngine();
     let hero = 0;
+
     document.querySelectorAll('[data-share-inv-earn]').forEach((el) => {
       const start = Number(el.getAttribute('data-start')) || 0;
       const end = Number(el.getAttribute('data-end')) || 0;
       const amount = Number(el.getAttribute('data-amount')) || 0;
       const ret = Number(el.getAttribute('data-ret')) || 0;
-      if (!(end > start) || !(amount > 0)) return;
-      const target = amount * ret / 100;
-      const elapsed = Math.max(0, Math.min(end - start, now - start));
-      const accrued = target * (elapsed / (end - start));
-      hero += accrued;
-      el.textContent = '+' + bothEarn(accrued);
-      const val = document.querySelector('[data-share-inv-value][data-start="' + start + '"]');
-      if (val) val.textContent = both(amount + accrued);
+      const planId = el.getAttribute('data-plan') || '';
+      let accruedCoins = 0, accruedUsd = 0, priceNow = 0, movePct = 0, engine = false;
+
+      if (P && planId) {
+        try {
+          const active = (P.summary ? (P.summary().active || []) : []);
+          let inv = null;
+          active.forEach((x) => { if (String(x.id) === String(planId)) inv = x; });
+          if (inv) {
+            const pr = P.progress(inv, P.sharePrice(), now);
+            accruedUsd = Number(pr.accruedUsd) || 0;
+            accruedCoins = accruedUsd / 0.5;
+            priceNow = Number(pr.priceNow) || Number(P.sharePrice()) || 0;
+            movePct = Number(pr.movePct) || 0;
+            engine = true;
+          }
+        } catch (e) {}
+      }
+      if (!engine) {
+        if (!(end > start) || !(amount > 0)) return;
+        const target = amount * ret / 100;
+        const elapsed = Math.max(0, Math.min(end - start, now - start));
+        accruedCoins = target * (elapsed / (end - start));
+        accruedUsd = accruedCoins * 0.5;
+        priceNow = P && P.sharePrice ? Number(P.sharePrice()) || 0 : 0;
+      }
+      hero += accruedCoins;
+      el.textContent = '+' + bothEarn(accruedCoins);
+
+      const card = el.closest ? el.closest('.shares-inv') : null;
+      if (!card) return;
+      const val = card.querySelector('[data-share-inv-value]');
+      if (val) val.textContent = both(amount + accruedCoins);
+      const usdEl = card.querySelector('[data-share-inv-earn-usd]');
+      if (usdEl) usdEl.textContent = '+$' + (Math.round(accruedUsd * 100) / 100).toFixed(2);
+      const pxEl = card.querySelector('[data-share-inv-px]');
+      if (pxEl && priceNow > 0) pxEl.textContent = '$' + priceNow.toFixed(2);
+      const chgEl = card.querySelector('[data-share-inv-chg]');
+      if (chgEl) {
+        chgEl.textContent = (movePct >= 0 ? '▲ +' : '▼ ') + Math.abs(movePct).toFixed(2) + '%';
+        chgEl.className = movePct >= 0 ? 'up' : 'down';
+      }
     });
+
+    /* real-time Whalecoin movement counter */
+    const mv = document.querySelector('[data-share-mov]');
+    if (mv) {
+      const price = P && P.sharePrice ? Number(P.sharePrice()) || 0 : 0;
+      let ref = price, note = 'live';
+      try {
+        const hist = (P && P.shareHistory) ? P.shareHistory() : [];
+        if (hist.length >= 2) {
+          ref = Number(hist[0].p) || price;
+          const mins = Math.max(1, Math.round((Date.now() - Number(hist[0].t)) / 60000));
+          note = mins >= 60 ? 'last ' + (mins / 60).toFixed(1) + 'h' : 'last ' + mins + 'm';
+        }
+      } catch (e) {}
+      const chg = ref > 0 ? ((price / ref) - 1) * 100 : 0;
+      const usdEl = mv.querySelector('[data-share-mov-usd]');
+      if (usdEl && price > 0) usdEl.textContent = '$' + price.toFixed(2);
+      const chgEl = mv.querySelector('[data-share-mov-chg]');
+      if (chgEl) {
+        chgEl.textContent = (chg >= 0 ? '▲ +' : '▼ ') + Math.abs(chg).toFixed(2) + '%';
+        chgEl.className = 'shares-mov-chg ' + (chg >= 0 ? 'up' : 'down');
+      }
+      const noteEl = mv.querySelector('[data-share-mov-note]');
+      if (noteEl) noteEl.textContent = note;
+    }
+
     const heroEl = document.querySelector('[data-share-hero-earn]');
     if (heroEl) {
       const completed = Number(heroEl.getAttribute('data-completed')) || 0;
@@ -932,6 +1035,27 @@
     .shares-perfcard .shares-perf-pills{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 8px}
     .shares-perf-chart{min-height:300px;margin-top:2px}
     .shares-chart{margin-top:6px}
+    .shares-inv-livechart{margin-top:9px;border-radius:12px;overflow:hidden;background:#070d14;border:1px solid rgba(46,230,201,.14)}
+    .shares-inv-livechart svg{display:block;width:100%;height:auto}
+    .shares-inv-live{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:9px;padding:7px 9px;border-radius:10px;
+      background:rgba(46,230,201,.10);border:1px solid rgba(46,230,201,.32);font-size:10.5px;color:var(--muted)}
+    .shares-inv-live b.up{color:#2ee6a8;font-variant-numeric:tabular-nums;font-size:12px}
+    .shares-inv-live .sil-label{font-weight:700;letter-spacing:.02em;color:var(--text)}
+    .shares-inv-live .sil-dot{width:7px;height:7px;border-radius:50%;background:#2ee6a8;box-shadow:0 0 0 0 rgba(46,230,168,.6);animation:silPulse 1.6s infinite}
+    .shares-inv-live .sil-sep{opacity:.4}
+    .shares-inv-live .sil-px b{color:var(--text);font-variant-numeric:tabular-nums}
+    .shares-inv-live .sil-px em{font-style:normal;font-weight:700;margin-left:3px;font-variant-numeric:tabular-nums}
+    .shares-inv-live .sil-px em.up{color:#2ee6a8}
+    .shares-inv-live .sil-px em.down{color:#ff5d7a}
+    .shares-mov{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:9px;padding:7px 10px;border-radius:11px;
+      background:rgba(46,230,201,.10);border:1px solid rgba(46,230,201,.32)}
+    .shares-mov-dot{width:7px;height:7px;border-radius:50%;background:#2ee6a8;animation:silPulse 1.6s infinite}
+    .shares-mov-label{font-size:9.5px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+    .shares-mov b{font-size:14px;font-variant-numeric:tabular-nums;color:var(--text)}
+    .shares-mov-chg{font-size:11.5px;font-weight:800;font-variant-numeric:tabular-nums;padding:2px 7px;border-radius:99px}
+    .shares-mov-chg.up{color:#0a2e26;background:#2ee6a8}
+    .shares-mov-chg.down{color:#2e0a12;background:#ff5d7a}
+    @keyframes silPulse{0%{box-shadow:0 0 0 0 rgba(46,230,168,.55)}70%{box-shadow:0 0 0 7px rgba(46,230,168,0)}100%{box-shadow:0 0 0 0 rgba(46,230,168,0)}}
     .shares-svg{width:100%;height:auto;display:block;overflow:visible}
     .shares-axis{fill:#63798a;font-size:7.5px;font-variant-numeric:tabular-nums}
     .shares-chart-empty{height:90px;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--muted)}

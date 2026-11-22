@@ -930,7 +930,8 @@
     paint() {
       const live = this.opts.getLive ? (this.opts.getLive() || {}) : (this.opts.hud || {});
       const wc = (v) => (Number(v) || 0).toFixed(2) + ' WC';
-      if (this.el.value) this.el.value.textContent = live.value != null ? wc(live.value) : '—';
+      if (this.el.value) this.el.value.textContent = live.value != null
+        ? (this.unit === 'usd' ? usd(live.value) : wc(live.value)) : '—';
       if (this.el.roi) {
         const r = Number(live.roiPct) || 0;
         this.el.roi.textContent = (r >= 0 ? '+' : '−') + Math.abs(r).toFixed(2) + '%';

@@ -97,7 +97,7 @@
       var gv = max - ((max - min) / 4) * g;
       grid += '<line x1="' + padL + '" y1="' + gy.toFixed(1) + '" x2="' + (W - padR) + '" y2="' + gy.toFixed(1) + '" stroke="rgba(255,255,255,.045)"/>';
       grid += '<text x="' + (W - padR + 4) + '" y="' + (gy + 3).toFixed(1) + '" fill="#6f7a8d" font-size="9">' +
-        (o.unit === 'wc' ? money(gv, 'wc', o.wcRate).replace('$', '$') : '$' + short(gv, o.unit)) + '</text>';
+        (o.unit === 'wc' ? (Math.abs(gv) >= 1000 ? (gv / 1000).toFixed(1) + 'k' : Math.round(gv)) + ' WC' : '$' + short(gv, o.unit)) + '</text>';
     }
     var lvls = '';
     (o.lines || []).forEach(function (l) {

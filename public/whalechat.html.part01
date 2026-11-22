@@ -385,6 +385,12 @@ html[data-theme="light"] .topbar{background:rgba(255,255,255,.78)}
 .wallet-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-top:18px}
 .wallet-actions .btn{height:40px;font-size:12px;padding:0 4px;background:rgba(255,255,255,.92);border:1px solid rgba(255,255,255,.5);color:#062b25;backdrop-filter:blur(6px);font-weight:700}
 .wallet-actions .btn:hover{background:#fff;transform:translateY(-1px)}
+.wallet-quick{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:10px}
+.wallet-quick a{display:flex;align-items:center;justify-content:center;gap:7px;height:46px;border-radius:13px;
+  font:750 12.5px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;text-decoration:none;letter-spacing:.01em;
+  color:#eafffb;background:rgba(46,230,201,.18);border:1px solid rgba(46,230,201,.5)}
+.wallet-quick a+a{background:rgba(58,160,255,.18);border-color:rgba(58,160,255,.5)}
+.wallet-quick a:active{transform:scale(.99)}
 .coin{display:inline-flex;width:22px;height:22px;border-radius:50%;background:var(--grad);color:#04241f;align-items:center;justify-content:center;font-size:11px;font-weight:800;flex:none}
 .stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}
 .stat{background:var(--surface-2);border:1px solid var(--border);border-radius:14px;padding:13px 14px}

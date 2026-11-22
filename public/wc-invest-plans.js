@@ -54,6 +54,12 @@
 
   /* ---- share price ------------------------------------------------------- */
   P.sharePrice = function () {
+    /* the live Whalecoin market (kept by the local engine or the server) */
+    try {
+      var m = typeof DB !== 'undefined' && DB && DB.shareMarket;
+      var mp = m && Number(m.priceUsd);
+      if (mp > 0) return mp;
+    } catch (e) {}
     try {
       var st = window.WC_SHARES && window.WC_SHARES.state;
       var p = st && st.shareMarket && Number(st.shareMarket.priceUsd);
@@ -132,6 +138,41 @@
     } catch (e) {}
   }
 
+  /* ---- Whalecoin share price movements ----------------------------------- */
+  /* The same price series the WhaleChat share-price chart draws: the shares
+     market history from the sync server / synced database, plus every price
+     this device has recorded. WC-Investing payouts are calculated from these
+     real movements instead of a fixed rate table. */
+  P.shareHistory = function () {
+    var out = [];
+    function push(t, p) {
+      t = Number(t) || 0; p = Number(p) || 0;
+      if (t > 0 && p > 0) out.push({ t: t, p: round4(p) });
+    }
+    try {
+      var st = window.WC_SHARES && window.WC_SHARES.state;
+      var h1 = (st && st.shareMarket && st.shareMarket.history) || [];
+      h1.forEach(function (h) { push(h.t, h.p != null ? h.p : h.price); });
+    } catch (e) {}
+    try {
+      if (typeof DB !== 'undefined' && DB && DB.shareMarket && Array.isArray(DB.shareMarket.history))
+        DB.shareMarket.history.forEach(function (h) { push(h.t || h.time, h.p != null ? h.p : (h.price || h.priceUsd)); });
+    } catch (e) {}
+    out.sort(function (a, b) { return a.t - b.t; });
+    /* de-duplicate identical timestamps */
+    var clean = [];
+    out.forEach(function (pt) { var last = clean[clean.length - 1]; if (last && pt.t === last.t) last.p = pt.p; else clean.push(pt); });
+    return clean;
+  };
+  /* price at a moment from the recorded movements (nearest point at or before) */
+  P.priceAt = function (at, fallback) {
+    var h = P.shareHistory();
+    var p = Number(fallback) || 0;
+    for (var i = h.length - 1; i >= 0; i--) { if (h[i].t <= at) { p = h[i].p; break; } }
+    if (!(p > 0)) p = P.sharePrice();
+    return p;
+  };
+
   /* ---- the formula ------------------------------------------------------- */
   P.dailyRoi = function (priceUsd, ratePct) {
     return round2(Number(priceUsd) * (Number(ratePct) / 100) * 1); /* 12.45 × 3% = 0.3735 */
@@ -139,10 +180,13 @@
   P.dailyRoiExact = function (priceUsd, ratePct) {
     return (Number(priceUsd) || 0) * ((Number(ratePct) || 0) / 100);
   };
+  /* total projected profit: daily profit × days × capital,
+     where daily profit = share price × plan rate (per the trade guide) */
   P.totalRoi = function (priceUsd, ratePct, days, capitalUsd) {
     return round2(P.dailyRoiExact(priceUsd, ratePct) * (Number(days) || 1) * (Number(capitalUsd) || 0));
   };
-  /* total profit from a list of daily prices: Σ(price × rate%) × capital */
+  /* total profit from the daily share prices the plan actually saw:
+     Σ(price × rate%) × capital — driven by the live share-price movements */
   P.totalRoiFromPrices = function (prices, ratePct, capitalUsd) {
     var sum = 0;
     (prices || []).forEach(function (p) { sum += P.dailyRoiExact(p, ratePct); });
@@ -184,35 +228,46 @@
   };
   function round4(v) { return Math.round((Number(v) || 0) * 1e4) / 1e4; }
 
-  /* profit numbers for a plan from its daily price record */
+  /* profit numbers for a plan from its daily price record.
+     Every figure is driven by the recorded WhaleChat share-price movements:
+     each day earns capital × rate% × that day's share price. */
   P.roiFor = function (plan, price, at) {
     at = at || Date.now();
     price = Number(price) || Number(plan.entryPriceUsd) || 0;
     var days = Math.max(1, Number(plan.days) || 1);
     var cap = Number(plan.capitalUsd) || 0;
     var rate = Number(plan.ratePct) || 0;
-    var log = (Array.isArray(plan.priceLog) && plan.priceLog.length) ? plan.priceLog.slice(0, days) : [Number(plan.entryPriceUsd) || price];
+    var entry = Number(plan.entryPriceUsd) || price || 1;
+    var log = (Array.isArray(plan.priceLog) && plan.priceLog.length) ? plan.priceLog.slice(0, days) : [entry];
     var start = Number(plan.startedAt) || at;
     var elapsedDays = Math.max(0, (Math.min(at, Number(plan.endsAt) || at) - start) / 864e5);
     var idx = Math.min(days - 1, Math.floor(elapsedDays));
     var done = plan.status === 'completed' || elapsedDays >= days;
+    function dayPx(i) {
+      var v = log[i] != null ? Number(log[i]) : (log.length ? Number(log[log.length - 1]) : entry);
+      return v > 0 ? v : entry;
+    }
+    var todayPx = dayPx(idx);
     var priceSum = 0, accSum = 0;
     for (var i = 0; i < days; i++) {
-      var p = log[i] != null ? Number(log[i]) : (i <= idx ? price : price);
+      var p = dayPx(i);
       priceSum += p;
       if (done || i < idx) accSum += p;
       else if (i === idx) accSum += p * (elapsedDays - idx);
     }
     var seen = done ? days : Math.min(days, idx + 1);
     var seenSum = 0;
-    for (var j = 0; j < seen; j++) seenSum += log[j] != null ? Number(log[j]) : price;
-    var avg = seen ? seenSum / seen : price;
+    for (var k = 0; k < seen; k++) seenSum += dayPx(k);
+    var avg = seen ? seenSum / seen : todayPx;
     var crashAt = P.crashLevel(plan);
     return {
       accruedUsd: round2(accSum * (rate / 100) * cap),
       projectedUsd: round2(priceSum * (rate / 100) * cap),
-      todayDailyUsd: round2(P.dailyRoiExact(log[idx] != null ? log[idx] : price, rate) * cap),
+      todayDailyUsd: round2(P.dailyRoiExact(todayPx, rate) * cap),
       avgPriceUsd: round4(avg),
+      entryPriceUsd: round4(entry),
+      priceNowUsd: round4(todayPx),
+      movePct: Math.round((todayPx / (entry || 1) - 1) * 10000) / 100,
       crashLevelUsd: crashAt,
       atRisk: crashAt > 0 && avg < crashAt,
       dayNo: Math.min(days, idx + 1)
@@ -244,7 +299,9 @@
       days: Number(plan.days) || 1,
       dayNo: r.dayNo,
       daysLeft: Math.max(0, Math.ceil((end - at) / 864e5)),
-      priceNow: Number(price) || 0,
+      priceNow: Number(r.priceNowUsd) || Number(price) || 0,
+      entryPriceUsd: Number(r.entryPriceUsd) || Number(plan.entryPriceUsd) || 0,
+      movePct: Number(r.movePct) || 0,
       avgPriceUsd: r.avgPriceUsd,
       crashLevelUsd: r.crashLevelUsd,
       atRisk: r.atRisk,
@@ -526,6 +583,44 @@
   };
 
   /* accrued series for one plan (or all) — drives the ROI charts */
+  /* Whalecoin share price at a moment inside a plan window: the recorded
+     share-market movement first, then that day's recorded price. */
+  P.planPriceAt = function (plan, t, hist) {
+    hist = hist || P.shareHistory();
+    var p = 0;
+    for (var i = hist.length - 1; i >= 0; i--) { if (hist[i].t <= t) { p = hist[i].p; break; } }
+    if (!(p > 0)) {
+      var log = (plan && plan.priceLog) || [];
+      var start = Number(plan && plan.startedAt) || t;
+      var idx = Math.max(0, Math.floor((t - start) / 864e5));
+      if (log.length) p = Number(log[Math.min(idx, log.length - 1)]);
+    }
+    if (!(p > 0)) p = Number(plan && plan.entryPriceUsd) || P.sharePrice();
+    return p;
+  };
+
+  /* Plan value curve (capital + ROI in USD) built from the WhaleChat share
+     price movements — the series the trading-style plan chart draws. */
+  P.planSeriesUsd = function (plan, steps) {
+    steps = steps || 60;
+    var out = [];
+    if (!plan) return out;
+    var now = Date.now();
+    var start = Number(plan.startedAt) || now;
+    var end = Math.min(now, Number(plan.endsAt) || now);
+    if (!(end > start)) end = start + 60000;
+    var hist = P.shareHistory();
+    var cap = Number(plan.capitalUsd) || 0;
+    for (var i = 0; i <= steps; i++) {
+      var t = start + ((end - start) * i) / steps;
+      var px = P.planPriceAt(plan, Math.min(now, Math.max(start + 1, t)), hist);
+      var r = P.roiFor(plan, px, Math.min(now, Math.max(start + 1, t)));
+      out.push({ t: Math.min(now, Math.round(t)), v: Math.round((cap + r.accruedUsd) * 100) / 100 });
+    }
+    if (out.length < 2) out = [{ t: start, v: cap }, { t: Math.max(start + 60000, end), v: cap + (P.roiFor(plan, P.sharePrice(), now).accruedUsd || 0) }];
+    return out;
+  };
+
   P.series = function (plan, steps) {
     steps = steps || 24;
     var out = [];
@@ -591,6 +686,58 @@
     return out.length > 1 ? out : [0, 0.0001];
   };
 
+  /* ---- Whalecoin share market: the movement every payout is based on ----- */
+  /* The WhaleChat share price is what a WC-Investing plan earns on, so the
+     local engine keeps the same gentle random walk the sync server's shares
+     worker runs, stores it in DB.shareMarket (history + current price) and
+     records it against every active plan day. The share-price card, the plan
+     charts and the payout all read this one series. */
+  P.market = function () {
+    if (typeof DB === 'undefined' || !DB) return null;
+    if (!DB.shareMarket || typeof DB.shareMarket !== 'object') DB.shareMarket = {};
+    var m = DB.shareMarket;
+    var adminPrice = 0;
+    try { adminPrice = Number(DB.settings && DB.settings.sharePriceUsd) || 0; } catch (e) {}
+    if (!(Number(m.basePriceUsd) > 0)) m.basePriceUsd = adminPrice || P.sharePrice() || 12.45;
+    if (!(Number(m.priceUsd) > 0)) m.priceUsd = Number(m.basePriceUsd);
+    if (!Array.isArray(m.history)) m.history = [];
+    return m;
+  };
+  P.tickMarket = function () {
+    try {
+      /* a server-side shares engine owns the market when it is running */
+      if (window.WC_SHARES && window.WC_SHARES.state && !window.WC_SHARES.state.__local) return false;
+      var m = P.market(); if (!m) return false;
+      var now = Date.now();
+      var base = Number(m.basePriceUsd) || 12.45;
+      var price = Number(m.priceUsd) || base;
+      if (Math.abs(price / base - 1) > 0.25) { base = price; m.basePriceUsd = base; }
+      var noise = (Math.random() - 0.5) * 0.006;
+      var drift = ((base - price) / base) * 0.004;
+      price = Math.max(0.25, price * (1 + noise + drift));
+      m.priceUsd = round4(price);
+      m.updatedAt = now;
+      var last = m.history[m.history.length - 1];
+      if (!m.history.length) {
+        /* seed the series so the chart has a line from the first tick */
+        m.history.push({ t: now - 3600e3, p: round4(Number(m.basePriceUsd) || m.priceUsd) });
+        m.history.push({ t: now, p: m.priceUsd });
+      } else if (now - (Number(last.t) || 0) >= 5000) {
+        m.history.push({ t: now, p: m.priceUsd });
+        if (m.history.length > 720) m.history.splice(0, m.history.length - 720);
+      } else {
+        last.p = m.priceUsd;
+      }
+      try { if (DB.settings) DB.settings.sharePriceUsd = m.priceUsd; } catch (e) {}
+      var u = null; try { u = user(); } catch (e) {}
+      if (u) {
+        var w = wallet(u);
+        w.plans.forEach(function (inv) { if (inv && inv.status === 'active') P.recordPrice(inv, m.priceUsd, now); });
+      }
+      return true;
+    } catch (e) { return false; }
+  };
+
   /* ---- keep time moving -------------------------------------------------- */
   var tries = 0;
   (function boot() {
@@ -599,6 +746,9 @@
       return;
     }
     P.sweep();
+    P.tickMarket();
+    /* the shares market ticks every 6s; every plan accrues on this movement */
+    setInterval(function () { try { P.tickMarket(); } catch (e) {} }, 6000);
     setInterval(function () { try { if (P.sweep()) repaint(); } catch (e) {} }, 30000);
     /* live payout: keep today's price current every 5s on the WC-Investing pages */
     setInterval(function () {

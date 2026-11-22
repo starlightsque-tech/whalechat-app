@@ -42,10 +42,12 @@
         '<div class="tiny muted">of ' + usd(s.totalRoiUsd) + ' projected</div>' +
       '</div></div>' +
       '<div class="wci-bar"><i style="width:' + Math.max(0, Math.min(100, s.pct)) + '%"></i></div>' +
-      '<div class="tiny muted" style="margin-top:6px">Day ' + s.dayNo + ' of ' + s.days + ' · Whalecoin now ' + usd(s.priceNow) + ' → today ' + usd(s.priceNow * (Number(inv.ratePct) || 0) / 100) + ' × ' + usd(inv.capitalUsd) + ' = <b class="up">' + usd(s.todayDailyUsd) + '</b>/day</div>' +
+      '<div class="tiny muted" style="margin-top:6px">Day ' + s.dayNo + ' of ' + s.days + ' · Whalecoin ' + usd(s.priceNow) + ' vs entry ' + usd(s.entryPriceUsd || inv.entryPriceUsd) + ' (' + (s.movePct >= 0 ? '+' : '') + Number(s.movePct || 0).toFixed(2) + '%) → today <b class="up">+' + usd(s.todayDailyUsd) + '</b></div>' +
       '<div class="tiny muted">Entry ' + usd(inv.entryPriceUsd) + ' · average ' + usd(s.avgPriceUsd) + ' · crash level ' + usd(s.crashLevelUsd) + ' · matures ' + new Date(Number(inv.endsAt)).toLocaleDateString() + '</div>' +
       (s.atRisk ? '<div class="tiny down" style="margin-top:4px"><b>At risk:</b> the average Whalecoin price is below the crash level. If it ends the plan below ' + usd(s.crashLevelUsd) + ' the plan is a total loss.</div>' : '') +
-      '<div class="wci-chartwrap">' + P.chart(P.series(inv, 24), { height: 110, color: s.atRisk ? '#ff4d5e' : '#2ee6c9', uid: inv.id, start: inv.startedAt, end: inv.endsAt }) + '</div>' +
+      '<div class="wci-chartwrap wci-plan-chartwrap" data-plan-chart="' + esc(inv.id) + '">' +
+        P.chart(P.series(inv, 24), { height: 110, color: s.atRisk ? '#ff4d5e' : '#2ee6c9', uid: inv.id, start: inv.startedAt, end: inv.endsAt }) +
+      '</div>' +
       '<div class="between tiny"><span class="muted">20%</span><span class="up">ROI ' + usd(s.accruedUsd) + '</span><span class="muted">100%</span></div>' +
     '</div>';
   }
@@ -370,7 +372,7 @@
       pv.innerHTML = '<div class="between"><span>Daily ROI</span><b>' + usd(daily) + '</b></div>' +
         '<div class="between"><span>Total ROI (' + days + ' days)</span><b class="up">+' + usd(total) + '</b></div>' +
         '<div class="between"><span>Payout at maturity</span><b>' + usd(amount + total) + '</b></div>' +
-        '<div class="tiny muted">Projected at today\'s Whalecoin price. The final profit uses each day\'s real price.</div>' +
+        '<div class="tiny muted">Today\'s Whalecoin price is used. Each day of the plan accrues on that day\'s real share-price movement.</div>' +
         '<div class="between"><span>Cost in WhaleCoin</span><b>' + wcv(amount) + ' WC</b></div>';
     }
   }, false);
@@ -428,11 +430,70 @@
     }, false);
   }
 
+  /* ---- stock-style plan charts (TradingView Lightweight Charts) ---------- */
+  /* The active-plan chart uses the same chart engine as the stock trading
+     view, fed with the plan value curve built from the WhaleChat share price
+     movements. The SVG below is only the fallback while the engine loads. */
+  var PLAN_CHARTS = {};
+  function planChartOpts(inv) {
+    var key = 'plan:' + inv.id;
+    return {
+      key: key,
+      points: P.planSeriesUsd(inv, 60),
+      unit: 'usd',
+      height: 168,
+      hud: { title: inv.planName, matures: new Date(Number(inv.endsAt)).toLocaleDateString() },
+      getLive: function () {
+        var s = P.progress(inv, P.sharePrice());
+        return {
+          value: s.valueUsd,
+          roiPct: ((Number(s.accruedUsd) || 0) / (Number(s.capitalUsd) || 1)) * 100,
+          earnCoins: (Number(s.accruedUsd) || 0) / RATE,
+          matures: new Date(Number(inv.endsAt)).toLocaleDateString()
+        };
+      }
+    };
+  }
+  function mountPlanCharts() {
+    if (!window.WC_PRO_CHART || typeof window.WC_PRO_CHART.mountEquity !== 'function') return;
+    var hosts = [].slice.call(document.querySelectorAll('[data-plan-chart]'));
+    var active = P.summary().active || [];
+    var seen = {};
+    hosts.forEach(function (host) {
+      var id = host.getAttribute('data-plan-chart');
+      var inv = null;
+      active.forEach(function (p) { if (p.id === id) inv = p; });
+      if (!inv) return;
+      seen['plan:' + id] = true;
+      var inst = PLAN_CHARTS['plan:' + id];
+      if (inst && inst.host === host) {
+        try { inst.setData(P.planSeriesUsd(inv, 60), planChartOpts(inv)); } catch (e) {}
+        return;
+      }
+      if (inst && typeof inst.destroy === 'function') { try { inst.destroy(); } catch (e) {} }
+      try {
+        host.innerHTML = '';
+        PLAN_CHARTS['plan:' + id] = window.WC_PRO_CHART.mountEquity(host, planChartOpts(inv));
+      } catch (e) {
+        PLAN_CHARTS['plan:' + id] = null;
+      }
+    });
+    Object.keys(PLAN_CHARTS).forEach(function (k) {
+      if (seen[k] || !PLAN_CHARTS[k]) return;
+      try { PLAN_CHARTS[k].destroy(); } catch (e) {}
+      delete PLAN_CHARTS[k];
+    });
+  }
+  P.mountPlanCharts = mountPlanCharts;
+  setInterval(mountPlanCharts, 900);
+
   /* repaint counters/charts without a full re-render */
   function paintLive() {
     try {
       var h = String(location.hash || '');
       if (h.indexOf('#/invest/shares') !== 0) return;
+      /* a live plan chart on screen: keep it mounted, do not rebuild the page */
+      if (document.querySelector('[data-plan-chart]')) { mountPlanCharts(); return; }
       /* never wipe a form the user is filling in */
       var ae = document.activeElement;
       if (ae && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)) return;
@@ -462,6 +523,11 @@
     .wci-bar{height:7px;border-radius:99px;background:var(--surface-2);overflow:hidden;margin-top:8px}
     .wci-bar i{display:block;height:100%;background:linear-gradient(90deg,#2ee6c9,#3aa0ff);border-radius:99px;transition:width .4s}
     .wci-chartwrap{margin-top:8px}
+    .wci-plan-chartwrap{margin-top:8px;min-height:172px;border-radius:12px;overflow:hidden}
+    .wci-plan-chartwrap .pc-wrap{height:168px!important;border-radius:12px}
+    .wci-plan-chartwrap .pc-hud{padding:7px 9px;min-width:130px}
+    .wci-plan-chartwrap .pc-price{font-size:16px}
+    .wci-plan-chartwrap .pc-row{font-size:9.5px}
     .wci-chartwrap.big{margin-top:10px}
     .wci-chart{width:100%;height:86px;display:block}
     .wci-chart-v2{height:auto!important;border-radius:10px;display:block}

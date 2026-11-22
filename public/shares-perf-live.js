@@ -199,8 +199,7 @@
     try {
       var stage = this.host.querySelector('.wcpl-stage');
       if (stage && window.WC_LIVE_CHART) {
-        stage.innerHTML = '<span class="wcpl-live">● LIVE</span>' +
-          WC_LIVE_CHART.svg(pts, { height: 220, unit: 'wc', wcRate: 0.5, lines: this.opts.lines || [] });
+        stage.innerHTML = WC_LIVE_CHART.svg(pts, { height: 220, unit: 'wc', wcRate: 0.5, lines: this.opts.lines || [] });
         this.el.svg = stage.querySelector('svg');
       }
     } catch (e) {}

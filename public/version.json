@@ -1,8 +1,8 @@
 {
-  "version": "3.61.0",
-  "build": "2026-11-22T11:00:00Z",
+  "version": "3.62.0",
+  "build": "2026-11-22T12:30:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.61.0 — Chat and WC-Investing buttons under the investment dashboard card, status posts limited to the contacts you pick (or your whole contact list) with a \"your contact just posted a status, view it now\" notification to every viewer, and a much louder notification sound for new messages and activity.",
-  "releasedAt": "2026-11-22T11:00:00Z",
+  "notes": "WhaleChat 3.62.0 - Chat and WC-Investing buttons under the ACCOUNT BALANCE dashboard card; the WC-Investing active plan chart now uses the same live trading chart as the stock view, with a live earnings counter and a real-time Whalecoin price-movement counter; plan payouts and charts are calculated from the WhaleChat share-price movements.",
+  "releasedAt": "2026-11-22T12:30:00Z",
   "minimum": "3.0.0"
 }
