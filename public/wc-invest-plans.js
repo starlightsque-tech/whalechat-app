@@ -389,7 +389,20 @@
     if (!(amount > 0)) return { error: 'Enter an amount' };
     var mode = opts.mode || 'profit2invest';
 
-    if (mode === 'profit2invest') {
+    if (mode === 'invest2capital') {
+      /* the main path users expect: investment account USD -> WC-Investing capital */
+      if ((Number(a.usd) || 0) < amount) return { error: 'Not enough in your investment account' };
+      a.usd = round2((Number(a.usd) || 0) - amount);
+      w.capital = round2((Number(w.capital) || 0) + amount);
+      log(w, 'Investment account → WC-Investing capital · ' + usd(amount), 0);
+      ledgerLine(u, 'Investment account → WC-Investing capital', amount);
+    } else if (mode === 'capital2invest') {
+      if ((Number(w.capital) || 0) < amount) return { error: 'Not enough capital balance' };
+      w.capital = round2((Number(w.capital) || 0) - amount);
+      a.usd = round2((Number(a.usd) || 0) + amount);
+      log(w, 'WC-Investing capital → investment account · ' + usd(amount), 0);
+      ledgerLine(u, 'WC-Investing capital → investment account', -amount);
+    } else if (mode === 'profit2invest') {
       if (w.profit < amount) return { error: 'Not enough profit balance' };
       w.profit = round2(w.profit - amount);
       a.usd = round2((Number(a.usd) || 0) + amount);

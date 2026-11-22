@@ -110,3 +110,13 @@ admins only.
   that hid the widget again was removed.
 - If live chat is switched off in Admin, the button falls back to the in-app
   support dialog instead of doing nothing.
+
+## WC-Investing capital top-up fixed
+The WC-Investing transfer page had no path from the investment account, so a
+top-up could not be completed. Added:
+- **Investment account → capital balance** (`invest2capital`) and the reverse
+  **capital balance → investment account** (`capital2invest`).
+- The transfer form lists the investment balance and defaults the top-up
+  option first; the dashboard also has a **Top up capital** shortcut.
+- Transfers debit/credit `investAcct.usd` and `investAcct.portfolios.wc`
+  (the same field the WC-Investing capital balance reads) and sync both.

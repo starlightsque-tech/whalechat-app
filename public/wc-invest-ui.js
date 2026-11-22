@@ -63,6 +63,7 @@
         '<a href="#/invest/shares/invest" class="btn btn-primary btn-sm" data-wci-go="invest">Invest now</a>' +
         '<a href="#/invest/shares/active" class="btn btn-ghost btn-sm" data-wci-go="active">Active plans</a>' +
         '<a href="#/invest/shares/transfer" class="btn btn-ghost btn-sm" data-wci-go="transfer">Transfer</a>' +
+        '<a href="#/investment/transfer?to=wc_capital" class="btn btn-ghost btn-sm">Top up capital</a>' +
         '<a href="#/invest/shares/roi" class="btn btn-ghost btn-sm" data-wci-go="roi">ROI progress</a>' +
         '<a href="#/invest/shares/history" class="btn btn-ghost btn-sm" data-wci-go="history">History</a>' +
         (function () { try { var u = (typeof me === 'function') ? me() : null; return u && u.role === 'admin' ? '<a href="#/admin/wc-investing" class="btn btn-ghost btn-sm">Admin · edit plans</a>' : ''; } catch (e) { return ''; } })() +
@@ -176,13 +177,15 @@
     return head('WC-Investing transfer', 'Move USD between your WC-Investing balances and the investment account.', '#/invest/shares') +
       '<div class="card">' +
         '<div class="field"><label class="label">Transfer</label><select class="input" id="wciTrMode">' +
+          '<option value="invest2capital">Investment account → capital balance (top up)</option>' +
+          '<option value="capital2invest">Capital balance → investment account</option>' +
           '<option value="profit2invest">Profit balance → investment USD balance</option>' +
           '<option value="profit2capital">Profit balance → capital balance</option>' +
           '<option value="leftover2capital">Leftover capital → capital balance</option>' +
           '<option value="leftover2invest">Leftover capital → investment USD balance</option>' +
         '</select></div>' +
         '<div class="field"><label class="label">Amount (USD)</label><input class="input" id="wciTrAmount" type="number" step="0.01" min="0" placeholder="0.00"/>' +
-          '<div class="tiny muted mt6">Profit ' + usd(s.profit) + ' · Leftover ' + usd(s.leftover) + ' · Capital ' + usd(s.capital) + '</div></div>' +
+          '<div class="tiny muted mt6">Investment ' + usd((me2() && me2().investAcct && Number(me2().investAcct.usd)) || 0) + ' · Profit ' + usd(s.profit) + ' · Leftover ' + usd(s.leftover) + ' · Capital ' + usd(s.capital) + '</div></div>' +
         '<button class="btn btn-primary" data-act="wci-transfer" style="width:100%">Transfer</button>' +
       '</div>' +
       '<div class="card"><div class="ih-list">' +
