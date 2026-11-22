@@ -1,8 +1,8 @@
 {
-  "version": "3.62.3",
-  "build": "2026-11-22T14:40:00Z",
+  "version": "3.62.4",
+  "build": "2026-11-22T15:40:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.62.3 - deposit approval now always lands in the user's crypto balance: the credit is written with an account-ledger proof, retries can never double-pay, a missing credit is re-applied automatically on the user's device, and the admin deposit list shows whether each approved deposit is credited with a Credit button.",
-  "releasedAt": "2026-11-22T14:40:00Z",
+  "notes": "WhaleChat 3.62.4 - sign-in is now permanent: an account stays logged in across reloads, updates, offline starts and sync races, and only the Sign out button ends the session. The signed-in account is backed up on the device and restored automatically if the server copy is missing.",
+  "releasedAt": "2026-11-22T15:40:00Z",
   "minimum": "3.0.0"
 }

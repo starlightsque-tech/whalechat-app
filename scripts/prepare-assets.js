@@ -98,6 +98,7 @@ const MODULES = [
   { file: 'b2b-auto-sell.js', marker: 'wc-b2b-auto-sell' },
   { file: 'typography.js', marker: 'wc-typography' },
   { file: 'session-guard.js', marker: 'wc-session-guard' },
+  { file: 'session-persist.js', marker: 'wc-session-persist' },
   { file: 'scroll-stability.js', marker: 'wc-scroll-stability' },
   { file: 'apk-download.js', marker: 'wc-apk-download' },
   { file: 'contacts-plus.js', marker: 'wc-contacts-plus' },

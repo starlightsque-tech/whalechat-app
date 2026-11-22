@@ -899,9 +899,11 @@ const Remote = {
         if (merged) { try { toast('Your account and chats were restored to this server', 'ok'); } catch (e) {} }
       }
       try { resolvePendingReferrals(); reconcileReferralBonuses(); } catch (e) {}
-      // session may point at a user this server doesn't know
+      // the signed-in account always stays signed in: if this server's copy is
+      // missing the user record, restore it from the device backup instead of
+      // signing the user out (only Sign out ends a session).
       if (SESSION && !DB.users.some(u => u.id === SESSION.userId)) {
-        SESSION = null; localStorage.removeItem(LS_SESSION);
+        try { if (typeof restoreSessionUser === 'function') restoreSessionUser(); } catch (e) {}
       }
       startEventStream();
       if (!opts.silent) toast('Connected — syncing across devices', 'ok');
@@ -974,7 +976,7 @@ const Remote = {
       this.last = cloneDB(DB);
       saveLocalNow();
       if (SESSION && !DB.users.some(u => u.id === SESSION.userId)) {
-        SESSION = null; localStorage.removeItem(LS_SESSION);
+        try { if (typeof restoreSessionUser === 'function') restoreSessionUser(); } catch (e) {}
       }
       this.status = 'online';
       try { resolvePendingReferrals(); reconcileReferralBonuses(); } catch (e) {}
@@ -1401,9 +1403,10 @@ async function boot() {
   try { await Remote.init(); } catch (e) { console.warn('sync init failed', e); }
   try { resolvePendingReferrals(); reconcileReferralBonuses(); } catch (e) {}
   if (SESSION) {
-    const u = me();
-    if (!u) { SESSION = null; localStorage.removeItem(LS_SESSION); }
-    else if (u.pin) Presence.touch();
+    let u = me();
+    if (!u) { try { u = restoreSessionUser(); } catch (e) {} }
+    if (u && u.pin) Presence.touch();
+    try { backupSessionUser(true); } catch (e) {}
   }
   initTheme();
   // referral short links: /ref/CODE, ?ref=CODE, #/ref=CODE

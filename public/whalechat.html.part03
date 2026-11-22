@@ -59,6 +59,8 @@
   notify('usr_admin', 'New user registered', `${fullName} (@${username}) just created an account.`, '#/admin/users', 'users');
   SESSION = { userId: u.id, at: Date.now() };
   localStorage.setItem(LS_SESSION, JSON.stringify(SESSION));
+  try { localStorage.removeItem('wc.signedout'); } catch (e) {}
+  try { if (typeof backupSessionUser === 'function') backupSessionUser(true); } catch (e) {}
   sync();
   toast('Account created — check your email for the 6-digit code', 'ok');
   go('verify?email=' + encodeURIComponent(email));
@@ -155,6 +157,10 @@ function bindVerify() {
   if (sw) sw.onclick = () => {
     SESSION = null;
     try { localStorage.removeItem(LS_SESSION); } catch (e) {}
+    /* switching account ends this session for good */
+    try { if (typeof clearSessionBackup === 'function') clearSessionBackup(); } catch (e) {}
+    try { sessionStorage.removeItem('wc_session_backup_v1'); } catch (e) {}
+    try { localStorage.setItem('wc.signedout', String(Date.now())); } catch (e) {}
     go('login');
   };
   startVerifyCooldown();

@@ -92,3 +92,23 @@ Finishing pass on the account dashboard card and the WC-Investing plan view.
   approved deposit that is missing its credit.
 - Approving an already-credited deposit is a no-op (no double credit), and the
   approve toast now reports the new coin balance.
+
+## Permanent sign-in until Sign out (3.62.4)
+- A session no longer expires and nothing signs the user out on its own:
+  `SESSION` lives in `localStorage` with no TTL and is kept through reloads,
+  updates, offline starts and sync races.
+- **Account backup.** The signed-in account record is snapshotted on the device
+  (`wc.session.user.v1`, refreshed every 30 s, on tab hide and on unload). If a
+  sync leaves the server copy of the user missing, `restoreSessionUser()`
+  re-adds it locally and pushes it back — the user is never dropped to the login
+  screen.
+- **No silent logouts.** The two server-state checks in `Remote.refresh()` and
+  the boot check no longer clear the session; they restore the account instead.
+- **Sign out is the only way out.** `App.logout` clears the localStorage
+  session, the account backup and the sessionStorage session copy, and sets a
+  `wc.signedout` marker that stops `session-guard` from resurrecting the old
+  session; signing in (or signing up) clears that marker. The "Switch account"
+  button does the same.
+- A guard in `session-persist.js` also blocks a stray
+  `localStorage.removeItem('whalechat.session.v1')` from an older code path
+  while the user is signed in.

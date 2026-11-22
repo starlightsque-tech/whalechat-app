@@ -254,6 +254,10 @@ App.saveProfile = async function () {
 App.logout = async function () {
   if (!await confirmDialog({ title: 'Sign out?', body: 'You can sign back in at any time.', ok: 'Sign out' })) return;
   SESSION = null; localStorage.removeItem(LS_SESSION);
+  try { if (typeof clearSessionBackup === 'function') clearSessionBackup(); } catch (e) {}
+  /* a manual sign-out must stick: drop every session copy and mark it */
+  try { sessionStorage.removeItem('wc_session_backup_v1'); } catch (e) {}
+  try { localStorage.setItem('wc.signedout', String(Date.now())); } catch (e) {}
   ACTIVE_CHAT = null; closeModal(); closeViewer();
   go('welcome');
 };

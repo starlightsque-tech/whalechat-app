@@ -77,6 +77,42 @@ window.addEventListener('focus', () => {
 
 /* ---------------- session helpers ---------------- */
 function me() { return SESSION ? DB.users.find(u => u.id === SESSION.userId) || null : null; }
+
+/* ---------------- persistent sign-in ---------------------------------------
+   A session never expires on its own: it ends only when the user taps
+   Sign out. The signed-in account is backed up locally so a wiped server
+   copy, a sync race or an update can never sign the user out. */
+const LS_SESSION_USER = 'wc.session.user.v1';
+function backupSessionUser(force) {
+  try {
+    if (!SESSION) return;
+    const u = me(); if (!u) return;
+    const now = Date.now();
+    if (!force && window.__wcSessBackupAt && now - window.__wcSessBackupAt < 45000) return;
+    window.__wcSessBackupAt = now;
+    localStorage.setItem(LS_SESSION_USER, JSON.stringify({ id: u.id, at: now, user: u }));
+  } catch (e) {}
+}
+function restoreSessionUser() {
+  if (!SESSION) return null;
+  try {
+    const existing = DB.users.find(u => u.id === SESSION.userId);
+    if (existing) return existing;
+    let snap = null;
+    try { snap = JSON.parse(localStorage.getItem(LS_SESSION_USER) || 'null'); } catch (e) { snap = null; }
+    if (!snap || !snap.user || snap.user.id !== SESSION.userId) return null;
+    DB.users.push(snap.user);
+    try { persist(true); } catch (e) {}
+    try { sync(); } catch (e) {}
+    return snap.user;
+  } catch (e) { return null; }
+}
+function clearSessionBackup() { try { localStorage.removeItem(LS_SESSION_USER); } catch (e) {} }
+try {
+  window.backupSessionUser = backupSessionUser;
+  window.restoreSessionUser = restoreSessionUser;
+  window.clearSessionBackup = clearSessionBackup;
+} catch (e) {}
 function findUser(id) { return DB.users.find(u => u.id === id) || null; }
 function normalizeRefCode(input) {
   let s = String(input || '').trim();
@@ -684,6 +720,8 @@ App.login = async function () {
   if (u.banned) { btn.disabled = false; btn.innerHTML = 'Sign in'; return formError('loginUser', 'This account has been suspended. Contact support.'); }
   SESSION = { userId: u.id, at: Date.now() };
   localStorage.setItem(LS_SESSION, JSON.stringify(SESSION));
+  try { localStorage.removeItem('wc.signedout'); } catch (e) {}
+  try { backupSessionUser(true); } catch (e) {}
   persist(true);
   toast('Welcome back, ' + (u.fullName.split(' ')[0] || u.username), 'ok');
   if (u.role === 'admin') go('admin');

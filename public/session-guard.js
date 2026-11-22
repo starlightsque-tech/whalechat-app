@@ -334,6 +334,8 @@
   }
 
   function restoreSession() {
+    /* never resurrect a session the user ended with Sign out */
+    try { if (localStorage.getItem('wc.signedout')) return false; } catch (e) {}
     let backup = null, live = null;
     try { backup = JSON.parse(sessionStorage.getItem(SESSION_BACKUP) || 'null'); } catch (e) {}
     try { live = JSON.parse(localStorage.getItem('whalechat.session.v1') || 'null'); } catch (e) {}
