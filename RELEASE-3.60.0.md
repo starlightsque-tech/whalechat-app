@@ -101,3 +101,12 @@ admins only.
 - The supplied photo is now part of the welcome page hero, blended behind the
   WhaleChat card with a radial mask on desktop and a soft banner above the card
   on mobile, matching the app's teal/dark design.
+
+## Live support opens the installed chat box on tap
+- The live-chat widget is preloaded quietly after sign-in (bubble hidden), so
+  tapping **Live support** opens the chat box immediately instead of waiting
+  for the third-party script.
+- The tap now calls `showWidget()` + `maximize()`; the earlier minimize hook
+  that hid the widget again was removed.
+- If live chat is switched off in Admin, the button falls back to the in-app
+  support dialog instead of doing nothing.

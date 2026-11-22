@@ -33,12 +33,16 @@
     } catch (e) {}
   }
 
+  var loadedOnce = false;
   function load() {
     if (ready() || loading) return;
     loading = true;
     window.Tawk_API = window.Tawk_API || {};
-    window.Tawk_API.onChatMinimized = function () { closeWidget(); };
-    window.Tawk_API.onChatHidden = function () { closeWidget(); };
+    /* the bubble stays hidden; a tap opens the full chat box */
+    window.Tawk_API.onLoad = function () {
+      loadedOnce = true;
+      try { if (!window.__wcLiveChatOpen && window.Tawk_API.hideWidget) window.Tawk_API.hideWidget(); } catch (e) {}
+    };
     var old = document.getElementById('wc-livechat-embed');
     if (old) old.remove();
     var s = document.createElement('script');
@@ -50,15 +54,27 @@
     document.head.appendChild(s);
   }
 
+  /* preload the widget after sign-in so the first tap opens instantly */
+  function preload() {
+    try {
+      if (typeof DB === 'undefined' || !DB) { setTimeout(preload, 1200); return; }
+      var cfg = (typeof WC_TAWK !== 'undefined' && WC_TAWK.enabled) ? WC_TAWK.enabled() : true;
+      if (!cfg) return;
+      load();
+    } catch (e) { setTimeout(preload, 1500); }
+  }
+
   function closeWidget() {
     window.__wcLiveChatOpen = false;
     try { document.body.classList.remove('wc-livechat-open'); } catch (e) {}
-    setTimeout(function () {
-      try { if (window.Tawk_API && Tawk_API.hideWidget) Tawk_API.hideWidget(); } catch (e) {}
-    }, 400);
   }
 
   function open() {
+    try {
+      if (typeof WC_TAWK !== 'undefined' && WC_TAWK.enabled && !WC_TAWK.enabled()) {
+        return (typeof App !== 'undefined' && App.liveChatHelp) ? App.liveChatHelp(true) : undefined;
+      }
+    } catch (e) {}
     window.__wcLiveChatOpen = true;
     try { document.body.classList.add('wc-livechat-open'); } catch (e) {}
     try { if (typeof closeModal === 'function') closeModal(); } catch (e) {}
@@ -70,8 +86,9 @@
         if (ready()) {
           clearInterval(timer);
           identify();
+          try { window.Tawk_API.showWidget && window.Tawk_API.showWidget(); } catch (e) {}
           window.Tawk_API.maximize();
-        } else if (tries > 45) {
+        } else if (tries > 60) {
           clearInterval(timer);
           window.__wcLiveChatOpen = false;
           try { document.body.classList.remove('wc-livechat-open'); } catch (e) {}
@@ -88,5 +105,8 @@
     App.liveChatOpen = open;
   } catch (e) {}
 
-  window.WC_LIVE_CHAT = { open: open, ready: ready };
+  window.WC_LIVE_CHAT = { open: open, ready: ready, preload: preload, load: load };
+  /* start loading right away so the first tap is instant */
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { setTimeout(preload, 600); });
+  else setTimeout(preload, 600);
 })();
