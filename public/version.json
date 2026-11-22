@@ -1,8 +1,8 @@
 {
-  "version": "3.60.0",
-  "build": "2026-11-22T09:00:00Z",
+  "version": "3.61.0",
+  "build": "2026-11-22T11:00:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.60.0 — Brevo email is connected end to end (API key, SMTP relay and the Cloudflare edge sender), so signup verification codes actually arrive. Code verification is now forgiving in the right direction: a correct code always verifies the account — leading zeros, spaces, dashes, pasted text, a resend or an already-verified account can never make a valid code fail. Version 3.56.0 accounts jane and investorD can be restored with the new restore script.",
-  "releasedAt": "2026-11-22T09:00:00Z",
+  "notes": "WhaleChat 3.61.0 — Chat and WC-Investing buttons under the investment dashboard card, status posts limited to the contacts you pick (or your whole contact list) with a \"your contact just posted a status, view it now\" notification to every viewer, and a much louder notification sound for new messages and activity.",
+  "releasedAt": "2026-11-22T11:00:00Z",
   "minimum": "3.0.0"
 }

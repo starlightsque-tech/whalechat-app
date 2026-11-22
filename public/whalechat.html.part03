@@ -979,9 +979,27 @@ function canViewStatus(s, viewerId) {
   if (!s) return false;
   if (s.userId === viewerId) return true;
   if (isBlocked(viewerId, s.userId)) return false;
-  if (s.privacy === 'everyone') return true;
   if (s.privacy === 'selected') return (s.selected || []).includes(viewerId);
+  if (s.privacy === 'everyone') return true;
+  /* default: everyone on the poster's contact list */
   return isContact(viewerId, s.userId);
+}
+
+/* Who is meant to see a status: the picked contacts, or the whole contact
+   list. Also the list the poster's notification goes out to. */
+function statusAudienceIds(s, posterId) {
+  if (!s) return [];
+  const owner = posterId || s.userId;
+  if (s.privacy === 'selected') return (s.selected || []).filter(id => findUser(id));
+  if (s.privacy === 'everyone') return DB.users.filter(x => x && x.id !== owner).map(x => x.id);
+  return myContacts(owner).map(c => c.id).filter(id => id !== owner && findUser(id));
+}
+function statusAudienceLabel(s) {
+  if (!s) return '';
+  const n = statusAudienceIds(s).length;
+  if (s.privacy === 'selected') return n ? `Only ${n} selected contact${n === 1 ? '' : 's'}` : 'No contacts selected';
+  if (s.privacy === 'everyone') return 'Everyone';
+  return n ? `All ${n} contact${n === 1 ? '' : 's'} on your list` : 'Your contact list';
 }
 
 function threadPreview(uid1, uid2) {

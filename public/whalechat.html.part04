@@ -431,7 +431,7 @@ VIEWS.status = function () {
             <div class="ring ${mine.length ? '' : 'seen'}"><div class="avatar" style="width:58px;height:58px">${u.avatar ? `<img src="${u.avatar}"/>` : esc(initials(u.fullName))}</div></div>
           </div>
           <div><div style="font-weight:650;font-size:15px">My status</div>
-          <div class="small muted mt6">${mine.length ? `${mine.length} update${mine.length > 1 ? 's' : ''} · ${mine.reduce((s, x) => s + (x.viewers || []).length, 0)} views` : 'Tap to share a photo, video or text update'}</div></div>
+          <div class="small muted mt6">${mine.length ? `${mine.length} update${mine.length > 1 ? 's' : ''} · ${mine.reduce((s, x) => s + (x.viewers || []).length, 0)} views · ${esc(statusAudienceLabel(mine[0]))}` : 'Tap to share a photo, video or text update'}</div></div>
         </div>
         <button class="btn btn-primary btn-sm" data-act="compose-status">${ic('plus', 15)} Create</button>
       </div>
@@ -476,15 +476,20 @@ App.composeStatus = function () {
     ${products.length ? `<div class="field mt16"><label class="label">Attach a product (optional)</label>
       <select class="input" id="stProduct"><option value="">No product</option>${products.map(p => `<option value="${p.id}">${esc(p.name)} — ${p.priceUsd ? usd(p.priceUsd) : ''}</option>`).join('')}</select>
       <div class="help">Followers can tap “Buy now” straight from your status.</div></div>` : ''}
-    <div class="field mt16"><label class="label">Privacy</label>
+    <div class="field mt16"><label class="label">Who can see this status</label>
       <select class="input" id="stPrivacy">
-        <option value="contacts">My contacts</option>
-        <option value="everyone">Everyone</option>
+        <option value="contacts">Everyone on my contact list (${myContacts(u.id).length})</option>
         <option value="selected">Only selected contacts</option>
       </select>
-      <div id="stSelected" class="hidden mt10"><div class="checkbox-grid panel" style="padding:8px">
-        ${myContacts(u.id).map(c => `<label><input type="checkbox" value="${c.id}"/> ${esc(c.fullName)} <span class="tiny muted">@${esc(c.username)}</span></label>`).join('')}
-      </div></div>
+      <div class="help" id="stPrivacyHelp">All ${myContacts(u.id).length} contact${myContacts(u.id).length === 1 ? '' : 's'} can see this status. They will get a notification: “your contact just posted a status, view it now”.</div>
+      <div id="stSelected" class="hidden mt10">
+        <div class="between" style="margin-bottom:6px"><span class="tiny muted">Pick who can see this status</span>
+          <span class="row" style="gap:6px"><button type="button" class="btn btn-ghost btn-sm" data-st-all>Select all</button><button type="button" class="btn btn-ghost btn-sm" data-st-none>Clear</button></span></div>
+        <div class="checkbox-grid panel" style="padding:8px">
+        ${myContacts(u.id).length ? myContacts(u.id).map(c => `<label><input type="checkbox" value="${c.id}"/> ${esc(c.fullName)} <span class="tiny muted">@${esc(c.username)}</span></label>`).join('') : '<div class="tiny muted">No contacts yet — add contacts first.</div>'}
+      </div>
+        <div class="help" id="stSelectedCount">0 contacts selected · only they will see it and be notified</div>
+      </div>
     </div>`,
     `<button class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary" data-act="post-status">Post status</button>`), { width: '480px' });
   STATUS_DRAFT = { type: 'text', bg: 'linear-gradient(135deg,#0f766e,#0ea5e9)', image: null, video: null, mediaId: null, videoId: null, productId: '', privacy: 'contacts' };
@@ -502,7 +507,26 @@ App.composeStatus = function () {
     STATUS_DRAFT.bg = b.getAttribute('data-bg');
   });
   const pr = document.getElementById('stPrivacy');
-  pr.onchange = () => document.getElementById('stSelected').classList.toggle('hidden', pr.value !== 'selected');
+  const syncAudience = () => {
+    const selWrap = document.getElementById('stSelected');
+    const selectedMode = pr.value === 'selected';
+    selWrap.classList.toggle('hidden', !selectedMode);
+    const help = document.getElementById('stPrivacyHelp');
+    if (help) help.classList.toggle('hidden', selectedMode);
+    const count = selWrap.querySelectorAll('input:checked').length;
+    const cEl = document.getElementById('stSelectedCount');
+    if (cEl) cEl.textContent = count + ' contact' + (count === 1 ? '' : 's') + ' selected · only they will see it and be notified';
+  };
+  pr.onchange = syncAudience;
+  const selWrap = document.getElementById('stSelected');
+  if (selWrap) {
+    selWrap.addEventListener('change', syncAudience);
+    const allBtn = document.querySelector('[data-st-all]');
+    const noneBtn = document.querySelector('[data-st-none]');
+    if (allBtn) allBtn.onclick = () => { selWrap.querySelectorAll('input').forEach(i => { i.checked = true; }); syncAudience(); };
+    if (noneBtn) noneBtn.onclick = () => { selWrap.querySelectorAll('input').forEach(i => { i.checked = false; }); syncAudience(); };
+  }
+  syncAudience();
 };
 let STATUS_DRAFT = null;
 
@@ -542,16 +566,26 @@ App.postStatus = async function () {
   if (d.type === 'video' && !d.videoId) return toast('Choose a video first', 'err');
   const sel = document.getElementById('stSelected');
   const selected = sel ? Array.from(sel.querySelectorAll('input:checked')).map(i => i.value) : [];
+  const privacy = document.getElementById('stPrivacy').value;
+  if (privacy === 'selected' && !selected.length) return toast('Pick at least one contact who can see this status', 'err');
   const product = document.getElementById('stProduct');
-  DB.statuses.push({
+  const st = {
     id: uid('st'), userId: u.id, type: d.type, text: text.trim(), bg: d.bg,
     mediaId: d.type === 'image' ? d.mediaId : d.type === 'video' ? d.videoId : null,
     productId: product ? product.value || null : null,
-    privacy: document.getElementById('stPrivacy').value,
+    privacy,
     selected, viewers: [], createdAt: Date.now(), expired: false
-  });
+  };
+  DB.statuses.push(st);
+  /* notify exactly the people who can see it */
+  const audience = statusAudienceIds(st, u.id).filter(id => id !== u.id && findUser(id) && !isBlocked(id, u.id));
+  audience.forEach(id => notify(id, 'Your contact just posted a status, view it now', u.fullName + ' just posted a status — view it now.', '#/status', 'status', 'open-status'));
+  st.notified = audience.slice();
   STATUS_DRAFT = null;
-  sync(); closeModal(); toast('Status posted — live for 24 hours', 'ok'); render();
+  sync(); closeModal();
+  toast('Status posted — live for 24 hours · ' + audience.length + ' contact' + (audience.length === 1 ? '' : 's') + ' notified', 'ok');
+  if (window.WC_ALERT && typeof window.WC_ALERT.play === 'function') { try { window.WC_ALERT.play('notification'); } catch (e) {} }
+  render();
 };
 
 let STATUS_VIEW = null;
@@ -652,9 +686,12 @@ App.statusStep = function (dir) {
 App.statusViewers = function (id) {
   const s = DB.statuses.find(x => x.id === id); if (!s) return;
   const viewers = (s.viewers || []).map(findUser).filter(Boolean);
-  openModal(modalShell('Status viewers', viewers.length ? `<div class="list">${viewers.map(v => `<div class="list-item">${avatarHTML(v, 'sm')}
+  const audience = statusAudienceIds(s).map(findUser).filter(Boolean);
+  const audienceRow = '<div class="panel" style="padding:9px 10px;margin-bottom:10px"><div class="tiny muted">Can see this status · ' + esc(statusAudienceLabel(s)) + '</div>' +
+    (audience.length ? '<div class="tiny" style="margin-top:4px">' + audience.map(v => esc(v.fullName)).join(', ') + '</div>' : '') + '</div>';
+  openModal(modalShell('Status viewers', audienceRow + (viewers.length ? `<div class="list">${viewers.map(v => `<div class="list-item">${avatarHTML(v, 'sm')}
     <div class="grow"><div class="small" style="font-weight:600">${esc(v.fullName)}</div><div class="tiny muted">@${esc(v.username)}</div></div></div>`).join('')}</div>`
-    : `<div class="empty" style="padding:16px"><p>No views yet. Only contacts who can see this status appear here.</p></div>`,
+    : `<div class="empty" style="padding:16px"><p>No views yet. Only the contacts you picked can see this status.</p></div>`),
     `<button class="btn btn-ghost" data-close style="width:100%">Close</button>`, (s.viewers || []).length + ' views'));
 };
 App.deleteStatus = async function (id) {

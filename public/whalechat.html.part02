@@ -198,7 +198,7 @@ function notify(userId, title, body, link, icon, action) {
       new Notification(title, {
         body, icon: LOGO, badge: LOGO,
         tag: 'wc-' + userId, renotify: true,
-        vibrate: [120, 60, 120], timestamp: Date.now()
+        vibrate: [900, 220, 900, 220, 900, 260, 1200], timestamp: Date.now()
       });
     } catch (e) {}
   }

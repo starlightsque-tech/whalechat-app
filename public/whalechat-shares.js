@@ -205,6 +205,23 @@
   function priceSeries(hist) { return (hist || []).map((p) => ({ t: Number(p.t) || 0, v: Number(p.p) || 0 })); }
   function equitySeries(hist) { return (hist || []).map((p) => ({ t: Number(p.t) || 0, v: Number(p.coins) || 0 })); }
 
+  /* Two account buttons shown directly below the WhaleChat investment
+     dashboard card (cut-out path in the reference screenshot). */
+  function quickRowHTML() {
+    return `<div class="wc-quick-row" data-wc-quick-row>
+      <a href="#/home" class="wc-quick-btn">
+        <span class="wc-quick-ic">${ic('chat', 18)}</span>
+        <span class="wc-quick-t"><b>Chat</b><small>Open your chat page</small></span>
+        ${ic('chevron', 15)}
+      </a>
+      <a href="#/invest/shares" class="wc-quick-btn wc-quick-inv">
+        <span class="wc-quick-ic">${ic('trend', 18)}</span>
+        <span class="wc-quick-t"><b>WC-Investing</b><small>Open your WC-Investing account</small></span>
+        ${ic('chevron', 15)}
+      </a>
+    </div>`;
+  }
+
   function marketChartHTML() {
     const st = S.state;
     const hist = priceSeries(st && st.shareMarket && st.shareMarket.history);
@@ -228,7 +245,7 @@
         <div><span>Your shares</span><b>${num(st && st.summary ? st.summary.shares : 0, 4)}</b></div>
         <div><span>Holders' earning</span><b data-share-earn>+${tinyNum(st && st.summary ? st.summary.totalEarnedCoins : 0)} WC</b></div>
       </div>
-    </div>`;
+    </div>` + quickRowHTML();
   }
 
   function heroHTML() {
@@ -896,6 +913,21 @@
     .shares-hero-grid span{font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:#8ba4b6;font-weight:700}
     .shares-hero-grid b{font-size:12.5px;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .shares-marketcard .shares-price-row{display:flex;justify-content:space-between;align-items:flex-end;gap:10px;margin-top:8px}
+    .wc-quick-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:10px 0 14px}
+    .wc-quick-row .wc-quick-btn{display:flex;align-items:center;gap:9px;padding:12px 13px;border-radius:14px;text-decoration:none;
+      background:linear-gradient(135deg,rgba(46,230,201,.13),rgba(58,160,255,.07));border:1px solid rgba(46,230,201,.30);color:#e9f4f9;
+      transition:transform .15s ease,border-color .15s ease}
+    .wc-quick-row .wc-quick-btn:active{transform:scale(.985)}
+    .wc-quick-row .wc-quick-inv{background:linear-gradient(135deg,rgba(58,160,255,.15),rgba(139,123,255,.09));border-color:rgba(58,160,255,.34)}
+    .wc-quick-row .wc-quick-ic{display:grid;place-items:center;width:34px;height:34px;border-radius:10px;flex:0 0 auto;
+      background:rgba(46,230,201,.16);color:#2ee6c9}
+    .wc-quick-row .wc-quick-inv .wc-quick-ic{background:rgba(58,160,255,.18);color:#7cc4ff}
+    .wc-quick-row .wc-quick-t{display:flex;flex-direction:column;min-width:0;flex:1}
+    .wc-quick-row .wc-quick-t b{font-size:13.5px;font-weight:750;letter-spacing:-.01em}
+    .wc-quick-row .wc-quick-t small{font-size:10px;color:#8ba4b6;line-height:1.35}
+    @media (max-width:430px){.wc-quick-row{grid-template-columns:1fr 1fr;gap:8px}
+      .wc-quick-row .wc-quick-btn{padding:10px;border-radius:12px}
+      .wc-quick-row .wc-quick-t small{display:none}}
     .shares-price{font-size:24px;font-weight:800;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
     .shares-perfcard .shares-perf-pills{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 8px}
     .shares-perf-chart{min-height:300px;margin-top:2px}

@@ -64,6 +64,13 @@
         '<div class="ih-card"><span>Active plans</span><b>' + s.activeCount + '</b><small>' + usd(s.investedUsd) + ' working · +' + usd(s.accruedUsd) + ' ROI</small></div>' +
       '</div>' +
 
+      '<div class="wc-quick-row" data-wci-quick-row>' +
+        '<a href="#/home" class="wc-quick-btn"><span class="wc-quick-ic">' + ic('chat', 18) + '</span>' +
+          '<span class="wc-quick-t"><b>Chat</b><small>Open your chat page</small></span>' + ic('chevron', 15) + '</a>' +
+        '<a href="#/invest/shares" class="wc-quick-btn wc-quick-inv"><span class="wc-quick-ic">' + ic('trend', 18) + '</span>' +
+          '<span class="wc-quick-t"><b>WC-Investing</b><small>Open your WC-Investing account</small></span>' + ic('chevron', 15) + '</a>' +
+      '</div>' +
+
       '<div class="card ih-actions"><div class="ih-btn-grid">' +
         '<a href="#/invest/shares/invest" class="btn btn-primary btn-sm" data-wci-go="invest">Invest now</a>' +
         '<a href="#/invest/shares/active" class="btn btn-ghost btn-sm" data-wci-go="active">Active plans</a>' +
@@ -162,8 +169,10 @@
     { id: '1h', label: '1H', ms: 60 * 60 * 1000 },
     { id: '24h', label: '24H', ms: 24 * 60 * 60 * 1000 },
     { id: '1d', label: '1D', ms: 24 * 60 * 60 * 1000 },
+    { id: '1w', label: '1W', ms: 7 * 24 * 60 * 60 * 1000 },
     { id: '7d', label: '7D', ms: 7 * 24 * 60 * 60 * 1000 },
-    { id: '14d', label: '14D', ms: 14 * 24 * 60 * 60 * 1000 },
+    { id: '1m', label: '1M', ms: 30 * 24 * 60 * 60 * 1000 },
+    { id: '1y', label: '1Y', ms: 365 * 24 * 60 * 60 * 1000 },
     { id: 'all', label: 'ALL', ms: 0 }
   ];
   P.viewRoi = function (params) {
@@ -172,7 +181,7 @@
     var one = null;
     s.active.forEach(function (p) { if (p.id === sel) one = p; });
     var rangeId = (params && params.range) || 'all';
-    var range = ROI_RANGES.filter(function (r) { return r.id === rangeId; })[0] || ROI_RANGES[6];
+    var range = ROI_RANGES.filter(function (r) { return r.id === rangeId; })[0] || ROI_RANGES[ROI_RANGES.length - 1];
     var series = one ? P.rangeSeries(one, range.ms, 30) : P.rangeCombined(range.ms, 30);
     var accrued = one ? P.progress(one, P.sharePrice()).accruedUsd : s.accruedUsd;
     var now = Date.now();

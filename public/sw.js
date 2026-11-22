@@ -1,7 +1,7 @@
 /* =========================================================================
    WhaleChat service worker — offline shell, in-place updates, Web Push
    ========================================================================= */
-const VERSION = 'wc-v3.60.0-1';
+const VERSION = 'wc-v3.61.0-1';
 const SHELL = [
   './',
   './index.html',
@@ -99,7 +99,7 @@ self.addEventListener('push', (event) => {
     tag: data.tag || 'wc-push',
     renotify: true,
     requireInteraction: !!data.requireInteraction,
-    vibrate: data.vibrate || [500, 180, 500, 180, 800],
+    vibrate: data.vibrate || [900, 220, 900, 220, 900, 260, 1200],
     silent: false,
     timestamp: Date.now(),
     data: { url: link },
