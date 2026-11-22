@@ -1,8 +1,8 @@
 {
-  "version": "3.62.0",
-  "build": "2026-11-22T12:30:00Z",
+  "version": "3.62.1",
+  "build": "2026-11-22T13:10:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.62.0 - Chat and WC-Investing buttons under the ACCOUNT BALANCE dashboard card; the WC-Investing active plan chart now uses the same live trading chart as the stock view, with a live earnings counter and a real-time Whalecoin price-movement counter; plan payouts and charts are calculated from the WhaleChat share-price movements.",
-  "releasedAt": "2026-11-22T12:30:00Z",
+  "notes": "WhaleChat 3.62.1 - every active WC-Investing plan now keeps a profit history log of its daily closes (Whalecoin price, what the day earned, running total), and the WC-Investing dashboard card at the top of WhaleChat Shares now shows a live earnings graph plus a real-time Whalecoin price ticker in the trading-chart style.",
+  "releasedAt": "2026-11-22T13:10:00Z",
   "minimum": "3.0.0"
 }

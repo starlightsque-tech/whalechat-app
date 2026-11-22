@@ -43,3 +43,23 @@ Finishing pass on the account dashboard card and the WC-Investing plan view.
   (and the crash level still applies at maturity).
 - The plan value curve the chart draws is rebuilt from that movement history, so
   the line follows the market instead of a fixed projection.
+
+## Profit history log on every active plan
+- Each active plan card now carries a **Profit history · daily closes** table:
+  day number and date, that day's Whalecoin price with its move from the entry
+  price, what the day earned in USD, and the running total at the close.
+- A highlighted **Today (running)** row shows the live price, today's earnings
+  so far and the running total, updated every second.
+- The log is produced by `WC_INVEST.profitLog(plan)` and persisted on the plan
+  (`plan.profitLog`) at each market tick and sweep, so it survives a reload and
+  always matches the payout maths exactly.
+
+## Live earnings graph + Whalecoin ticker on the dashboard card
+- The hero card at the top of WhaleChat Shares (WC-Investing dashboard) now has
+  a **Whalecoin ticker** — live price, green/red `▲ +1.44%` badge and the window
+  the move covers — refreshed every second.
+- Under it sits a **live earnings graph** in the same trading-chart style as the
+  stock view: principal + accrued profit, green/red segmented line, soft fill,
+  right-hand WC scale, an INVESTED dashed line and a live percentage badge.
+- The Plan performance chart now reads the same engine values, so the chart
+  value, ROI, earnings and the plan cards can never disagree.

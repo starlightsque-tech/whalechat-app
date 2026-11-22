@@ -269,6 +269,39 @@
     </div>` + quickRowHTML();
   }
 
+  /* daily-close history for one plan, straight from the WC-Investing engine */
+  function planHistory(id, planObj) {
+    try {
+      const P = localEngine();
+      if (!P || !P.profitLog) return [];
+      let plan = planObj || null;
+      if (!plan) {
+        const w = P.wallet ? P.wallet() : null;
+        (w && w.plans || []).forEach((p) => { if (String(p.id) === String(id)) plan = p; });
+      }
+      return plan ? P.profitLog(plan) : [];
+    } catch (e) { return []; }
+  }
+
+  /* aggregate plan value (WC) over time — the hero live earnings graph */
+  function heroSeries() {
+    const list = (S.state && S.state.investments) || [];
+    const by = {};
+    list.forEach((v) => {
+      (v.equityHistory || []).forEach((p) => {
+        const t = Math.floor(Number(p.t) / 10000) * 10000;
+        if (!(t > 0)) return;
+        by[t] = (by[t] || 0) + (Number(p.coins) || 0);
+      });
+    });
+    const pts = Object.keys(by).map((t) => ({ t: Number(t), v: by[t] })).sort((a, b) => a.t - b.t);
+    if (pts.length >= 2) return pts;
+    /* no history yet: a flat line at the invested principal */
+    const invested = list.reduce((a, v) => a + (Number(v.amountCoins) || 0), 0);
+    const now = Date.now();
+    return [{ t: now - 3600e3, v: invested || 0 }, { t: now, v: invested || 0 }];
+  }
+
   function heroHTML() {
     const st = S.state;
     const s = (st && st.summary) || {};
@@ -283,8 +316,26 @@
         <div><span>Active plans</span><b>${s.activeCount || 0}</b></div>
         <div><span>Invested</span><b>${money(s.investedCoins * 0.5)} USD</b></div>
         <div><span>Accrued</span><b class="up">+${money(s.accruedCoins * 0.5)} USD</b></div>
-        <div><span>Share price</span><b>$${num(s.sharePriceUsd, 2)}</b></div>
+        <div><span>Share price</span><b data-hero-px>$${num(s.sharePriceUsd, 2)}</b></div>
       </div>
+      <div class="shares-hero-ticker" data-share-ticker>
+        <span class="sht-dot"></span>
+        <span class="sht-label">Whalecoin</span>
+        <b data-share-ticker-px>$${num(s.sharePriceUsd || 12.45, 2)}</b>
+        <span class="sht-chg up" data-share-ticker-chg>▲ +0.00%</span>
+        <span class="tiny muted" data-share-ticker-note>live price</span>
+      </div>
+      <div class="shares-hero-chart" id="sharesHeroChart">${(function () {
+        try {
+          if (window.WC_LIVE_CHART) {
+            const pts = heroSeries();
+            const invested = (S.state && S.state.investments || []).reduce((a, v) => a + (Number(v.amountCoins) || 0), 0);
+            return WC_LIVE_CHART.svg(pts, { height: 132, unit: 'wc', wcRate: 0.5, lines: invested > 0 ? [{ price: invested, color: '#3AA0FF', title: 'INVESTED', style: 2 }] : [] });
+          }
+        } catch (e) {}
+        return '';
+      })()}</div>
+      <div class="tiny muted" style="margin-top:6px">Live earnings graph · principal + accrued profit, updated every second from the Whalecoin price movements.</div>
     </div>`;
   }
 
@@ -302,6 +353,37 @@
         Invest in ${escS(p.name)}
       </button>
     </div>`;
+  }
+
+  /* profit history block: one row per daily close (price + what the day earned) */
+  function planLogHTML(v) {
+    const log = planHistory(v.id);
+    const rows = log.slice(-14).map((d) => {
+      const dt = new Date(Number(d.at) || 0);
+      const day = dt.toLocaleDateString([], { month: 'short', day: 'numeric' });
+      const up = Number(d.changePct) >= 0;
+      return '<div class="plog-row">' +
+        '<span class="plog-day">Day ' + d.day + '<em>' + day + '</em></span>' +
+        '<span class="plog-px">$' + Number(d.priceUsd).toFixed(2) + '<em class="' + (up ? 'up' : 'down') + '">' + (up ? '▲ +' : '▼ ') + Math.abs(Number(d.changePct)).toFixed(2) + '%</em></span>' +
+        '<span class="plog-day-earn">+' + money(d.dailyUsd) + '</span>' +
+        '<span class="plog-total">' + money(d.accruedUsd) + '</span>' +
+      '</div>';
+    }).join('');
+    const running = v.status === 'active'
+      ? '<div class="plog-row plog-running" data-plog-run="' + escS(v.id) + '">' +
+          '<span class="plog-day">Today<em>running</em></span>' +
+          '<span class="plog-px"><b data-plog-run-px>$' + Number(v.entryPriceUsd || 12.45).toFixed(2) + '</b></span>' +
+          '<span class="plog-day-earn" data-plog-run-day>—</span>' +
+          '<span class="plog-total up" data-plog-run-total>—</span>' +
+        '</div>'
+      : '';
+    return '<div class="shares-plog">' +
+      '<div class="shares-plog-head"><span>Profit history · daily closes</span>' +
+        '<span class="tiny muted">' + (log.length ? log.length + ' day' + (log.length === 1 ? '' : 's') + ' logged' : 'first close at the end of day 1') + '</span></div>' +
+      '<div class="plog-cols"><span>Day</span><span>Whalecoin</span><span>Earned</span><span>Total</span></div>' +
+      (rows || running ? '<div class="plog-rows">' + rows + running + '</div>'
+        : '<div class="plog-empty">No daily close recorded yet — the day 1 entry appears when the first day finishes.</div>') +
+    '</div>';
   }
 
   function investmentCard(v) {
@@ -363,6 +445,7 @@
           <em data-share-inv-chg class="up">+0.00%</em></span>
       </div>
       ${liveChart}
+      ${planLogHTML(v)}
     </div>`;
   }
 
@@ -385,6 +468,20 @@
     const amount = Number(inv.amountCoins) || 0;
     const ret = Number(inv.returnPct) || 0;
     if (!(amount > 0)) return 0;
+    /* value from the WC-Investing engine: capital + earnings accrued from the
+       real Whalecoin price movements, at that moment */
+    try {
+      const P = localEngine();
+      if (P && P.wallet) {
+        let raw = null;
+        ((P.wallet() || {}).plans || []).forEach((p) => { if (String(p.id) === String(inv.id)) raw = p; });
+        if (raw) {
+          const at = Math.min(Date.now(), Number(t) || Date.now());
+          const pr = P.progress(raw, P.sharePrice(), at);
+          return amount + (Number(pr.accruedUsd) || 0) / 0.5;
+        }
+      }
+    } catch (e) {}
     const p = end > start ? Math.max(0, Math.min(1, (t - start) / (end - start))) : 1;
     return amount + (amount * ret / 100) * p;
   }
@@ -855,6 +952,7 @@
     const now = Date.now();
     const P = localEngine();
     let hero = 0;
+    let heroValue = 0;
 
     document.querySelectorAll('[data-share-inv-earn]').forEach((el) => {
       const start = Number(el.getAttribute('data-start')) || 0;
@@ -903,6 +1001,20 @@
         chgEl.textContent = (movePct >= 0 ? '▲ +' : '▼ ') + Math.abs(movePct).toFixed(2) + '%';
         chgEl.className = movePct >= 0 ? 'up' : 'down';
       }
+      heroValue += amount + accruedCoins;
+
+      /* today's running line in the profit history */
+      const run = card.querySelector('[data-plog-run]');
+      if (run) {
+        const capUsd = amount * 0.5;
+        const dayUsd = capUsd * (ret / 100) * (priceNow || 0);
+        const rp = run.querySelector('[data-plog-run-px]');
+        if (rp && priceNow > 0) rp.textContent = '$' + priceNow.toFixed(2);
+        const rd = run.querySelector('[data-plog-run-day]');
+        if (rd) rd.textContent = '+$' + (Math.round(dayUsd * 100) / 100).toFixed(2);
+        const rt = run.querySelector('[data-plog-run-total]');
+        if (rt) rt.textContent = '+$' + (Math.round(accruedUsd * 100) / 100).toFixed(2);
+      }
     });
 
     /* real-time Whalecoin movement counter */
@@ -928,6 +1040,52 @@
       }
       const noteEl = mv.querySelector('[data-share-mov-note]');
       if (noteEl) noteEl.textContent = note;
+    }
+
+    /* Whalecoin price ticker on the dashboard card */
+    const price = P && P.sharePrice ? Number(P.sharePrice()) || 0 : 0;
+    let ref = price, note = 'live price';
+    try {
+      const hist = (P && P.shareHistory) ? P.shareHistory() : [];
+      if (hist.length >= 2) {
+        ref = Number(hist[0].p) || price;
+        const mins = Math.max(1, Math.round((Date.now() - Number(hist[0].t)) / 60000));
+        note = mins >= 60 ? 'last ' + (mins / 60).toFixed(1) + 'h' : 'last ' + mins + 'm';
+      }
+    } catch (e) {}
+    const tick = document.querySelector('[data-share-ticker]');
+    if (tick) {
+      const pxEl = tick.querySelector('[data-share-ticker-px]');
+      if (pxEl && price > 0) pxEl.textContent = '$' + price.toFixed(2);
+      const chg = ref > 0 ? ((price / ref) - 1) * 100 : 0;
+      const cEl = tick.querySelector('[data-share-ticker-chg]');
+      if (cEl) {
+        cEl.textContent = (chg >= 0 ? '▲ +' : '▼ ') + Math.abs(chg).toFixed(2) + '%';
+        cEl.className = 'sht-chg ' + (chg >= 0 ? 'up' : 'down');
+      }
+      const nEl = tick.querySelector('[data-share-ticker-note]');
+      if (nEl) nEl.textContent = note;
+    }
+    const heroPx = document.querySelector('[data-hero-px]');
+    if (heroPx && price > 0) heroPx.textContent = '$' + price.toFixed(2);
+
+    /* live earnings graph on the dashboard card */
+    const heroChart = document.getElementById('sharesHeroChart');
+    if (heroChart && window.WC_LIVE_CHART) {
+      try {
+        const pts = heroSeries();
+        const lastT = pts.length ? Number(pts[pts.length - 1].t) : 0;
+        const nowMs = Date.now();
+        if (heroValue > 0) {
+          if (nowMs <= lastT) pts[pts.length - 1].v = heroValue;
+          else pts.push({ t: nowMs, v: heroValue });
+        }
+        const invested = (S.state && S.state.investments || []).reduce((a, v) => a + (Number(v.amountCoins) || 0), 0);
+        heroChart.innerHTML = WC_LIVE_CHART.svg(pts, {
+          height: 132, unit: 'wc', wcRate: 0.5,
+          lines: invested > 0 ? [{ price: invested, color: '#3AA0FF', title: 'INVESTED', style: 2 }] : []
+        });
+      } catch (e) {}
     }
 
     const heroEl = document.querySelector('[data-share-hero-earn]');
@@ -1056,6 +1214,36 @@
     .shares-mov-chg.up{color:#0a2e26;background:#2ee6a8}
     .shares-mov-chg.down{color:#2e0a12;background:#ff5d7a}
     @keyframes silPulse{0%{box-shadow:0 0 0 0 rgba(46,230,168,.55)}70%{box-shadow:0 0 0 7px rgba(46,230,168,0)}100%{box-shadow:0 0 0 0 rgba(46,230,168,0)}}
+    .shares-hero-ticker{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px;padding:8px 11px;border-radius:11px;
+      background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.10)}
+    .sht-dot{width:7px;height:7px;border-radius:50%;background:#2ee6a8;animation:silPulse 1.6s infinite;flex:0 0 auto}
+    .sht-label{font-size:9.5px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:#8ba4b6}
+    .shares-hero-ticker b{font-size:16px;color:#e9f4f9;font-variant-numeric:tabular-nums}
+    .sht-chg{font-size:11px;font-weight:800;padding:2px 7px;border-radius:99px;font-variant-numeric:tabular-nums}
+    .sht-chg.up{color:#062b25;background:#2ee6a8}
+    .sht-chg.down{color:#2e0a12;background:#ff5d7a}
+    .shares-hero-chart{margin-top:10px;border-radius:12px;overflow:hidden;border:1px solid rgba(46,230,201,.16);background:#070d14}
+    .shares-hero-chart svg{display:block;width:100%;height:auto}
+    .shares-plog{margin-top:10px;border:1px solid var(--border);border-radius:11px;background:var(--surface-2);overflow:hidden}
+    .shares-plog-head{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--border);
+      font-size:11px;font-weight:750;color:var(--text)}
+    .plog-cols,.plog-row{display:grid;grid-template-columns:1.1fr 1.15fr .95fr .95fr;gap:6px;align-items:center}
+    .plog-cols{padding:5px 10px;font-size:8.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted-2);font-weight:800;background:rgba(255,255,255,.02)}
+    .plog-rows{max-height:212px;overflow:auto}
+    .plog-row{padding:6px 10px;border-top:1px solid var(--border);font-size:10.5px;font-variant-numeric:tabular-nums}
+    .plog-row:first-child{border-top:none}
+    .plog-day{display:flex;flex-direction:column;gap:1px;font-weight:700;color:var(--text)}
+    .plog-day em{font-style:normal;font-weight:600;font-size:8.5px;color:var(--muted-2)}
+    .plog-px{display:flex;flex-direction:column;gap:1px;color:var(--text)}
+    .plog-px em{font-style:normal;font-size:8.5px;font-weight:800}
+    .plog-px em.up,.plog-total.up{color:var(--success)}
+    .plog-px em.down{color:var(--danger)}
+    .plog-day-earn{color:var(--text)}
+    .plog-total{text-align:right;font-weight:800;color:var(--text)}
+    .plog-running{background:rgba(46,230,201,.08)}
+    .plog-running .plog-day{color:var(--accent)}
+    .plog-empty{padding:10px;font-size:10.5px;color:var(--muted)}
+    @media (max-width:400px){.plog-cols,.plog-row{grid-template-columns:1fr 1fr .9fr .9fr;gap:4px;padding-left:8px;padding-right:8px}}
     .shares-svg{width:100%;height:auto;display:block;overflow:visible}
     .shares-axis{fill:#63798a;font-size:7.5px;font-variant-numeric:tabular-nums}
     .shares-chart-empty{height:90px;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--muted)}

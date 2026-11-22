@@ -309,6 +309,48 @@
     };
   };
 
+  /* ---- daily close profit history --------------------------------------- */
+  /* One entry per plan day, recorded at that day's close: the Whalecoin price
+     of the day, what the day earned and the running total. Every figure is the
+     same one the payout uses, so the log explains the payout exactly. */
+  P.profitLog = function (plan) {
+    var out = [];
+    if (!plan) return out;
+    var days = Math.max(1, Number(plan.days) || 1);
+    var cap = Number(plan.capitalUsd) || 0;
+    var rate = Number(plan.ratePct) || 0;
+    var entry = Number(plan.entryPriceUsd) || 0;
+    var log = Array.isArray(plan.priceLog) ? plan.priceLog : [];
+    var start = Number(plan.startedAt) || 0;
+    var now = Date.now();
+    var cum = 0;
+    for (var i = 0; i < days; i++) {
+      if (log[i] == null) break;
+      if (!(entry > 0)) entry = Number(log[i]) || 0;
+      var px = Number(log[i]) || entry;
+      var closedAt = start + (i + 1) * 864e5;
+      if (closedAt > now && plan.status === 'active') break;   /* day still running */
+      var dayUsd = cap * (rate / 100) * px;
+      cum += dayUsd;
+      out.push({
+        day: i + 1,
+        at: closedAt,
+        priceUsd: round4(px),
+        changePct: entry > 0 ? Math.round((px / entry - 1) * 10000) / 100 : 0,
+        dailyUsd: round2(dayUsd),
+        accruedUsd: round2(cum)
+      });
+    }
+    return out;
+  };
+  /* persist the log on the plan (backfills plans created before it existed) */
+  P.syncProfitLog = function (plan) {
+    if (!plan) return [];
+    var log = P.profitLog(plan);
+    plan.profitLog = log;
+    return log;
+  };
+
   /* ---- activate ---------------------------------------------------------- */
   P.activate = function (opts) {
     opts = opts || {};
@@ -389,6 +431,7 @@
         changed = true;
       }
       if (P.recordPrice(inv, price, now)) changed = true;
+      P.syncProfitLog(inv);
       if (now < Number(inv.endsAt)) return;
 
       var days = Math.max(1, Number(inv.days) || 1);
@@ -732,7 +775,7 @@
       var u = null; try { u = user(); } catch (e) {}
       if (u) {
         var w = wallet(u);
-        w.plans.forEach(function (inv) { if (inv && inv.status === 'active') P.recordPrice(inv, m.priceUsd, now); });
+        w.plans.forEach(function (inv) { if (inv && inv.status === 'active') { P.recordPrice(inv, m.priceUsd, now); P.syncProfitLog(inv); } });
       }
       return true;
     } catch (e) { return false; }
