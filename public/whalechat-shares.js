@@ -49,15 +49,94 @@
   function uidNow() { try { return me().id; } catch (e) { return ''; } }
   function isAdmin() { try { return me() && me().role === 'admin'; } catch (e) { return false; } }
 
+  /* When the Cloudflare worker does not expose the shares engine, the page
+     still has to show the user's real WC-Investing capital and let them
+     invest. Everything below reads the same investAcct.portfolios.wc field
+     that transfers update, so a top-up is visible immediately. */
+  function localEngine() {
+    try { return window.WC_INVEST || null; } catch (e) { return null; }
+  }
+  function localState() {
+    const P = localEngine();
+    if (!P || typeof P.summary !== 'function') return null;
+    let u = null;
+    try { u = me(); } catch (e) {}
+    if (!u) return null;
+    const s = P.summary();
+    const price = Number(P.sharePrice && P.sharePrice()) || 12.45;
+    const plans = (P.catalog ? P.catalog() : []).map((p) => {
+      const days = Math.max(1, Number(p.days) || 1);
+      return Object.assign({}, p, {
+        durationValue: days, durationUnit: 'days', durationDays: days,
+        durationLabel: days + (days === 1 ? ' day' : ' days'),
+        returnPct: Number(p.ratePct) || 0,
+        dailyReturnPct: Number(p.ratePct) || 0,
+        totalReturnPct: (Number(p.ratePct) || 0) * days,
+        minCoins: (Number(p.minUsd) || 0) * 2,
+        maxCoins: (Number(p.maxUsd) || 0) * 2,
+        enabled: true
+      });
+    });
+    const active = (s.active || []).map((inv) => {
+      const pr = P.progress ? P.progress(inv, price) : {};
+      const capUsd = Number(inv.capitalUsd) || 0;
+      const accruedUsd = Number(pr.accruedUsd) || 0;
+      const targetUsd = Number(inv.projectedRoiUsd) || 0;
+      return {
+        id: inv.id, planId: inv.planId, planName: inv.planName || inv.planId,
+        amountUsd: capUsd, amountCoins: capUsd * 2,
+        returnPct: Number(inv.ratePct) || 0, dailyReturnPct: Number(inv.ratePct) || 0,
+        durationDays: Number(inv.days) || 1, totalReturnPct: (Number(inv.ratePct) || 0) * (Number(inv.days) || 1),
+        durationLabel: (Number(inv.days) || 1) + ' days',
+        entryPriceUsd: Number(inv.entryPriceUsd) || price,
+        shares: Number(inv.shares) || (price > 0 ? capUsd / price : 0),
+        startAt: Number(inv.startedAt) || Date.now(), endAt: Number(inv.endsAt) || Date.now(),
+        status: inv.status, accruedCoins: accruedUsd * 2, accruedUsd,
+        targetProfitCoins: targetUsd * 2, targetProfitUsd: targetUsd,
+        currentValueCoins: (capUsd + accruedUsd) * 2, currentValueUsd: capUsd + accruedUsd,
+        progressPct: Number(pr.pct) || 0, remainingMs: Math.max(0, (Number(inv.endsAt) || 0) - Date.now()),
+        completedAt: inv.completedAt || null, equityHistory: []
+      };
+    });
+    const investedUsd = active.reduce((a, x) => a + x.amountUsd, 0);
+    const accruedUsd = active.reduce((a, x) => a + x.accruedUsd, 0);
+    return {
+      ok: true, __local: true, enabled: true,
+      balance: Number(s.capital) || 0,
+      balanceUsd: Number(s.capital) || 0,
+      wcUsd: Number(s.capital) || 0,
+      payoutUsd: Number(s.profit) || 0,
+      coinsPerUsd: 2,
+      plans,
+      investments: active, completed: [],
+      summary: {
+        activeCount: active.length, investedCoins: investedUsd * 2, investedUsd,
+        accruedCoins: accruedUsd * 2, accruedUsd,
+        targetProfitCoins: active.reduce((a, x) => a + x.targetProfitCoins, 0),
+        targetProfitUsd: active.reduce((a, x) => a + x.targetProfitUsd, 0),
+        completedProfitCoins: 0, completedProfitUsd: 0,
+        totalEarnedCoins: accruedUsd * 2, totalEarnedUsd: accruedUsd,
+        shares: active.reduce((a, x) => a + x.shares, 0),
+        sharePriceUsd: price, sharePriceCoins: price * 2
+      },
+      shareMarket: { priceUsd: price, priceCoins: price * 2, updatedAt: Date.now(), history: [] },
+      serverTime: Date.now()
+    };
+  }
+
+  S.localState = localState;
   async function load(force) {
     if (S.loading && S.pending) return S.pending;
+    if (!force && S.state && S.state.__local) { const ls = localState(); if (ls) { S.state = ls; S.loadedAt = Date.now(); return S.state; } }
     if (!force && S.state && Date.now() - S.loadedAt < 4000) return S.state;
     if (typeof Remote === 'undefined' || !Remote.enabled) return S.state;
     S.loading = true;
     S.pending = (async () => {
       try {
         const r = await api('/api/shares/state?userId=' + encodeURIComponent(uidNow()), {}, 12000);
-        if (r.data && r.data.ok) { S.state = r.data; S.loadedAt = Date.now(); }
+        if (r.data && r.data.ok && r.data.__local) { S.state = r.data; S.loadedAt = Date.now(); }
+        else if (r.data && r.data.ok && r.data.enabled !== false && r.data.summary) { S.state = r.data; S.loadedAt = Date.now(); }
+        else { const ls = localState(); if (ls) { S.state = ls; S.loadedAt = Date.now(); } }
       } catch (e) { console.error('shares state', e); }
       finally { S.loading = false; S.pending = null; }
       return S.state;
@@ -404,6 +483,8 @@
   S.paintExample = paintShareExample;
 
   S.view = function () {
+    /* keep the local (no server engine) view in step with transfers/plans */
+    if (S.state && S.state.__local) { const ls = localState(); if (ls) S.state = ls; }
     if (!S.state) {
       load(false).then(() => { if (S.state) render(); });
       const offline = (typeof Remote !== 'undefined' && !Remote.enabled);
@@ -417,7 +498,7 @@
       <div class="row" style="gap:10px;align-items:center"><a href="#/invest" class="btn-icon">${ic('back', 18)}</a>
         <div><div class="section-title" style="margin:0">WhaleChat Shares</div>
           <div class="tiny muted">Buy company shares · fixed-return plans · live earnings</div></div></div>
-      <div class="row" style="gap:8px"><span class="badge">${num(S.state.balance)} WC</span>
+      <div class="row" style="gap:8px"><span class="badge">$${num(S.state.balanceUsd != null ? S.state.balanceUsd : S.state.balance)} USD capital</span>
         <button class="btn btn-sm btn-ghost" data-act="shares-refresh">${ic('refresh', 14)} Refresh</button></div>
     </div></div>
 
@@ -474,7 +555,7 @@
         <div class="between"><span>Total at maturity</span><b id="sharesTotal">—</b></div>
         <div class="between"><span>Matures</span><b id="sharesMature">—</b></div>
       </div>
-      <div class="tiny muted" style="margin-top:6px">Balance ${num(S.state.balance)} WC. WC = USD ÷ 0.50.</div>`,
+      <div class="tiny muted" style="margin-top:6px">Capital balance $${num(S.state.balanceUsd != null ? S.state.balanceUsd : S.state.balance)} USD (${num((Number(S.state.balanceUsd != null ? S.state.balanceUsd : S.state.balance)) * 2)} WC).</div>`,
       `<button class="btn btn-ghost" data-close style="flex:1">Cancel</button>
        <button class="btn btn-primary" data-act="shares-invest" data-id="${escS(p.id)}" style="flex:1">Buy shares</button>`), { width: '480px' });
     const inp = document.getElementById('sharesUsd');
@@ -592,9 +673,20 @@
     App.sharesOpen = function (id) { investModal(id); };
 
     App.sharesInvest = async function (id) {
-      if (typeof Remote === 'undefined' || !Remote.enabled) return tmsg('Connect the sync server to invest', 'err');
       const amt = Number((document.getElementById('sharesUsd') || {}).value) || 0;
       if (!(amt > 0)) return tmsg('Enter a USD amount', 'err');
+      /* no shares engine on the sync host: use the local WC-Investing engine */
+      const P = localEngine();
+      if ((typeof Remote === 'undefined' || !Remote.enabled || (S.state && S.state.__local)) && P && typeof P.activate === 'function') {
+        const res = P.activate({ planId: id, capitalUsd: amt });
+        if (!res || res.error) return tmsg(res && res.error || 'Investment failed', 'err');
+        if (typeof closeModal === 'function') closeModal();
+        await load(true);
+        tmsg('Bought WhaleChat shares · ' + num(res.investment && res.investment.shares, 4), 'ok');
+        render();
+        return;
+      }
+      if (typeof Remote === 'undefined' || !Remote.enabled) return tmsg('Connect the sync server to invest', 'err');
       try {
         const r = await api('/api/shares/invest', { method: 'POST', body: JSON.stringify({ userId: uidNow(), planId: id, amountUsd: amt }) }, 25000);
         if (!r.res || !r.res.ok || !r.data || !r.data.ok) return tmsg((r.data && r.data.error) || 'Investment failed', 'err');

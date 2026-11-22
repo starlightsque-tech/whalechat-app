@@ -120,3 +120,15 @@ top-up could not be completed. Added:
   option first; the dashboard also has a **Top up capital** shortcut.
 - Transfers debit/credit `investAcct.usd` and `investAcct.portfolios.wc`
   (the same field the WC-Investing capital balance reads) and sync both.
+
+## WC-Investing capital now shows on the Shares page
+The cloud sync host does not run the shares engine (`/api/shares/state`
+returns `enabled:false`), so the WhaleChat Shares page was showing 0 WC and a
+$0.00 share price regardless of the real capital. It now falls back to the
+local WC-Investing engine:
+- capital badge reads **investAcct.portfolios.wc** — the same field a transfer
+  credits — and is shown as **USD capital**;
+- plans come from the WC-Investing catalogue and investing uses the local
+  `WC_INVEST.activate` engine when the server has no shares engine;
+- the page rebuilds its state on every visit, so a top-up is visible
+  immediately after the transfer.
