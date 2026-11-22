@@ -164,3 +164,10 @@ local WC-Investing engine:
   ROI page chart now use the reference market-chart style: dark panel,
   red/green line with soft fill, right-hand USD scale, the current value in a
   coloured badge, dashed grid and time labels along the bottom.
+
+## ROI chart time ranges
+The WC-Investing ROI progress chart now has range buttons above it:
+**30M · 1H · 24H · 1D · 7D · 14D · ALL**. Selecting one redraws the chart for
+that window (per-plan or all plans) and keeps the selected plan. The Starter /
+active plan cards use the same reference-style chart with the current value
+badge and right-hand USD scale.

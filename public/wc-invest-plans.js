@@ -465,7 +465,7 @@
   };
 
   /* ---- small svg chart, live-safe --------------------------------------- */
-  function num2(v) { var n = Number(v); if (!isFinite(n)) n = 0; return Math.abs(n) >= 0.01 ? n.toFixed(2) : n.toFixed(4); }
+  function num2(v) { var n = Number(v); if (!isFinite(n)) n = 0; return n.toFixed(2); }
   /* Dark market chart in the reference style: red/green line, soft fill,
      right-hand USD scale with the current value in a coloured badge, time
      labels along the bottom. Used for every WC-Investing/ROI chart. */
@@ -492,7 +492,7 @@
       var y = yAt(val).toFixed(1);
       grid += '<line x1="' + padL + '" y1="' + y + '" x2="' + (padL + plotW) + '" y2="' + y + '" stroke="rgba(255,255,255,.055)" stroke-dasharray="2 4"/>';
       if (Math.abs(Number(y) - yAt(pts[pts.length - 1])) > 12)
-        labels += '<text x="' + (W - 4) + '" y="' + (Number(y) + 3.5).toFixed(1) + '" text-anchor="end" class="wci-chart-y" font-size="8.5" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" font-weight="600">$' + num2(val) + '</text>';
+        labels += '<text x="' + (W - 11) + '" y="' + (Number(y) + 3.5).toFixed(1) + '" text-anchor="end" class="wci-chart-y" font-size="8.5" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" font-weight="600">$' + num2(val) + '</text>';
     }
     for (var gx = 1; gx <= 2; gx++) {
       var gxp = (padL + (plotW * gx / 3)).toFixed(1);
@@ -541,6 +541,44 @@
     if (out.length < 2) out = [0, Math.max(0.0001, (P.progress(plan, P.sharePrice()).accruedUsd))];
     return out;
   };
+  /* ROI series limited to a rolling window (30m, 1h, 24h, 7d …).
+     The value at each point is the accrued ROI up to that time, so the line
+     shows how the plan grew inside the selected window. */
+  P.rangeSeries = function (plan, rangeMs, steps) {
+    steps = steps || 30;
+    if (!plan) return [0, 0.0001];
+    var now = Date.now();
+    var start = Number(plan.startedAt) || now;
+    var end = Math.min(now, Number(plan.endsAt) || now);
+    if (rangeMs > 0) start = Math.max(start, end - rangeMs);
+    if (!(end > start)) { start = end - 60000; }
+    var px = P.sharePrice();
+    var out = [];
+    for (var i = 0; i <= steps; i++) {
+      var t = start + ((end - start) * i) / steps;
+      if (t < (Number(plan.startedAt) || now)) { out.push(0); continue; }
+      out.push(P.roiFor(plan, px, Math.max(start + 1, t)).accruedUsd);
+    }
+    var last = out.length ? out[out.length - 1] : 0;
+    if (out.length < 2) out = [0, Math.max(0.0001, last)];
+    return out;
+  };
+  P.rangeCombined = function (rangeMs, steps) {
+    steps = steps || 30;
+    var s = P.summary();
+    var active = s.active || [];
+    if (!active.length) return [0, 0.0001];
+    var now = Date.now();
+    var end = now;
+    var start = rangeMs > 0 ? end - rangeMs : Math.min.apply(null, active.map(function (p) { return Number(p.startedAt) || now; }));
+    var series = active.map(function (p) { return P.rangeSeries(p, rangeMs, steps); });
+    var out = [];
+    for (var i = 0; i <= steps; i++) {
+      out.push(series.reduce(function (sum, arr) { return sum + (Number(arr[Math.min(i, arr.length - 1)]) || 0); }, 0));
+    }
+    return out.length > 1 ? out : [0, 0.0001];
+  };
+
   P.combinedSeries = function (steps) {
     var s = P.summary();
     if (!s.active.length) return [0, 0.0001];

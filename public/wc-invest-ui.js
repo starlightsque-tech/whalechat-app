@@ -157,30 +157,49 @@
   };
 
   /* -------------------------------- ROI page ------------------------------ */
+  var ROI_RANGES = [
+    { id: '30m', label: '30M', ms: 30 * 60 * 1000 },
+    { id: '1h', label: '1H', ms: 60 * 60 * 1000 },
+    { id: '24h', label: '24H', ms: 24 * 60 * 60 * 1000 },
+    { id: '1d', label: '1D', ms: 24 * 60 * 60 * 1000 },
+    { id: '7d', label: '7D', ms: 7 * 24 * 60 * 60 * 1000 },
+    { id: '14d', label: '14D', ms: 14 * 24 * 60 * 60 * 1000 },
+    { id: 'all', label: 'ALL', ms: 0 }
+  ];
   P.viewRoi = function (params) {
     var s = P.summary();
     var sel = (params && params.plan) || '__all__';
     var one = null;
     s.active.forEach(function (p) { if (p.id === sel) one = p; });
-    var series = one ? P.series(one, 30) : P.combinedSeries(30);
+    var rangeId = (params && params.range) || 'all';
+    var range = ROI_RANGES.filter(function (r) { return r.id === rangeId; })[0] || ROI_RANGES[6];
+    var series = one ? P.rangeSeries(one, range.ms, 30) : P.rangeCombined(range.ms, 30);
     var accrued = one ? P.progress(one, P.sharePrice()).accruedUsd : s.accruedUsd;
-    var winStart = one ? (Number(one.startedAt) || Date.now()) : (s.active.length ? Math.min.apply(null, s.active.map(function (p) { return Number(p.startedAt) || Date.now(); })) : Date.now() - 6 * 3600e3);
-    var winEnd = one ? (Number(one.endsAt) || Date.now()) : (s.active.length ? Math.max.apply(null, s.active.map(function (p) { return Number(p.endsAt) || Date.now(); })) : Date.now());
-    var pills = '<a class="chip wci-pill' + (sel === '__all__' ? ' on' : '') + '" href="#/invest/shares/roi">All plans</a>' +
+    var now = Date.now();
+    var winEnd = one ? Math.min(now, Number(one.endsAt) || now) : now;
+    var winStart = range.ms > 0 ? winEnd - range.ms
+      : (one ? (Number(one.startedAt) || now) : (s.active.length ? Math.min.apply(null, s.active.map(function (p) { return Number(p.startedAt) || now; })) : now - 6 * 3600e3));
+    if (one) winStart = Math.max(winStart, Number(one.startedAt) || winStart);
+    var planParam = sel !== '__all__' ? 'plan=' + encodeURIComponent(sel) + '&' : '';
+    var rangeBar = ROI_RANGES.map(function (r) {
+      return '<a class="chip wci-pill' + (r.id === rangeId ? ' on' : '') + '" href="#/invest/shares/roi?' + planParam + 'range=' + r.id + '">' + r.label + '</a>';
+    }).join('');
+    var pills = '<a class="chip wci-pill' + (sel === '__all__' ? ' on' : '') + '" href="#/invest/shares/roi?range=' + rangeId + '">All plans</a>' +
       s.active.map(function (p) {
-        return '<a class="chip wci-pill' + (p.id === sel ? ' on' : '') + '" href="#/invest/shares/roi?plan=' + encodeURIComponent(p.id) + '">' + esc(p.planName) + '</a>';
+        return '<a class="chip wci-pill' + (p.id === sel ? ' on' : '') + '" href="#/invest/shares/roi?plan=' + encodeURIComponent(p.id) + '&range=' + rangeId + '">' + esc(p.planName) + '</a>';
       }).join('');
     return head('ROI progress', 'Return on every active plan, accrued live.', '#/invest/shares') +
       '<div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:8px">' + pills + '</div>' +
       '<div class="card"><div class="between"><div class="card-title" style="margin:0">' + (one ? esc(one.planName) : 'All active plans') + '</div>' +
         '<b class="up">+' + usd(accrued) + '</b></div>' +
+        '<div class="row" style="gap:5px;flex-wrap:wrap;margin:8px 0 6px">' + rangeBar + '</div>' +
         '<div class="wci-chartwrap big">' + P.chart(series, { height: 190, color: one ? (one.atRisk ? '#ff4d5e' : '#2ee6c9') : '#3aa0ff', uid: 'roi', start: winStart, end: winEnd }) + '</div>' +
         '<div class="tiny muted" style="margin-top:6px">' + (one
           ? 'Capital ' + usd(one.capitalUsd) + ' · ' + one.ratePct + '%/day · ' + one.days + ' days · projected ' + usd(one.projectedRoiUsd)
           : 'Accrued across ' + s.activeCount + ' plan' + (s.activeCount === 1 ? '' : 's') + ' · working capital ' + usd(s.investedUsd)) + '</div></div>' +
       (s.active.length ? '<div class="card"><div class="card-title">Per plan</div>' + s.active.map(function (p) {
         var pr = P.progress(p, P.sharePrice());
-        return '<a class="ih-row" href="#/invest/shares/roi?plan=' + encodeURIComponent(p.id) + '"><div class="grow"><b>' + esc(p.planName) + '</b>' +
+        return '<a class="ih-row" href="#/invest/shares/roi?plan=' + encodeURIComponent(p.id) + '&range=' + rangeId + '"><div class="grow"><b>' + esc(p.planName) + '</b>' +
           '<div class="tiny muted">' + usd(p.capitalUsd) + ' · ' + pr.pct.toFixed(1) + '% of ' + p.days + ' days</div></div>' +
           '<b class="up">+' + usd(pr.accruedUsd) + '</b></a>';
       }).join('') + '</div>' : '');
