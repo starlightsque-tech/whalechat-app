@@ -313,9 +313,9 @@
         <span class="badge badge-success">Live</span>
       </div>
       <div class="shares-hero-grid">
-        <div><span>Active plans</span><b>${s.activeCount || 0}</b></div>
-        <div><span>Invested</span><b>${money(s.investedCoins * 0.5)} USD</b></div>
-        <div><span>Accrued</span><b class="up">+${money(s.accruedCoins * 0.5)} USD</b></div>
+        <div><span>Active plans</span><b data-hero-count>${s.activeCount || 0}</b></div>
+        <div><span>Invested</span><b data-hero-invested>${money(s.investedCoins * 0.5)} USD</b></div>
+        <div><span>Accrued</span><b class="up" data-hero-accrued>+${money(s.accruedCoins * 0.5)} USD</b></div>
         <div><span>Share price</span><b data-hero-px>$${num(s.sharePriceUsd, 2)}</b></div>
       </div>
       <div class="shares-hero-ticker" data-share-ticker>
@@ -1042,6 +1042,17 @@
       if (noteEl) noteEl.textContent = note;
     }
 
+    /* hero KPI numbers, updated in place (no page rebuild) */
+    try {
+      const investedCoins = Math.max(0, heroValue - hero);
+      const invEl = document.querySelector('[data-hero-invested]');
+      if (invEl) invEl.textContent = money(investedCoins * 0.5) + ' USD';
+      const accEl = document.querySelector('[data-hero-accrued]');
+      if (accEl) accEl.textContent = '+' + money(hero * 0.5) + ' USD';
+      const cntEl = document.querySelector('[data-hero-count]');
+      if (cntEl) cntEl.textContent = String(((S.state && S.state.investments) || []).length);
+    } catch (e) {}
+
     /* Whalecoin price ticker on the dashboard card */
     const price = P && P.sharePrice ? Number(P.sharePrice()) || 0 : 0;
     let ref = price, note = 'live price';
@@ -1081,10 +1092,15 @@
           else pts.push({ t: nowMs, v: heroValue });
         }
         const invested = (S.state && S.state.investments || []).reduce((a, v) => a + (Number(v.amountCoins) || 0), 0);
-        heroChart.innerHTML = WC_LIVE_CHART.svg(pts, {
-          height: 132, unit: 'wc', wcRate: 0.5,
-          lines: invested > 0 ? [{ price: invested, color: '#3AA0FF', title: 'INVESTED', style: 2 }] : []
-        });
+        /* redraw only when the line really changed, so the graph does not flash */
+        const sig = pts.length + ':' + Number(pts[pts.length - 1].v || 0).toFixed(2) + ':' + Number(invested || 0).toFixed(2) + ':' + Number(price || 0).toFixed(4);
+        if (heroChart.__wcSig !== sig) {
+          heroChart.__wcSig = sig;
+          heroChart.innerHTML = WC_LIVE_CHART.svg(pts, {
+            height: 132, unit: 'wc', wcRate: 0.5,
+            lines: invested > 0 ? [{ price: invested, color: '#3AA0FF', title: 'INVESTED', style: 2 }] : []
+          });
+        }
       } catch (e) {}
     }
 
@@ -1104,6 +1120,16 @@
   function plansSig() {
     try {
       return JSON.stringify((S.state && S.state.plans || []).map((p) => [p.id, p.name, p.returnPct, p.durationValue, p.durationUnit, p.minUsd, p.maxUsd, p.enabled]));
+    } catch (e) { return ''; }
+  }
+
+  /* the identity of the plan/investment set — a rebuild is only needed when
+     this changes, never once per timer tick */
+  function structSig() {
+    try {
+      var list = (S.state && S.state.investments) || [];
+      return list.map(function (v) { return String(v.id) + ':' + String(v.status); }).join('|') +
+        '#' + ((S.state && S.state.plans) || []).length;
     } catch (e) { return ''; }
   }
 
@@ -1147,15 +1173,24 @@
         };
       }
     }, 200);
+    /* Poll the plan data in the background. The page is only rebuilt when the
+       set of plans/investments really changes — every other tick updates the
+       numbers and charts in place, so nothing flashes or jumps. */
     setInterval(() => {
       if (!onSharesPage() || document.hidden) return;
+      if (window.WC_QUIET && WC_QUIET.busy()) return;      /* never while the user is busy */
       load(true).then(() => {
         const sig = plansSig();
-        if (S.plansSig && S.plansSig !== sig) { S.plansSig = sig; try { render(); } catch (e) {} return; }
+        if (S.plansSig && S.plansSig !== sig) {
+          S.plansSig = sig;
+          if (window.WC_QUIET) WC_QUIET.render(); else try { render(); } catch (e) {}
+          return;
+        }
         S.plansSig = sig;
-        refreshLiveMount();
+        const st = structSig();
+        if (st !== S.structSig) { S.structSig = st; refreshLiveMount(); }
       });
-    }, 2500);
+    }, 9000);
     setInterval(tickEarnings, 1000);
   }
 

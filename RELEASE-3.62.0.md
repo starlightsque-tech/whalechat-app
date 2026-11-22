@@ -153,3 +153,25 @@ Finishing pass on the account dashboard card and the WC-Investing plan view.
     shows "Opening live chat…" immediately.
   - `tawk-control.js` no longer auto-loads or shows the floating bubble when
     live chat is enabled.
+
+## No more auto-refresh under the user (3.62.8)
+- **New `ui-no-refresh.js` (`WC_QUIET`).** Tracks pointer/wheel/scroll/key/input
+  activity and provides `WC_QUIET.busy()` and `WC_QUIET.render()` (a background
+  render that waits for an idle moment). Every render now saves and restores the
+  scroll position and the focused field/selection (only when the route did not
+  change), so a sync can never throw the user to the top of a page or out of the
+  form they were filling in.
+- **Shares / WC-Investing page no longer rebuilt on a timer.** The 2.5 s poll now
+  runs every 9 s, is skipped while the user is busy, and only rebuilds the page
+  when the set of plans/investments actually changes. Everything else — total
+  earnings, invested, accrued, active plans, each plan's earnings and current
+  value, the Whalecoin ticker, the live charts — is updated in place every
+  second. The hero graph is only redrawn when its line really changed.
+- **WC-Investing live repaints** (`wc-invest-ui`, `wc-invest-plans`) no longer
+  call a full `render()` on their 5 s/30 s timers on those pages; they use the
+  quiet renderer, which defers while the user is scrolling, typing or a dialog
+  is open.
+- Verified: on the Shares page the app performs **0 full renders in 15 s idle**,
+  the scroll position stays exactly where the user left it, renders are deferred
+  to 0 while the user scrolls, and a deposit form keeps its value and focus
+  across background ticks while the live numbers keep moving.

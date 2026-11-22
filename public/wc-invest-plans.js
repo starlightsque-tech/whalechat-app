@@ -48,6 +48,14 @@
   function user() { try { return typeof me === 'function' ? me() : null; } catch (e) { return null; } }
   function save() { try { if (typeof persist === 'function') persist(); } catch (e) {} try { if (typeof sync === 'function') sync(); } catch (e) {} }
   function repaint() { try { if (typeof render === 'function') render(); } catch (e) {} }
+  /* background repaint: waits for the user to be idle so it never interrupts */
+  function quietRepaint() {
+    try {
+      if (window.WC_QUIET && typeof WC_QUIET.render === 'function') return WC_QUIET.render();
+      if (window.WC_QUIET && WC_QUIET.busy && WC_QUIET.busy()) return;
+      if (typeof render === 'function') render();
+    } catch (e) {}
+  }
   function tmsg(m, t) { try { if (typeof toast === 'function') toast(m, t || 'ok'); } catch (e) {} }
   function money(v) { return usd(v); }
   function round2(v) { return Math.round((Number(v) || 0) * 100) / 100; }
@@ -792,7 +800,7 @@
     P.tickMarket();
     /* the shares market ticks every 6s; every plan accrues on this movement */
     setInterval(function () { try { P.tickMarket(); } catch (e) {} }, 6000);
-    setInterval(function () { try { if (P.sweep()) repaint(); } catch (e) {} }, 30000);
+    setInterval(function () { try { if (P.sweep()) quietRepaint(); } catch (e) {} }, 30000);
     /* live payout: keep today's price current every 5s on the WC-Investing pages */
     setInterval(function () {
       try {
@@ -801,7 +809,9 @@
         var u = user(); if (!u) return;
         var w = wallet(u), px = P.sharePrice(), any = false;
         w.plans.forEach(function (inv) { if (inv && inv.status === 'active') { P.recordPrice(inv, px); any = true; } });
-        if (any) repaint();
+        /* the Shares / WC-Investing account page updates its own numbers and
+           charts in place — never repaint the whole page on top of the user */
+        if (any && h.indexOf('#/invest/shares') !== 0) quietRepaint();
       } catch (e) {}
     }, 5000);
   })();

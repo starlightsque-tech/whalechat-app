@@ -1,8 +1,8 @@
 {
-  "version": "3.62.7",
-  "build": "2026-11-22T17:50:00Z",
+  "version": "3.62.8",
+  "build": "2026-11-22T19:00:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.62.7 - every Live chat / Live support button opens a real chat box: the Tawk widget is no longer removed, it is loaded with the official embed and retried as a plain script if a network blocks it, and if the embed still cannot start the app shows Tawk's hosted live chat page in a full-screen frame so the chat always opens.",
-  "releasedAt": "2026-11-22T17:50:00Z",
+  "notes": "WhaleChat 3.62.8 - the app no longer auto-refreshes pages under the user. Investing screens update their numbers, earnings and charts in place, the Shares/WC-Investing page is only rebuilt when the plan set really changes, background repaints wait for the user to be idle, and every render keeps the scroll position and the field being typed in.",
+  "releasedAt": "2026-11-22T19:00:00Z",
   "minimum": "3.0.0"
 }
