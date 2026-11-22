@@ -1605,19 +1605,28 @@ class MarketService {
         const direction = t.direction || (t.side === 'short' ? 'FALL' : 'RISE');
         const dir = direction === 'FALL' ? -1 : 1;
         if (!t.direction) t.direction = direction;
-        /* count each distinct real price change since entry */
+        /* Count price moves in the user's direction (Move 1, Move 2 …). The
+           counter is monotonic for the life of the trade and is never reset by
+           a take / re-base. Moves against the trade do not count. */
         if (Number(q.price) > 0 && q.price !== t.lastMovePrice) {
-          if (Number(t.lastMovePrice) > 0) {
+          const lastPx = Number(t.lastMovePrice) || 0;
+          const favorable = dir < 0 ? q.price < lastPx : q.price > lastPx;
+          if (lastPx > 0) {
+            /* legacy multiplier still counts every price change */
             t.moveCount = (Number(t.moveCount) || 0) + 1;
-            t.totalMoveCount = (Number(t.totalMoveCount) || 0) + 1; /* whole trade, never reset */
+            if (favorable) {
+              t.favorableMoves = (Number(t.favorableMoves) || 0) + 1;
+              t.totalMoveCount = Math.max(Number(t.totalMoveCount) || 0, t.favorableMoves);
+            }
+            changed++;
           }
           t.lastMovePrice = q.price;
         }
-        /* with a take-profit level set, moves = how many TP levels of profit the trade has reached */
+        /* TP level reached since the last take (used only to size the next
+           secured amount, never to overwrite the move counter) */
         if (tpLevelOf(t) > 0) {
           const lvNow = tpMoves(t, q.price, lev, dir);
-          if (lvNow !== Number(t.moveCount)) { t.moveCount = lvNow; changed++; }
-          t.totalMoveCount = (Number(t.tpMovesTaken) || 0) + lvNow;
+          if (lvNow > 0) { t.tpReady = lvNow; }
         }
         if (t.stakeAmount == null) t.stakeAmount = t.capitalCoins;
         if (!(Number(t.takeProfitPrice) > 0) && Number(t.tpPct) > 0) {

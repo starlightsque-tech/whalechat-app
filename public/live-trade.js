@@ -406,6 +406,7 @@ const LT = {
     if (!DB || !DB.trades) return;
     this.open().forEach(t => {
       this.updateTrailing(t);
+      LT.trackMove(t);
       /* When the server bot engine is actively auto-securing this account it is
          authoritative; otherwise the app takes the profit itself so a local /
          offline subscription still works on every device. */
@@ -2722,6 +2723,35 @@ LT.closeFee = function (t) {
 };
 /* Price move % = (current - entry) / entry x 100.  Example: entry $100, now $125 -> 25 / 100 = 0.25 = 25%.
    Single source of truth for live P&L, charts and the trade guide. */
+/* Count every price move that went in the user's direction. This is the
+   "Moves N" counter on the trade card: it never resets on a take / re-base,
+   so move 1, move 2 ... keep counting for the life of the trade. */
+LT.trackMove = function (t, price) {
+  if (!t || t.status !== 'Open') return Number(t && t.favorableMoves) || 0;
+  let px = Number(price);
+  if (!(px > 0)) { try { const q = INV.quote(t.ticker); px = Number(q && q.price) || 0; } catch (e) { px = 0; } }
+  if (!(px > 0)) return Number(t.favorableMoves) || 0;
+  const dir = LT.dirOf(t) === 'FALL' ? -1 : 1;
+  const last = Number(t.dirMoveLast) || Number(t.entryPrice) || 0;
+  if (last > 0 && px !== last) {
+    const favorable = dir < 0 ? px < last : px > last;
+    if (favorable) {
+      t.favorableMoves = (Number(t.favorableMoves) || 0) + 1;
+      /* keep the legacy fields in step for older cards */
+      t.totalMoveCount = Math.max(Number(t.totalMoveCount) || 0, t.favorableMoves);
+      const stamp = Date.now();
+      if (!t._moveSavedAt || stamp - Number(t._moveSavedAt) > 3000) {
+        t._moveSavedAt = stamp;
+        try { persist(); } catch (e) {}
+      }
+    }
+    t.dirMoveLast = px;
+  } else if (!t.dirMoveLast) {
+    t.dirMoveLast = last || px;
+  }
+  return Number(t.favorableMoves) || 0;
+};
+
 /* number of real price moves seen on the live feed since entry (or last re-base): each distinct new price counts once; never a fixed number */
 LT.movesOf = function (t, price) {
   const n = Number(t.moveCount) || 0;
@@ -2766,6 +2796,8 @@ LT.rebaseAfterTake = function (t, price, amount) {
    (totalMoveCount) wins; older trades fall back to the moves since the last re-base. */
 LT.totalMovesOf = function (t) {
   if (!t) return 0;
+  /* every favourable price move counts, independent of the TP level */
+  if (t.favorableMoves != null) return Number(t.favorableMoves) || 0;
   if (LT.tpLevelOf(t) > 0) {
     if (t.status !== 'Open') return Number(t.totalMoveCount) || Number(t.tpMovesTaken) || 0;
     const q = INV.quote(t.ticker);
@@ -2981,23 +3013,8 @@ LT.secureLocal = function (t, reason) {
   if (t.securedProfits.length > 100) t.securedProfits.length = 100;
   t.securedProfitCoins = Math.round(((Number(t.securedProfitCoins) || 0) + profit) * 100) / 100;
   t.securedProfitCount = (Number(t.securedProfitCount) || 0) + 1;
-  /* Auto take profit credits the secured amount immediately, so the user does
-     not have to open Orders and claim it manually. */
-  try {
-    const entry = t.securedProfits[0];
-    if (entry && !entry.claimed) {
-      entry.claimed = true;
-      entry.claimedAt = now;
-      entry.autoClaimed = true;
-      const owner = findUser(t.userId);
-      if (owner) {
-        const ia2 = INV.investAcct(owner);
-        ia2.stockProfit = Math.round(((Number(ia2.stockProfit) || 0) + profit) * 100) / 100;
-        t.autoClaimedCoins = Math.round(((Number(t.autoClaimedCoins) || 0) + profit) * 100) / 100;
-        if (typeof tx === 'function') tx(t.userId, 'auto-take-profit', `Auto take profit · ${t.ticker} · +${usd(profit)} credited to Profit balance`, profit, { tradeId: t.id, price: p.price, reason: reason || 'Auto Secure' });
-      }
-    }
-  } catch (e) {}
+  /* The profit stays as an unclaimed secured entry so the user takes it
+     manually from Saved / Secured profits. It is never silently credited. */
   { const mv = LT.logMove(t, { price: p.price, entryBefore: t.entryPrice, amount: profit, levels: levels || 1, by: 'auto-secure', kind: 'secured' });
     if (mv && t.securedProfits[0]) { t.securedProfits[0].moveFrom = mv.from; t.securedProfits[0].moveTo = mv.to; } }
   t.entryPrice = tpLvl > 0 ? LT.rebaseAfterTake(t, p.price, profit) : Math.round(p.price * 1e6) / 1e6;
@@ -3012,7 +3029,7 @@ LT.secureLocal = function (t, reason) {
   }
   if (!t.lastSecureNoteAt || now - Number(t.lastSecureNoteAt) > 60000) {
     t.lastSecureNoteAt = now;
-    notify(t.userId, 'Profit secured — claim it anytime', `${t.ticker}: +${usd(profit)} USD secured. Claim it anytime — it goes to your stock Profit balance.`, '#/invest/orders', 'lock');
+    notify(t.userId, 'Profit secured — claim it anytime', `${t.ticker}: +${usd(profit)} USD secured at ${usd(p.price)}. Press Take profit to claim it to your stock Profit balance.`, '#/invest/orders', 'lock');
   }
   persist();
   return true;
@@ -3110,7 +3127,10 @@ setInterval(() => {
   try {
     if (!DB || !me()) return;
     if (LT.autoSecureOn(me().id)) {
-      LT.open(me().id).forEach((t) => { if (!LT.serverCovered(t)) LT.secureLocal(t, 'Auto Secure'); });
+      LT.open(me().id).forEach((t) => {
+        LT.trackMove(t);
+        if (!LT.serverCovered(t)) LT.secureLocal(t, 'Auto Secure');
+      });
     }
     LT.paintSecure();
   } catch (e) { console.error('auto secure tick', e); }

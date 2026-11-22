@@ -64,3 +64,17 @@ Admin → **WC-Investing** lets an administrator:
 Plans save to `DB.settings.investPlans` and sync, so every device gets the new
 catalogue. The WC-Investing dashboard shows an "Admin · edit plans" shortcut to
 admins only.
+
+## Auto take-profit and trade moves
+- **Moves N** now counts every distinct price move in the user's trade
+  direction (Move 1, Move 2 …), for the whole life of the trade. Moves against
+  the trade are not counted and the counter is never reset by a take/re-base.
+- **Auto Secure** evaluates every favourable move (200 ms engine tick, 500 ms
+  monitor) and secures profit the moment the available amount reaches the
+  user's TP level. Amounts below the TP are left running, so nothing under the
+  user's level is taken and nothing at/above it is skipped.
+- Secured profit is **not silently credited**: each lock is stored as an
+  unclaimed entry the user claims with **Take profit** / **Claim all**, so a
+  user who was offline can claim everything on return.
+- The server engine (`market.js`) does the same for subscribed users while the
+  app is closed, and mirrors the directional move count.
