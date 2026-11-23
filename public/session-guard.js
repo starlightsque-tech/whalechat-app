@@ -24,6 +24,7 @@
   const IDLE_APPLY_MS = 15000;   /* how often a deferred update re-checks for idle */
 
   const memory = new Map();     /* live values, incl. secrets — never persisted */
+  const forgotten = new Set();  /* fields the user cleared (sent / cancelled) */
 
   const G = window.WC_SESSION_GUARD = {
     version: '1.0.0',
@@ -99,6 +100,7 @@
     if (route.split('?')[0] !== here.split('?')[0]) return;
     let restored = 0;
     Object.keys(d.fields || {}).forEach((k) => {
+      if (forgotten.has(k)) return;
       let el = null;
       try { el = $(k); } catch (e) { el = null; }
       if (!el) return;
@@ -117,6 +119,7 @@
       /* the app may re-render over the restored values — repeat once shortly after */
       setTimeout(() => {
         Object.keys(d.fields || {}).forEach((k) => {
+          if (forgotten.has(k)) return;
           let el = null;
           try { el = $(k); } catch (e) { el = null; }
           if (!el) return;
@@ -128,12 +131,80 @@
     }
   }
 
+  /* ------------------------------------------------------ sent-message guard
+     A message that has been sent must never come back into the composer.
+     The send path clears the textarea programmatically (`inp.value = ''`) and
+     that fires no `input` event, so the snapshot kept the sent text and the
+     next re-render injected it into the brand-new textarea — right above the
+     keyboard. Users then kept clearing an already-sent message by hand.
+
+     Fix: every write to a watched field is observed at element level. Clearing
+     a field COMMITS the clear — the value leaves the live snapshot and the
+     sessionStorage draft — so neither a re-render nor a reload can bring an
+     already-sent message back. Half-typed (unsent) drafts still survive. */
+  function forgetField(key) {
+    if (!key) return;
+    forgotten.add(key);
+    memory.delete(key);
+    G.dirty.delete(key);
+    try {
+      const raw = sessionStorage.getItem(DRAFT_KEY);
+      if (!raw) return;
+      const d = JSON.parse(raw);
+      if (!d || !d.fields || !Object.prototype.hasOwnProperty.call(d.fields, key)) return;
+      delete d.fields[key];
+      if (Object.keys(d.fields).length) sessionStorage.setItem(DRAFT_KEY, JSON.stringify(d));
+      else sessionStorage.removeItem(DRAFT_KEY);
+    } catch (e) {}
+  }
+  G.forget = forgetField;
+
+  function protoFor(el) {
+    const tag = el.tagName;
+    if (tag === 'TEXTAREA') return window.HTMLTextAreaElement && window.HTMLTextAreaElement.prototype;
+    if (tag === 'SELECT') return window.HTMLSelectElement && window.HTMLSelectElement.prototype;
+    if (tag === 'INPUT') return window.HTMLInputElement && window.HTMLInputElement.prototype;
+    return null;
+  }
+
+  /* element-level `value` tap: covers EVERY clear path (send, media send,
+     cancel edit, any future one) without touching each send implementation */
+  function watchValue(el) {
+    if (!el || el.__wcValueWatched) return;
+    const proto = protoFor(el);
+    if (!proto) return;
+    try {
+      const key = fieldKey(el);
+      if (!key) return;
+      const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+      if (!desc || !desc.get || !desc.set) return;
+      Object.defineProperty(el, 'value', {
+        configurable: true,
+        enumerable: true,
+        get: function () { return desc.get.call(this); },
+        set: function (v) {
+          desc.set.call(this, v);
+          const k = this.id ? '#' + this.id : key;
+          if (!k) return;
+          if (v === '' || v === null || v === undefined) forgetField(k);
+          else if (memory.has(k)) memory.set(k, String(v));
+        }
+      });
+      el.__wcValueWatched = true;
+    } catch (e) {}
+  }
+
+  function scanFields() { $$('input, textarea, select').forEach(watchValue); }
+  G.watchValue = watchValue;
+  G.scanFields = scanFields;
+
   /* The app re-renders views when sync state changes. That used to wipe a
      half-filled form without any reload at all — restore it immediately. */
   let restoreTimer = null;
   function restoreFromMemory() {
     let changed = 0;
     memory.forEach((val, key) => {
+      if (forgotten.has(key)) return;
       let el = null;
       try { el = $(key); } catch (e) { el = null; }
       if (!el) return;
@@ -162,7 +233,7 @@
     watchRerenders._on = true;
     const obs = new MutationObserver((muts) => {
       for (let i = 0; i < muts.length; i++) {
-        if (muts[i].addedNodes && muts[i].addedNodes.length) { scheduleRestore(); return; }
+        if (muts[i].addedNodes && muts[i].addedNodes.length) { scanFields(); scheduleRestore(); return; }
       }
     });
     obs.observe(document.body, { childList: true, subtree: true });
@@ -176,7 +247,7 @@
     if (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable) {
       G.markBusy();
       const k = fieldKey(t);
-      if (k) { G.dirty.add(k); memory.set(k, t.type === 'checkbox' ? (t.checked ? 1 : 0) : t.value); }
+      if (k) { forgotten.delete(k); G.dirty.add(k); memory.set(k, t.type === 'checkbox' ? (t.checked ? 1 : 0) : t.value); }
       clearTimeout(saveDraft._t);
       saveDraft._t = setTimeout(() => saveDraft(), 220);
     }
@@ -184,7 +255,7 @@
 
   document.addEventListener('focusin', (e) => {
     const t = e.target;
-    if (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)) G.markBusy();
+    if (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)) { G.markBusy(); watchValue(t); }
   }, true);
 
   document.addEventListener('focusout', () => {
@@ -499,6 +570,7 @@
     setTimeout(sanitizeUsers, 2500);
     setTimeout(guardAuthCalls, 1200);
     watchRerenders();
+    scanFields();
     offlineChip(false);
     window.addEventListener('online', () => offlineChip(false));
     silenceRejectionToasts();
