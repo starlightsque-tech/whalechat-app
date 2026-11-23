@@ -1,8 +1,8 @@
 {
-  "version": "3.62.8",
-  "build": "2026-11-22T19:00:00Z",
+  "version": "3.62.9",
+  "build": "2026-11-23T00:30:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.62.8 - the app no longer auto-refreshes pages under the user. Investing screens update their numbers, earnings and charts in place, the Shares/WC-Investing page is only rebuilt when the plan set really changes, background repaints wait for the user to be idle, and every render keeps the scroll position and the field being typed in.",
-  "releasedAt": "2026-11-22T19:00:00Z",
+  "notes": "WhaleChat 3.62.9 - email verification now sends through the Brevo HTTPS API from the Cloudflare Worker, with 6-digit codes stored in D1. SMTP/nodemailer and the 'No sync server' error are gone, so codes keep working after idle time and across deploys.",
+  "releasedAt": "2026-11-23T00:30:00Z",
   "minimum": "3.0.0"
 }

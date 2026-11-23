@@ -132,6 +132,9 @@ The pages app is static; the chat backend runs on Cloudflare itself:
 cd cloudflare/whalechat-api
 export CLOUDFLARE_API_TOKEN=...
 export CLOUDFLARE_ACCOUNT_ID=...
+# One time only. The key is stored as a Worker secret, never in git, and
+# survives every future deploy.
+npx wrangler secret put BREVO_API_KEY
 npx wrangler deploy
 ```
 
@@ -146,8 +149,17 @@ bash scripts/build-pages.sh
 npx wrangler pages deploy dist --project-name whalechat --branch main
 ```
 
-Email verification remains on Pages Functions (`functions/api/otp/*`), where
-the Brevo key and KV binding live.
+Email verification runs in the Worker through the Brevo HTTPS API:
+
+- `POST /api/send-code { email }` creates a 6-digit code in D1 (`email_codes`),
+  expires it after 10 minutes and emails it with Brevo (one retry after 2s).
+- `POST /api/verify-code { email, code }` checks D1, deletes the code, marks the
+  account verified and creates a session.
+- `GET /api/health` includes `"brevoConfigured": true` once the secret is set.
+
+There is no SMTP socket to keep alive, so an idle hour or a new deploy cannot
+disconnect email. `BREVO_SENDER_EMAIL` and `BREVO_SENDER_NAME` are Worker vars
+in `wrangler.toml`; the sender must be verified in Brevo.
 
 ---
 
