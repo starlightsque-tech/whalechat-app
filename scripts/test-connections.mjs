@@ -28,6 +28,7 @@ globalThis.process = realProcess;
 globalThis.console = realConsole;
 const ChatHub = mod.ChatHub;
 
+const SRC_TEXT = fs.readFileSync(SRC, 'utf8');
 const results = [];
 /* the bundled Worker replaces console/process with Cloudflare shims, so the
    test writes straight to fd 1 */
@@ -49,14 +50,14 @@ function fakeDB() {
         _args: [],
         bind(...a) { stmt._args = a; return stmt; },
         async first() {
-          if (/FROM app_state WHERE k = \?/.test(sql)) {
+          if (/FROM app_settings WHERE k = \?/.test(sql)) {
             const v = kv.get(stmt._args[0]);
             return v ? { v } : null;
           }
           return null;
         },
         async run() {
-          if (/INSERT INTO app_state/.test(sql)) kv.set(stmt._args[0], stmt._args[1]);
+          if (/INSERT INTO app_settings/.test(sql)) kv.set(stmt._args[0], stmt._args[1]);
           return { success: true };
         },
         async all() { return { results: [] }; }
@@ -124,6 +125,10 @@ async function status(h) {
 
 async function main() {
   const h = hub();
+
+  /* 0. the settings table (production app_state is a snapshot table) */
+  check('connections use their own settings table', SRC_TEXT.includes('app_settings') && !/FROM app_state WHERE k/.test(SRC_TEXT));
+  check('the settings table is created on first use', /CREATE TABLE IF NOT EXISTS app_settings/.test(SRC_TEXT));
 
   /* 1. admin only */
   let r = await h.handleConnections(req('GET'), new URL('https://x/api/connections'), async () => ({ adminId: USER }));

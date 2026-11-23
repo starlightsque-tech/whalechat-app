@@ -1622,9 +1622,11 @@ var ChatHub = class {
     let v = {};
     if (this.env && this.env.DB) {
       try {
-        const row = await this.env.DB.prepare("SELECT v FROM app_state WHERE k = ?").bind("settings.connections").first();
+        await this.ensureConnectionsTable();
+        const row = await this.env.DB.prepare("SELECT v FROM app_settings WHERE k = ?").bind("settings.connections").first();
         if (row && row.v) v = JSON.parse(row.v) || {};
       } catch (e) {
+        console.error("[connections] read failed: " + (e && e.message));
       }
     }
     if (!v.app) v.app = {};
@@ -1633,13 +1635,27 @@ var ChatHub = class {
     this.connectionsCache = v;
     return v;
   }
+  /* a settings table of its own: the production app_state table is a snapshot
+     table (id/rev/db), not a key/value store, so it must not be reused here */
+  async ensureConnectionsTable() {
+    if (this.connectionsTableReady || !this.env || !this.env.DB) return;
+    try {
+      await this.env.DB.prepare("CREATE TABLE IF NOT EXISTS app_settings (k TEXT PRIMARY KEY, v TEXT NOT NULL, updated_at INTEGER)").run();
+      this.connectionsTableReady = true;
+    } catch (e) {
+      console.error("[connections] table create failed: " + (e && e.message));
+    }
+  }
   async saveConnections(v) {
     v.updatedAt = Date.now();
     this.connectionsCache = v;
     if (this.env && this.env.DB) {
       try {
-        await this.env.DB.prepare("INSERT INTO app_state (k, v) VALUES (?,?) ON CONFLICT(k) DO UPDATE SET v = excluded.v").bind("settings.connections", JSON.stringify(v)).run();
+        await this.ensureConnectionsTable();
+        await this.env.DB.prepare("INSERT INTO app_settings (k, v, updated_at) VALUES (?,?,?) ON CONFLICT(k) DO UPDATE SET v = excluded.v, updated_at = excluded.updated_at").bind("settings.connections", JSON.stringify(v), v.updatedAt).run();
+        this.connectionsPersisted = true;
       } catch (e) {
+        this.connectionsPersisted = false;
         console.error("[connections] save failed: " + (e && e.message));
       }
     }
@@ -1785,7 +1801,8 @@ var ChatHub = class {
       smtp: { configured: false, note: "Brevo HTTPS API only — no SMTP socket to disconnect" },
       storage: {
         backend: this.env && this.env.DB ? "cloudflare-d1" : "durable-object",
-        table: "app_state · settings.connections",
+        table: "app_settings · settings.connections",
+        persisted: this.connectionsPersisted !== false,
         updatedAt: c.updatedAt || 0
       }
     };

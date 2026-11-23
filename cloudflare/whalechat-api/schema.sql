@@ -14,6 +14,16 @@ CREATE TABLE IF NOT EXISTS app_state (
   v TEXT
 );
 
+-- Admin panel settings that must survive a deploy (Servers & API:
+-- the connected app servers, the public app URL and the Brevo email server).
+-- The Worker also creates this table on first use, so an existing database
+-- needs no migration.
+CREATE TABLE IF NOT EXISTS app_settings (
+  k TEXT PRIMARY KEY,
+  v TEXT NOT NULL,
+  updated_at INTEGER
+);
+
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
   name TEXT,
