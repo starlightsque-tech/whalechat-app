@@ -22,7 +22,8 @@
     "build:pages": "bash scripts/build-pages.sh",
     "restore:users": "node scripts/restore-users-360.mjs",
     "db:init": "cd cloudflare/whalechat-api && wrangler d1 execute whalechat_db --file=./schema.sql --remote",
-    "db:check": "node scripts/check-cloudflare-db.mjs"
+    "db:check": "node scripts/check-cloudflare-db.mjs",
+    "test:email-worker": "node scripts/validate-email-worker.mjs"
   },
   "dependencies": {
     "web-push": "^3.6.7",
