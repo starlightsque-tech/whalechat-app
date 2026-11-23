@@ -64,5 +64,16 @@ curl -N 'https://whalechat-api.starlightsque.workers.dev/api/events?user=test'
 Push notifications use a VAPID key generated once and stored in Durable Object
 storage. Market quotes refresh from Yahoo Finance in batches of 20 every 30 s.
 
-Email OTP verification still runs on the Pages Functions (`functions/api/otp/*`)
-because that is where the Brevo key and KV binding live.
+Email OTP verification runs in this Worker over the Brevo HTTPS API. Codes are
+stored in D1 (`email_codes`) and there is no SMTP connection to keep alive.
+
+```bash
+cd cloudflare/whalechat-api
+npx wrangler secret put BREVO_API_KEY     # paste the Brevo API key once
+npx wrangler deploy
+curl https://whalechat-api.starlightsque.workers.dev/api/health
+# -> "brevoConfigured": true
+```
+
+`BREVO_SENDER_EMAIL` and `BREVO_SENDER_NAME` live in `wrangler.toml` `[vars]`
+and survive deploys. The sender address must be verified in Brevo.

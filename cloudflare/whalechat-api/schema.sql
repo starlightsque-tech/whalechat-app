@@ -58,4 +58,13 @@ CREATE TABLE IF NOT EXISTS sessions (
   user_id TEXT,
   expires_at INTEGER
 );
+
+-- Email verification codes (Brevo HTTPS API only — no SMTP connection).
+CREATE TABLE IF NOT EXISTS email_codes (
+  email TEXT PRIMARY KEY,
+  code TEXT NOT NULL,
+  expires_at INTEGER NOT NULL,
+  attempts INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_email_codes_expiry ON email_codes (expires_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions (user_id);

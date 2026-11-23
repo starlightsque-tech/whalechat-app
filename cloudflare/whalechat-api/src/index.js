@@ -1057,6 +1057,75 @@ function yahooSymbol(asset) {
   return clean.replace(/\./g, "-");
 }
 __name(yahooSymbol, "yahooSymbol");
+/* =========================================================================
+   Email delivery — Brevo Transactional API over HTTPS only.
+   -------------------------------------------------------------------------
+   There is no SMTP socket and no "sync server" mail transport to keep alive.
+   A Cloudflare Worker never holds a long-lived connection, so a deploy, an
+   idle hour or a cold start can never disconnect email again.
+   ========================================================================= */
+function maskEmailAddr(e) {
+  return String(e || "").replace(/^(.{2}).*(@.*)$/, "$1***$2");
+}
+function emailCodeHtml(code) {
+  return `<div style="background:#04101a;padding:28px;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
+    <div style="max-width:520px;margin:0 auto;background:#0b1723;border:1px solid #16303f;border-radius:18px;overflow:hidden">
+      <div style="padding:22px 24px;background:linear-gradient(135deg,#0f766e,#0b3d5c)">
+        <div style="font-size:12px;letter-spacing:.18em;color:#9fe9dd;font-weight:700">WHALECHAT</div>
+        <h1 style="margin:8px 0 0;font-size:23px;color:#eaf6fb">Your verification code</h1>
+      </div>
+      <div style="padding:24px;color:#c7d8e2;font-size:14.5px;line-height:1.7">
+        <p style="margin:0 0 6px">Enter this code to verify your WhaleChat account. It expires in 10 minutes.</p>
+        <div style="margin:20px 0;text-align:center">
+          <div style="display:inline-block;font-family:Menlo,Consolas,monospace;font-size:32px;letter-spacing:9px;font-weight:800;color:#eaf6fb;background:#04101a;border:1px dashed #2ee6c9;border-radius:12px;padding:14px 22px;user-select:all;-webkit-user-select:all">${code}</div>
+        </div>
+        <p style="font-size:12px;color:#63808f;margin:12px 0 0">If you did not request this, ignore this email and never share the code.</p>
+      </div>
+    </div>
+  </div>`;
+}
+function brevoSender(env3) {
+  return {
+    email: String(env3.BREVO_SENDER_EMAIL || env3.BREVO_FROM || env3.MAIL_FROM || "whalechat1@gmail.com"),
+    name: String(env3.BREVO_SENDER_NAME || env3.BREVO_FROM_NAME || env3.MAIL_FROM_NAME || "WhaleChat")
+  };
+}
+async function brevoSendCode(env3, email, code) {
+  if (!env3.BREVO_API_KEY)
+    return { ok: false, error: "email_not_configured" };
+  const payload = {
+    sender: brevoSender(env3),
+    to: [{ email }],
+    subject: "Your WhaleChat verification code",
+    htmlContent: emailCodeHtml(code),
+    textContent: "Your WhaleChat verification code is " + code + ". It expires in 10 minutes."
+  };
+  let lastError = "";
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch("https://api.brevo.com/v3/smtp/email", {
+        method: "POST",
+        headers: { "api-key": env3.BREVO_API_KEY, "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (res.status === 201 || res.ok)
+        return { ok: true, status: res.status };
+      const txt = await res.text().catch(() => "");
+      lastError = "Brevo " + res.status + ": " + String(txt).slice(0, 300);
+      console.error("[email] " + lastError);
+      /* A permanent 4xx (bad key, unverified sender, bad address) is not worth
+         a retry; rate limits and 5xx are. */
+      if (res.status >= 400 && res.status < 500 && res.status !== 429)
+        return { ok: false, error: "email_failed", status: res.status };
+    } catch (e) {
+      lastError = String(e && e.message || e);
+      console.error("[email] Brevo request failed: " + lastError);
+    }
+    if (attempt === 0)
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+  return { ok: false, error: "email_failed" };
+}
 var ChatHub = class {
   constructor(state, env3) {
     this.state = state;
@@ -1895,6 +1964,111 @@ var ChatHub = class {
     }
     return out;
   }
+  /* Issue a 6-digit code, store it in D1 and email it through Brevo HTTPS.
+     Returns { status, body } so both the new and legacy routes share it. */
+  async issueEmailCode(rawEmail) {
+    const email = String(rawEmail || "").trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email))
+      return { status: 400, body: { success: false, ok: false, error: "invalid_email", message: "Enter a valid email address" } };
+    if (!this.env || !this.env.DB)
+      return { status: 503, body: { success: false, ok: false, error: "database_unavailable" } };
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    const expiresAt = Date.now() + 10 * 60 * 1000;
+    try {
+      await this.env.DB.prepare("CREATE TABLE IF NOT EXISTS email_codes (email TEXT PRIMARY KEY, code TEXT NOT NULL, expires_at INTEGER NOT NULL, attempts INTEGER DEFAULT 0)").run();
+      await this.env.DB.prepare("DELETE FROM email_codes WHERE email = ?").bind(email).run();
+      await this.env.DB.prepare("INSERT INTO email_codes (email, code, expires_at, attempts) VALUES (?,?,?,0)").bind(email, code, expiresAt).run();
+    } catch (e) {
+      console.error("[email] code store failed: " + e.message);
+      return { status: 500, body: { success: false, ok: false, error: "code_store_failed" } };
+    }
+    const sent = await brevoSendCode(this.env, email, code);
+    if (!sent.ok) {
+      const notConfigured = sent.error === "email_not_configured";
+      return {
+        status: notConfigured ? 503 : 502,
+        body: {
+          success: false,
+          ok: false,
+          error: notConfigured ? "email_not_configured" : "email_failed",
+          message: notConfigured ? "Email is not configured on the server" : "Couldn't send code. Tap resend."
+        }
+      };
+    }
+    return { status: 200, body: { success: true, ok: true, to: maskEmailAddr(email), expiresIn: 600, attemptsLeft: 6 } };
+  }
+  /* Verify a code from D1, mark the account verified and create a session.
+     Only D1 + the Worker are involved — the frontend never needs an email
+     server connection to complete verification. */
+  async confirmEmailCode(rawEmail, rawCode) {
+    const email = String(rawEmail || "").trim().toLowerCase();
+    let code = String(rawCode == null ? "" : rawCode);
+    try { code = code.normalize("NFKC"); } catch (e) {}
+    code = code.replace(/[^0-9]/g, "").slice(0, 6);
+    if (!email || code.length !== 6)
+      return { status: 400, body: { success: false, ok: false, error: "invalid", message: "Enter the 6-digit code from the email" } };
+    if (!this.env || !this.env.DB)
+      return { status: 503, body: { success: false, ok: false, error: "database_unavailable" } };
+    let row = null;
+    try {
+      await this.env.DB.prepare("CREATE TABLE IF NOT EXISTS email_codes (email TEXT PRIMARY KEY, code TEXT NOT NULL, expires_at INTEGER NOT NULL, attempts INTEGER DEFAULT 0)").run();
+      row = await this.env.DB.prepare("SELECT email, code, expires_at, attempts FROM email_codes WHERE email = ? AND code = ? AND expires_at > ?").bind(email, code, Date.now()).first();
+    } catch (e) {
+      console.error("[email] code read failed: " + e.message);
+      return { status: 500, body: { success: false, ok: false, error: "code_store_failed" } };
+    }
+    if (!row) {
+      try {
+        await this.env.DB.prepare("UPDATE email_codes SET attempts = COALESCE(attempts, 0) + 1 WHERE email = ?").bind(email).run();
+      } catch (e) {}
+      return { status: 400, body: { success: false, ok: false, error: "invalid", message: "That code is not correct" } };
+    }
+    try {
+      await this.env.DB.prepare("DELETE FROM email_codes WHERE email = ?").bind(email).run();
+    } catch (e) {}
+    const now = Date.now();
+    let user = null;
+    if (this.db && Array.isArray(this.db.users))
+      user = this.db.users.find((u) => u && String(u.email || "").trim().toLowerCase() === email) || null;
+    let d1row = null;
+    try {
+      d1row = await this.env.DB.prepare("SELECT id, name, email, username, data FROM users WHERE lower(email) = ?").bind(email).first();
+    } catch (e) {}
+    if (!user && d1row) {
+      let extra = {};
+      try { extra = JSON.parse(d1row.data || "{}") || {}; } catch (e) {}
+      user = Object.assign({ id: d1row.id, name: d1row.name, email: d1row.email, username: d1row.username }, extra);
+      if (this.db && Array.isArray(this.db.users))
+        this.db.users.push(user);
+    }
+    const userId = (user && user.id) || (d1row && d1row.id) || null;
+    if (user) {
+      user.verified = true;
+      user.emailVerified = true;
+      user.verifiedAt = now;
+      user.verificationMethod = "email_code";
+      delete user.emailVerifyRequired;
+    }
+    if (d1row) {
+      let data = {};
+      try { data = JSON.parse(d1row.data || "{}") || {}; } catch (e) {}
+      data.verified = true;
+      data.emailVerified = true;
+      data.verifiedAt = now;
+      data.verificationMethod = "email_code";
+      delete data.emailVerifyRequired;
+      try {
+        await this.env.DB.prepare("UPDATE users SET data = ? WHERE id = ?").bind(JSON.stringify(data), d1row.id).run();
+      } catch (e) {}
+    }
+    if (user) {
+      this.rev += 1;
+      this.updatedAt = now;
+      this.scheduleSave();
+    }
+    const token = userId ? await this.createSession(userId) : null;
+    return { status: 200, body: { success: true, ok: true, verified: true, verifiedAt: now, userId, username: user && user.username || "", role: user && user.role || "user", token } };
+  }
   async fetch(request) {
     await this.ready;
     if (request.method === "OPTIONS")
@@ -1914,7 +2088,33 @@ var ChatHub = class {
     if (path === "/api/rooms" || path.indexOf("/api/rooms/") === 0)
       return json({ ok: false, error: "not_found", path }, 404);
     if (path === "/api/health") {
-      return json({ ok: true, app: APP, version: VERSION, build: BUILD, uptimeSec: 0, rev: this.rev, users: this.db && this.db.users ? this.db.users.length : 0, clients: this.clients.size, push: false, publicUrl: null, storage: this.env.DB ? "d1+durable-object" : "durable-object", d1: this.env.DB ? "whalechat_db" : "unbound", email: false, market: { mode: "offline", source: "offline", marketOpen: true, alwaysOpen: true, tickers: 0 } });
+      const brevoConfigured = !!(this.env && this.env.BREVO_API_KEY);
+      return json({ ok: true, app: APP, version: VERSION, build: BUILD, uptimeSec: 0, rev: this.rev, users: this.db && this.db.users ? this.db.users.length : 0, clients: this.clients.size, push: false, publicUrl: null, storage: this.env.DB ? "d1+durable-object" : "durable-object", d1: this.env.DB ? "whalechat_db" : "unbound", email: brevoConfigured, emailProvider: brevoConfigured ? "brevo" : "none", brevoConfigured, market: { mode: "offline", source: "offline", marketOpen: true, alwaysOpen: true, tickers: 0 } });
+    }
+    /* ---- email verification: Brevo API only, codes in D1 -----------------
+       No SMTP, no nodemailer and no "sync server" mail connection. These
+       endpoints are the only path used by the Verify Email screen. */
+    if (path === "/api/send-code" && request.method === "POST") {
+      const b = await body();
+      const r = await this.issueEmailCode(b && b.email);
+      return json(r.body, r.status);
+    }
+    if (path === "/api/verify-code" && request.method === "POST") {
+      const b = await body();
+      const r = await this.confirmEmailCode(b && b.email, b && b.code);
+      return json(r.body, r.status);
+    }
+    /* Legacy aliases kept so an installed app or cached page still verifies
+       against the same D1 codes during the rollout. */
+    if (path === "/api/verify/signup/send" && request.method === "POST") {
+      const b = await body();
+      const r = await this.issueEmailCode(b && b.email);
+      return json(r.body, r.status);
+    }
+    if (path === "/api/verify/signup/confirm" && request.method === "POST") {
+      const b = await body();
+      const r = await this.confirmEmailCode(b && b.email, b && b.code);
+      return json(r.body, r.status);
     }
     if (path === "/api/release")
       return json({ ok: true, version: VERSION, build: BUILD, users: this.db && this.db.users ? this.db.users.length : 0 });
@@ -2398,19 +2598,14 @@ var ChatHub = class {
       this.roomBroadcast(room, "room-typing", { code: room.code, from: userId, isTyping: !!b.isTyping, at: Date.now() }, userId);
       return json({ ok: true, at: Date.now() });
     }
-    if (path === "/api/verify/signup/send" && request.method === "POST") {
-      const b = await body();
-      return json({ ok: true, to: b.email || "", delivered: false, autoVerified: true, message: "Verification is not required on this server" });
-    }
-    if (path === "/api/verify/signup/confirm" && request.method === "POST") {
-      return json({ ok: true, verifiedAt: Date.now(), verificationMethod: "auto" });
-    }
     if (path === "/api/verify/send" && request.method === "POST")
       return json({ ok: true, delivered: false, autoVerified: true });
     if (path === "/api/verify/check" && request.method === "POST")
       return json({ ok: true, verified: true });
-    if (path === "/api/email/status")
-      return json({ ok: true, configured: false, provider: "none" });
+    if (path === "/api/email/status") {
+      const configured = !!(this.env && this.env.BREVO_API_KEY);
+      return json({ ok: true, configured, provider: configured ? "brevo" : "none", from: brevoSender(this.env || {}).email, host: "api.brevo.com", port: 443, queued: 0, sent: 0, lastError: "" });
+    }
     if (path.startsWith("/api/email/"))
       return json({ ok: false, error: "email_not_configured" }, 200);
     if (path === "/api/connections")

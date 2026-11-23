@@ -6,6 +6,14 @@ compatibility_flags = ["nodejs_compat"]
 [observability]
 enabled = true
 
+# Brevo transactional email (HTTPS API only — no SMTP).
+# The API key MUST be a Worker secret, never a committed value:
+#   npx wrangler secret put BREVO_API_KEY
+# Sender identity is safe to keep here and survives every deploy.
+[vars]
+BREVO_SENDER_EMAIL = "whalechat1@gmail.com"
+BREVO_SENDER_NAME = "WhaleChat"
+
 # Cloudflare D1 — durable database for every account and all app data.
 # The Durable Object mirrors itself here on every save and hydrates from here
 # when its own storage is empty, so publishing never wipes users.

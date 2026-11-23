@@ -261,13 +261,14 @@ async function loadEmailPanel() {
     badge.className = 'badge ' + (d.configured ? 'badge-success' : 'badge-warn');
     badge.textContent = d.configured ? 'Connected' : 'Not configured';
     box.innerHTML = `<div class="kv"><span class="k">Mailbox</span><span class="v">${esc(d.from || '—')}</span></div>
-      <div class="kv"><span class="k">SMTP host</span><span class="v">${esc((d.host || '') + ':' + (d.port || ''))}</span></div>
+      <div class="kv"><span class="k">Provider</span><span class="v">Brevo API (HTTPS)</span></div>
+      <div class="kv"><span class="k">Endpoint</span><span class="v">api.brevo.com</span></div>
       <div class="kv"><span class="k">Queued</span><span class="v">${d.queued || 0}</span></div>
       <div class="kv"><span class="k">Sent this session</span><span class="v">${d.sent || 0}</span></div>
       ${d.lastError ? `<div class="tiny mt8" style="color:var(--danger)">${esc(d.lastError)}</div>` : ''}`;
   } catch (e) {
-    badge.className = 'badge badge-warn'; badge.textContent = 'No sync server';
-    box.innerHTML = '<div class="tiny muted">Email runs on the sync server. Connect this device to a server to see its status.</div>';
+    badge.className = 'badge badge-warn'; badge.textContent = 'Server unavailable';
+    box.innerHTML = '<div class="tiny muted">Email runs on the Worker through the Brevo HTTPS API. Connect this device to a server to see its status.</div>';
   }
 }
 App.emailTest = async function () {
@@ -280,7 +281,7 @@ App.emailTest = async function () {
     r = await fetch('/api/email/test', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ to }) }).then(x => x.json());
   } catch (e) { return toast('Could not reach the server', 'err'); }
   if (r && r.ok) toast('Test email sent to ' + to, 'ok');
-  else if (r && r.error === 'smtp_not_configured') toast('Mailbox not connected on the server yet', 'err');
+  else if (r && (r.error === 'email_not_configured' || r.error === 'smtp_not_configured')) toast('Brevo API key is not set on the server yet', 'err');
   else toast('Email failed: ' + ((r && r.error) || 'unknown'), 'err');
   loadEmailPanel();
 };

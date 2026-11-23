@@ -7,8 +7,7 @@
      Finnhub   — stock/chart price source (REST + websocket)
      Binance   — crypto/meme price source (REST + websocket)
      Alpaca    — US stock price source (REST snapshots)
-     Brevo     — transactional email
-     SMTP      — fallback mail transport
+     Brevo     — transactional email (HTTPS API only)
 
    Everything is stored in the app database (Postgres when configured, the
    mounted disk otherwise) under settings.connections, mirrored to
@@ -202,11 +201,6 @@ function createConnections(opts) {
         key: mask(!!bre.apiKey),
         from: bre.from || mailStatus.from || '',
         provider: mailStatus.provider || 'none'
-      },
-      smtp: {
-        configured: !!(mailStatus.configured && mailStatus.provider === 'smtp'),
-        host: mailStatus.host || '',
-        from: mailStatus.from || ''
       },
       storage: {
         database: opts.storageBackend ? opts.storageBackend() : 'file',

@@ -620,7 +620,7 @@ async function loadReleasePanel() {
     set('relServerBuildRow', 'unavailable');
     set('relRev', '—'); set('relDevices', '—'); set('relUptime', '—'); set('relClients', '—');
     const badge = document.getElementById('relBadge');
-    if (badge) { badge.className = 'badge badge-warn'; badge.textContent = 'No sync server'; }
+    if (badge) { badge.className = 'badge badge-warn'; badge.textContent = 'Server unavailable'; }
   }
 }
 

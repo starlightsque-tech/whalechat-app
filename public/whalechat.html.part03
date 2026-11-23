@@ -72,9 +72,9 @@
    Signup now finishes on the verification screen. Until the code emailed to
    the account is accepted the router refuses to open the rest of the app, so
    a half-registered account can never reach a profile or wallet.
-   Enforced whenever a sync server is connected (that is what sends the mail).
-   In pure local mode there is no server to send mail, so the gate is skipped
-   rather than locking a user out of their own device. */
+   Enforced whenever a sync server is connected. Email itself is sent by the
+   Worker through the Brevo HTTPS API — there is no SMTP/mail-server connection
+   to keep alive, so verification survives idle time and every deploy. */
 function needsEmailVerify(u) {
   if (!u) return false;
   if (!Remote.enabled) return false;
@@ -195,16 +195,21 @@ function verifyError(msg) {
 App.sendSignupCode = async function (manual) {
   const u = me();
   if (!u) { go('login'); return; }
-  if (!Remote.enabled) { verifyError('No sync server is connected, so email cannot be sent.'); return; }
   if (manual && verifyLeft() > 0) return;
   VERIFY_COOLDOWN = Date.now() + 60000;
   startVerifyCooldown();
   try {
-    const r = await Remote.fetchJSON('/api/verify/signup/send', { method: 'POST', body: JSON.stringify({ email: u.email }) }, 15000);
+    /* Brevo HTTPS API on the Worker. No SMTP, no “sync server” check. */
+    let r = await Remote.fetchJSON('/api/send-code', { method: 'POST', body: JSON.stringify({ email: u.email }) }, 20000);
+    if (r.res.status === 404 || r.res.status === 405 || r.res.status === 501) {
+      /* older deployment: same code, legacy route */
+      r = await Remote.fetchJSON('/api/verify/signup/send', { method: 'POST', body: JSON.stringify({ email: u.email }) }, 20000);
+    }
     const d = r.data || {};
-    if (!r.res.ok || d.ok === false) {
+    if (!r.res.ok || d.ok === false || d.success === false) {
       if (d.error === 'too_soon') { VERIFY_COOLDOWN = Date.now() + (Number(d.retryIn) || 60) * 1000; startVerifyCooldown(); return; }
-      verifyError(d.message || 'Could not send the code. Try again.');
+      if (d.error === 'too_many') { verifyError(d.message || 'Too many codes requested. Try again in an hour.'); return; }
+      verifyError("Couldn't send code. Tap resend.");
       return;
     }
     if (d.alreadyVerified) {
@@ -246,7 +251,7 @@ App.sendSignupCode = async function (manual) {
     const note = document.getElementById('vcResendNote');
     if (note) note.textContent = 'Code sent to ' + (d.to || u.email) + '. ';
   } catch (e) {
-    verifyError('Network problem — check your connection and resend.');
+    verifyError("Couldn't send code. Tap resend.");
   }
 };
 
@@ -271,14 +276,18 @@ App.verifyAccount = async function () {
   try {
     let r;
     try {
-      r = await Remote.fetchJSON('/api/verify/signup/confirm', { method: 'POST', body: JSON.stringify({ email: u.email, code }) }, 15000);
+      r = await Remote.fetchJSON('/api/verify-code', { method: 'POST', body: JSON.stringify({ email: u.email, code }) }, 20000);
+      if (r.res.status === 404 || r.res.status === 405 || r.res.status === 501) {
+        /* older deployment: same D1 code, legacy route */
+        r = await Remote.fetchJSON('/api/verify/signup/confirm', { method: 'POST', body: JSON.stringify({ email: u.email, code }) }, 20000);
+      }
     } catch (netErr) {
       /* Network problems must not eat the code or look like a wrong code. */
       restore();
       return verifyError('Network problem — your code is still in the box, tap Verify again.');
     }
     const d = r.data || {};
-    const verified = r.res.ok && d.ok !== false;
+    const verified = r.res.ok && d.ok !== false && d.success !== false;
     if (!verified && d.error !== 'already_verified') {
       restore();
       /* Keep the typed code visible so the user can fix a single digit rather

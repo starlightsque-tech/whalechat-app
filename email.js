@@ -1,32 +1,23 @@
 /* =========================================================================
-   WhaleChat transactional email (Brevo API, Brevo SMTP relay, Resend or
-   Outlook / Microsoft 365 SMTP)
+   WhaleChat transactional email — Brevo Transactional API over HTTPS ONLY.
    -------------------------------------------------------------------------
-   Provider priority:
-     1. BREVO_API_KEY                         Brevo transactional API
-     2. RESEND_API_KEY                        Resend API
-     3. BREVO_SMTP_KEY (+ BREVO_SMTP_USER)    Brevo SMTP relay
-     4. SMTP_USER + SMTP_PASS                 any SMTP mailbox (Outlook etc.)
+   There is no SMTP relay, no nodemailer and no socket to reconnect. Email is
+   a stateless HTTPS POST, so a deploy, an idle hour or a cold start can never
+   disconnect mail delivery.
 
-   Brevo SMTP relay variables:
-     BREVO_SMTP_USER  your Brevo login (e.g. you@example.com)
-     BREVO_SMTP_KEY   SMTP key from Brevo → SMTP & API → SMTP
-     BREVO_SMTP_HOST  default smtp-relay.brevo.com
-     BREVO_SMTP_PORT  default 587 (STARTTLS)
+   Required:
+     BREVO_API_KEY     Brevo API key (Worker secret / server env)
+   Sender:
+     BREVO_SENDER_EMAIL / MAIL_FROM       verified Brevo sender
+     BREVO_SENDER_NAME  / MAIL_FROM_NAME  display name (default WhaleChat)
 
-   Shared:
-     MAIL_FROM     verified sender address (default whalechat1@gmail.com)
-     MAIL_FROM_NAME default WhaleChat
-   Emails are queued in DATA_DIR/outbox.json and retried, so a temporary
-   SMTP failure never loses a notification.
+   Emails are queued in DATA_DIR/outbox.json and retried, so a temporary API
+   failure never loses a notification.
    ========================================================================= */
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
-
-let nodemailer = null;
-try { nodemailer = require('nodemailer'); } catch (e) { nodemailer = null; }
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const MAIL_CFG_FILE = path.join(DATA_DIR, 'mail.json');
@@ -34,15 +25,8 @@ function applyRuntimeMail() {
   try {
     const c = JSON.parse(fs.readFileSync(MAIL_CFG_FILE, 'utf8'));
     if (c.brevoKey) cfg.brevoKey = c.brevoKey;
-    if (c.brevoSmtpUser) cfg.brevoSmtpUser = c.brevoSmtpUser;
-    if (c.brevoSmtpKey) cfg.brevoSmtpKey = c.brevoSmtpKey;
-    if (c.brevoSmtpHost) cfg.brevoSmtpHost = c.brevoSmtpHost;
-    if (c.brevoSmtpPort) cfg.brevoSmtpPort = Number(c.brevoSmtpPort);
-    if (c.resendKey) cfg.resendKey = c.resendKey;
     if (c.from) cfg.from = c.from;
     if (c.fromName) cfg.fromName = c.fromName;
-    if (c.host) cfg.host = c.host;
-    if (c.port) cfg.port = Number(c.port);
   } catch (e) {}
 }
 
@@ -50,58 +34,30 @@ const OUTBOX = path.join(DATA_DIR, 'outbox.json');
 const SENT = path.join(DATA_DIR, 'email-sent.json');
 
 const cfg = {
-  host: process.env.SMTP_HOST || 'smtp-mail.outlook.com',
-  port: Number(process.env.SMTP_PORT || 587),
-  secure: String(process.env.SMTP_SECURE || '').toLowerCase() === 'true',
-  user: process.env.SMTP_USER || process.env.OUTLOOK_EMAIL || '',
-  pass: process.env.SMTP_PASS || process.env.OUTLOOK_APP_PASSWORD || '',
-  resendKey: process.env.RESEND_API_KEY || '',
-  resendFrom: process.env.RESEND_FROM || '',
   brevoKey: process.env.BREVO_API_KEY || '',
-  brevoSmtpUser: process.env.BREVO_SMTP_USER || process.env.BREVO_LOGIN || '',
-  brevoSmtpKey: process.env.BREVO_SMTP_KEY || process.env.BREVO_SMTP_PASSWORD || '',
-  brevoSmtpHost: process.env.BREVO_SMTP_HOST || 'smtp-relay.brevo.com',
-  brevoSmtpPort: Number(process.env.BREVO_SMTP_PORT || 587),
   /* wc-verified-sender */ from: (function () {
-    var want = String(process.env.MAIL_FROM || '').trim().toLowerCase();
+    var want = String(process.env.BREVO_SENDER_EMAIL || process.env.MAIL_FROM || '').trim().toLowerCase();
     var verified = 'whalechat1@gmail.com';
-    if (want && want === verified) return process.env.MAIL_FROM;
+    if (want && want === verified) return process.env.BREVO_SENDER_EMAIL || process.env.MAIL_FROM;
     if (want) console.warn('[mail] MAIL_FROM ' + want + ' is not a verified Brevo sender - using ' + verified);
     return verified;
   })(),
-  fromName: process.env.MAIL_FROM_NAME || 'WhaleChat'
+  fromName: process.env.BREVO_SENDER_NAME || process.env.MAIL_FROM_NAME || 'WhaleChat'
 };
 function provider() {
   applyRuntimeMail();
   if (cfg.brevoKey) return 'brevo';
-  if (cfg.resendKey) return 'resend';
-  if (cfg.brevoSmtpUser && cfg.brevoSmtpKey) return 'brevo-smtp';
-  if (cfg.user && cfg.pass) return 'smtp';
   return 'none';
 }
 
 const state = { queued: 0, sent: 0, failed: 0, lastError: '', lastSentAt: null };
 let queue = [];
 let sentKeys = [];
-let transport = null;
 let timer = null;
 
 function configured() {
   applyRuntimeMail();
-  if (cfg.brevoKey) return !!cfg.from;
-  if (cfg.resendKey) return !!cfg.from;
-  if (cfg.brevoSmtpUser && cfg.brevoSmtpKey) return !!(nodemailer && cfg.from);
-  return !!(nodemailer && cfg.user && cfg.pass && cfg.from);
-}
-function transportConfig() {
-  const p = provider();
-  if (p === 'brevo-smtp') {
-    return {
-      host: cfg.brevoSmtpHost, port: cfg.brevoSmtpPort, secure: cfg.brevoSmtpPort === 465,
-      auth: { user: cfg.brevoSmtpUser, pass: cfg.brevoSmtpKey }
-    };
-  }
-  return { host: cfg.host, port: cfg.port, secure: cfg.secure, auth: { user: cfg.user, pass: cfg.pass } };
+  return !!(cfg.brevoKey && cfg.from);
 }
 function readJSON(file, fallback) { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return fallback; } }
 function writeJSON(file, value) {
@@ -119,16 +75,6 @@ function load() {
   if (!Array.isArray(queue)) queue = [];
   if (!Array.isArray(sentKeys)) sentKeys = [];
   state.queued = queue.length;
-  if (configured() && (provider() === 'smtp' || provider() === 'brevo-smtp')) {
-    const tc = transportConfig();
-    transport = nodemailer.createTransport({
-      host: tc.host, port: tc.port, secure: tc.secure, auth: tc.auth,
-      tls: { minVersion: 'TLSv1.2' },
-      connectionTimeout: 15000, greetingTimeout: 15000, socketTimeout: 20000
-    });
-  } else {
-    transport = null;
-  }
   clearInterval(timer);
   timer = setInterval(() => { flush().catch(() => {}); }, 60 * 1000);
   if (timer.unref) timer.unref();
@@ -278,7 +224,7 @@ const templates = {
     return {
       subject: 'WhaleChat email service is working',
       html: layout('Email service connected',
-        `This test confirms WhaleChat can send mail through <b style="color:#e9f4f9">${escapeHtml(cfg.from)}</b> (${escapeHtml(cfg.host)}).<br/><br/>
+        `This test confirms WhaleChat can send mail through <b style="color:#e9f4f9">${escapeHtml(cfg.from)}</b> (Brevo HTTPS API).<br/><br/>
          Account-creation and package-delivery emails will use this channel.`,
         { label: 'Open WhaleChat', url: ctx.appUrl + '/whalechat.html' }),
       text: 'WhaleChat email service is working.'
@@ -320,15 +266,10 @@ async function flush() {
     for (const item of [...queue]) {
       try {
         if (provider() === 'brevo') {
-          /* The Fly Render host's IP is not on Brevo's allow-list, so mail is
-             relayed through the Cloudflare edge when a relay is configured. */
-          const relayUrl = String(process.env.MAIL_RELAY_URL || '').trim();
-          const relaySecret = String(process.env.MAIL_RELAY_SECRET || '').trim();
-          const target = (relayUrl && relaySecret) ? relayUrl : 'https://api.brevo.com/v3/smtp/email';
-          const apiKey = (relayUrl && relaySecret) ? relaySecret : cfg.brevoKey;
-          const res = await fetch(target, {
+          /* One stateless HTTPS request. No relay, no SMTP socket. */
+          const res = await fetch('https://api.brevo.com/v3/smtp/email', {
             method: 'POST',
-            headers: { 'api-key': apiKey, 'content-type': 'application/json', accept: 'application/json' },
+            headers: { 'api-key': cfg.brevoKey, 'content-type': 'application/json', accept: 'application/json' },
             body: JSON.stringify({
               sender: { name: cfg.fromName, email: cfg.from },
               to: [{ email: item.to }],
@@ -343,40 +284,8 @@ async function flush() {
             try { const j = JSON.parse(body); msg = j.message || msg; } catch (e) {}
             throw new Error('Brevo ' + res.status + ': ' + msg);
           }
-        } else if (provider() === 'resend') {
-          const res = await fetch('https://api.resend.com/emails', {
-            method: 'POST',
-            headers: { authorization: 'Bearer ' + cfg.resendKey, 'content-type': 'application/json' },
-            body: JSON.stringify({
-              from: `${cfg.fromName} <${cfg.from}>`,
-              to: [item.to],
-              subject: item.subject,
-              html: item.html,
-              text: item.text
-            })
-          });
-          if (!res.ok) {
-            const body = await res.text().catch(() => '');
-            let msg = body.slice(0, 300);
-            try { msg = JSON.parse(body).message || msg; } catch (e) {}
-            throw new Error('Resend ' + res.status + ': ' + msg);
-          }
         } else {
-          if (!transport) {
-            const tc = transportConfig();
-            transport = nodemailer.createTransport({
-              host: tc.host, port: tc.port, secure: tc.secure, auth: tc.auth,
-              tls: { minVersion: 'TLSv1.2' },
-              connectionTimeout: 15000, greetingTimeout: 15000, socketTimeout: 20000
-            });
-          }
-          await transport.sendMail({
-            from: `"${cfg.fromName}" <${cfg.from}>`,
-            to: item.to,
-            subject: item.subject,
-            text: item.text,
-            html: item.html
-          });
+          throw new Error('email_not_configured');
         }
         item.sentAt = Date.now();
         if (item.key) markSent(item.key);
@@ -395,7 +304,7 @@ async function flush() {
           queue = queue.filter(q => q.id !== item.id);
           if (item.key) markSent(item.key); // stop retrying a permanently bad address
         }
-        break; // SMTP trouble: stop this round and retry later
+        break; // API trouble: stop this round and retry later
       }
     }
   } finally {
@@ -412,11 +321,8 @@ function status() {
     configured: configured(),
     provider: provider(),
     from: cfg.from || null,
-    host: provider() === 'brevo' ? 'api.brevo.com'
-      : provider() === 'resend' ? 'api.resend.com'
-      : provider() === 'brevo-smtp' ? cfg.brevoSmtpHost
-      : cfg.host,
-    port: provider() === 'brevo-smtp' ? cfg.brevoSmtpPort : (provider() === 'smtp' ? cfg.port : 443),
+    host: provider() === 'brevo' ? 'api.brevo.com' : null,
+    port: provider() === 'brevo' ? 443 : null,
     queued: queue.length,
     sent: state.sent,
     failed: state.failed,

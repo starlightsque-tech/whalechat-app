@@ -75,7 +75,7 @@ const twelvedata = createTwelveFeed ? createTwelveFeed({
   onTick: (sym, price) => { try { market.ingestExternal(sym, price); } catch (e) {} }
 }) : null;
 
-/* Durable third-party connection settings (Finnhub, Binance, Brevo, SMTP).
+/* Durable third-party connection settings (Finnhub, Binance, Brevo HTTPS email).
    Applied on every boot so a new release never comes up disconnected. */
 const connections = createConnections ? createConnections({
   getDb: () => store.db,
@@ -302,7 +302,7 @@ function readBody(req) {
     req.on('error', reject);
   });
 }
-/* Account + delivery emails (Outlook SMTP, queued & retried). */
+/* Account + delivery emails (Brevo HTTPS API only, queued & retried). */
 function lifecycleEmails(pushes, events) {
   if (!email) return;
   const appUrl = PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || ('http://localhost:' + PORT);
@@ -1245,7 +1245,7 @@ async function api(req, res, pathname, query) {
     }
     console.log('[verify] signup code for ' + emailAddr.slice(0, 2) + '*** queued=' + queued + ' mailReady=' + mailReady + ' provider=' + (email && email.status ? email.status().provider : 'none'));
     if (!mailReady) {
-      return json(res, 503, { ok: false, error: 'email_not_configured', message: 'Email sending is not configured yet. An admin must connect Brevo or SMTP in Admin → Servers.', to: maskEmail(emailAddr) });
+      return json(res, 503, { ok: false, error: 'email_not_configured', message: 'Email sending is not configured yet. An admin must connect Brevo in Admin → Servers.', to: maskEmail(emailAddr) });
     }
     return json(res, 200, { ok: true, queued, to: maskEmail(emailAddr), expiresIn: 900, attemptsLeft: 6 });
   }
@@ -1374,7 +1374,7 @@ async function api(req, res, pathname, query) {
     return json(res, 200, { ok: true, campaignId, recipients: users.length, queued });
   }
   if (pathname === '/api/email/backfill' && req.method === 'POST') {
-    if (!email || !email.configured()) return json(res, 503, { ok: false, error: 'smtp_not_configured' });
+    if (!email || !email.configured()) return json(res, 503, { ok: false, error: 'email_not_configured' });
     const body = await readBody(req).catch(() => ({}));
     const type = body.type || 'welcome';
     const appUrl = PUBLIC_URL || ('http://localhost:' + PORT);
@@ -1393,7 +1393,7 @@ async function api(req, res, pathname, query) {
     const admin = (store.db && store.db.users.find(u => u.role === 'admin')) || {};
     const to = String(body.to || admin.email || '');
     if (!to) return json(res, 400, { ok: false, error: 'missing_recipient' });
-    if (!email.configured()) return json(res, 503, { ok: false, error: 'smtp_not_configured', to });
+    if (!email.configured()) return json(res, 503, { ok: false, error: 'email_not_configured', to });
     const queued = email.enqueue({ key: 'test:' + Date.now(), to, template: 'test', data: {}, appUrl: PUBLIC_URL || ('http://localhost:' + PORT) });
     return json(res, 200, { ok: true, queued, to, status: email.status() });
   }
@@ -1411,21 +1411,12 @@ async function api(req, res, pathname, query) {
       let cur = {};
       try { cur = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) {}
       if (body.brevoKey) cur.brevoKey = String(body.brevoKey).trim();
-      if (body.brevoSmtpUser) cur.brevoSmtpUser = String(body.brevoSmtpUser).trim();
-      if (body.brevoSmtpKey) cur.brevoSmtpKey = String(body.brevoSmtpKey).trim();
-      if (body.brevoSmtpHost) cur.brevoSmtpHost = String(body.brevoSmtpHost).trim();
-      if (body.brevoSmtpPort) cur.brevoSmtpPort = Number(body.brevoSmtpPort) || 587;
       if (body.from) cur.from = String(body.from).trim();
       if (body.fromName) cur.fromName = String(body.fromName).trim();
-      if (body.resendKey) cur.resendKey = String(body.resendKey).trim();
       cur.updatedAt = new Date().toISOString();
       writeJSONAtomic(file, cur);
       if (cur.brevoKey) process.env.BREVO_API_KEY = cur.brevoKey;
-      if (cur.brevoSmtpUser) process.env.BREVO_SMTP_USER = cur.brevoSmtpUser;
-      if (cur.brevoSmtpKey) process.env.BREVO_SMTP_KEY = cur.brevoSmtpKey;
-      if (cur.brevoSmtpHost) process.env.BREVO_SMTP_HOST = cur.brevoSmtpHost;
-      if (cur.brevoSmtpPort) process.env.BREVO_SMTP_PORT = String(cur.brevoSmtpPort);
-      if (cur.from) process.env.MAIL_FROM = cur.from;
+      if (cur.from) process.env.BREVO_SENDER_EMAIL = cur.from;
       return json(res, 200, { ok: true, configured: email.configured(), provider: email.status().provider, from: cur.from || null });
     } catch (e) { return json(res, 500, { ok: false, error: e.message }); }
   }

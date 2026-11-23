@@ -1037,14 +1037,14 @@ function adminSettings() {
   <div class="card mt16">
     <div class="between wrap gap10">
       <div><h3 style="font-size:15px">Email notifications</h3>
-        <p class="tiny muted mt6">Account-creation and package-delivery emails are sent through the app's mail provider (Brevo, Resend or Outlook SMTP, whichever is configured). Delivery is queued and retried, so a temporary mail outage never loses a notification.</p></div>
+        <p class="tiny muted mt6">Account-creation and package-delivery emails are sent through the Brevo transactional API over HTTPS. There is no SMTP connection to keep alive, so a deploy or idle period never disconnects email. Delivery is queued and retried, so a temporary outage never loses a notification.</p></div>
       <span class="badge" id="emailBadge">Checking…</span>
     </div>
     <div class="mt14" id="emailStatus"><div class="tiny muted">Reading mail settings…</div></div>
     <div class="field mt14"><label class="label">Send a test email</label>
       <div class="row gap8"><input class="input" id="emailTestTo" placeholder="you@email.com" value="${esc(me().email || '')}"/>
       <button class="btn btn-primary btn-sm" data-act="email-test">${ic('send', 14)} Send</button></div>
-      <div class="help">Uses the SMTP mailbox configured on the server.</div></div>
+      <div class="help">Uses the Brevo API key configured on the server.</div></div>
     <div class="tiny muted mt10" style="line-height:1.6">Triggers: <b>account created</b> and <b>order marked delivered</b>.</div>
   </div>
   <div class="card mt16">
