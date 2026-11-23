@@ -953,10 +953,10 @@ globalThis.process = cloudflare_default2;
 
 // src/index.js
 var APP = "whalechat";
-var VERSION = "3.60.0";
+var VERSION = "3.63.0";
 var DO_NAME = "global:v12";
 var PREV_DO_NAME = "global:v11";
-var BUILD = "2026-11-22T23:00:00Z";
+var BUILD = "2026-11-23T04:10:00Z";
 var COLLECTIONS = ["users", "vendors", "companyProducts", "products", "orders", "deposits", "withdrawals", "messages", "statuses", "notifications", "contacts", "blocks", "txs", "referrals", "purchases", "refunds", "vendorApplications", "reports", "bonuses", "bonusClaims", "emailCampaigns", "stocks", "holdings", "trades", "watchlist", "alerts", "audit", "portfolioAudit", "botAccounts", "botEvents", "traffic", "shareInvestments", "serviceRequests"];
 var PRESENCE_STALE_MS = 35e3;
 var CORS = {
