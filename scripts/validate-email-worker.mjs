@@ -168,7 +168,7 @@ check('POST /api/verify-code is wired to confirmEmailCode', () => {
 });
 
 check('GET /api/health reports brevoConfigured', () => {
-  assert(source.includes('brevoConfigured = !!(this.env && this.env.BREVO_API_KEY)'), 'brevoConfigured computation missing');
+  assert(source.includes('brevoConfigured = !!this.effectiveBrevoKey()'), 'brevoConfigured computation missing');
   assert(/brevoConfigured,/.test(source), 'brevoConfigured not returned by health');
   return 'brevoConfigured exposed';
 });

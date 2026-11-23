@@ -1,6 +1,6 @@
 {
   "name": "whalechat",
-  "version": "3.62.10",
+  "version": "3.63.0",
   "private": true,
   "description": "WhaleChat — chat, marketplace and wallet. Web app + sync server + Android/iOS shells.",
   "main": "server.js",
@@ -24,7 +24,9 @@
     "db:init": "cd cloudflare/whalechat-api && wrangler d1 execute whalechat_db --file=./schema.sql --remote",
     "db:check": "node scripts/check-cloudflare-db.mjs",
     "test:email-worker": "node scripts/validate-email-worker.mjs",
-    "test:composer": "node scripts/test-composer-clear.mjs"
+    "test:composer": "node scripts/test-composer-clear.mjs",
+    "test:smooth-chat": "node scripts/test-chat-smooth.mjs",
+    "test:connections": "node scripts/test-connections.mjs"
   },
   "dependencies": {
     "web-push": "^3.6.7",

@@ -255,6 +255,8 @@
     const row = {
       id: msg.id, chatId: msg.chatId, from: msg.from, to: msg.to,
       type: msg.type || 'text', text: msg.text || '', createdAt: msg.createdAt,
+      /* stickers (and anything else a message carries) must survive the outbox */
+      sticker: msg.sticker || null, mediaUrl: msg.mediaUrl || null,
       attempts: 0, nextAt: 0
     };
     await idbPut('messages', stripVolatile(Object.assign({}, msg, { __state: 'queued' })));
@@ -296,6 +298,12 @@
     }
   }
   WCI.flush = flush;
+  /* used by the sticker tray: queue any already-built message on the same
+     durable outbox so stickers get the same offline queue and delivery ticks */
+  WCI.enqueueMessage = function (msg) {
+    try { return enqueue(msg); } catch (e) { return Promise.resolve(); }
+  };
+  WCI.newId = function () { return newId(); };
 
   function markSent(msgId, sid, status) {
     pendingIds.delete(msgId);
@@ -316,6 +324,8 @@
       type: row.type || 'text', text: row.text || '', createdAt: row.createdAt,
       status: ST.SENT, deleted: false, readBy: []
     };
+    if (row.sticker) msg.sticker = row.sticker;
+    if (row.mediaUrl) msg.mediaUrl = row.mediaUrl;
     try {
       if (awCfg()) {
         const r = await awCreate(awCfg(), msg);

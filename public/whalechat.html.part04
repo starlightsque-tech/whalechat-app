@@ -17,14 +17,22 @@ AFTER.chat = function (parts) {
       if (!ACTIVE_CHAT) { clearInterval(SUPPORT_TIMER); return; }
       const waiting = supportWaiting(ACTIVE_CHAT);
       const present = !!document.getElementById('supportLiveCallout');
-      if (waiting !== present) render();
+      if (waiting !== present) {
+        if (window.WC_SMOOTH && WC_SMOOTH.composerActive && WC_SMOOTH.composerActive()) WC_SMOOTH.renderIdle(render);
+        else render();
+      }
     }, 15000);
   }
   const body = document.getElementById('chatBody');
   if (body) body.scrollTop = body.scrollHeight;
   const inp = document.getElementById('msgInput');
   if (inp) {
-    inp.focus({ preventScroll: true });
+    /* Take the keyboard only the first time this chat opens. Re-focusing on
+       every re-render is what made the keyboard flash open and closed. */
+    const sameChat = window.__wcChatFocusCid === ACTIVE_CHAT;
+    window.__wcChatFocusCid = ACTIVE_CHAT;
+    const writingNow = !!(window.WC_SMOOTH && WC_SMOOTH.composerActive && WC_SMOOTH.composerActive());
+    if (!sameChat && !writingNow) { try { inp.focus({ preventScroll: true }); } catch (e) {} }
     inp.style.height = 'auto';
     inp.style.height = Math.min(120, inp.scrollHeight) + 'px';
     if (!inp.dataset.bound) {
@@ -190,15 +198,19 @@ App.send = async function () {
   notify(otherId, u.fullName, text ? text.slice(0, 120) : (media[0].type === 'audio' ? 'Voice message' : media[0].type === 'video' ? 'Video' : 'Photo'), '#/chat/' + u.id, 'chat');
   sync();
   if (chan) { try { chan.postMessage({ t: 'message', from: u.id }); } catch (e) {} }
-  render();
-  setTimeout(() => { if (ACTIVE_CHAT === cid) { const b = document.getElementById('chatBody'); if (b) b.scrollTop = b.scrollHeight; } }, 30);
+  /* draw the sent bubbles in place: the composer keeps its height, its focus
+     and the keyboard stays open (a full render reset all three) */
+  if (!(window.WC_SMOOTH && WC_SMOOTH.afterSend && WC_SMOOTH.afterSend())) {
+    render();
+    setTimeout(() => { if (ACTIVE_CHAT === cid) { const b = document.getElementById('chatBody'); if (b) b.scrollTop = b.scrollHeight; } }, 30);
+  }
   // delivery ack simulation
   setTimeout(() => {
     const fresh = loadDB();
     if (!fresh) return;
     let ch = false;
     fresh.messages.forEach(m => { if (m.chatId === cid && m.from === u.id && m.status === 'sent') { m.status = 'delivered'; ch = true; } });
-    if (ch) { DB = fresh; persist(); if (ACTIVE_CHAT === cid) render(); }
+    if (ch) { DB = fresh; persist(); if (ACTIVE_CHAT === cid && !(window.WC_SMOOTH && WC_SMOOTH.paintTicks && WC_SMOOTH.paintTicks())) render(); }
   }, 1200);
 };
 
@@ -433,8 +445,20 @@ VIEWS.status = function () {
           <div><div style="font-weight:650;font-size:15px">My status</div>
           <div class="small muted mt6">${mine.length ? `${mine.length} update${mine.length > 1 ? 's' : ''} · ${mine.reduce((s, x) => s + (x.viewers || []).length, 0)} views · ${esc(statusAudienceLabel(mine[0]))}` : 'Tap to share a photo, video or text update'}</div></div>
         </div>
-        <button class="btn btn-primary btn-sm" data-act="compose-status">${ic('plus', 15)} Create</button>
+        <div class="row gap6">
+          ${mine.length ? `<button class="btn btn-ghost btn-sm" data-act="open-status" data-id="${u.id}">${ic('eye', 14)} View mine</button>` : ''}
+          <button class="btn btn-primary btn-sm" data-act="compose-status">${ic('plus', 15)} Create</button>
+        </div>
       </div>
+      ${mine.length ? `<div class="hr" style="margin:14px 0 10px"></div>
+      <div class="between mb8"><span class="small" style="font-weight:650">Your updates</span><span class="tiny muted">Delete any post instantly</span></div>
+      <div class="list">${mine.map(s => `<div class="list-item">
+        <div style="width:34px;height:34px;border-radius:9px;flex:none;display:flex;align-items:center;justify-content:center;background:rgba(46,230,201,.14);color:var(--accent)">${ic(s.type === 'text' ? 'edit' : s.type === 'video' ? 'video' : 'image', 16)}</div>
+        <div class="grow" style="min-width:0"><div class="small" style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${s.type === 'text' ? esc((s.text || '').slice(0, 70) || 'Text status') : (s.type === 'video' ? 'Video status' : 'Photo status')}</div>
+        <div class="tiny muted">${timeAgo(s.createdAt)} ago · ${(s.viewers || []).length} view${(s.viewers || []).length === 1 ? '' : 's'} · ${Math.max(1, Math.round((s.createdAt + 86400000 - Date.now()) / 3600000))}h left</div></div>
+        <button class="btn btn-xs btn-ghost" data-act="open-status" data-id="${u.id}">${ic('eye', 13)}</button>
+        <button class="btn btn-xs btn-ghost" data-act="delete-status" data-id="${s.id}" style="color:var(--danger)" title="Delete this status">${ic('trash', 13)}</button>
+      </div>`).join('')}</div>` : ''}
     </div>
     <div class="section-title"><h3>Recent updates</h3><span class="tiny muted">${Object.keys(byUser).length} contacts</span></div>
     ${Object.keys(byUser).length ? `<div class="list">${Object.keys(byUser).map(id => {

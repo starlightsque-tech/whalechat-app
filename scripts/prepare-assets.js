@@ -115,7 +115,9 @@ const MODULES = [
   { file: 'welcome-mail.js', marker: 'wc-welcome-mail' },
   { file: 'live-chat-open.js', marker: 'wc-live-chat-open' },
   { file: 'ui-smooth.js', marker: 'wc-ui-smooth' },
-  { file: 'ui-no-refresh.js', marker: 'wc-quiet-ui' }
+  { file: 'ui-no-refresh.js', marker: 'wc-quiet-ui' },
+  { file: 'chat-smooth.js', marker: 'wc-chat-smooth' },
+  { file: 'stickers.js', marker: 'wc-stickers' }
 ];
 try {
   let page = fs.readFileSync(APP, 'utf8');

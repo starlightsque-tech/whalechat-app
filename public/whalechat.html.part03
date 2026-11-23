@@ -473,6 +473,7 @@ const ADMIN_NAV = [
   { key: 'admin-notifications', label: 'Notifications', icon: 'bell', href: '#/admin/notifications' },
   { key: 'admin-bonuses', label: 'Bonuses', icon: 'gift', href: '#/admin/bonuses' },
   { key: 'admin-email', label: 'Email', icon: 'send', href: '#/admin/email' },
+  { key: 'admin-connections', label: 'Servers & API', icon: 'server', href: '#/admin/connections' },
   { key: 'admin-release', label: 'Release', icon: 'refresh', href: '#/admin/release' },
   { key: 'admin-settings', label: 'Settings', icon: 'settings', href: '#/admin/settings' },
   { key: 'admin-chat', label: 'Support Chat', icon: 'chat', href: '#/admin/chat' }
@@ -661,6 +662,10 @@ App.maintEnd = function () {
 /* ---------------- master render ---------------- */
 function render() {
   if (!DB_READY) { renderSplash(); return; }
+  /* WC smooth chat: while the user is typing on a chat screen the screen is
+     painted in place (new bubbles, ticks, "typing…") instead of rebuilt, so the
+     composer, its text, the caret and the keyboard are never touched. */
+  if (window.WC_SMOOTH && WC_SMOOTH.intercept && WC_SMOOTH.intercept()) return;
   clearInterval(MAINT_TIMER); MAINT_TIMER = null;
   initTheme();
   const app = document.getElementById('app');
@@ -820,7 +825,13 @@ function doMaintenance() {
 setInterval(() => {
   if (!DB || !me()) return;
   const had = DB.messages.filter(m => m.from === me().id && m.status === 'sent' && Date.now() - m.createdAt > 900).length;
-  if (had) { doMaintenance(); render(); }
+  if (had) {
+    doMaintenance();
+    /* update ✓✓ in place: a re-render here ate whatever the user was typing */
+    if (!(window.WC_SMOOTH && WC_SMOOTH.paintTicks && WC_SMOOTH.paintTicks())) {
+      if (!(window.WC_SMOOTH && WC_SMOOTH.composerActive && WC_SMOOTH.composerActive())) render();
+    }
+  }
 }, 4000);
 
 /* ---------------- install prompt ---------------- */
@@ -944,7 +955,7 @@ const Presence = {
   isOnline(id) { const m = this.map(); return m[id] && Date.now() - m[id] < 90000; },
   lastSeen(id) { const m = this.map(); return m[id] || 0; }
 };
-setInterval(() => { if (me()) { Presence.touch(); if (ACTIVE_CHAT) render(); } }, 25000);
+setInterval(() => { if (me()) { Presence.touch(); if (ACTIVE_CHAT) { if (window.WC_SMOOTH && WC_SMOOTH.paintPresence) WC_SMOOTH.paintPresence(); else render(); } } }, 25000);
 
 /* ---------------- presence broadcast (typing) ---------------- */
 let chan = null;
@@ -955,9 +966,17 @@ if (chan) chan.onmessage = (ev) => {
   if (d.t === 'typing' && d.chatId) {
     TYPING[d.chatId] = TYPING[d.chatId] || {};
     TYPING[d.chatId][d.from] = Date.now();
-    if (ACTIVE_CHAT === d.chatId) render();
+    /* a typing notice must never rebuild the chat — paint the header only */
+    if (ACTIVE_CHAT === d.chatId) {
+      if (window.WC_SMOOTH && WC_SMOOTH.paintPresence) WC_SMOOTH.paintPresence();
+      else render();
+    }
   }
-  if (d.t === 'message') { DB = loadDB(); render(); }
+  if (d.t === 'message') {
+    DB = loadDB();
+    /* append the new bubbles in place so typing is never interrupted */
+    if (!(window.WC_SMOOTH && WC_SMOOTH.syncChat && WC_SMOOTH.syncChat())) render();
+  }
 };
 
 /* ---------------- helpers ---------------- */
@@ -970,7 +989,7 @@ function lastMessage(a, b) {
 function previewOf(m) {
   if (!m) return '';
   if (m.deleted) return 'Message deleted';
-  const map = { image: '📷 Photo', video: '🎬 Video', audio: '🎤 Voice message', file: '📎 Attachment' };
+  const map = { image: '📷 Photo', video: '🎬 Video', audio: '🎤 Voice message', file: '📎 Attachment', sticker: 'Sticker' };
   return (m.forwarded && m.type !== 'audio' ? 'Forwarded · ' : '') + (m.text || map[m.type] || 'Message');
 }
 function chatMessages(cid) {
@@ -1326,14 +1345,14 @@ VIEWS.chat = function (parts) {
       <div class="avatar-wrap" data-act="view-profile" data-id="${other.id}" style="cursor:pointer">${avatarHTML(other, 'sm')}${online ? '<span class="status-dot" style="width:10px;height:10px"></span>' : ''}</div>
       <div class="grow" data-act="view-profile" data-id="${other.id}" style="cursor:pointer;min-width:0">
         <div class="row gap6" style="font-weight:650;font-size:14.5px">${esc(other.fullName)} ${other.verified ? `<span class="verified">${ic('check', 9)}</span>` : ''}</div>
-        <div class="tiny" style="color:${typing ? 'var(--accent)' : 'var(--muted)'}">${typing ? 'typing…' : online ? 'online' : 'last seen ' + (Presence.lastSeen(other.id) ? timeAgo(Presence.lastSeen(other.id)) + ' ago' : 'recently')}
+        <div class="tiny" id="chatHeadSub" style="color:${typing ? 'var(--accent)' : 'var(--muted)'}">${typing ? 'typing…' : online ? 'online' : 'last seen ' + (Presence.lastSeen(other.id) ? timeAgo(Presence.lastSeen(other.id)) + ' ago' : 'recently')}
           ${muted ? ' · muted' : ''}</div>
       </div>
       <button class="btn-icon" data-act="chat-menu" data-id="${other.id}" style="width:36px;height:36px">${ic('more', 18)}</button>
     </div>
     <div class="chat-body" id="chatBody">
       ${body}
-      ${typing ? `<div class="typing"><i></i><i></i><i></i></div>` : ''}
+      ${typing ? `<div class="typing" id="chatTyping"><i></i><i></i><i></i></div>` : ''}
     </div>
     ${other.role === 'admin' && supportWaiting(cid) ? `<div class="support-live" id="supportLiveCallout">
       <div class="row gap10" style="align-items:flex-start">
@@ -1352,6 +1371,7 @@ VIEWS.chat = function (parts) {
         ${m.type === 'image' && m.preview ? `<img src="${m.preview}" style="width:100%;height:100%;object-fit:cover"/>` : `<span style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;color:var(--accent)">${ic(m.type === 'video' ? 'video' : 'mic', 18)}</span>`}
         <button data-act="remove-media" data-idx="${i}" style="position:absolute;top:2px;right:2px;width:17px;height:17px;border-radius:50%;background:rgba(0,0,0,.7);color:#fff;font-size:10px;display:flex;align-items:center;justify-content:center">×</button></div>`).join('')}</div>` : ''}
       <div class="row" style="gap:7px;align-items:flex-end">
+        <button class="icon-btn-round chat-stk-btn" data-act="stickers" title="Stickers">${ic('sticker', 19)}</button>
         <button class="icon-btn-round" data-act="attach" title="Attach">${ic('clip', 19)}</button>
         <textarea id="msgInput" placeholder="${blocked ? 'You blocked this contact' : 'Message…'}" rows="1" ${blocked ? 'disabled' : ''}>${esc(comp.text || '')}</textarea>
         ${comp.text || (comp.media && comp.media.length) || editMsg
@@ -1388,7 +1408,10 @@ function messageHTML(m, u, other) {
   const out = m.from === u.id;
   const showFwd = m.forwarded && m.type !== 'audio'; // audio forwards intentionally look normal
   let content = '';
-  if (m.type === 'image') {
+  if (m.type === 'sticker') {
+    content = (window.WC_STICKERS && WC_STICKERS.html) ? WC_STICKERS.html(m)
+      : '<div class="stk"><div class="stk-tile" style="background:linear-gradient(135deg,#0f766e,#0ea5e9)"><span class="stk-e">\ud83d\udc33</span></div></div>';
+  } else if (m.type === 'image') {
     content = `<img class="chat-media${m.mediaUrl ? '' : ' skeleton'}"${m.mediaUrl ? ` src="${m.mediaUrl}"` : ''} data-media="${m.mediaId}" style="min-height:120px" alt="Photo" data-act="view-media" data-id="${m.id}"/>`;
   } else if (m.type === 'video') {
     content = `<video class="chat-media"${m.mediaUrl ? ` src="${m.mediaUrl}"` : ''} data-media="${m.mediaId}" controls playsinline preload="metadata" style="min-height:120px"></video>`;

@@ -134,12 +134,30 @@ export CLOUDFLARE_API_TOKEN=...
 export CLOUDFLARE_ACCOUNT_ID=...
 # One time only. The key is stored as a Worker secret, never in git, and
 # survives every future deploy.
+# optional once the key is connected in Admin → Servers & API:
 npx wrangler secret put BREVO_API_KEY
 npx wrangler deploy
 ```
 
 The Worker exposes `/api/health`, `/api/state`, `/api/ops`, `/api/events` (SSE),
-`/api/messages/*`, `/api/presence`, `/api/typing` and `/api/rooms/*`.
+`/api/messages/*`, `/api/presence`, `/api/typing`, `/api/rooms/*` and the
+admin connection routes `/api/connections` + `/api/connections/test`.
+
+### Connect the servers from the admin panel (3.63.0+)
+
+Admin → **Servers & API** (`#/admin/connections`) connects both servers by hand,
+with no redeploy:
+
+| What | How |
+|---|---|
+| **App server** | Paste the sync/API URL → **Connect server**. It is probed on `/api/health` before it is accepted, then stored with latency, build and rev. Re-test, make primary or remove any time. The public app URL lives here too. |
+| **Email server (Brevo)** | Paste the API key + verified sender → **Connect email server**. The key is verified against `https://api.brevo.com/v3/account` first; **Send test email** proves delivery. |
+
+Both are stored in D1 (`app_state` → `settings.connections`), not in the synced
+app database, so a cache clear, a new phone, a state merge or a redeploy never
+disconnects them. The keys are only ever shown masked. Email (verification
+codes, test mail, broadcasts) uses the key connected in the panel; the
+`BREVO_API_KEY` Worker secret stays as a fallback.
 Durable Object storage holds the database, so deploys never wipe user data.
 
 Deploy the static app:

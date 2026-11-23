@@ -1,8 +1,8 @@
 {
-  "version": "3.62.10",
-  "build": "2026-11-23T02:39:15Z",
+  "version": "3.63.0",
+  "build": "2026-11-23T04:10:00Z",
   "file": "whalechat.html",
-  "notes": "WhaleChat 3.62.10 - a sent message no longer stays in the chat composer/keyboard. Clearing the composer now commits the clear to the draft snapshot and session draft, and pending draft-restore passes skip it, so no re-render or reload can bring an already-sent message back. Unsent drafts are still restored.",
-  "releasedAt": "2026-11-23T02:39:15Z",
+  "notes": "WhaleChat 3.63.0 — chat is smooth again, stickers and status control, and a new admin Servers & API space.\n\n• Typing is never interrupted: the chat screen no longer rebuilds itself for background changes (typing notices, delivery ticks, presence heartbeats, incoming messages). New bubbles, ✓✓ ticks and the “typing…” line are painted in place, so the composer, the text, the caret and the keyboard stay exactly where they are — no more shaking or blinking while chatting.\n• The keyboard opens once per chat instead of flashing on every refresh, and sending a message keeps the composer focused and the message list still.\n• Stickers: send built-in sticker packs from the chat composer, save any sticker to My stickers on your account (it follows you to every device), make a sticker from a photo, and see recent stickers.\n• Status: delete any status you posted from Status → Your updates (one tap) as well as from the viewer.\n• Admin → Servers & API: connect app servers by hand (URL is health-probed and stored) and connect the Brevo email server (key verified, sender saved, test email). Both are stored on the server and survive every deploy.\n• Email (verification codes, test mail, broadcasts) now uses the email server connected in the admin panel, with the Worker secret as fallback.\n• Faster chat: fewer full-screen rebuilds, fewer reflows, less work per message.",
+  "releasedAt": "2026-11-23T04:10:00Z",
   "minimum": "3.0.0"
 }
