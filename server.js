@@ -682,6 +682,10 @@ function markMessagesDelivered(userId) {
 }
 
 async function api(req, res, pathname, query) {
+  /* Brevo-only email API surface. The Worker is the primary path; these
+     aliases keep the same frontend call working on the Node host too. */
+  if (pathname === '/api/send-code') pathname = '/api/verify/signup/send';
+  if (pathname === '/api/verify-code') pathname = '/api/verify/signup/confirm';
   /* --- durable connection settings (admin only) -------------------------- */
   if (pathname === '/api/connections' && req.method === 'GET') {
     const adminId = query.get('adminId') || '';
@@ -770,7 +774,7 @@ async function api(req, res, pathname, query) {
   }
 
   if (pathname === '/api/health' && req.method === 'GET') {
-    return json(res, 200, { ok: true, app: 'whalechat', version: readJSON(path.join(PUBLIC_DIR, 'version.json'), {}).version || null, build: (readJSON(path.join(PUBLIC_DIR, 'version.json'), {}).build) || BUILD, uptimeSec: Math.floor((Date.now() - STARTED) / 1000), rev: store.rev, users: (store.db && store.db.users) ? store.db.users.length : 0, clients: clients.size, push: !!webpush, publicUrl: PUBLIC_URL || null, storage: pool ? 'postgres' : 'file', email: !!(email && email.configured()), market: market.status() });
+    return json(res, 200, { ok: true, app: 'whalechat', version: readJSON(path.join(PUBLIC_DIR, 'version.json'), {}).version || null, build: (readJSON(path.join(PUBLIC_DIR, 'version.json'), {}).build) || BUILD, uptimeSec: Math.floor((Date.now() - STARTED) / 1000), rev: store.rev, users: (store.db && store.db.users) ? store.db.users.length : 0, clients: clients.size, push: !!webpush, publicUrl: PUBLIC_URL || null, storage: pool ? 'postgres' : 'file', email: !!(email && email.configured()), emailProvider: 'brevo', brevoConfigured: !!(email && email.configured()), market: market.status() });
   }
   if (pathname === '/api/state' && req.method === 'GET') return json(res, 200, { rev: store.rev, db: store.db, updatedAt: store.updatedAt });
   if (pathname === '/api/state/init' && req.method === 'POST') {
